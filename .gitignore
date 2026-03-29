@@ -42,3 +42,6 @@ next-env.d.ts
 
 # supabase temp
 supabase/.temp
+
+# synced claude config defaults (fetched from claude-config repo)
+.claude-defaults.md
