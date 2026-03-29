@@ -16,11 +16,13 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // If SESSION_SECRET is not configured, skip auth (open access)
+  const secret = process.env.SESSION_SECRET
+  if (!secret) return NextResponse.next()
+
   // Check for valid session cookie
   const session = request.cookies.get('mf-session')
-  const secret = process.env.SESSION_SECRET
-
-  if (!session || !secret || session.value !== secret) {
+  if (!session || session.value !== secret) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
