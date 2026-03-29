@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Proxy buffers request bodies — raise limit to handle large WAV/AIFF files
+    proxyClientMaxBodySize: '200mb',
+  },
   // Allow images from Supabase storage and Replicate
   images: {
     remotePatterns: [

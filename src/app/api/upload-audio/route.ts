@@ -10,20 +10,25 @@ export async function DELETE(request: NextRequest) {
   return NextResponse.json({ ok: true })
 }
 
-const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
+const MAX_AUDIO_SIZE = 200 * 1024 * 1024  // 200MB
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
 
-// Ensure the storage bucket exists, creating it if needed
+const AUDIO_BUCKET_SIZE_LIMIT = 209715200  // 200MB
+const IMAGE_BUCKET_SIZE_LIMIT = 10485760   // 10MB
+
+// Ensure the storage bucket exists with the correct size limit
 async function ensureBucket(bucket: string, isAudio: boolean) {
+  const sizeLimit = isAudio ? AUDIO_BUCKET_SIZE_LIMIT : IMAGE_BUCKET_SIZE_LIMIT
+  const allowedMimeTypes = isAudio
+    ? ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
+    : ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
   const { error } = await supabaseAdmin.storage.getBucket(bucket)
   if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
-    await supabaseAdmin.storage.createBucket(bucket, {
-      public: true,
-      fileSizeLimit: isAudio ? 52428800 : 10485760,
-      allowedMimeTypes: isAudio
-        ? ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
-        : ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-    })
+    await supabaseAdmin.storage.createBucket(bucket, { public: true, fileSizeLimit: sizeLimit, allowedMimeTypes })
+  } else {
+    // Update limit on existing bucket in case it was created with the old 50MB cap
+    await supabaseAdmin.storage.updateBucket(bucket, { public: true, fileSizeLimit: sizeLimit, allowedMimeTypes })
   }
 }
 

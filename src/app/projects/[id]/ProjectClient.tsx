@@ -232,7 +232,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
               >
                 <Upload size={24} className="mx-auto text-[#444] mb-2" />
                 <p className="text-sm text-[#555]">Click to choose audio file</p>
-                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 50MB</p>
+                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 200MB</p>
                 <input
                   ref={fileInputRef}
                   type="file"
