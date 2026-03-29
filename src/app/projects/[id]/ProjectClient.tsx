@@ -236,7 +236,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="audio/*"
+                  accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.ogg,.m4a"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
