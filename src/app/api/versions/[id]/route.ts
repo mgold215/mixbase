@@ -1,38 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getVersion, updateVersion, deleteVersion, logActivity } from '@/lib/localdb'
+import { supabaseAdmin } from '@/lib/supabase'
 
-type Ctx = { params: Promise<{ id: string }> }
-
-export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { id } = await params
-  const version = getVersion(id)
-  if (!version) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json(version)
-}
-
-export async function PATCH(request: NextRequest, { params }: Ctx) {
-  const { id } = await params
+// PATCH /api/versions/[id] — update a version (status, notes, etc.)
+export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const { id } = await ctx.params
   const body = await request.json()
 
-  const existing = getVersion(id)
-  const updated = updateVersion(id, body)
-  if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // Fetch old version to detect status change
+  const { data: oldVersion } = await supabaseAdmin
+    .from('mf_versions')
+    .select('status, project_id, version_number')
+    .eq('id', id)
+    .single()
 
-  // Log status change
-  if (body.status && existing && body.status !== existing.status) {
-    logActivity({
+  const { data, error } = await supabaseAdmin
+    .from('mf_versions')
+    .update(body)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Log status change activity
+  if (body.status && oldVersion && body.status !== oldVersion.status) {
+    await supabaseAdmin.from('mf_activity').insert({
       type: 'status_change',
-      project_id: existing.project_id,
+      project_id: oldVersion.project_id,
       version_id: id,
-      description: `v${existing.version_number} moved from ${existing.status} to ${body.status}`,
+      description: `v${oldVersion.version_number} moved from ${oldVersion.status} to ${body.status}`,
     })
   }
 
-  return NextResponse.json(updated)
+  return NextResponse.json(data)
 }
 
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
-  const { id } = await params
-  deleteVersion(id)
+// GET /api/versions/[id] — get one version with its feedback
+export async function GET(_req: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const { id } = await ctx.params
+
+  const { data, error } = await supabaseAdmin
+    .from('mf_versions')
+    .select('*, mf_feedback(*)')
+    .eq('id', id)
+    .single()
+
+  if (error) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json(data)
+}
+
+// DELETE /api/versions/[id]
+export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const { id } = await ctx.params
+  const { error } = await supabaseAdmin.from('mf_versions').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

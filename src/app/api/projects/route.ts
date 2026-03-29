@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getProjects, createProject, logActivity } from '@/lib/localdb'
+import { supabaseAdmin } from '@/lib/supabase'
 
+// GET /api/projects — list all projects
 export async function GET() {
-  const projects = getProjects()
-  return NextResponse.json(projects)
+  const { data, error } = await supabaseAdmin
+    .from('mf_projects')
+    .select('*')
+    .order('updated_at', { ascending: false })
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
 }
 
+// POST /api/projects — create a new project
 export async function POST(request: NextRequest) {
   const body = await request.json()
   const { title, genre, bpm, key_signature } = body
@@ -14,13 +21,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Title is required' }, { status: 400 })
   }
 
-  const project = createProject({ title: title.trim(), genre, bpm, key_signature })
+  const { data, error } = await supabaseAdmin
+    .from('mf_projects')
+    .insert({ title: title.trim(), genre, bpm, key_signature })
+    .select()
+    .single()
 
-  logActivity({
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Log activity
+  await supabaseAdmin.from('mf_activity').insert({
     type: 'project_created',
-    project_id: project.id,
-    description: `Project "${project.title}" created`,
+    project_id: data.id,
+    description: `Project "${data.title}" created`,
   })
 
-  return NextResponse.json(project, { status: 201 })
+  return NextResponse.json(data, { status: 201 })
 }

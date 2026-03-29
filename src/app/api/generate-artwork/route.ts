@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFileSync, mkdirSync, existsSync } from 'fs'
-import { join } from 'path'
-import { updateProject } from '@/lib/localdb'
+import { supabaseAdmin } from '@/lib/supabase'
 
+// POST /api/generate-artwork — generate AI artwork using Replicate (FLUX model)
 export async function POST(request: NextRequest) {
   const { project_id, prompt } = await request.json()
 
@@ -21,7 +20,7 @@ export async function POST(request: NextRequest) {
     headers: {
       'Authorization': `Bearer ${replicateToken}`,
       'Content-Type': 'application/json',
-      'Prefer': 'wait',
+      'Prefer': 'wait',  // Wait for result synchronously (up to 60s)
     },
     body: JSON.stringify({
       input: {
@@ -40,31 +39,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: prediction.error ?? 'Image generation failed' }, { status: 500 })
   }
 
+  // Get the output URL from Replicate
   const outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+
   if (!outputUrl) {
     return NextResponse.json({ error: 'No image returned from generator' }, { status: 500 })
   }
 
-  // Download and store locally
-  try {
-    const imageRes = await fetch(outputUrl)
-    const imageBuffer = await imageRes.arrayBuffer()
-    const filename = `ai-${Date.now()}.jpg`
-    const uploadDir = join(process.cwd(), 'public', 'uploads', 'artwork', project_id)
-    if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
-    writeFileSync(join(uploadDir, filename), new Uint8Array(imageBuffer))
-    const artworkUrl = `/uploads/artwork/${project_id}/${filename}`
+  // Download the image and store it in Supabase Storage for permanence
+  const imageRes = await fetch(outputUrl)
+  const imageBuffer = await imageRes.arrayBuffer()
 
-    if (project_id) {
-      updateProject(project_id, { artwork_url: artworkUrl })
-    }
+  const filename = `${project_id}/ai-${Date.now()}.jpg`
+  const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+    .from('mf-artwork')
+    .upload(filename, new Uint8Array(imageBuffer), {
+      contentType: 'image/jpeg',
+      upsert: false,
+    })
 
-    return NextResponse.json({ artwork_url: artworkUrl })
-  } catch {
-    // Fall back to Replicate URL if local save fails
-    if (project_id) {
-      updateProject(project_id, { artwork_url: outputUrl })
-    }
+  if (uploadError) {
+    // Fall back to Replicate URL if upload fails (it may expire)
     return NextResponse.json({ artwork_url: outputUrl })
   }
+
+  const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
+  const artworkUrl = urlData.publicUrl
+
+  // Update the project artwork
+  if (project_id) {
+    await supabaseAdmin
+      .from('mf_projects')
+      .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
+      .eq('id', project_id)
+  }
+
+  return NextResponse.json({ artwork_url: artworkUrl })
 }

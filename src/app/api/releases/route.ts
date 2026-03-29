@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getReleases, createRelease, logActivity } from '@/lib/localdb'
+import { supabaseAdmin } from '@/lib/supabase'
 
 export async function GET() {
-  const releases = getReleases()
-  return NextResponse.json(releases)
+  const { data, error } = await supabaseAdmin
+    .from('mf_releases')
+    .select('*, mf_projects(title, artwork_url)')
+    .order('release_date', { ascending: true, nullsFirst: false })
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
 }
 
 export async function POST(request: NextRequest) {
@@ -12,14 +17,20 @@ export async function POST(request: NextRequest) {
 
   if (!title?.trim()) return NextResponse.json({ error: 'Title is required' }, { status: 400 })
 
-  const release = createRelease({ title: title.trim(), release_date, project_id, genre, label, isrc, notes })
+  const { data, error } = await supabaseAdmin
+    .from('mf_releases')
+    .insert({ title: title.trim(), release_date, project_id, genre, label, isrc, notes })
+    .select()
+    .single()
 
-  logActivity({
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  await supabaseAdmin.from('mf_activity').insert({
     type: 'release_created',
     project_id: project_id ?? null,
-    release_id: release.id,
-    description: `Release "${release.title}" added to pipeline`,
+    release_id: data.id,
+    description: `Release "${data.title}" added to pipeline`,
   })
 
-  return NextResponse.json(release, { status: 201 })
+  return NextResponse.json(data, { status: 201 })
 }
