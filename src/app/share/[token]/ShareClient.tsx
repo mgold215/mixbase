@@ -7,7 +7,7 @@ import type { Version } from '@/lib/supabase'
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 
 type Props = {
-  version: Version & { mf_projects: unknown }
+  version: Version & { mf_projects: { title: string; artwork_url: string | null } | null }
 }
 
 export default function ShareClient({ version }: Props) {

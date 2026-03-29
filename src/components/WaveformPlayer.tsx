@@ -71,7 +71,7 @@ export default function WaveformPlayer({
       ws?.destroy()
       wavesurferRef.current = null
     }
-  }, [audioUrl, compact])
+  }, [audioUrl, compact, onTimeUpdate])
 
   // Sync playback position from outside (A/B compare)
   useEffect(() => {

@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 // Routes that are always public — no password required
 const PUBLIC_PATHS = ['/login', '/share/', '/api/auth', '/api/feedback', '/api/audio-url', '/api/health', '/api/db-init']
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow public paths and static assets

@@ -36,6 +36,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   })
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
+  const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Get the highest status across all versions (for the project-level pipeline)
@@ -64,11 +65,16 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   }
 
   async function updateNotes(versionId: string, field: 'private_notes' | 'public_notes', value: string) {
-    await fetch(`/api/versions/${versionId}`, {
+    const res = await fetch(`/api/versions/${versionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value }),
     })
+    if (res.ok) {
+      const key = `${versionId}-${field}`
+      setSavedNoteKey(key)
+      setTimeout(() => setSavedNoteKey(null), 2000)
+    }
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -207,17 +213,22 @@ export default function ProjectClient({ project, initialVersions }: Props) {
             <div className="space-y-4">
               {/* File picker */}
               <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 rounded-xl p-6 text-center cursor-pointer transition-colors"
+                onClick={() => !uploading && fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
+                  uploading
+                    ? 'border-[#a78bfa]/30 cursor-not-allowed opacity-60'
+                    : 'border-[#222] hover:border-[#a78bfa]/30 cursor-pointer'
+                }`}
               >
                 <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                <p className="text-sm text-[#555]">Click to choose audio file</p>
+                <p className="text-sm text-[#555]">{uploading ? uploadProgress : 'Click to choose audio file'}</p>
                 <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 50MB</p>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="audio/*"
                   className="hidden"
+                  disabled={uploading}
                   onChange={handleFileUpload}
                 />
               </div>
@@ -289,10 +300,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 />
                 <label htmlFor="allow_download" className="text-xs text-[#666]">Allow download on share page</label>
               </div>
-
-              {uploadProgress && (
-                <p className="text-xs text-[#a78bfa]">{uploadProgress}</p>
-              )}
             </div>
           </div>
         )}
@@ -315,8 +322,9 @@ export default function ProjectClient({ project, initialVersions }: Props) {
             versions.map((version, index) => {
               const isExpanded = expandedVersion === version.id
               const feedback = version.mf_feedback ?? []
-              const avgRating = feedback.length > 0
-                ? (feedback.reduce((s, f) => s + (f.rating ?? 0), 0) / feedback.filter(f => f.rating).length).toFixed(1)
+              const ratedFeedback = feedback.filter(f => f.rating)
+              const avgRating = ratedFeedback.length > 0
+                ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
                 : null
 
               return (
@@ -419,7 +427,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                       {/* Notes */}
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Private notes</label>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs text-[#555]">Private notes</label>
+                            {savedNoteKey === `${version.id}-private_notes` && (
+                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+                            )}
+                          </div>
                           <textarea
                             defaultValue={version.private_notes ?? ''}
                             onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
@@ -429,7 +442,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Public notes (share page)</label>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs text-[#555]">Public notes (share page)</label>
+                            {savedNoteKey === `${version.id}-public_notes` && (
+                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+                            )}
+                          </div>
                           <textarea
                             defaultValue={version.public_notes ?? ''}
                             onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
