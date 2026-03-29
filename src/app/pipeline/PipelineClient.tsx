@@ -52,6 +52,7 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', release_date: '', project_id: '', genre: '', label: '', isrc: '', notes: '' })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   function setField(field: string, value: string) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -60,24 +61,31 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const res = await fetch('/api/releases', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: form.title,
-        release_date: form.release_date || null,
-        project_id: form.project_id || null,
-        genre: form.genre || null,
-        label: form.label || null,
-        isrc: form.isrc || null,
-        notes: form.notes || null,
-      }),
-    })
-    const data = await res.json()
-    if (res.ok) {
-      setReleases(prev => [{ ...data, mf_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
-      setShowForm(false)
-      setForm({ title: '', release_date: '', project_id: '', genre: '', label: '', isrc: '', notes: '' })
+    setSaveError(null)
+    try {
+      const res = await fetch('/api/releases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: form.title,
+          release_date: form.release_date || null,
+          project_id: form.project_id || null,
+          genre: form.genre || null,
+          label: form.label || null,
+          isrc: form.isrc || null,
+          notes: form.notes || null,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setReleases(prev => [{ ...data, mf_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
+        setShowForm(false)
+        setForm({ title: '', release_date: '', project_id: '', genre: '', label: '', isrc: '', notes: '' })
+      } else {
+        setSaveError(data.error ?? 'Failed to create release')
+      }
+    } catch {
+      setSaveError('Network error — please try again')
     }
     setSaving(false)
   }
@@ -347,6 +355,9 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
               </div>
             </div>
 
+            {saveError && (
+              <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-xl px-3 py-2">{saveError}</p>
+            )}
             <div className="flex gap-3">
               <button
                 type="submit"
@@ -357,7 +368,7 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => setShowForm(false)}
+                onClick={() => { setShowForm(false); setSaveError(null) }}
                 className="px-5 py-2.5 text-sm text-[#555] hover:text-white rounded-xl transition-colors"
               >
                 Cancel

@@ -4,6 +4,20 @@ import { supabaseAdmin } from '@/lib/supabase'
 const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
 
+// Ensure the storage bucket exists, creating it if needed
+async function ensureBucket(bucket: string, isAudio: boolean) {
+  const { error } = await supabaseAdmin.storage.getBucket(bucket)
+  if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
+    await supabaseAdmin.storage.createBucket(bucket, {
+      public: true,
+      fileSizeLimit: isAudio ? 52428800 : 10485760,
+      allowedMimeTypes: isAudio
+        ? ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
+        : ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+    })
+  }
+}
+
 // POST /api/upload-audio — upload audio file or artwork to Supabase Storage
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
@@ -22,6 +36,11 @@ export async function POST(request: NextRequest) {
   }
 
   const bucket = type === 'artwork' ? 'mf-artwork' : 'mf-audio'
+  const isAudio = type !== 'artwork'
+
+  // Auto-create the bucket if it doesn't exist yet
+  await ensureBucket(bucket, isAudio)
+
   const ext = file.name.split('.').pop()
   const filename = `${projectId}/${Date.now()}.${ext}`
 

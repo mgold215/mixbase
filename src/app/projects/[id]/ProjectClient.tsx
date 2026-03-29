@@ -125,10 +125,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       setExpandedVersion(newVersion.id)
       setShowUpload(false)
       setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
+      setUploadProgress('')
+    } else {
+      setUploadProgress(`Error saving version: ${newVersion.error ?? 'Unknown error'}`)
     }
 
     setUploading(false)
-    setUploadProgress('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
