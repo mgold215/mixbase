@@ -35,7 +35,8 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     status: 'WIP' as Version['status'], allow_download: false,
   })
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState('')
+  const [uploadPct, setUploadPct] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState('')
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -81,36 +82,55 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    setUploadProgress('Uploading audio...')
+    setUploadPct(0)
+    setUploadStatus('Uploading...')
 
     const formData = new FormData()
     formData.append('file', file)
     formData.append('project_id', project.id)
     formData.append('type', 'audio')
 
-    const uploadRes = await fetch('/api/upload-audio', { method: 'POST', body: formData })
-    const uploadData = await uploadRes.json()
+    // XHR for real upload progress
+    const uploadData = await new Promise<{ url?: string; error?: string }>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+      })
+      xhr.addEventListener('load', () => {
+        try { resolve(JSON.parse(xhr.responseText)) }
+        catch { resolve({ error: 'Invalid response' }) }
+      })
+      xhr.addEventListener('error', () => resolve({ error: 'Network error' }))
+      xhr.open('POST', '/api/upload-audio')
+      xhr.send(formData)
+    })
 
-    if (!uploadRes.ok) {
-      setUploadProgress(`Error: ${uploadData.error}`)
+    if (!uploadData.url) {
+      setUploadStatus(`Error: ${uploadData.error ?? 'Upload failed'}`)
+      setUploadPct(0)
       setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    setUploadProgress('Creating version...')
+    setUploadPct(85)
+    setUploadStatus('Reading metadata...')
 
-    // Get audio duration via a temporary Audio element
+    // Get audio duration — short timeout, non-blocking
     let duration: number | null = null
     try {
       duration = await new Promise((resolve) => {
         const audio = new Audio(uploadData.url)
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
-        setTimeout(() => resolve(null), 10000)
+        setTimeout(() => resolve(null), 3000)
       })
     } catch {
       duration = null
     }
+
+    setUploadPct(92)
+    setUploadStatus('Saving version...')
 
     const versionRes = await fetch('/api/versions', {
       method: 'POST',
@@ -127,16 +147,23 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
     const newVersion = await versionRes.json()
     if (versionRes.ok) {
-      setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
-      setExpandedVersion(newVersion.id)
-      setShowUpload(false)
-      setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
-      setUploadProgress('')
+      setUploadPct(100)
+      setUploadStatus('Done!')
+      setTimeout(() => {
+        setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
+        setExpandedVersion(newVersion.id)
+        setShowUpload(false)
+        setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
+        setUploadPct(0)
+        setUploadStatus('')
+        setUploading(false)
+      }, 500)
     } else {
-      setUploadProgress(`Error saving version: ${newVersion.error ?? 'Unknown error'}`)
+      setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
+      setUploadPct(0)
+      setUploading(false)
     }
 
-    setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -216,12 +243,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 onClick={() => !uploading && fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
                   uploading
-                    ? 'border-[#a78bfa]/30 cursor-not-allowed opacity-60'
+                    ? 'border-[#a78bfa]/30 cursor-not-allowed'
                     : 'border-[#222] hover:border-[#a78bfa]/30 cursor-pointer'
                 }`}
               >
                 <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                <p className="text-sm text-[#555]">{uploading ? uploadProgress : 'Click to choose audio file'}</p>
+                <p className="text-sm text-[#555]">Click to choose audio file</p>
                 <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 50MB</p>
                 <input
                   ref={fileInputRef}
@@ -232,6 +259,22 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   onChange={handleFileUpload}
                 />
               </div>
+
+              {/* Progress bar */}
+              {uploading && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#a78bfa]'}>{uploadStatus}</span>
+                    <span className="text-[#555]">{uploadPct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${uploadStatus.startsWith('Error') ? 'bg-red-500' : uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'}`}
+                      style={{ width: `${uploadPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
