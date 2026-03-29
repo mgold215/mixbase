@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { writeFileSync, mkdirSync, existsSync } from 'fs'
+import { join } from 'path'
 
-const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
+const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB
 
-// POST /api/upload-audio — upload audio file or artwork to Supabase Storage
 export async function POST(request: NextRequest) {
   const formData = await request.formData()
   const file = formData.get('file') as File | null
   const projectId = formData.get('project_id') as string
-  const type = (formData.get('type') as string) ?? 'audio'  // 'audio' | 'artwork'
+  const type = (formData.get('type') as string) ?? 'audio'
 
   if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
@@ -21,27 +21,22 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const bucket = type === 'artwork' ? 'mf-artwork' : 'mf-audio'
+  const subdir = type === 'artwork' ? 'artwork' : 'audio'
   const ext = file.name.split('.').pop()
-  const filename = `${projectId}/${Date.now()}.${ext}`
+  const filename = `${Date.now()}.${ext}`
+  const uploadDir = join(process.cwd(), 'public', 'uploads', subdir, projectId)
+
+  if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true })
 
   const arrayBuffer = await file.arrayBuffer()
   const buffer = new Uint8Array(arrayBuffer)
+  writeFileSync(join(uploadDir, filename), buffer)
 
-  const { data, error } = await supabaseAdmin.storage
-    .from(bucket)
-    .upload(filename, buffer, {
-      contentType: file.type,
-      upsert: false,
-    })
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  const { data: urlData } = supabaseAdmin.storage.from(bucket).getPublicUrl(data.path)
+  const publicUrl = `/uploads/${subdir}/${projectId}/${filename}`
 
   return NextResponse.json({
-    url: urlData.publicUrl,
-    path: data.path,
+    url: publicUrl,
+    path: `${subdir}/${projectId}/${filename}`,
     size: file.size,
     name: file.name,
   })

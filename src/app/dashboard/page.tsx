@@ -1,35 +1,21 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { getProjects, getActivity } from '@/lib/localdb'
 import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Plus, Music, Clock, MessageSquare } from 'lucide-react'
+import { Plus, Music, Clock } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
-  // Fetch projects, recent activity, and stats in parallel
-  const [projectsRes, activityRes] = await Promise.all([
-    supabaseAdmin
-      .from('mf_projects')
-      .select('*, mf_versions(id, status, created_at)')
-      .order('updated_at', { ascending: false }),
-    supabaseAdmin
-      .from('mf_activity')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20),
-  ])
+  const projects = getProjects()
+  const activity = getActivity(20)
 
-  const projects = projectsRes.data ?? []
-  const activity = activityRes.data ?? []
-
-  // Compute stats
   const stats = {
     total: projects.length,
-    wip: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
-    finished: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'Finished')).length,
-    released: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'Released')).length,
+    wip: projects.filter(p => p.mf_versions?.some(v => v.status === 'WIP')).length,
+    finished: projects.filter(p => p.mf_versions?.some(v => v.status === 'Finished')).length,
+    released: projects.filter(p => p.mf_versions?.some(v => v.status === 'Released')).length,
   }
 
   function activityIcon(type: string) {
@@ -115,7 +101,6 @@ export default async function DashboardPage() {
                         href={`/projects/${project.id}`}
                         className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2a2a2a] rounded-2xl overflow-hidden transition-colors"
                       >
-                        {/* Artwork */}
                         <div className="relative aspect-square bg-[#0f0f0f]">
                           {project.artwork_url ? (
                             <Image
@@ -123,30 +108,24 @@ export default async function DashboardPage() {
                               alt={project.title}
                               fill
                               className="object-cover"
+                              unoptimized={project.artwork_url.startsWith('/')}
                             />
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <Music size={32} className="text-[#222]" />
                             </div>
                           )}
-                          {/* Status badge overlay */}
                           <div className="absolute top-3 right-3">
                             <StatusBadge status={latestStatus} size="sm" />
                           </div>
                         </div>
-
-                        {/* Info */}
                         <div className="p-4">
                           <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors">
                             {project.title}
                           </h3>
                           <div className="flex items-center gap-3 mt-1.5">
-                            {project.genre && (
-                              <span className="text-xs text-[#555]">{project.genre}</span>
-                            )}
-                            {project.bpm && (
-                              <span className="text-xs text-[#444]">{project.bpm} BPM</span>
-                            )}
+                            {project.genre && <span className="text-xs text-[#555]">{project.genre}</span>}
+                            {project.bpm && <span className="text-xs text-[#444]">{project.bpm} BPM</span>}
                           </div>
                           <div className="flex items-center gap-1.5 mt-2 text-[#444] text-xs">
                             <Clock size={11} />

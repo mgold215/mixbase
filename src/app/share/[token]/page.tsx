@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { getVersionByToken } from '@/lib/localdb'
 import { notFound } from 'next/navigation'
 import Image from 'next/image'
 import ShareClient from './ShareClient'
@@ -9,32 +9,29 @@ export const dynamic = 'force-dynamic'
 
 export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
-
-  // Look up the version by its share token
-  const { data: version, error } = await supabaseAdmin
-    .from('mf_versions')
-    .select('*, mf_projects(*)')
-    .eq('share_token', token)
-    .single()
-
-  if (error || !version) notFound()
+  const version = getVersionByToken(token)
+  if (!version) notFound()
 
   const project = version.mf_projects
 
   return (
     <div className="min-h-screen bg-[#080808] flex flex-col">
-      {/* Minimal header */}
       <header className="border-b border-[#111] px-6 py-4 flex items-center justify-between">
         <span className="text-sm font-bold text-[#555] tracking-tight">Mixfolio</span>
         <span className="text-xs text-[#333]">Private share</span>
       </header>
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-6 py-12">
-        {/* Artwork + title */}
         <div className="flex gap-5 mb-8">
           <div className="relative w-24 h-24 rounded-xl overflow-hidden bg-[#111] flex-shrink-0 border border-[#1a1a1a]">
             {project?.artwork_url ? (
-              <Image src={project.artwork_url} alt={project.title} fill className="object-cover" />
+              <Image
+                src={project.artwork_url}
+                alt={project.title}
+                fill
+                className="object-cover"
+                unoptimized={project.artwork_url.startsWith('/')}
+              />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center text-[#333] text-2xl">♪</div>
             )}
@@ -55,7 +52,6 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </div>
         </div>
 
-        {/* Waveform player + notes + feedback form */}
         <ShareClient version={version} />
       </main>
     </div>

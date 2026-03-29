@@ -1,4 +1,4 @@
-import { supabaseAdmin, formatDuration, formatFileSize, STATUS_CONFIG, STATUSES } from '@/lib/supabase'
+import { getProject } from '@/lib/localdb'
 import { notFound } from 'next/navigation'
 import Nav from '@/components/Nav'
 import ProjectClient from './ProjectClient'
@@ -7,24 +7,17 @@ export const dynamic = 'force-dynamic'
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const data = getProject(id)
+  if (!data) notFound()
 
-  const [projectRes, versionsRes] = await Promise.all([
-    supabaseAdmin.from('mf_projects').select('*').eq('id', id).single(),
-    supabaseAdmin
-      .from('mf_versions')
-      .select('*, mf_feedback(*)')
-      .eq('project_id', id)
-      .order('version_number', { ascending: false }),
-  ])
-
-  if (projectRes.error || !projectRes.data) notFound()
+  const { mf_versions, ...project } = data
 
   return (
     <div className="min-h-screen bg-[#080808]">
       <Nav />
       <ProjectClient
-        project={projectRes.data}
-        initialVersions={versionsRes.data ?? []}
+        project={project}
+        initialVersions={mf_versions}
       />
     </div>
   )
