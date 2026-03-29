@@ -36,6 +36,8 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   })
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
+  const [savingNotes, setSavingNotes] = useState<string | null>(null)
+  const [notesError, setNotesError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Get the highest status across all versions (for the project-level pipeline)
@@ -64,11 +66,23 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   }
 
   async function updateNotes(versionId: string, field: 'private_notes' | 'public_notes', value: string) {
-    await fetch(`/api/versions/${versionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value }),
-    })
+    const key = `${versionId}:${field}`
+    setSavingNotes(key)
+    setNotesError(null)
+    try {
+      const res = await fetch(`/api/versions/${versionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setNotesError(data.error ?? 'Failed to save notes')
+      }
+    } catch {
+      setNotesError('Network error — notes not saved')
+    }
+    setSavingNotes(null)
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -127,6 +141,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
       setUploadProgress('')
     } else {
+      // Clean up the orphaned audio file from storage
+      fetch('/api/upload-audio', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: uploadData.path, bucket: 'mf-audio' }),
+      }).catch(() => {})
       setUploadProgress(`Error saving version: ${newVersion.error ?? 'Unknown error'}`)
     }
 
@@ -417,26 +437,37 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                       </div>
 
                       {/* Notes */}
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Private notes</label>
-                          <textarea
-                            defaultValue={version.private_notes ?? ''}
-                            onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
-                            placeholder="Notes only you can see..."
-                            rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
-                          />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-[#555]">Notes</p>
+                          {savingNotes?.startsWith(version.id) && (
+                            <span className="text-[10px] text-[#555]">Saving...</span>
+                          )}
+                          {notesError && !savingNotes?.startsWith(version.id) && (
+                            <span className="text-[10px] text-red-400">{notesError}</span>
+                          )}
                         </div>
-                        <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Public notes (share page)</label>
-                          <textarea
-                            defaultValue={version.public_notes ?? ''}
-                            onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
-                            placeholder="Notes visible to listeners..."
-                            rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
-                          />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs text-[#555] mb-1.5">Private (only you)</label>
+                            <textarea
+                              defaultValue={version.private_notes ?? ''}
+                              onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
+                              placeholder="Notes only you can see..."
+                              rows={3}
+                              className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-[#555] mb-1.5">Public (share page)</label>
+                            <textarea
+                              defaultValue={version.public_notes ?? ''}
+                              onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
+                              placeholder="Notes visible to listeners..."
+                              rows={3}
+                              className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
+                            />
+                          </div>
                         </div>
                       </div>
 

@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
+// DELETE /api/upload-audio — remove an uploaded file from storage (used for cleanup on failed version creation)
+export async function DELETE(request: NextRequest) {
+  const { path, bucket } = await request.json()
+  if (!path || !bucket) return NextResponse.json({ error: 'path and bucket required' }, { status: 400 })
+  const { error } = await supabaseAdmin.storage.from(bucket).remove([path])
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
 const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
 

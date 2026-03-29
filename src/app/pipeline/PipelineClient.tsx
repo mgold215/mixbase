@@ -103,8 +103,8 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
 
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release?')) return
-    await fetch(`/api/releases/${id}`, { method: 'DELETE' })
-    setReleases(prev => prev.filter(r => r.id !== id))
+    const res = await fetch(`/api/releases/${id}`, { method: 'DELETE' })
+    if (res.ok) setReleases(prev => prev.filter(r => r.id !== id))
   }
 
   // Separate upcoming vs past
