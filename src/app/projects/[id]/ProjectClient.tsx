@@ -8,7 +8,7 @@ import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
+  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil
 } from 'lucide-react'
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
@@ -38,6 +38,14 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [editingProject, setEditingProject] = useState(false)
+  const [projectForm, setProjectForm] = useState({
+    title: project.title,
+    genre: project.genre ?? '',
+    bpm: project.bpm?.toString() ?? '',
+    key_signature: project.key_signature ?? '',
+  })
+  const [projectSaved, setProjectSaved] = useState(false)
 
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -78,7 +86,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) setSelectedFile(file)
+    if (file) { setSelectedFile(file); setUploadStatus('') }
   }
 
   async function handleUploadSubmit() {
@@ -187,6 +195,24 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     if (res.ok) setVersions(prev => prev.filter(v => v.id !== versionId))
   }
 
+  async function saveProject() {
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: projectForm.title.trim() || project.title,
+        genre: projectForm.genre.trim() || null,
+        bpm: projectForm.bpm ? parseInt(projectForm.bpm) : null,
+        key_signature: projectForm.key_signature.trim() || null,
+      }),
+    })
+    if (res.ok) {
+      setProjectSaved(true)
+      setEditingProject(false)
+      setTimeout(() => setProjectSaved(false), 2000)
+    }
+  }
+
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8">
@@ -208,13 +234,50 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           </div>
 
           <div className="flex-1 min-w-0 pt-1">
-            <h1 className="text-2xl font-bold text-white mb-1">{project.title}</h1>
-            <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
-              {project.genre && <span>{project.genre}</span>}
-              {project.bpm && <span>{project.bpm} BPM</span>}
-              {project.key_signature && <span>Key of {project.key_signature}</span>}
-              <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
-            </div>
+            {editingProject ? (
+              <div className="space-y-3 mb-4">
+                <input
+                  type="text"
+                  value={projectForm.title}
+                  onChange={e => setProjectForm(p => ({ ...p, title: e.target.value }))}
+                  className="w-full bg-[#0f0f0f] border border-[#a78bfa]/30 rounded-xl px-3 py-2 text-lg font-bold text-white focus:outline-none focus:border-[#a78bfa]/60"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">Genre</label>
+                    <input type="text" value={projectForm.genre} onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))} placeholder="e.g. Techno" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">BPM</label>
+                    <input type="number" value={projectForm.bpm} onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))} placeholder="e.g. 140" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">Key</label>
+                    <input type="text" value={projectForm.key_signature} onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))} placeholder="e.g. Am" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={saveProject} className="bg-[#a78bfa] hover:bg-[#9370f0] text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
+                  <button onClick={() => setEditingProject(false)} className="text-[#444] hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-2xl font-bold text-white">{projectForm.title || project.title}</h1>
+                  <button onClick={() => setEditingProject(true)} className="text-[#333] hover:text-[#666] transition-colors" title="Edit project details">
+                    <Pencil size={13} />
+                  </button>
+                  {projectSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>}
+                </div>
+                <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
+                  {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
+                  {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
+                  {(projectForm.key_signature || project.key_signature) && <span>Key of {projectForm.key_signature || project.key_signature}</span>}
+                  <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+                </div>
+              </>
+            )}
             <StatusPipeline currentStatus={projectStatus} />
           </div>
         </div>
@@ -276,20 +339,22 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 </div>
               )}
 
-              {uploading && (
+              {(uploading || uploadStatus) && (
                 <div>
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#a78bfa]'}>{uploadStatus}</span>
-                    <span className="text-[#555]">{uploadPct}%</span>
+                    {!uploadStatus.startsWith('Error') && <span className="text-[#555]">{uploadPct}%</span>}
                   </div>
-                  <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        uploadStatus.startsWith('Error') ? 'bg-red-500' : uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'
-                      }`}
-                      style={{ width: `${uploadPct}%` }}
-                    />
-                  </div>
+                  {!uploadStatus.startsWith('Error') && (
+                    <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'
+                        }`}
+                        style={{ width: `${uploadPct}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -366,7 +431,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 disabled={!selectedFile || uploading}
                 className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-3 transition-colors"
               >
-                {uploading ? uploadStatus : 'Upload Version'}
+                {uploading ? (uploadStatus.startsWith('Error') ? 'Upload Version' : uploadStatus) : uploadStatus.startsWith('Error') ? 'Try Again' : 'Upload Version'}
               </button>
             </div>
           </div>
