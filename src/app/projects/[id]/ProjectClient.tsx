@@ -83,6 +83,10 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
   async function handleUploadSubmit() {
     if (!selectedFile) return
+    if (selectedFile.size > 500 * 1024 * 1024) {
+      setUploadStatus('Error: File too large (max 500MB)')
+      return
+    }
     setUploading(true)
     setUploadPct(0)
     setUploadStatus('Uploading...')
