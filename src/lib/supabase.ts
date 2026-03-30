@@ -60,21 +60,9 @@ export type Release = {
   release_date: string | null
   project_id: string | null
   genre: string | null
-  secondary_genre: string | null
   label: string | null
   isrc: string | null
-  upc: string | null
   notes: string | null
-  artist_name: string | null
-  featured_artists: string | null
-  release_type: 'single' | 'album' | 'ep'
-  explicit: boolean
-  songwriter_name: string | null
-  producer_name: string | null
-  final_version_id: string | null
-  distrokid_status: 'not_started' | 'uploading' | 'submitted' | 'error'
-  spotify_pitch_copy: string | null
-  agent_log: string | null
   mixing_done: boolean
   mastering_done: boolean
   artwork_ready: boolean
