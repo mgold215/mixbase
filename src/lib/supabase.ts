@@ -41,6 +41,8 @@ export type Version = {
   change_log: string | null
   share_token: string
   allow_download: boolean
+  open_for_feedback: boolean
+  feedback_context: string | null
   created_at: string
 }
 

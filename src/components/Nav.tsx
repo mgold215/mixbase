@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, CalendarRange, LogOut } from 'lucide-react'
+import { LayoutDashboard, CalendarRange, Radio, LogOut } from 'lucide-react'
 
 export default function Nav() {
   const pathname = usePathname()
@@ -16,6 +16,7 @@ export default function Nav() {
   const links = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/pipeline', label: 'Release Pipeline', icon: CalendarRange },
+    { href: '/feed', label: 'Producer Feed', icon: Radio },
   ]
 
   return (

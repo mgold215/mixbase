@@ -8,13 +8,51 @@ import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
+  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Radio, Pencil, X
 } from 'lucide-react'
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
 
 type VersionWithFeedback = Version & { mf_feedback: Feedback[] }
+
+function FeedbackContextInput({ versionId, value, onSave }: { versionId: string; value: string; onSave: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  const [saved, setSaved] = useState(false)
+
+  async function save() {
+    await fetch(`/api/versions/${versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback_context: text.trim() || null }),
+    })
+    onSave(text.trim() || null as unknown as string)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-[#1a1a1a]">
+      <label className="block text-[10px] text-[#555] mb-1.5">What kind of feedback are you looking for? (optional)</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && save()}
+          placeholder="e.g. Focus on the low end, is the drop working?"
+          className="flex-1 bg-[#111] border border-[#222] rounded-lg px-3 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+        />
+        <button
+          onClick={save}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${saved ? 'text-emerald-400' : 'text-[#a78bfa] hover:bg-[#a78bfa]/10'}`}
+        >
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 type Props = {
   project: Project
@@ -38,6 +76,14 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [editingProject, setEditingProject] = useState(false)
+  const [projectForm, setProjectForm] = useState({
+    title: project.title,
+    genre: project.genre ?? '',
+    bpm: project.bpm?.toString() ?? '',
+    key_signature: project.key_signature ?? '',
+  })
+  const [projectSaved, setProjectSaved] = useState(false)
 
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -61,6 +107,15 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     if (res.ok) {
       setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: newStatus } : v))
     }
+  }
+
+  async function toggleFeedback(versionId: string, current: boolean) {
+    const res = await fetch(`/api/versions/${versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ open_for_feedback: !current }),
+    })
+    if (res.ok) setVersions(prev => prev.map(v => v.id === versionId ? { ...v, open_for_feedback: !current } : v))
   }
 
   async function updateNotes(versionId: string, field: 'private_notes' | 'public_notes', value: string) {
@@ -187,6 +242,24 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     if (res.ok) setVersions(prev => prev.filter(v => v.id !== versionId))
   }
 
+  async function saveProject() {
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: projectForm.title.trim() || project.title,
+        genre: projectForm.genre.trim() || null,
+        bpm: projectForm.bpm ? parseInt(projectForm.bpm) : null,
+        key_signature: projectForm.key_signature.trim() || null,
+      }),
+    })
+    if (res.ok) {
+      setProjectSaved(true)
+      setEditingProject(false)
+      setTimeout(() => setProjectSaved(false), 2000)
+    }
+  }
+
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8">
@@ -208,13 +281,82 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           </div>
 
           <div className="flex-1 min-w-0 pt-1">
-            <h1 className="text-2xl font-bold text-white mb-1">{project.title}</h1>
-            <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
-              {project.genre && <span>{project.genre}</span>}
-              {project.bpm && <span>{project.bpm} BPM</span>}
-              {project.key_signature && <span>Key of {project.key_signature}</span>}
-              <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
-            </div>
+            {editingProject ? (
+              <div className="space-y-3 mb-4">
+                <input
+                  type="text"
+                  value={projectForm.title}
+                  onChange={e => setProjectForm(p => ({ ...p, title: e.target.value }))}
+                  className="w-full bg-[#0f0f0f] border border-[#a78bfa]/30 rounded-xl px-3 py-2 text-lg font-bold text-white focus:outline-none focus:border-[#a78bfa]/60"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">Genre</label>
+                    <input
+                      type="text"
+                      value={projectForm.genre}
+                      onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))}
+                      placeholder="e.g. Techno"
+                      className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">BPM</label>
+                    <input
+                      type="number"
+                      value={projectForm.bpm}
+                      onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))}
+                      placeholder="e.g. 140"
+                      className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-[#555] mb-1">Key</label>
+                    <input
+                      type="text"
+                      value={projectForm.key_signature}
+                      onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))}
+                      placeholder="e.g. Am"
+                      className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveProject}
+                    className="bg-[#a78bfa] hover:bg-[#9370f0] text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingProject(false)}
+                    className="text-[#444] hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-2xl font-bold text-white">{projectForm.title || project.title}</h1>
+                  <button
+                    onClick={() => setEditingProject(true)}
+                    className="text-[#333] hover:text-[#666] transition-colors"
+                    title="Edit project details"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  {projectSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>}
+                </div>
+                <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
+                  {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
+                  {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
+                  {(projectForm.key_signature || project.key_signature) && <span>Key of {projectForm.key_signature || project.key_signature}</span>}
+                  <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+                </div>
+              </>
+            )}
             <StatusPipeline currentStatus={projectStatus} />
           </div>
         </div>
@@ -482,6 +624,38 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                             )
                           })}
                         </div>
+                      </div>
+
+                      {/* Producer Feed toggle */}
+                      <div className="bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Radio size={13} className={version.open_for_feedback ? 'text-[#a78bfa]' : 'text-[#444]'} />
+                            <div>
+                              <p className="text-xs font-medium text-white">Producer Feed</p>
+                              <p className="text-[10px] text-[#555] mt-0.5">
+                                {version.open_for_feedback ? 'Open for community feedback' : 'Not on the feed'}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => toggleFeedback(version.id, version.open_for_feedback ?? false)}
+                            className={`relative w-10 h-5 rounded-full transition-colors ${
+                              version.open_for_feedback ? 'bg-[#a78bfa]' : 'bg-[#222]'
+                            }`}
+                          >
+                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${
+                              version.open_for_feedback ? 'translate-x-5' : 'translate-x-0.5'
+                            }`} />
+                          </button>
+                        </div>
+                        {version.open_for_feedback && (
+                          <FeedbackContextInput
+                            versionId={version.id}
+                            value={version.feedback_context ?? ''}
+                            onSave={(ctx) => setVersions(prev => prev.map(v => v.id === version.id ? { ...v, feedback_context: ctx } : v))}
+                          />
+                        )}
                       </div>
 
                       {/* Notes */}
