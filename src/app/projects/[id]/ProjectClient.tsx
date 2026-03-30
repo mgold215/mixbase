@@ -103,7 +103,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       xhr.open('POST', uploadUrl)
       xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
       xhr.setRequestHeader('Content-Type', selectedFile.type || 'audio/mpeg')
-      xhr.setRequestHeader('x-upsert', 'false')
+      xhr.setRequestHeader('x-upsert', 'true')
       xhr.send(selectedFile)
     })
 
