@@ -238,27 +238,26 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
             <h2 className="text-sm font-semibold text-white mb-4">Upload New Version</h2>
             <div className="space-y-4">
-              {/* File picker */}
-              <div
-                onClick={() => !uploading && fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
+              {/* File picker — label wraps input for reliable mobile tap */}
+              <label
+                className={`block border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
                   uploading
-                    ? 'border-[#a78bfa]/30 cursor-not-allowed'
-                    : 'border-[#222] hover:border-[#a78bfa]/30 cursor-pointer'
+                    ? 'border-[#a78bfa]/30 cursor-not-allowed opacity-60'
+                    : 'border-[#222] hover:border-[#a78bfa]/30 cursor-pointer active:border-[#a78bfa]/50'
                 }`}
               >
                 <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                <p className="text-sm text-[#555]">Click to choose audio file</p>
-                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 50MB</p>
+                <p className="text-sm text-[#555]">Tap to choose audio file</p>
+                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF, M4A · Max 50MB</p>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="audio/*"
-                  className="hidden"
+                  accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                  className="sr-only"
                   disabled={uploading}
                   onChange={handleFileUpload}
                 />
-              </div>
+              </label>
 
               {/* Progress bar */}
               {uploading && (
