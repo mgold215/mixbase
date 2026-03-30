@@ -52,6 +52,12 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
     const data = await res.json()
     if (res.ok && data.url) {
+      // Persist artwork URL to DB
+      await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artwork_url: data.url }),
+      })
       setPreviewUrl(data.url)
       onArtworkUpdated(data.url)
       setMode('idle')
