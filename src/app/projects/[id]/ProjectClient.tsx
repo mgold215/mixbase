@@ -6,7 +6,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
@@ -37,6 +37,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -78,49 +79,57 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     }
   }
 
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (file) setSelectedFile(file)
+  }
+
+  async function handleUploadSubmit() {
+    if (!selectedFile) return
     setUploading(true)
     setUploadPct(0)
     setUploadStatus('Uploading...')
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('project_id', project.id)
-    formData.append('type', 'audio')
+    const ext = selectedFile.name.split('.').pop()
+    const filename = `${project.id}/${Date.now()}.${ext}`
 
-    // XHR for real upload progress
-    const uploadData = await new Promise<{ url?: string; error?: string }>((resolve) => {
+    // Upload directly from browser to Supabase storage via XHR for real progress
+    // This bypasses Railway entirely — browser talks directly to Supabase
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/mf-audio/${filename}`
+
+    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       const xhr = new XMLHttpRequest()
       xhr.upload.addEventListener('progress', (ev) => {
         if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
       })
-      xhr.addEventListener('load', () => {
-        try { resolve(JSON.parse(xhr.responseText)) }
-        catch { resolve({ error: 'Invalid response' }) }
-      })
-      xhr.addEventListener('error', () => resolve({ error: 'Network error' }))
-      xhr.open('POST', '/api/upload-audio')
-      xhr.send(formData)
+      xhr.addEventListener('load', () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, error: xhr.status >= 300 ? xhr.responseText : undefined }))
+      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+      xhr.open('POST', uploadUrl)
+      xhr.setRequestHeader('Authorization', `Bearer ${supabaseKey}`)
+      xhr.setRequestHeader('Content-Type', selectedFile.type || 'audio/mpeg')
+      xhr.setRequestHeader('x-upsert', 'false')
+      xhr.send(selectedFile)
     })
 
-    if (!uploadData.url) {
-      setUploadStatus(`Error: ${uploadData.error ?? 'Upload failed'}`)
+    if (!xhrResult.ok) {
+      setUploadStatus(`Error: ${xhrResult.error ?? 'Upload failed'}`)
       setUploadPct(0)
       setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
+
+    const { data: urlData } = supabase.storage.from('mf-audio').getPublicUrl(filename)
+    const audioUrl = urlData.publicUrl
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
 
-    // Get audio duration — short timeout, non-blocking
     let duration: number | null = null
     try {
       duration = await new Promise((resolve) => {
-        const audio = new Audio(uploadData.url)
+        const audio = new Audio(audioUrl)
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
         setTimeout(() => resolve(null), 3000)
@@ -137,10 +146,10 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: project.id,
-        audio_url: uploadData.url,
-        audio_filename: file.name,
+        audio_url: audioUrl,
+        audio_filename: selectedFile.name,
         duration_seconds: duration,
-        file_size_bytes: file.size,
+        file_size_bytes: selectedFile.size,
         ...uploadForm,
       }),
     })
@@ -153,11 +162,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
         setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
         setExpandedVersion(newVersion.id)
         setShowUpload(false)
+        setSelectedFile(null)
         setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
         setUploadPct(0)
         setUploadStatus('')
         setUploading(false)
-      }, 500)
+      }, 600)
     } else {
       setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
       setUploadPct(0)
@@ -238,26 +248,32 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
             <h2 className="text-sm font-semibold text-white mb-4">Upload New Version</h2>
             <div className="space-y-4">
-              {/* File picker — label wraps input for reliable mobile tap */}
-              <label
-                className={`block border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
-                  uploading
-                    ? 'border-[#a78bfa]/30 cursor-not-allowed opacity-60'
-                    : 'border-[#222] hover:border-[#a78bfa]/30 cursor-pointer active:border-[#a78bfa]/50'
-                }`}
-              >
-                <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                <p className="text-sm text-[#555]">Tap to choose audio file</p>
-                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF, M4A · Max 50MB</p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
-                  className="sr-only"
-                  disabled={uploading}
-                  onChange={handleFileUpload}
-                />
-              </label>
+              {/* File picker */}
+              {!selectedFile ? (
+                <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
+                  <Upload size={24} className="mx-auto text-[#444] mb-2" />
+                  <p className="text-sm text-[#555]">Tap to choose audio file</p>
+                  <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF, M4A · Max 50MB</p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                    className="sr-only"
+                    onChange={handleFileSelect}
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center gap-3 bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3">
+                  <Music size={16} className="text-[#a78bfa] flex-shrink-0" />
+                  <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
+                  <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  {!uploading && (
+                    <button onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }} className="text-[#444] hover:text-red-400 flex-shrink-0 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Progress bar */}
               {uploading && (
@@ -342,6 +358,14 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 />
                 <label htmlFor="allow_download" className="text-xs text-[#666]">Allow download on share page</label>
               </div>
+
+              <button
+                onClick={handleUploadSubmit}
+                disabled={!selectedFile || uploading}
+                className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-3 transition-colors"
+              >
+                {uploading ? uploadStatus : 'Upload Version'}
+              </button>
             </div>
           </div>
         )}
