@@ -11,6 +11,24 @@ const MODEL_INPUTS = {
   imagen: (prompt: string) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
 }
 
+async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
+  const maxAttempts = 30 // 30 * 4s = 2 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 4000))
+    const res = await fetch(predictionUrl, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const prediction = await res.json()
+    if (prediction.status === 'succeeded') {
+      return Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+    }
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      throw new Error(prediction.error ?? 'Prediction failed')
+    }
+  }
+  return null
+}
+
 // POST /api/generate-artwork — generate AI artwork using Replicate
 export async function POST(request: NextRequest) {
   const { project_id, prompt, model = 'flux' } = await request.json()
@@ -32,7 +50,7 @@ export async function POST(request: NextRequest) {
     headers: {
       'Authorization': `Bearer ${replicateToken}`,
       'Content-Type': 'application/json',
-      'Prefer': 'wait',
+      'Prefer': 'wait=55',
     },
     body: JSON.stringify({ input: inputFn(prompt.trim()) }),
   })
@@ -40,13 +58,25 @@ export async function POST(request: NextRequest) {
   const prediction = await replicateRes.json()
 
   if (!replicateRes.ok || prediction.error) {
+    console.error('[generate-artwork] Replicate error:', JSON.stringify(prediction))
     return NextResponse.json({ error: prediction.error ?? 'Image generation failed' }, { status: 500 })
   }
 
   // Replicate returns array for Flux, single string for Imagen
-  const outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+  let outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+
+  // If prediction is still processing (202 / status not succeeded), poll for result
+  if (!outputUrl && prediction.urls?.get) {
+    try {
+      outputUrl = await pollPrediction(prediction.urls.get, replicateToken)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Generation failed'
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+  }
 
   if (!outputUrl) {
+    console.error('[generate-artwork] No output URL. Prediction:', JSON.stringify(prediction))
     return NextResponse.json({ error: 'No image returned from generator' }, { status: 500 })
   }
 
