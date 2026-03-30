@@ -91,8 +91,8 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
   async function handleUploadSubmit() {
     if (!selectedFile) return
-    if (selectedFile.size > 500 * 1024 * 1024) {
-      setUploadStatus('Error: File too large (max 500MB)')
+    if (selectedFile.size > 2 * 1024 * 1024 * 1024) {
+      setUploadStatus('Error: File too large (max 2GB)')
       return
     }
     setUploading(true)
@@ -314,7 +314,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
                   <Upload size={24} className="mx-auto text-[#444] mb-2" />
                   <p className="text-sm text-[#555]">Tap to choose audio file</p>
-                  <p className="text-xs text-[#333] mt-1">WAV, AIFF recommended · MP3 at 320kbps+ · Max 500MB</p>
+                  <p className="text-xs text-[#333] mt-1">WAV, AIFF recommended · MP3 at 320kbps+ · Max 2GB</p>
                   <input
                     ref={fileInputRef}
                     type="file"
