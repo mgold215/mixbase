@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import * as tus from 'tus-js-client'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
@@ -103,30 +104,41 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const filename = `${project.id}/${Date.now()}.${ext}`
 
     // Upload directly from browser to Supabase — bypasses Railway proxy
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/mf-audio/${filename}`
+    const mimeByExt: Record<string, string> = {
+      wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
+      mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
+    }
+    const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
+    const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      const xhr = new XMLHttpRequest()
-      xhr.upload.addEventListener('progress', (ev) => {
-        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+    const tusResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const upload = new tus.Upload(selectedFile, {
+        endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
+        retryDelays: [0, 1000, 3000, 5000],
+        headers: {
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          'x-upsert': 'true',
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        metadata: {
+          bucketName: 'mf-audio',
+          objectName: filename,
+          contentType,
+          cacheControl: '3600',
+        },
+        chunkSize: 6 * 1024 * 1024, // 6MB chunks
+        onError: (err) => resolve({ ok: false, error: err.message }),
+        onProgress: (bytesUploaded, bytesTotal) => {
+          setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
+        },
+        onSuccess: () => resolve({ ok: true }),
       })
-      xhr.addEventListener('load', () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, error: xhr.status >= 300 ? xhr.responseText : undefined }))
-      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('POST', uploadUrl)
-      xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
-      const mimeByExt: Record<string, string> = {
-        wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
-        mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
-      }
-      const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
-      const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
-      xhr.setRequestHeader('Content-Type', contentType)
-      xhr.setRequestHeader('x-upsert', 'true')
-      xhr.send(selectedFile)
+      upload.start()
     })
 
-    if (!xhrResult.ok) {
-      setUploadStatus(`Error: ${xhrResult.error ?? 'Upload failed'}`)
+    if (!tusResult.ok) {
+      setUploadStatus(`Error: ${tusResult.error ?? 'Upload failed'}`)
       setUploadPct(0)
       setUploading(false)
       return
