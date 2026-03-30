@@ -81,9 +81,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
   }
 
-  const replicateToken = process.env.REPLICATE_API_TOKEN
+  const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
   if (!replicateToken) {
-    return NextResponse.json({ error: 'Replicate API token not configured' }, { status: 500 })
+    return NextResponse.json({ error: 'REPLICATE_API_TOKEN not set in environment' }, { status: 500 })
+  }
+  if (!replicateToken.startsWith('r8_')) {
+    console.error('[generate-artwork] Token looks wrong, starts with:', replicateToken.slice(0, 4))
+    return NextResponse.json({ error: `Token format invalid (starts with "${replicateToken.slice(0, 4)}", expected "r8_")` }, { status: 500 })
   }
 
   const endpoint = MODEL_ENDPOINTS[model] ?? MODEL_ENDPOINTS.flux
