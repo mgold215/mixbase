@@ -2,13 +2,14 @@
 
 import { useState, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
+  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Rocket, X
 } from 'lucide-react'
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
@@ -22,6 +23,7 @@ type Props = {
 }
 
 export default function ProjectClient({ project, initialVersions }: Props) {
+  const router = useRouter()
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [showUpload, setShowUpload] = useState(false)
@@ -37,6 +39,9 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [uploadStatus, setUploadStatus] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
+  const [showPipelineForm, setShowPipelineForm] = useState(false)
+  const [pipelineForm, setPipelineForm] = useState({ title: project.title, release_date: '' })
+  const [sendingToPipeline, setSendingToPipeline] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const projectStatus = versions.reduce((best, v) => {
@@ -181,6 +186,25 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     if (res.ok) setVersions(prev => prev.filter(v => v.id !== versionId))
   }
 
+  async function handleSendToPipeline(e: React.FormEvent) {
+    e.preventDefault()
+    setSendingToPipeline(true)
+    const res = await fetch('/api/releases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: pipelineForm.title,
+        release_date: pipelineForm.release_date || null,
+        project_id: project.id,
+        genre: project.genre ?? null,
+      }),
+    })
+    setSendingToPipeline(false)
+    if (res.ok) {
+      router.push('/pipeline')
+    }
+  }
+
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8">
@@ -234,7 +258,57 @@ export default function ProjectClient({ project, initialVersions }: Props) {
               A/B Compare
             </button>
           )}
+
+          <button
+            onClick={() => setShowPipelineForm(!showPipelineForm)}
+            className={`ml-auto flex items-center gap-2 text-sm px-4 py-2 rounded-xl border transition-colors ${
+              showPipelineForm ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-400' : 'border-[#222] text-[#666] hover:text-white hover:border-[#333]'
+            }`}
+          >
+            <Rocket size={14} />
+            Send to Pipeline
+          </button>
         </div>
+
+        {/* Send to pipeline form */}
+        {showPipelineForm && (
+          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-white">Send to Release Pipeline</h2>
+              <button onClick={() => setShowPipelineForm(false)} className="text-[#444] hover:text-white transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+            <form onSubmit={handleSendToPipeline} className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block text-xs text-[#666] mb-1.5">Release title</label>
+                <input
+                  type="text"
+                  value={pipelineForm.title}
+                  onChange={e => setPipelineForm(p => ({ ...p, title: e.target.value }))}
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                />
+              </div>
+              <div className="w-44">
+                <label className="block text-xs text-[#666] mb-1.5">Target release date</label>
+                <input
+                  type="date"
+                  value={pipelineForm.release_date}
+                  onChange={e => setPipelineForm(p => ({ ...p, release_date: e.target.value }))}
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 [color-scheme:dark]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={sendingToPipeline || !pipelineForm.title.trim()}
+                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors whitespace-nowrap"
+              >
+                <Rocket size={13} />
+                {sendingToPipeline ? 'Sending...' : 'Go to Pipeline'}
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Upload form */}
         {showUpload && (
