@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import sharp from 'sharp'
+
+// Allow up to 2 minutes — Flux 2 Pro can take 30-60s
+export const maxDuration = 120
 
 const MODEL_ENDPOINTS: Record<string, string> = {
   flux: 'https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions',
@@ -7,31 +11,71 @@ const MODEL_ENDPOINTS: Record<string, string> = {
 }
 
 const MODEL_INPUTS = {
-  flux: (prompt: string) => ({ prompt, aspect_ratio: '1:1', output_format: 'jpg', output_quality: 90 }),
+  flux:   (prompt: string) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
   imagen: (prompt: string) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
 }
 
 async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
-  const maxAttempts = 30 // 30 * 4s = 2 minutes max
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 4000))
-    const res = await fetch(predictionUrl, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
-    const prediction = await res.json()
-    if (prediction.status === 'succeeded') {
-      return Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
-    }
-    if (prediction.status === 'failed' || prediction.status === 'canceled') {
-      throw new Error(prediction.error ?? 'Prediction failed')
-    }
+  for (let i = 0; i < 24; i++) {  // 24 * 5s = 2 min
+    await new Promise(r => setTimeout(r, 5000))
+    const res = await fetch(predictionUrl, { headers: { Authorization: `Bearer ${token}` } })
+    const p = await res.json()
+    if (p.status === 'succeeded') return Array.isArray(p.output) ? p.output[0] : p.output
+    if (p.status === 'failed' || p.status === 'canceled') throw new Error(p.error ?? 'Prediction failed')
   }
   return null
 }
 
-// POST /api/generate-artwork — generate AI artwork using Replicate
+async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Buffer> {
+  const img = sharp(Buffer.from(imageBuffer))
+  const { width = 1024, height = 1024 } = await img.metadata()
+
+  const label = 'moodmixformat'
+  const titleText = title.toUpperCase()
+
+  const fontSize = Math.round(width * 0.055)
+  const smallSize = Math.round(width * 0.032)
+  const pad = Math.round(width * 0.045)
+
+  // SVG overlay: title top-left, label bottom-left
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="shadow">
+          <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.7"/>
+        </filter>
+      </defs>
+      <text
+        x="${pad}" y="${pad + fontSize}"
+        font-family="'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif"
+        font-size="${fontSize}"
+        font-weight="bold"
+        fill="white"
+        filter="url(#shadow)"
+        letter-spacing="2"
+      >${titleText}</text>
+      <text
+        x="${pad}" y="${height - pad}"
+        font-family="'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif"
+        font-size="${smallSize}"
+        font-weight="bold"
+        fill="white"
+        fill-opacity="0.85"
+        filter="url(#shadow)"
+        letter-spacing="1"
+      >${label}</text>
+    </svg>
+  `
+
+  return img
+    .composite([{ input: Buffer.from(svg), blend: 'over' }])
+    .jpeg({ quality: 92 })
+    .toBuffer()
+}
+
+// POST /api/generate-artwork
 export async function POST(request: NextRequest) {
-  const { project_id, prompt, model = 'flux' } = await request.json()
+  const { project_id, prompt, model = 'flux', title = '' } = await request.json()
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
@@ -43,14 +87,14 @@ export async function POST(request: NextRequest) {
   }
 
   const endpoint = MODEL_ENDPOINTS[model] ?? MODEL_ENDPOINTS.flux
-  const inputFn = MODEL_INPUTS[model as keyof typeof MODEL_INPUTS] ?? MODEL_INPUTS.flux
+  const inputFn   = MODEL_INPUTS[model as keyof typeof MODEL_INPUTS] ?? MODEL_INPUTS.flux
 
   const replicateRes = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${replicateToken}`,
+      Authorization: `Bearer ${replicateToken}`,
       'Content-Type': 'application/json',
-      'Prefer': 'wait=55',
+      Prefer: 'wait',
     },
     body: JSON.stringify({ input: inputFn(prompt.trim()) }),
   })
@@ -58,49 +102,49 @@ export async function POST(request: NextRequest) {
   const prediction = await replicateRes.json()
 
   if (!replicateRes.ok || prediction.error) {
-    console.error('[generate-artwork] Replicate error:', JSON.stringify(prediction))
-    return NextResponse.json({ error: prediction.error ?? 'Image generation failed' }, { status: 500 })
+    console.error('[generate-artwork] Replicate error:', replicateRes.status, JSON.stringify(prediction))
+    return NextResponse.json({ error: prediction.detail ?? prediction.error ?? 'Image generation failed' }, { status: 500 })
   }
 
-  // Replicate returns array for Flux, single string for Imagen
-  let outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+  let outputUrl: string | null = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output ?? null
 
-  // If prediction is still processing (202 / status not succeeded), poll for result
+  // Poll if still processing
   if (!outputUrl && prediction.urls?.get) {
     try {
       outputUrl = await pollPrediction(prediction.urls.get, replicateToken)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Generation failed'
-      return NextResponse.json({ error: msg }, { status: 500 })
+      return NextResponse.json({ error: err instanceof Error ? err.message : 'Generation failed' }, { status: 500 })
     }
   }
 
   if (!outputUrl) {
-    console.error('[generate-artwork] No output URL. Prediction:', JSON.stringify(prediction))
-    return NextResponse.json({ error: 'No image returned from generator' }, { status: 500 })
+    console.error('[generate-artwork] No output. Status:', prediction.status, 'Full:', JSON.stringify(prediction))
+    return NextResponse.json({ error: `No image returned (status: ${prediction.status ?? 'unknown'})` }, { status: 500 })
   }
 
-  // Download the image and store it in Supabase Storage for permanence
+  // Download generated image
   const imageRes = await fetch(outputUrl)
+  if (!imageRes.ok) {
+    return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })
+  }
   const imageBuffer = await imageRes.arrayBuffer()
+
+  // Stamp with title + moodmixformat branding
+  const stamped = await stampArtwork(imageBuffer, title || prompt.split(',')[0].trim())
 
   const filename = `${project_id}/ai-${Date.now()}.jpg`
   const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
     .from('mf-artwork')
-    .upload(filename, new Uint8Array(imageBuffer), {
-      contentType: 'image/jpeg',
-      upsert: false,
-    })
+    .upload(filename, stamped, { contentType: 'image/jpeg', upsert: false })
 
   if (uploadError) {
-    // Fall back to Replicate URL if upload fails (it may expire)
+    console.error('[generate-artwork] Supabase upload error:', uploadError.message)
     return NextResponse.json({ artwork_url: outputUrl })
   }
 
   const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
-  // Update the project artwork
   if (project_id) {
     await supabaseAdmin
       .from('mf_projects')

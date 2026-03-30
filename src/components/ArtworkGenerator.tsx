@@ -27,7 +27,7 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     const res = await fetch('/api/generate-artwork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, prompt, model }),
+      body: JSON.stringify({ project_id: projectId, prompt, model, title: projectTitle }),
     })
 
     const data = await res.json()

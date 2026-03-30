@@ -106,7 +106,13 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
       xhr.open('POST', uploadUrl)
       xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
-      xhr.setRequestHeader('Content-Type', selectedFile.type || 'audio/mpeg')
+      const mimeByExt: Record<string, string> = {
+        wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
+        mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
+      }
+      const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
+      const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
+      xhr.setRequestHeader('Content-Type', contentType)
       xhr.setRequestHeader('x-upsert', 'true')
       xhr.send(selectedFile)
     })
