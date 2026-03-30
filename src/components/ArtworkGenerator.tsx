@@ -14,7 +14,7 @@ type Props = {
 
 export default function ArtworkGenerator({ projectId, projectTitle, genre, currentArtwork, onArtworkUpdated }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
-  const [prompt, setPrompt] = useState(`${projectTitle}${genre ? `, ${genre}` : ''} — abstract music artwork, dark moody aesthetic, no text`)
+  const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(currentArtwork ?? null)
