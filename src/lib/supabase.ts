@@ -1,23 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Lazy initialization so the build doesn't fail when env vars aren't present
-function getSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co'
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder'
-  return createClient(url, key)
-}
+// Hardcoded as fallbacks — these are public keys, safe to expose in client code
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
+export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU'
 
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co'
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder'
-  return createClient(url, key)
-}
+// Browser client — uses anon key
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Browser client — uses anon key, safe to expose
-export const supabase = getSupabaseClient()
-
-// Server-only admin client — full access, never use in browser
-export const supabaseAdmin = getSupabaseAdmin()
+// Server-only admin client — uses service role key if available, falls back to anon
+export const supabaseAdmin = createClient(
+  SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY
+)
 
 // ---- Type definitions ----
 
@@ -96,17 +90,15 @@ export type Activity = {
   created_at: string
 }
 
-// Status colors and ordering
 export const STATUS_CONFIG = {
-  'WIP': { label: 'WIP', color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/30', step: 1 },
-  'Mix/Master': { label: 'Mix / Master', color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400/30', step: 2 },
-  'Finished': { label: 'Finished', color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30', step: 3 },
-  'Released': { label: 'Released', color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-400/30', step: 4 },
+  'WIP':        { label: 'WIP',          color: 'text-yellow-400',  bg: 'bg-yellow-400/10',  border: 'border-yellow-400/30',  step: 1 },
+  'Mix/Master': { label: 'Mix / Master', color: 'text-blue-400',    bg: 'bg-blue-400/10',    border: 'border-blue-400/30',    step: 2 },
+  'Finished':   { label: 'Finished',     color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30', step: 3 },
+  'Released':   { label: 'Released',     color: 'text-purple-400',  bg: 'bg-purple-400/10',  border: 'border-purple-400/30',  step: 4 },
 }
 
 export const STATUSES = ['WIP', 'Mix/Master', 'Finished', 'Released'] as const
 
-// Format seconds as m:ss
 export function formatDuration(seconds: number | null): string {
   if (!seconds) return '--:--'
   const m = Math.floor(seconds / 60)
@@ -114,7 +106,6 @@ export function formatDuration(seconds: number | null): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-// Format bytes as human-readable
 export function formatFileSize(bytes: number | null): string {
   if (!bytes) return ''
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`

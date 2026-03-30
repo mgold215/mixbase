@@ -1,18 +1,16 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
 } from 'lucide-react'
 
-// WaveformPlayer is browser-only — import dynamically
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
 
@@ -41,7 +39,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Get the highest status across all versions (for the project-level pipeline)
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
     const candidate = STATUS_CONFIG[v.status as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -93,11 +90,8 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const ext = selectedFile.name.split('.').pop()
     const filename = `${project.id}/${Date.now()}.${ext}`
 
-    // Upload directly from browser to Supabase storage via XHR for real progress
-    // This bypasses Railway entirely — browser talks directly to Supabase
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/mf-audio/${filename}`
+    // Upload directly from browser to Supabase — bypasses Railway proxy
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/mf-audio/${filename}`
 
     const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       const xhr = new XMLHttpRequest()
@@ -107,7 +101,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       xhr.addEventListener('load', () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, error: xhr.status >= 300 ? xhr.responseText : undefined }))
       xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
       xhr.open('POST', uploadUrl)
-      xhr.setRequestHeader('Authorization', `Bearer ${supabaseKey}`)
+      xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
       xhr.setRequestHeader('Content-Type', selectedFile.type || 'audio/mpeg')
       xhr.setRequestHeader('x-upsert', 'false')
       xhr.send(selectedFile)
@@ -186,7 +180,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8">
-        {/* Back */}
         <Link href="/dashboard" className="flex items-center gap-2 text-[#555] hover:text-white text-sm mb-6 transition-colors w-fit">
           <ArrowLeft size={14} />
           Dashboard
@@ -194,7 +187,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
         {/* Project header */}
         <div className="flex gap-6 mb-8">
-          {/* Artwork */}
           <div className="flex-shrink-0 w-32">
             <ArtworkGenerator
               projectId={project.id}
@@ -205,7 +197,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
             />
           </div>
 
-          {/* Info */}
           <div className="flex-1 min-w-0 pt-1">
             <h1 className="text-2xl font-bold text-white mb-1">{project.title}</h1>
             <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
@@ -214,8 +205,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
               {project.key_signature && <span>Key of {project.key_signature}</span>}
               <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
             </div>
-
-            {/* Status pipeline */}
             <StatusPipeline currentStatus={projectStatus} />
           </div>
         </div>
@@ -248,7 +237,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
             <h2 className="text-sm font-semibold text-white mb-4">Upload New Version</h2>
             <div className="space-y-4">
-              {/* File picker */}
               {!selectedFile ? (
                 <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
                   <Upload size={24} className="mx-auto text-[#444] mb-2" />
@@ -268,14 +256,16 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
                   <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
                   {!uploading && (
-                    <button onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }} className="text-[#444] hover:text-red-400 flex-shrink-0 transition-colors">
+                    <button
+                      onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                      className="text-[#444] hover:text-red-400 flex-shrink-0 transition-colors"
+                    >
                       <Trash2 size={14} />
                     </button>
                   )}
                 </div>
               )}
 
-              {/* Progress bar */}
               {uploading && (
                 <div>
                   <div className="flex justify-between text-xs mb-1.5">
@@ -284,7 +274,9 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   </div>
                   <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-300 ${uploadStatus.startsWith('Error') ? 'bg-red-500' : uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'}`}
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        uploadStatus.startsWith('Error') ? 'bg-red-500' : uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'
+                      }`}
                       style={{ width: `${uploadPct}%` }}
                     />
                   </div>
@@ -327,7 +319,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Private notes (only you)</label>
+                  <label className="block text-xs text-[#666] mb-1.5">Private notes</label>
                   <textarea
                     placeholder="Internal notes..."
                     value={uploadForm.private_notes}
@@ -337,7 +329,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Public notes (visible on share page)</label>
+                  <label className="block text-xs text-[#666] mb-1.5">Public notes (share page)</label>
                   <textarea
                     placeholder="Notes for listener..."
                     value={uploadForm.public_notes}
@@ -377,7 +369,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           </div>
         )}
 
-        {/* Version timeline */}
+        {/* Version list */}
         <div className="space-y-3">
           {versions.length === 0 ? (
             <div className="text-center py-16 text-[#444]">
@@ -395,12 +387,10 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
               return (
                 <div key={version.id} className="bg-[#111] border border-[#1a1a1a] rounded-2xl overflow-hidden">
-                  {/* Version header */}
                   <div
                     className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[#141414] transition-colors"
                     onClick={() => setExpandedVersion(isExpanded ? null : version.id)}
                   >
-                    {/* Version number */}
                     <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#1a1a1a] flex items-center justify-center">
                       <span className="text-sm font-bold text-[#888]">v{version.version_number}</span>
                     </div>
@@ -430,8 +420,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <StatusBadge status={version.status} size="sm" />
-
-                      {/* Share button */}
                       <button
                         onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
                         className={`p-1.5 rounded-lg transition-colors ${
@@ -443,22 +431,18 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                       >
                         {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
                       </button>
-
                       {isExpanded ? <ChevronUp size={14} className="text-[#444]" /> : <ChevronDown size={14} className="text-[#444]" />}
                     </div>
                   </div>
 
-                  {/* Expanded content */}
                   {isExpanded && (
                     <div className="px-4 pb-5 pt-1 border-t border-[#1a1a1a] space-y-5">
-                      {/* Waveform player */}
                       <WaveformPlayer
                         audioUrl={version.audio_url}
                         allowDownload={version.allow_download}
                         filename={version.audio_filename ?? undefined}
                       />
 
-                      {/* Change log */}
                       {version.change_log && (
                         <div className="bg-[#0f0f0f] rounded-xl p-3">
                           <p className="text-xs text-[#555] mb-1">What changed</p>
@@ -524,7 +508,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                         </div>
                       </div>
 
-                      {/* Feedback list */}
+                      {/* Feedback */}
                       {feedback.length > 0 && (
                         <div>
                           <p className="text-xs text-[#555] mb-2">Listener Feedback</p>
@@ -542,16 +526,13 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                                   )}
                                 </div>
                                 <p className="text-xs text-[#666]">{f.comment}</p>
-                                <p className="text-[10px] text-[#333] mt-1">
-                                  {new Date(f.created_at).toLocaleDateString()}
-                                </p>
+                                <p className="text-[10px] text-[#333] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
                               </div>
                             ))}
                           </div>
                         </div>
                       )}
 
-                      {/* Delete */}
                       <div className="flex justify-end">
                         <button
                           onClick={() => deleteVersion(version.id)}
