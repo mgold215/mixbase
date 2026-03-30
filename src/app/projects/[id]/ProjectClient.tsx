@@ -1,18 +1,16 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload
 } from 'lucide-react'
 
-// WaveformPlayer is browser-only — import dynamically
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
 
@@ -35,10 +33,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     status: 'WIP' as Version['status'], allow_download: false,
   })
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState('')
+  const [uploadPct, setUploadPct] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Get the highest status across all versions (for the project-level pipeline)
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
     const candidate = STATUS_CONFIG[v.status as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -64,73 +64,110 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   }
 
   async function updateNotes(versionId: string, field: 'private_notes' | 'public_notes', value: string) {
-    await fetch(`/api/versions/${versionId}`, {
+    const res = await fetch(`/api/versions/${versionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value }),
     })
+    if (res.ok) {
+      const key = `${versionId}-${field}`
+      setSavedNoteKey(key)
+      setTimeout(() => setSavedNoteKey(null), 2000)
+    }
   }
 
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (file) setSelectedFile(file)
+  }
+
+  async function handleUploadSubmit() {
+    if (!selectedFile) return
     setUploading(true)
-    setUploadProgress('Uploading audio...')
+    setUploadPct(0)
+    setUploadStatus('Uploading...')
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('project_id', project.id)
-    formData.append('type', 'audio')
+    const ext = selectedFile.name.split('.').pop()
+    const filename = `${project.id}/${Date.now()}.${ext}`
 
-    const uploadRes = await fetch('/api/upload-audio', { method: 'POST', body: formData })
-    const uploadData = await uploadRes.json()
+    // Upload directly from browser to Supabase — bypasses Railway proxy
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/mf-audio/${filename}`
 
-    if (!uploadRes.ok) {
-      setUploadProgress(`Error: ${uploadData.error}`)
+    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+      })
+      xhr.addEventListener('load', () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, error: xhr.status >= 300 ? xhr.responseText : undefined }))
+      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+      xhr.open('POST', uploadUrl)
+      xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
+      xhr.setRequestHeader('Content-Type', selectedFile.type || 'audio/mpeg')
+      xhr.setRequestHeader('x-upsert', 'false')
+      xhr.send(selectedFile)
+    })
+
+    if (!xhrResult.ok) {
+      setUploadStatus(`Error: ${xhrResult.error ?? 'Upload failed'}`)
+      setUploadPct(0)
       setUploading(false)
       return
     }
 
-    setUploadProgress('Creating version...')
+    const { data: urlData } = supabase.storage.from('mf-audio').getPublicUrl(filename)
+    const audioUrl = urlData.publicUrl
 
-    // Get audio duration via a temporary Audio element
+    setUploadPct(85)
+    setUploadStatus('Reading metadata...')
+
     let duration: number | null = null
     try {
       duration = await new Promise((resolve) => {
-        const audio = new Audio(uploadData.url)
+        const audio = new Audio(audioUrl)
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
-        setTimeout(() => resolve(null), 10000)
+        setTimeout(() => resolve(null), 3000)
       })
     } catch {
       duration = null
     }
+
+    setUploadPct(92)
+    setUploadStatus('Saving version...')
 
     const versionRes = await fetch('/api/versions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: project.id,
-        audio_url: uploadData.url,
-        audio_filename: file.name,
+        audio_url: audioUrl,
+        audio_filename: selectedFile.name,
         duration_seconds: duration,
-        file_size_bytes: file.size,
+        file_size_bytes: selectedFile.size,
         ...uploadForm,
       }),
     })
 
     const newVersion = await versionRes.json()
     if (versionRes.ok) {
-      setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
-      setExpandedVersion(newVersion.id)
-      setShowUpload(false)
-      setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
-      setUploadProgress('')
+      setUploadPct(100)
+      setUploadStatus('Done!')
+      setTimeout(() => {
+        setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
+        setExpandedVersion(newVersion.id)
+        setShowUpload(false)
+        setSelectedFile(null)
+        setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
+        setUploadPct(0)
+        setUploadStatus('')
+        setUploading(false)
+      }, 600)
     } else {
-      setUploadProgress(`Error saving version: ${newVersion.error ?? 'Unknown error'}`)
+      setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
+      setUploadPct(0)
+      setUploading(false)
     }
 
-    setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -143,7 +180,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8">
-        {/* Back */}
         <Link href="/dashboard" className="flex items-center gap-2 text-[#555] hover:text-white text-sm mb-6 transition-colors w-fit">
           <ArrowLeft size={14} />
           Dashboard
@@ -151,7 +187,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
         {/* Project header */}
         <div className="flex gap-6 mb-8">
-          {/* Artwork */}
           <div className="flex-shrink-0 w-32">
             <ArtworkGenerator
               projectId={project.id}
@@ -162,7 +197,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
             />
           </div>
 
-          {/* Info */}
           <div className="flex-1 min-w-0 pt-1">
             <h1 className="text-2xl font-bold text-white mb-1">{project.title}</h1>
             <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
@@ -171,8 +205,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
               {project.key_signature && <span>Key of {project.key_signature}</span>}
               <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
             </div>
-
-            {/* Status pipeline */}
             <StatusPipeline currentStatus={projectStatus} />
           </div>
         </div>
@@ -205,22 +237,51 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
             <h2 className="text-sm font-semibold text-white mb-4">Upload New Version</h2>
             <div className="space-y-4">
-              {/* File picker */}
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 rounded-xl p-6 text-center cursor-pointer transition-colors"
-              >
-                <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                <p className="text-sm text-[#555]">Click to choose audio file</p>
-                <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF · Max 50MB</p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-              </div>
+              {!selectedFile ? (
+                <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
+                  <Upload size={24} className="mx-auto text-[#444] mb-2" />
+                  <p className="text-sm text-[#555]">Tap to choose audio file</p>
+                  <p className="text-xs text-[#333] mt-1">WAV, MP3, AIFF, M4A · Max 50MB</p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                    className="sr-only"
+                    onChange={handleFileSelect}
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center gap-3 bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3">
+                  <Music size={16} className="text-[#a78bfa] flex-shrink-0" />
+                  <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
+                  <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  {!uploading && (
+                    <button
+                      onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                      className="text-[#444] hover:text-red-400 flex-shrink-0 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {uploading && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#a78bfa]'}>{uploadStatus}</span>
+                    <span className="text-[#555]">{uploadPct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        uploadStatus.startsWith('Error') ? 'bg-red-500' : uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'
+                      }`}
+                      style={{ width: `${uploadPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -258,7 +319,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Private notes (only you)</label>
+                  <label className="block text-xs text-[#666] mb-1.5">Private notes</label>
                   <textarea
                     placeholder="Internal notes..."
                     value={uploadForm.private_notes}
@@ -268,7 +329,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Public notes (visible on share page)</label>
+                  <label className="block text-xs text-[#666] mb-1.5">Public notes (share page)</label>
                   <textarea
                     placeholder="Notes for listener..."
                     value={uploadForm.public_notes}
@@ -290,9 +351,13 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                 <label htmlFor="allow_download" className="text-xs text-[#666]">Allow download on share page</label>
               </div>
 
-              {uploadProgress && (
-                <p className="text-xs text-[#a78bfa]">{uploadProgress}</p>
-              )}
+              <button
+                onClick={handleUploadSubmit}
+                disabled={!selectedFile || uploading}
+                className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-3 transition-colors"
+              >
+                {uploading ? uploadStatus : 'Upload Version'}
+              </button>
             </div>
           </div>
         )}
@@ -304,7 +369,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           </div>
         )}
 
-        {/* Version timeline */}
+        {/* Version list */}
         <div className="space-y-3">
           {versions.length === 0 ? (
             <div className="text-center py-16 text-[#444]">
@@ -315,18 +380,17 @@ export default function ProjectClient({ project, initialVersions }: Props) {
             versions.map((version, index) => {
               const isExpanded = expandedVersion === version.id
               const feedback = version.mf_feedback ?? []
-              const avgRating = feedback.length > 0
-                ? (feedback.reduce((s, f) => s + (f.rating ?? 0), 0) / feedback.filter(f => f.rating).length).toFixed(1)
+              const ratedFeedback = feedback.filter(f => f.rating)
+              const avgRating = ratedFeedback.length > 0
+                ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
                 : null
 
               return (
                 <div key={version.id} className="bg-[#111] border border-[#1a1a1a] rounded-2xl overflow-hidden">
-                  {/* Version header */}
                   <div
                     className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[#141414] transition-colors"
                     onClick={() => setExpandedVersion(isExpanded ? null : version.id)}
                   >
-                    {/* Version number */}
                     <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#1a1a1a] flex items-center justify-center">
                       <span className="text-sm font-bold text-[#888]">v{version.version_number}</span>
                     </div>
@@ -356,8 +420,6 @@ export default function ProjectClient({ project, initialVersions }: Props) {
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <StatusBadge status={version.status} size="sm" />
-
-                      {/* Share button */}
                       <button
                         onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
                         className={`p-1.5 rounded-lg transition-colors ${
@@ -369,22 +431,18 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                       >
                         {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
                       </button>
-
                       {isExpanded ? <ChevronUp size={14} className="text-[#444]" /> : <ChevronDown size={14} className="text-[#444]" />}
                     </div>
                   </div>
 
-                  {/* Expanded content */}
                   {isExpanded && (
                     <div className="px-4 pb-5 pt-1 border-t border-[#1a1a1a] space-y-5">
-                      {/* Waveform player */}
                       <WaveformPlayer
                         audioUrl={version.audio_url}
                         allowDownload={version.allow_download}
                         filename={version.audio_filename ?? undefined}
                       />
 
-                      {/* Change log */}
                       {version.change_log && (
                         <div className="bg-[#0f0f0f] rounded-xl p-3">
                           <p className="text-xs text-[#555] mb-1">What changed</p>
@@ -419,7 +477,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                       {/* Notes */}
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Private notes</label>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs text-[#555]">Private notes</label>
+                            {savedNoteKey === `${version.id}-private_notes` && (
+                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+                            )}
+                          </div>
                           <textarea
                             defaultValue={version.private_notes ?? ''}
                             onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
@@ -429,7 +492,12 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-[#555] mb-1.5">Public notes (share page)</label>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs text-[#555]">Public notes (share page)</label>
+                            {savedNoteKey === `${version.id}-public_notes` && (
+                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+                            )}
+                          </div>
                           <textarea
                             defaultValue={version.public_notes ?? ''}
                             onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
@@ -440,7 +508,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                         </div>
                       </div>
 
-                      {/* Feedback list */}
+                      {/* Feedback */}
                       {feedback.length > 0 && (
                         <div>
                           <p className="text-xs text-[#555] mb-2">Listener Feedback</p>
@@ -458,16 +526,13 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                                   )}
                                 </div>
                                 <p className="text-xs text-[#666]">{f.comment}</p>
-                                <p className="text-[10px] text-[#333] mt-1">
-                                  {new Date(f.created_at).toLocaleDateString()}
-                                </p>
+                                <p className="text-[10px] text-[#333] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
                               </div>
                             ))}
                           </div>
                         </div>
                       )}
 
-                      {/* Delete */}
                       <div className="flex justify-end">
                         <button
                           onClick={() => deleteVersion(version.id)}

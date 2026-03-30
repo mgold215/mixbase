@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { Play, Pause, Download } from 'lucide-react'
 import { formatDuration } from '@/lib/supabase'
 
@@ -8,7 +8,6 @@ type Props = {
   audioUrl: string
   allowDownload?: boolean
   filename?: string
-  // For A/B compare: sync playback position from outside
   syncPosition?: number
   onTimeUpdate?: (time: number) => void
   compact?: boolean
@@ -22,8 +21,7 @@ export default function WaveformPlayer({
   onTimeUpdate,
   compact = false,
 }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const wavesurferRef = useRef<import('wavesurfer.js').default | null>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -32,90 +30,84 @@ export default function WaveformPlayer({
   const speeds = [0.5, 0.75, 1, 1.25, 1.5]
 
   useEffect(() => {
-    if (!containerRef.current) return
-    let ws: import('wavesurfer.js').default | null = null
-
-    // Dynamically import wavesurfer (browser-only)
-    import('wavesurfer.js').then(({ default: WaveSurfer }) => {
-      ws = WaveSurfer.create({
-        container: containerRef.current!,
-        waveColor: '#2a2a2a',
-        progressColor: '#a78bfa',
-        url: audioUrl,
-        height: compact ? 48 : 72,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 2,
-        normalize: true,
-        interact: true,
-      })
-
-      ws.on('ready', () => {
-        setDuration(ws!.getDuration())
-        setLoading(false)
-      })
-
-      ws.on('timeupdate', (time: number) => {
-        setCurrentTime(time)
-        onTimeUpdate?.(time)
-      })
-
-      ws.on('play', () => setIsPlaying(true))
-      ws.on('pause', () => setIsPlaying(false))
-      ws.on('finish', () => setIsPlaying(false))
-
-      wavesurferRef.current = ws
-    })
-
+    const audio = audioRef.current
+    if (!audio) return
+    const onLoaded = () => { setDuration(audio.duration || 0); setLoading(false) }
+    const onTime = () => { setCurrentTime(audio.currentTime); onTimeUpdate?.(audio.currentTime) }
+    const onEnded = () => setIsPlaying(false)
+    audio.addEventListener('loadedmetadata', onLoaded)
+    audio.addEventListener('timeupdate', onTime)
+    audio.addEventListener('ended', onEnded)
+    if (audio.readyState >= 1) onLoaded()
     return () => {
-      ws?.destroy()
-      wavesurferRef.current = null
+      audio.removeEventListener('loadedmetadata', onLoaded)
+      audio.removeEventListener('timeupdate', onTime)
+      audio.removeEventListener('ended', onEnded)
     }
-  }, [audioUrl, compact])
+  }, [audioUrl, onTimeUpdate])
 
-  // Sync playback position from outside (A/B compare)
   useEffect(() => {
-    if (syncPosition !== undefined && wavesurferRef.current && duration > 0) {
-      const fraction = syncPosition / duration
-      wavesurferRef.current.seekTo(Math.min(1, Math.max(0, fraction)))
+    const audio = audioRef.current
+    if (syncPosition !== undefined && audio && duration > 0) {
+      audio.currentTime = Math.min(duration, Math.max(0, syncPosition))
     }
   }, [syncPosition, duration])
 
-  const togglePlay = useCallback(() => {
-    wavesurferRef.current?.playPause()
-  }, [])
+  function togglePlay() {
+    const audio = audioRef.current
+    if (!audio) return
+    if (isPlaying) { audio.pause(); setIsPlaying(false) }
+    else { audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
+  }
 
-  const changeSpeed = useCallback((newSpeed: number) => {
-    setSpeed(newSpeed)
-    wavesurferRef.current?.setPlaybackRate(newSpeed)
-  }, [])
+  function seek(e: React.ChangeEvent<HTMLInputElement>) {
+    const audio = audioRef.current
+    if (!audio) return
+    audio.currentTime = Number(e.target.value)
+    setCurrentTime(Number(e.target.value))
+  }
 
-  // Keyboard shortcut: Space to play/pause when focused
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  function changeSpeed(s: number) {
+    setSpeed(s)
+    if (audioRef.current) audioRef.current.playbackRate = s
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === ' ') { e.preventDefault(); togglePlay() }
-    if (e.key === 'ArrowRight') wavesurferRef.current?.skip(5)
-    if (e.key === 'ArrowLeft') wavesurferRef.current?.skip(-5)
-  }, [togglePlay])
+    if (e.key === 'ArrowRight' && audioRef.current) audioRef.current.currentTime += 5
+    if (e.key === 'ArrowLeft' && audioRef.current) audioRef.current.currentTime -= 5
+  }
+
+  const pct = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div
-      className="w-full focus:outline-none"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-    >
-      {/* Waveform */}
-      <div className="waveform-container relative">
+    <div className="w-full focus:outline-none" tabIndex={0} onKeyDown={handleKeyDown}>
+      <audio ref={audioRef} src={audioUrl} preload="metadata" />
+
+      {/* Progress bar / scrubber */}
+      <div className={`relative w-full ${compact ? 'h-10' : 'h-14'} bg-[#0f0f0f] rounded-lg overflow-hidden mb-2`}>
         {loading && (
-          <div className={`absolute inset-0 flex items-center justify-center bg-[#0f0f0f] rounded-lg ${compact ? 'h-12' : 'h-[72px]'}`}>
+          <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-4 h-4 border-2 border-[#a78bfa]/30 border-t-[#a78bfa] rounded-full animate-spin" />
           </div>
         )}
-        <div ref={containerRef} className="w-full" />
+        <div
+          className="absolute bottom-0 left-0 h-1 bg-[#a78bfa] transition-all duration-100"
+          style={{ width: `${pct}%` }}
+        />
+        <input
+          type="range"
+          min={0}
+          max={duration || 1}
+          step={0.1}
+          value={currentTime}
+          onChange={seek}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mt-2">
-        {/* Play/Pause */}
+      <div className="flex items-center gap-3">
         <button
           onClick={togglePlay}
           disabled={loading}
@@ -124,24 +116,19 @@ export default function WaveformPlayer({
           {isPlaying ? <Pause size={14} /> : <Play size={14} />}
         </button>
 
-        {/* Time display */}
         <span className="text-xs text-[#555] tabular-nums flex-shrink-0">
-          {formatDuration(currentTime)} / {formatDuration(duration)}
+          {formatDuration(currentTime)} / {formatDuration(duration || null)}
         </span>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Speed control */}
         <div className="flex items-center gap-0.5">
           {speeds.map(s => (
             <button
               key={s}
               onClick={() => changeSpeed(s)}
               className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
-                speed === s
-                  ? 'bg-[#a78bfa]/20 text-[#a78bfa]'
-                  : 'text-[#444] hover:text-[#888]'
+                speed === s ? 'bg-[#a78bfa]/20 text-[#a78bfa]' : 'text-[#444] hover:text-[#888]'
               }`}
             >
               {s}x
@@ -149,7 +136,6 @@ export default function WaveformPlayer({
           ))}
         </div>
 
-        {/* Download */}
         {allowDownload && (
           <a
             href={audioUrl}
