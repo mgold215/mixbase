@@ -15,6 +15,7 @@ type Props = {
 export default function ArtworkGenerator({ projectId, projectTitle, genre, currentArtwork, onArtworkUpdated }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
   const [prompt, setPrompt] = useState(`${projectTitle}${genre ? `, ${genre}` : ''} — abstract music artwork, dark moody aesthetic, no text`)
+  const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(currentArtwork ?? null)
   const [error, setError] = useState('')
@@ -26,7 +27,7 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     const res = await fetch('/api/generate-artwork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, prompt }),
+      body: JSON.stringify({ project_id: projectId, prompt, model }),
     })
 
     const data = await res.json()
@@ -103,6 +104,20 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
       {/* Generate mode */}
       {mode === 'generate' && (
         <div className="space-y-2">
+          {/* Model selector */}
+          <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
+            {(['flux', 'imagen'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => setModel(m)}
+                className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
+                  model === m ? 'bg-[#a78bfa]/20 text-[#a78bfa]' : 'text-[#555] hover:text-[#888]'
+                }`}
+              >
+                {m === 'flux' ? 'Flux 2 Pro' : 'Imagen 4'}
+              </button>
+            ))}
+          </div>
           <textarea
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
