@@ -8,7 +8,7 @@ export default async function PipelinePage() {
   const [releasesRes, projectsRes] = await Promise.all([
     supabaseAdmin
       .from('mf_releases')
-      .select('*, mf_projects(title, artwork_url)')
+      .select('*, mf_projects(id, title, artwork_url), mf_versions(id, version_number, label, audio_url, status)')
       .order('release_date', { ascending: true, nullsFirst: false }),
     supabaseAdmin
       .from('mf_projects')
