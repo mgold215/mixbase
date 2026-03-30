@@ -5,7 +5,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil
@@ -102,26 +102,32 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const ext = selectedFile.name.split('.').pop()
     const filename = `${project.id}/${Date.now()}.${ext}`
 
-    // Upload directly from browser to Supabase — bypasses Railway proxy
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/mf-audio/${filename}`
+    const mimeByExt: Record<string, string> = {
+      wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
+      mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
+    }
+    const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
+    const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    // Route through Railway server using service role key — bypasses Supabase anon 50MB limit
+    const xhrResult = await new Promise<{ ok: boolean; audioUrl?: string; error?: string }>((resolve) => {
       const xhr = new XMLHttpRequest()
       xhr.upload.addEventListener('progress', (ev) => {
         if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
       })
-      xhr.addEventListener('load', () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, error: xhr.status >= 300 ? xhr.responseText : undefined }))
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve({ ok: true, audioUrl: JSON.parse(xhr.responseText).audioUrl }) }
+          catch { resolve({ ok: false, error: 'Invalid response' }) }
+        } else {
+          try { resolve({ ok: false, error: JSON.parse(xhr.responseText).error ?? xhr.responseText }) }
+          catch { resolve({ ok: false, error: xhr.responseText }) }
+        }
+      })
       xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('POST', uploadUrl)
-      xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`)
-      const mimeByExt: Record<string, string> = {
-        wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
-        mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
-      }
-      const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
-      const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
-      xhr.setRequestHeader('Content-Type', contentType)
-      xhr.setRequestHeader('x-upsert', 'true')
+      xhr.open('POST', '/api/upload')
+      xhr.setRequestHeader('x-filename', filename)
+      xhr.setRequestHeader('x-content-type', contentType)
       xhr.send(selectedFile)
     })
 
@@ -132,8 +138,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       return
     }
 
-    const { data: urlData } = supabase.storage.from('mf-audio').getPublicUrl(filename)
-    const audioUrl = urlData.publicUrl
+    const audioUrl = xhrResult.audioUrl!
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
