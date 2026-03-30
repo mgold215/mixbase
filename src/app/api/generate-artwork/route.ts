@@ -14,13 +14,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Replicate API token not configured' }, { status: 500 })
   }
 
-  // Call Replicate FLUX.1-schnell model
-  const replicateRes = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
+  // Call Replicate FLUX 2 Pro model
+  const replicateRes = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${replicateToken}`,
       'Content-Type': 'application/json',
-      'Prefer': 'wait',  // Wait for result synchronously (up to 60s)
+      'Prefer': 'wait',
     },
     body: JSON.stringify({
       input: {
@@ -28,7 +28,6 @@ export async function POST(request: NextRequest) {
         aspect_ratio: '1:1',
         output_format: 'jpg',
         output_quality: 90,
-        num_outputs: 1,
       },
     }),
   })
