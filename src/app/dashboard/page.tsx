@@ -3,16 +3,39 @@ import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Plus, Music, Clock, MessageSquare } from 'lucide-react'
+import { Plus, Music, Clock, MessageSquare, ArrowRight } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
+
+type WorkflowStage = 'start' | 'wip' | 'mix_master' | 'finished' | 'in_pipeline' | 'released'
+
+const STAGE_CONFIG: Record<WorkflowStage, { label: string; color: string }> = {
+  start:       { label: 'Start',       color: 'text-[#555] bg-[#1a1a1a]' },
+  wip:         { label: 'Mixing',      color: 'text-yellow-400 bg-yellow-400/10' },
+  mix_master:  { label: 'Mix/Master',  color: 'text-blue-400 bg-blue-400/10' },
+  finished:    { label: 'Finished',    color: 'text-emerald-400 bg-emerald-400/10' },
+  in_pipeline: { label: 'In Pipeline', color: 'text-[#a78bfa] bg-[#a78bfa]/10' },
+  released:    { label: 'Released',    color: 'text-purple-300 bg-purple-300/10' },
+}
+
+function getWorkflowStage(
+  versions: { status: string }[],
+  releases: { id: string }[]
+): WorkflowStage {
+  if (versions.some(v => v.status === 'Released')) return 'released'
+  if (releases.length > 0) return 'in_pipeline'
+  if (versions.some(v => v.status === 'Finished')) return 'finished'
+  if (versions.some(v => v.status === 'Mix/Master')) return 'mix_master'
+  if (versions.length > 0) return 'wip'
+  return 'start'
+}
 
 export default async function DashboardPage() {
   // Fetch projects, recent activity, and stats in parallel
   const [projectsRes, activityRes] = await Promise.all([
     supabaseAdmin
       .from('mf_projects')
-      .select('*, mf_versions(id, status, created_at)')
+      .select('*, mf_versions(id, status, created_at), mf_releases(id)')
       .order('updated_at', { ascending: false }),
     supabaseAdmin
       .from('mf_activity')
@@ -105,55 +128,76 @@ export default async function DashboardPage() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   {projects.map(project => {
-                    const versions = project.mf_versions ?? []
-                    const latestVersion = versions[versions.length - 1]
+                    const versions: { status: string }[] = project.mf_versions ?? []
+                    const releases: { id: string }[] = project.mf_releases ?? []
+                    const latestVersion = versions[versions.length - 1] as { status: string } | undefined
                     const latestStatus = latestVersion?.status ?? 'WIP'
+                    const stage = getWorkflowStage(versions, releases)
+                    const stageConf = STAGE_CONFIG[stage]
+                    const showPipelineLink = stage === 'finished' || stage === 'in_pipeline' || stage === 'released'
 
                     return (
-                      <Link
-                        key={project.id}
-                        href={`/projects/${project.id}`}
-                        className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2a2a2a] rounded-2xl overflow-hidden transition-colors"
-                      >
-                        {/* Artwork */}
-                        <div className="relative aspect-square bg-[#0f0f0f]">
-                          {project.artwork_url ? (
-                            <Image
-                              src={project.artwork_url}
-                              alt={project.title}
-                              fill
-                              className="object-cover"
-                            />
-                          ) : (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <Music size={32} className="text-[#222]" />
+                      <div key={project.id} className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2a2a2a] rounded-2xl overflow-hidden transition-colors flex flex-col">
+                        <Link href={`/projects/${project.id}`} className="block">
+                          {/* Artwork */}
+                          <div className="relative aspect-square bg-[#0f0f0f]">
+                            {project.artwork_url ? (
+                              <Image
+                                src={project.artwork_url}
+                                alt={project.title}
+                                fill
+                                className="object-cover"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <Music size={32} className="text-[#222]" />
+                              </div>
+                            )}
+                            {/* Status badge overlay */}
+                            <div className="absolute top-3 right-3">
+                              <StatusBadge status={latestStatus} size="sm" />
                             </div>
-                          )}
-                          {/* Status badge overlay */}
-                          <div className="absolute top-3 right-3">
-                            <StatusBadge status={latestStatus} size="sm" />
+                            {/* Workflow stage badge */}
+                            <div className="absolute top-3 left-3">
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${stageConf.color}`}>
+                                {stageConf.label}
+                              </span>
+                            </div>
                           </div>
-                        </div>
 
-                        {/* Info */}
-                        <div className="p-4">
-                          <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors">
-                            {project.title}
-                          </h3>
-                          <div className="flex items-center gap-3 mt-1.5">
-                            {project.genre && (
-                              <span className="text-xs text-[#555]">{project.genre}</span>
-                            )}
-                            {project.bpm && (
-                              <span className="text-xs text-[#444]">{project.bpm} BPM</span>
-                            )}
+                          {/* Info */}
+                          <div className="p-4 pb-3">
+                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors">
+                              {project.title}
+                            </h3>
+                            <div className="flex items-center gap-3 mt-1.5">
+                              {project.genre && (
+                                <span className="text-xs text-[#555]">{project.genre}</span>
+                              )}
+                              {project.bpm && (
+                                <span className="text-xs text-[#444]">{project.bpm} BPM</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-2 text-[#444] text-xs">
+                              <Clock size={11} />
+                              <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 mt-2 text-[#444] text-xs">
-                            <Clock size={11} />
-                            <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+                        </Link>
+
+                        {/* Pipeline CTA */}
+                        {showPipelineLink && (
+                          <div className="px-4 pb-4">
+                            <Link
+                              href="/pipeline"
+                              className="flex items-center justify-between w-full px-3 py-2 rounded-xl bg-[#a78bfa]/10 hover:bg-[#a78bfa]/20 text-[#a78bfa] text-xs font-medium transition-colors"
+                            >
+                              <span>{stage === 'in_pipeline' ? 'View in Release Pipeline' : 'Add to Release Pipeline'}</span>
+                              <ArrowRight size={12} />
+                            </Link>
                           </div>
-                        </div>
-                      </Link>
+                        )}
+                      </div>
                     )
                   })}
                 </div>

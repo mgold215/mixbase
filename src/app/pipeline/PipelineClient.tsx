@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, Music, CalendarRange } from 'lucide-react'
 import type { Release } from '@/lib/supabase'
 
@@ -136,7 +137,9 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-white truncate">{release.title}</span>
               {release.mf_projects && (
-                <span className="text-xs text-[#444] truncate">← {release.mf_projects.title}</span>
+                release.project_id
+                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#a78bfa] truncate transition-colors">← {release.mf_projects.title}</Link>
+                  : <span className="text-xs text-[#444] truncate">← {release.mf_projects.title}</span>
               )}
             </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-[#444]">
