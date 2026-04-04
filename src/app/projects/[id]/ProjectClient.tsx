@@ -5,7 +5,8 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil,
@@ -48,6 +49,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [detectingMeta, setDetectingMeta] = useState(false)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editingProject, setEditingProject] = useState(false)
@@ -98,9 +100,21 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) { setSelectedFile(file); setUploadStatus('') }
+    if (!file) return
+    setSelectedFile(file); setUploadStatus('')
+    // Auto-detect BPM and key from the selected file
+    setDetectingMeta(true)
+    const result = await analyzeFile(file)
+    if (result) {
+      setProjectForm(p => ({
+        ...p,
+        bpm: result.bpm.toString(),
+        key_signature: result.key,
+      }))
+    }
+    setDetectingMeta(false)
   }
 
   async function handleUploadSubmit() {
@@ -377,6 +391,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   <Music size={16} className="text-[#a78bfa] flex-shrink-0" />
                   <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
                   <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  {detectingMeta && <span className="text-[10px] text-[#a78bfa] animate-pulse flex-shrink-0">detecting BPM & key…</span>}
                   {!uploading && (
                     <button
                       onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
@@ -638,7 +653,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   {isExpanded && (
                     <div className="px-4 pb-5 pt-1 border-t border-[#1a1a1a] space-y-5">
                       <WaveformPlayer
-                        audioUrl={version.audio_url}
+                        audioUrl={audioProxyUrl(version.audio_url)}
                         allowDownload={version.allow_download}
                         filename={version.audio_filename ?? undefined}
                       />

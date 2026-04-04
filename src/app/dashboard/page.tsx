@@ -3,7 +3,8 @@ import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Plus, Music, Clock, MessageSquare, ArrowRight } from 'lucide-react'
+import { Plus, Music, Clock } from 'lucide-react'
+import AddToPipelineButton from '@/components/AddToPipelineButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -188,13 +189,11 @@ export default async function DashboardPage() {
                         {/* Pipeline CTA */}
                         {showPipelineLink && (
                           <div className="px-4 pb-4">
-                            <Link
-                              href="/pipeline"
-                              className="flex items-center justify-between w-full px-3 py-2 rounded-xl bg-[#a78bfa]/10 hover:bg-[#a78bfa]/20 text-[#a78bfa] text-xs font-medium transition-colors"
-                            >
-                              <span>{stage === 'in_pipeline' ? 'View in Release Pipeline' : 'Add to Release Pipeline'}</span>
-                              <ArrowRight size={12} />
-                            </Link>
+                            <AddToPipelineButton
+                              projectId={project.id}
+                              projectTitle={project.title}
+                              hasRelease={releases.length > 0}
+                            />
                           </div>
                         )}
                       </div>
