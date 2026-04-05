@@ -356,7 +356,11 @@ export default function PlayerPage() {
                   <p className={`text-sm font-medium truncate leading-tight ${active ? 'text-white' : 'text-[#ccc]'}`}>
                     {t.title}
                   </p>
-                  <p className="text-xs text-[#666] truncate mt-1">{t.artist}</p>
+                  <p className="text-xs text-[#666] truncate mt-1">
+                    <span className="font-mono">{t.version}</span>
+                    <span className="mx-1.5 text-[#444]">·</span>
+                    <span>{t.status}</span>
+                  </p>
                 </div>
               </button>
             )
@@ -424,17 +428,18 @@ export default function PlayerPage() {
                 {/* Yellow stripe — pill-shaped window with two black hubs touching,
                     separated by a thin silver divider (matches the MMF logo). */}
                 <div style={{ height: 126, background: STRIPE_YELLOW }} className="relative">
-                  {/* Pill-shaped dark window — the cassette's tape window cutout */}
+                  {/* Pill-shaped translucent window — the cassette's tape window cutout */}
                   <div
                     className="absolute left-1/2 -translate-x-1/2 rounded-full overflow-hidden"
                     style={{
                       top: 14, bottom: 14, width: 360,
-                      background: 'linear-gradient(180deg, #1a1a1a 0%, #050505 60%, #0d0d0d 100%)',
+                      background: 'linear-gradient(180deg, rgba(235,235,240,0.85) 0%, rgba(200,200,210,0.75) 50%, rgba(220,220,225,0.85) 100%)',
+                      backdropFilter: 'blur(6px)',
                       boxShadow: [
-                        'inset 0 5px 10px rgba(0,0,0,0.95)',
-                        'inset 0 -2px 4px rgba(0,0,0,0.8)',
-                        'inset 0 0 0 1.5px rgba(0,0,0,0.95)',
-                        '0 1px 0 rgba(255,255,255,0.5)',
+                        'inset 0 3px 8px rgba(0,0,0,0.35)',
+                        'inset 0 -2px 4px rgba(255,255,255,0.5)',
+                        'inset 0 0 0 1px rgba(255,255,255,0.4)',
+                        '0 1px 0 rgba(255,255,255,0.7)',
                       ].join(', '),
                     }}
                   >
