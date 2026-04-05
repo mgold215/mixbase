@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 // Routes that are always public — no password required
-const PUBLIC_PATHS = ['/login', '/share/', '/api/auth', '/api/feedback', '/api/audio', '/api/audio-url', '/api/health', '/api/db-init']
+const PUBLIC_PATHS = ['/login', '/share/', '/api/auth', '/api/feedback', '/api/audio', '/api/audio-url', '/api/health', '/api/db-init', '/api/tus']
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
