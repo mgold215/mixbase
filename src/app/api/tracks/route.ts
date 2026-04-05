@@ -7,13 +7,14 @@ export type Track = {
   artist: string
   artwork_url: string | null
   audio_url: string
+  status: string
   uploaded_at: number
 }
 
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from('mf_versions')
-    .select('id, label, version_number, audio_url, created_at, mf_projects(title, artwork_url)')
+    .select('id, label, version_number, audio_url, status, created_at, mf_projects(title, artwork_url)')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -31,6 +32,7 @@ export async function GET() {
       artist: projectTitle,
       artwork_url: project?.artwork_url ?? null,
       audio_url: v.audio_url,
+      status: v.status ?? 'WIP',
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
     }
   })
