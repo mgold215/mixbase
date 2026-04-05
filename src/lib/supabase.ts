@@ -59,6 +59,7 @@ export type Release = {
   title: string
   release_date: string | null
   project_id: string | null
+  final_version_id: string | null
   genre: string | null
   label: string | null
   isrc: string | null
@@ -98,6 +99,13 @@ export const STATUS_CONFIG = {
 }
 
 export const STATUSES = ['WIP', 'Mix/Master', 'Finished', 'Released'] as const
+
+export function audioProxyUrl(supabaseUrl: string): string {
+  const marker = '/storage/v1/object/public/mf-audio/'
+  const idx = supabaseUrl.indexOf(marker)
+  if (idx === -1) return supabaseUrl
+  return `/api/audio/${supabaseUrl.slice(idx + marker.length)}`
+}
 
 export function formatDuration(seconds: number | null): string {
   if (!seconds) return '--:--'

@@ -5,7 +5,7 @@ import PipelineClient from './PipelineClient'
 export const dynamic = 'force-dynamic'
 
 export default async function PipelinePage() {
-  const [releasesRes, projectsRes] = await Promise.all([
+  const [releasesRes, projectsRes, versionsRes] = await Promise.all([
     supabaseAdmin
       .from('mf_releases')
       .select('*, mf_projects(title, artwork_url)')
@@ -14,6 +14,10 @@ export default async function PipelinePage() {
       .from('mf_projects')
       .select('id, title')
       .order('title'),
+    supabaseAdmin
+      .from('mf_versions')
+      .select('id, project_id, version_number, label, status')
+      .order('version_number', { ascending: false }),
   ])
 
   return (
@@ -23,6 +27,7 @@ export default async function PipelinePage() {
         <PipelineClient
           initialReleases={releasesRes.data ?? []}
           projects={projectsRes.data ?? []}
+          versions={versionsRes.data ?? []}
         />
       </div>
     </div>

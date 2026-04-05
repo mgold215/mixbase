@@ -5,11 +5,23 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil
+  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil,
+  CalendarRange, ExternalLink
 } from 'lucide-react'
+import type { Release } from '@/lib/supabase'
+
+const CHECKLIST_ITEMS = [
+  { key: 'mixing_done' as const,       label: 'Mixing done' },
+  { key: 'mastering_done' as const,    label: 'Mastering done' },
+  { key: 'artwork_ready' as const,     label: 'Artwork ready' },
+  { key: 'dsp_submitted' as const,     label: 'DSP submitted' },
+  { key: 'social_posts_done' as const, label: 'Social posts scheduled' },
+  { key: 'press_release_done' as const,label: 'Press release done' },
+]
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
@@ -19,9 +31,10 @@ type VersionWithFeedback = Version & { mf_feedback: Feedback[] }
 type Props = {
   project: Project
   initialVersions: VersionWithFeedback[]
+  initialRelease: Release | null
 }
 
-export default function ProjectClient({ project, initialVersions }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [showUpload, setShowUpload] = useState(false)
@@ -36,6 +49,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [detectingMeta, setDetectingMeta] = useState(false)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editingProject, setEditingProject] = useState(false)
@@ -46,6 +60,8 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     key_signature: project.key_signature ?? '',
   })
   const [projectSaved, setProjectSaved] = useState(false)
+  const [release, setRelease] = useState<Release | null>(initialRelease)
+  const [startingRelease, setStartingRelease] = useState(false)
 
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -84,9 +100,21 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     }
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) { setSelectedFile(file); setUploadStatus('') }
+    if (!file) return
+    setSelectedFile(file); setUploadStatus('')
+    // Auto-detect BPM and key from the selected file
+    setDetectingMeta(true)
+    const result = await analyzeFile(file)
+    if (result) {
+      setProjectForm(p => ({
+        ...p,
+        bpm: result.bpm.toString(),
+        key_signature: result.key,
+      }))
+    }
+    setDetectingMeta(false)
   }
 
   async function handleUploadSubmit() {
@@ -109,36 +137,48 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // Route through Railway server using service role key — bypasses Supabase anon 50MB limit
-    const xhrResult = await new Promise<{ ok: boolean; audioUrl?: string; error?: string }>((resolve) => {
-      const xhr = new XMLHttpRequest()
-      xhr.upload.addEventListener('progress', (ev) => {
-        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
-      })
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try { resolve({ ok: true, audioUrl: JSON.parse(xhr.responseText).audioUrl }) }
-          catch { resolve({ ok: false, error: 'Invalid response' }) }
-        } else {
-          try { resolve({ ok: false, error: JSON.parse(xhr.responseText).error ?? xhr.responseText }) }
-          catch { resolve({ ok: false, error: xhr.responseText }) }
-        }
-      })
-      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('POST', '/api/upload')
-      xhr.setRequestHeader('x-filename', filename)
-      xhr.setRequestHeader('x-content-type', contentType)
-      xhr.send(selectedFile)
-    })
+    // Direct browser → Supabase upload using a short-lived signed URL.
+    // Railway is completely out of the byte path, so its 10 MB edge-proxy
+    // cap (which was silently truncating files to exactly 10 MiB) is gone.
+    setUploadStatus('Uploading...')
 
-    if (!xhrResult.ok) {
-      setUploadStatus(`Error: ${xhrResult.error ?? 'Upload failed'}`)
+    const urlRes = await fetch('/api/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, contentType }),
+    })
+    const urlData = await urlRes.json()
+    if (!urlRes.ok) {
+      setUploadStatus(`Error: ${urlData.error ?? 'Could not get upload URL'}`)
       setUploadPct(0)
       setUploading(false)
       return
     }
 
-    const audioUrl = xhrResult.audioUrl!
+    const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+      })
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
+        else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
+      })
+      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+      xhr.open('PUT', urlData.signedUrl)
+      xhr.setRequestHeader('Content-Type', contentType)
+      xhr.setRequestHeader('x-upsert', 'true')
+      xhr.send(selectedFile)
+    })
+
+    if (!putResult.ok) {
+      setUploadStatus(`Error: ${putResult.error ?? 'Upload failed'}`)
+      setUploadPct(0)
+      setUploading(false)
+      return
+    }
+
+    const audioUrl = urlData.publicUrl as string
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
@@ -217,6 +257,36 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       setTimeout(() => setProjectSaved(false), 2000)
     }
   }
+
+  async function startRelease() {
+    setStartingRelease(true)
+    const res = await fetch('/api/releases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: projectForm.title || project.title, project_id: project.id }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      setRelease(data)
+    }
+    setStartingRelease(false)
+  }
+
+  async function toggleReleaseCheck(field: string, current: boolean) {
+    if (!release) return
+    const res = await fetch(`/api/releases/${release.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: !current }),
+    })
+    if (res.ok) {
+      setRelease(prev => prev ? { ...prev, [field]: !current } : prev)
+    }
+  }
+
+  const releaseProgress = release
+    ? Math.round((CHECKLIST_ITEMS.filter(c => release[c.key]).length / CHECKLIST_ITEMS.length) * 100)
+    : 0
 
   return (
     <div className="pt-14">
@@ -333,6 +403,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   <Music size={16} className="text-[#a78bfa] flex-shrink-0" />
                   <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
                   <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  {detectingMeta && <span className="text-[10px] text-[#a78bfa] animate-pulse flex-shrink-0">detecting BPM & key…</span>}
                   {!uploading && (
                     <button
                       onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
@@ -449,6 +520,82 @@ export default function ProjectClient({ project, initialVersions }: Props) {
           </div>
         )}
 
+        {/* Release Pipeline section */}
+        <div className="mt-10 mb-2">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CalendarRange size={16} className="text-[#a78bfa]" />
+              <h2 className="text-sm font-semibold text-white">Release Pipeline</h2>
+            </div>
+            {release && (
+              <Link
+                href="/pipeline"
+                className="flex items-center gap-1 text-xs text-[#555] hover:text-[#a78bfa] transition-colors"
+              >
+                View in Pipeline
+                <ExternalLink size={11} />
+              </Link>
+            )}
+          </div>
+
+          {release ? (
+            <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-5">
+              {/* Progress bar */}
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${releaseProgress}%`,
+                      backgroundColor: releaseProgress === 100 ? '#34d399' : releaseProgress >= 50 ? '#a78bfa' : '#555',
+                    }}
+                  />
+                </div>
+                <span className="text-xs text-[#444] flex-shrink-0">{releaseProgress}%</span>
+              </div>
+
+              {/* Checklist */}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
+                {CHECKLIST_ITEMS.map(item => (
+                  <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={release[item.key]}
+                      onChange={() => toggleReleaseCheck(item.key, release[item.key])}
+                      className="accent-[#a78bfa] w-3.5 h-3.5 flex-shrink-0"
+                    />
+                    <span className={`text-sm transition-colors ${release[item.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
+                      {item.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              {release.release_date && (
+                <p className="text-xs text-[#444] mt-4">
+                  Target date: {new Date(release.release_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-6 flex flex-col items-center text-center gap-4">
+              <CalendarRange size={28} className="text-[#2a2a2a]" />
+              <div>
+                <p className="text-sm text-[#666]">Ready to plan your release?</p>
+                <p className="text-xs text-[#444] mt-1">Track mixing, mastering, artwork, and DSP distribution from one place.</p>
+              </div>
+              <button
+                onClick={startRelease}
+                disabled={startingRelease}
+                className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+              >
+                <Plus size={15} />
+                {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Version list */}
         <div className="space-y-3">
           {versions.length === 0 ? (
@@ -518,7 +665,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
                   {isExpanded && (
                     <div className="px-4 pb-5 pt-1 border-t border-[#1a1a1a] space-y-5">
                       <WaveformPlayer
-                        audioUrl={version.audio_url}
+                        audioUrl={audioProxyUrl(version.audio_url)}
                         allowDownload={version.allow_download}
                         filename={version.audio_filename ?? undefined}
                       />

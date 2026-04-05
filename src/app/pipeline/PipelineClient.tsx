@@ -2,14 +2,17 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
-import { Plus, ChevronDown, ChevronUp, Trash2, Music, CalendarRange } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
 import type { Release } from '@/lib/supabase'
 
 type ReleaseWithProject = Release & { mf_projects: { title: string; artwork_url: string | null } | null }
+type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string }
 
 type Props = {
   initialReleases: ReleaseWithProject[]
   projects: { id: string; title: string }[]
+  versions: VersionLite[]
 }
 
 const CHECKLIST_ITEMS = [
@@ -46,17 +49,27 @@ function daysUntil(dateStr: string | null): string | null {
   return `${days} days`
 }
 
-export default function PipelineClient({ initialReleases, projects }: Props) {
+export default function PipelineClient({ initialReleases, projects, versions }: Props) {
   const [releases, setReleases] = useState(initialReleases)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ title: '', release_date: '', project_id: '', genre: '', label: '', isrc: '', notes: '' })
+  const [form, setForm] = useState({ title: '', release_date: '', project_id: '', final_version_id: '', genre: '', label: '', isrc: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   function setField(field: string, value: string) {
-    setForm(prev => ({ ...prev, [field]: value }))
+    setForm(prev => {
+      const next = { ...prev, [field]: value }
+      // Clear the picked version whenever the project changes.
+      if (field === 'project_id') next.final_version_id = ''
+      return next
+    })
   }
+
+  // Only show the versions belonging to the currently-selected project.
+  const projectVersions = form.project_id
+    ? versions.filter(v => v.project_id === form.project_id)
+    : []
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -70,6 +83,7 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
           title: form.title,
           release_date: form.release_date || null,
           project_id: form.project_id || null,
+          final_version_id: form.final_version_id || null,
           genre: form.genre || null,
           label: form.label || null,
           isrc: form.isrc || null,
@@ -80,7 +94,7 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
       if (res.ok) {
         setReleases(prev => [{ ...data, mf_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
         setShowForm(false)
-        setForm({ title: '', release_date: '', project_id: '', genre: '', label: '', isrc: '', notes: '' })
+        setForm({ title: '', release_date: '', project_id: '', final_version_id: '', genre: '', label: '', isrc: '', notes: '' })
       } else {
         setSaveError(data.error ?? 'Failed to create release')
       }
@@ -136,7 +150,9 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-white truncate">{release.title}</span>
               {release.mf_projects && (
-                <span className="text-xs text-[#444] truncate">← {release.mf_projects.title}</span>
+                release.project_id
+                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#a78bfa] truncate transition-colors">← {release.mf_projects.title}</Link>
+                  : <span className="text-xs text-[#444] truncate">← {release.mf_projects.title}</span>
               )}
             </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-[#444]">
@@ -296,7 +312,8 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            {/* Project + Version pickers */}
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-[#666] mb-1.5">Linked Project</label>
                 <select
@@ -310,6 +327,30 @@ export default function PipelineClient({ initialReleases, projects }: Props) {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-xs text-[#666] mb-1.5">
+                  Final Track Version
+                  {!form.project_id && <span className="text-[#444] ml-1">(pick project first)</span>}
+                </label>
+                <select
+                  value={form.final_version_id}
+                  onChange={e => setField('final_version_id', e.target.value)}
+                  disabled={!form.project_id || projectVersions.length === 0}
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 appearance-none disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <option value="" className="bg-[#111]">
+                    {form.project_id && projectVersions.length === 0 ? 'No versions yet' : 'Latest / none'}
+                  </option>
+                  {projectVersions.map(v => (
+                    <option key={v.id} value={v.id} className="bg-[#111]">
+                      {v.label ? v.label : `Version ${v.version_number}`} — {v.status}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-[#666] mb-1.5">Genre</label>
                 <input
