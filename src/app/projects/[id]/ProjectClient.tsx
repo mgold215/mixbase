@@ -5,8 +5,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, SUPABASE_URL, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
-import * as tus from 'tus-js-client'
+import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
@@ -138,42 +137,48 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // TUS chunked upload through our server-side proxy (/api/tus).
-    // Each chunk is 8 MB — under Railway's 10 MB request body limit.
-    // The proxy relays to Supabase using the service-role key, bypassing the
-    // anon-key per-file size cap (free tier: ~50 MB).
+    // Direct browser → Supabase upload using a short-lived signed URL.
+    // Railway is completely out of the byte path, so its 10 MB edge-proxy
+    // cap (which was silently truncating files to exactly 10 MiB) is gone.
     setUploadStatus('Uploading...')
-    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/mf-audio/${filename}`
-    const tusResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      const upload = new tus.Upload(selectedFile, {
-        endpoint: '/api/tus',
-        retryDelays: [0, 3000, 5000, 10000, 20000],
-        uploadDataDuringCreation: true,
-        removeFingerprintOnSuccess: true,
-        chunkSize: 8 * 1024 * 1024, // 8 MB — safely under Railway's 10 MB wall
-        metadata: {
-          bucketName: 'mf-audio',
-          objectName: filename,
-          contentType,
-          cacheControl: '3600',
-        },
-        onError: (err) => resolve({ ok: false, error: err.message }),
-        onProgress: (bytesUploaded, bytesTotal) => {
-          if (bytesTotal) setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
-        },
-        onSuccess: () => resolve({ ok: true }),
-      })
-      upload.start()
-    })
 
-    if (!tusResult.ok) {
-      setUploadStatus(`Error: ${tusResult.error ?? 'Upload failed'}`)
+    const urlRes = await fetch('/api/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, contentType }),
+    })
+    const urlData = await urlRes.json()
+    if (!urlRes.ok) {
+      setUploadStatus(`Error: ${urlData.error ?? 'Could not get upload URL'}`)
       setUploadPct(0)
       setUploading(false)
       return
     }
 
-    const audioUrl = publicUrl
+    const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+      })
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
+        else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
+      })
+      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+      xhr.open('PUT', urlData.signedUrl)
+      xhr.setRequestHeader('Content-Type', contentType)
+      xhr.setRequestHeader('x-upsert', 'true')
+      xhr.send(selectedFile)
+    })
+
+    if (!putResult.ok) {
+      setUploadStatus(`Error: ${putResult.error ?? 'Upload failed'}`)
+      setUploadPct(0)
+      setUploading(false)
+      return
+    }
+
+    const audioUrl = urlData.publicUrl as string
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
