@@ -41,44 +41,42 @@ function statusTag(status: string): { label: string; color: string } {
   }
 }
 
-// Proper cassette reel: outer plastic disc + concentric tape spool rings + 6-point
-// star spindle in the center. Spins while playing.
-function Reel({ spinning }: { spinning: boolean }) {
+// Real cassette hub: tape wound around the hub in concentric brown rings,
+// with a toothed white center disc (6 drive-spindle teeth). The whole hub
+// rotates — no glittery "film reel" detail, because a cassette hub has none.
+function Reel({ spinning, size = 88 }: { spinning: boolean; size?: number }) {
   return (
     <svg
       viewBox="-50 -50 100 100"
-      width={104}
-      height={104}
+      width={size}
+      height={size}
       style={{
-        animation: spinning ? 'reelSpin 2.8s linear infinite' : 'none',
-        filter: 'drop-shadow(0 3px 8px rgba(0,0,0,0.6))',
+        animation: spinning ? 'reelSpin 2.4s linear infinite' : 'none',
+        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.75))',
       }}
     >
-      {/* Outer plastic tire */}
-      <circle r="48" fill="#0b0b0b" />
-      <circle r="48" fill="none" stroke="#222" strokeWidth="1" />
-      <circle r="44" fill="none" stroke="#1a1a1a" strokeWidth="1" />
+      {/* Wound tape — concentric brown/black rings, getting subtly darker inward */}
+      <circle r="48" fill="#1a0d06" />
+      <circle r="48" fill="none" stroke="#2a1608" strokeWidth="0.5" />
+      {[46, 43, 40, 37, 34, 31, 28, 25].map((r, i) => (
+        <circle key={r} r={r} fill="none" stroke={i % 2 ? '#120905' : '#251309'} strokeWidth="1" />
+      ))}
 
-      {/* Magnetic-tape spool (brown, wound on hub) */}
-      <circle r="40" fill="#1a0e08" />
-      <circle r="40" fill="none" stroke="#3a2418" strokeWidth="0.5" />
-      <circle r="36" fill="none" stroke="#2a1810" strokeWidth="2" />
-      <circle r="32" fill="none" stroke="#3a2014" strokeWidth="1.5" />
-      <circle r="28" fill="none" stroke="#4a2818" strokeWidth="1.5" />
-      <circle r="24" fill="none" stroke="#3a2014" strokeWidth="1" />
+      {/* White toothed hub disc (the real hub on a cassette is white/cream) */}
+      <circle r="22" fill="#e8e4d8" />
+      <circle r="22" fill="none" stroke="#6a6558" strokeWidth="0.4" />
+      <circle r="22" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="0.3" strokeDasharray="0 100" />
 
-      {/* Hub inner disc */}
-      <circle r="20" fill="#0a0a0a" />
-      <circle r="20" fill="none" stroke="#1a1a1a" strokeWidth="0.5" />
-
-      {/* 6-point star spindle (drive gear) */}
-      <g fill="#9a9a9a" stroke="#1a1a1a" strokeWidth="0.5">
+      {/* 6 rectangular drive-spindle teeth cut into the hub */}
+      <g fill="#0a0a0a">
         {[0, 60, 120, 180, 240, 300].map(a => (
-          <polygon key={a} points="-3,-17 3,-17 2,-7 -2,-7" transform={`rotate(${a})`} />
+          <rect key={a} x="-2.4" y="-14" width="4.8" height="8" rx="0.6" transform={`rotate(${a})`} />
         ))}
       </g>
-      <circle r="7" fill="#4a4a4a" stroke="#1a1a1a" strokeWidth="0.5" />
-      <circle r="3" fill="#1a1a1a" />
+
+      {/* Center spindle hole */}
+      <circle r="4.5" fill="#0a0a0a" />
+      <circle r="4.5" fill="none" stroke="#8a8578" strokeWidth="0.4" />
     </svg>
   )
 }
@@ -423,64 +421,74 @@ export default function PlayerPage() {
                   <span className="absolute right-4 top-2 text-white text-[11px] font-black tracking-wider">MIX</span>
                 </div>
 
-                {/* Yellow stripe — reels sit in a 3D recessed tape window */}
-                <div style={{ height: 150, background: STRIPE_YELLOW }} className="relative">
-                  {/* Recessed dark window — heavy inset shadows + bottom highlight sell the depth */}
+                {/* Yellow stripe — one wide cassette window with both hubs inside
+                    and the exposed tape passing across the bottom between them.
+                    The tape IS the progress bar. Guide rollers at bottom corners. */}
+                <div style={{ height: 170, background: STRIPE_YELLOW }} className="relative">
+                  {/* Recessed dark window — the cassette's clear tape window */}
                   <div
-                    className="absolute left-1/2 -translate-x-1/2 rounded-lg overflow-visible"
+                    className="absolute rounded-[3px] overflow-hidden"
                     style={{
-                      top: 14, bottom: 14, width: 250,
-                      background: 'radial-gradient(ellipse at 50% 25%, #2a2a2a 0%, #0a0a0a 75%)',
+                      left: 40, right: 40, top: 18, bottom: 18,
+                      background: 'linear-gradient(180deg, #1a1a1a 0%, #050505 55%, #0d0d0d 100%)',
                       boxShadow: [
-                        'inset 0 5px 12px rgba(0,0,0,0.95)',
-                        'inset 0 -2px 3px rgba(255,255,255,0.06)',
-                        'inset 0 0 0 1px rgba(0,0,0,0.6)',
+                        'inset 0 6px 14px rgba(0,0,0,0.95)',
+                        'inset 0 -3px 6px rgba(0,0,0,0.8)',
+                        'inset 0 0 0 1px rgba(0,0,0,0.9)',
+                        'inset 2px 0 3px rgba(0,0,0,0.6)',
+                        'inset -2px 0 3px rgba(0,0,0,0.6)',
                         '0 1px 0 rgba(255,255,255,0.55)',
                       ].join(', '),
                     }}
                   >
-                    {/* Reels close together with a short visible tape bridge */}
-                    <div className="absolute inset-0 flex items-center justify-center gap-1">
+                    {/* Both hubs, positioned toward the top with real cassette spacing.
+                        The hubs sit slightly above center so tape can run under them. */}
+                    <div className="absolute inset-0 flex items-start justify-center gap-[70px] pt-2">
                       <Reel spinning={isPlaying} />
-                      <div
-                        className="h-[3px] rounded-sm"
-                        style={{
-                          width: 14,
-                          background: 'linear-gradient(180deg, #7a4828 0%, #3a2010 50%, #1a0a04 100%)',
-                          boxShadow: '0 1px 0 rgba(255,180,120,0.15)',
-                        }}
-                      />
                       <Reel spinning={isPlaying} />
                     </div>
-                  </div>
-                </div>
 
-                {/* Progress bar — an exposed tape strip below the window */}
-                <div style={{ height: 30, background: STRIPE_YELLOW }} className="relative flex items-center px-8">
-                  <div
-                    className="flex-1 relative h-3 rounded-sm overflow-hidden"
-                    style={{
-                      background: '#080808',
-                      boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.95), inset 0 -1px 1px rgba(255,255,255,0.05), 0 1px 0 rgba(255,255,255,0.25)',
-                    }}
-                  >
+                    {/* Exposed magnetic tape across the bottom of the window — this
+                        is the progress bar. Tape travels right→left as music plays. */}
                     <div
-                      className="absolute inset-y-0 left-0 transition-[width] duration-200"
+                      className="absolute left-0 right-0 h-[4px]"
                       style={{
-                        width: `${pct}%`,
-                        background: 'linear-gradient(180deg, #7a4828 0%, #3a2010 50%, #1a0a04 100%)',
-                        boxShadow: 'inset 0 1px 0 rgba(255,180,120,0.18)',
+                        bottom: 14,
+                        background: 'linear-gradient(180deg, #6b3e20 0%, #3a2010 50%, #1a0a04 100%)',
+                        boxShadow: '0 1px 0 rgba(255,180,120,0.12), 0 -1px 0 rgba(0,0,0,0.8)',
                       }}
                     />
+                    {/* Playhead marker on the tape */}
                     <div
-                      className="absolute top-0 bottom-0 w-[2px] pointer-events-none"
-                      style={{ left: `${pct}%`, background: accentCss, boxShadow: `0 0 8px ${accentCss}` }}
+                      className="absolute w-[2px] h-[10px] pointer-events-none"
+                      style={{
+                        bottom: 11,
+                        left: `${pct}%`,
+                        background: accentCss,
+                        boxShadow: `0 0 6px ${accentCss}`,
+                      }}
                     />
+                    {/* Seek input overlays the tape */}
                     <input
                       type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                       onChange={seek}
-                      className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                      className="absolute left-0 right-0 w-full h-4 opacity-0 cursor-pointer"
+                      style={{ bottom: 8 }}
                     />
+
+                    {/* Guide rollers — small posts at bottom-left & bottom-right of window */}
+                    {[6, -6].map((x, i) => (
+                      <div
+                        key={i}
+                        className="absolute w-[10px] h-[10px] rounded-full"
+                        style={{
+                          bottom: 8,
+                          ...(x > 0 ? { left: x } : { right: -x }),
+                          background: 'radial-gradient(circle at 35% 30%, #bbb, #555 65%, #1a1a1a)',
+                          boxShadow: 'inset 0 0 0 1px #000, 0 1px 1px rgba(0,0,0,0.8)',
+                        }}
+                      />
+                    ))}
                   </div>
                 </div>
 
