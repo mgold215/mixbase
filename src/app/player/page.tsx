@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic,
+  Repeat, Repeat1, Search, ListMusic, Sliders,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -23,17 +23,52 @@ const EQ_PRESETS: Record<EQPreset, [number, number, number]> = {
   'Lo-Fi':[4, -3, -9],
 }
 
-const VINYL_BG = `radial-gradient(circle at 50% 50%,
-  #000 0%, #000 4.5%,
-  #2a1a40 4.5%, #1a0d2e 6%,
-  #111 6%, #0d0d0d 12%,
-  #1a1a1a 12%, #111 20%,
-  #181818 20%, #0f0f0f 30%,
-  #161616 30%, #0d0d0d 42%,
-  #151515 42%, #0c0c0c 56%,
-  #141414 56%, #0b0b0b 72%,
-  #131313 72%, #1a1a1a 100%
-)`
+// MoodMix cassette label colors — pulled from the logo.
+const STRIPE_BLUE   = '#2d3fd1'
+const STRIPE_PINK   = '#ff2e82'
+const STRIPE_YELLOW = '#f7d417'
+const STRIPE_TEAL   = '#16b892'
+
+// Single reel: dark hub with spokes; spins while playing.
+function Reel({ spinning, accent }: { spinning: boolean; accent: string }) {
+  return (
+    <div
+      className="relative rounded-full flex items-center justify-center"
+      style={{
+        width: 96, height: 96,
+        background: 'radial-gradient(circle at 35% 30%, #1a1a1a 0%, #000 70%)',
+        boxShadow: 'inset 0 0 0 3px #2a2a2a, 0 4px 12px rgba(0,0,0,0.6)',
+        animation: spinning ? 'reelSpin 2.4s linear infinite' : 'none',
+      }}
+    >
+      {/* Spokes */}
+      {[0, 1, 2, 3, 4, 5].map(i => (
+        <div
+          key={i}
+          className="absolute"
+          style={{
+            width: 6, height: 30,
+            background: 'linear-gradient(180deg, #3a3a3a, #1a1a1a)',
+            borderRadius: 3,
+            transform: `rotate(${i * 60}deg) translateY(-26px)`,
+            transformOrigin: 'center 41px',
+          }}
+        />
+      ))}
+      {/* Accent ring */}
+      <div
+        className="absolute rounded-full pointer-events-none"
+        style={{
+          inset: 6,
+          border: `1px solid ${accent}`,
+          opacity: 0.35,
+        }}
+      />
+      {/* Center dot */}
+      <div className="w-3 h-3 rounded-full" style={{ background: '#555' }} />
+    </div>
+  )
+}
 
 export default function PlayerPage() {
   const [tracks, setTracks] = useState<Track[]>([])
@@ -50,29 +85,21 @@ export default function PlayerPage() {
   const [search, setSearch] = useState('')
   const [eqPreset, setEqPreset] = useState<EQPreset>('Flat')
   const [speed, setSpeed] = useState(1)
-  const [showEQ, setShowEQ] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   // BPM / key analysis
   const [trackBPM, setTrackBPM] = useState<number | null>(null)
   const [trackKey, setTrackKey] = useState<string | null>(null)
-  const [analyzing, setAnalyzing] = useState(false)
 
-  // Dynamic accent color from album art
+  // Accent color derived from album art
   const [accent, setAccent] = useState<[number, number, number]>([167, 139, 250])
-
-  // Background crossfade
-  const [bgSlot, setBgSlot] = useState<0 | 1>(0)
-  const [bgUrls, setBgUrls] = useState<[string | null, string | null]>([null, null])
 
   // Refs
   const audioRef = useRef<HTMLAudioElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
   const bassRef = useRef<BiquadFilterNode | null>(null)
   const midRef = useRef<BiquadFilterNode | null>(null)
   const trebleRef = useRef<BiquadFilterNode | null>(null)
-  const rafRef = useRef<number>(0)
   const analysisAbortRef = useRef<AbortController | null>(null)
 
   const current = filtered[currentIdx] ?? null
@@ -101,48 +128,13 @@ export default function PlayerPage() {
     if (audioCtxRef.current || !audioRef.current) return
     const ctx = new AudioContext()
     const src = ctx.createMediaElementSource(audioRef.current)
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 256
     const bass = ctx.createBiquadFilter(); bass.type = 'lowshelf'; bass.frequency.value = 200
     const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1200; mid.Q.value = 1.2
     const treble = ctx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 4000
-    src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(analyser); analyser.connect(ctx.destination)
+    src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(ctx.destination)
     audioCtxRef.current = ctx
-    analyserRef.current = analyser
     bassRef.current = bass; midRef.current = mid; trebleRef.current = treble
-    rafRef.current = requestAnimationFrame(drawViz)
   }
-
-  // ── Visualizer ─────────────────────────────────────────────────────────────────
-  const drawViz = useCallback(() => {
-    rafRef.current = requestAnimationFrame(drawViz)
-    const canvas = canvasRef.current
-    const analyser = analyserRef.current
-    if (!canvas || !analyser) return
-    const ctx = canvas.getContext('2d')!
-    const W = canvas.width, H = canvas.height
-    const cx = W / 2, cy = H / 2
-    ctx.clearRect(0, 0, W, H)
-    const data = new Uint8Array(analyser.frequencyBinCount)
-    analyser.getByteFrequencyData(data)
-    const [r, g, b] = accent
-    const numBars = 90
-    const innerR = 237, maxBar = 72
-    for (let i = 0; i < numBars; i++) {
-      const val = data[Math.floor(i * data.length / numBars)] / 255
-      const h = val * maxBar + 2
-      const angle = (i / numBars) * Math.PI * 2 - Math.PI / 2
-      const cos = Math.cos(angle), sin = Math.sin(angle)
-      const alpha = 0.25 + val * 0.75
-      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`
-      ctx.lineWidth = Math.max(1.5, (W * 0.75 / numBars) - 1)
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.moveTo(cx + cos * innerR, cy + sin * innerR)
-      ctx.lineTo(cx + cos * (innerR + h), cy + sin * (innerR + h))
-      ctx.stroke()
-    }
-  }, [accent])
 
   // ── Load track ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -154,27 +146,20 @@ export default function PlayerPage() {
     setCurrentTime(0); setDuration(0); setTrackBPM(null); setTrackKey(null)
     if (isPlaying) audio.play().catch(() => setIsPlaying(false))
 
-    // Background crossfade
-    const next: 0 | 1 = bgSlot === 0 ? 1 : 0
-    setBgUrls(prev => { const u = [...prev] as [string | null, string | null]; u[next] = current.artwork_url; return u })
-    setBgSlot(next)
-
-    // Extract accent color
+    // Extract accent color from artwork
     if (current.artwork_url) {
       extractDominantColor(current.artwork_url).then(setAccent).catch(() => setAccent([167, 139, 250]))
     } else {
       setAccent([167, 139, 250])
     }
 
-    // BPM + Key analysis in background
+    // BPM + Key analysis (background)
     analysisAbortRef.current?.abort()
     const abort = new AbortController()
     analysisAbortRef.current = abort
-    setAnalyzing(true)
     analyzeAudioUrl(audioProxyUrl(current.audio_url)).then(result => {
       if (abort.signal.aborted) return
       if (result) { setTrackBPM(result.bpm); setTrackKey(result.key) }
-      setAnalyzing(false)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIdx, filtered])
@@ -190,21 +175,20 @@ export default function PlayerPage() {
     if (trebleRef.current) trebleRef.current.gain.value = tv
   }, [eqPreset])
 
-  // ── Cleanup RAF on unmount ─────────────────────────────────────────────────────
-  useEffect(() => () => { cancelAnimationFrame(rafRef.current) }, [])
-
   // ── Playback ───────────────────────────────────────────────────────────────────
   const goTo = useCallback((idx: number, play = true) => {
     setCurrentIdx(idx); if (play) setIsPlaying(true)
   }, [])
 
   const next = useCallback(() => {
+    if (filtered.length === 0) return
     if (shuffle) goTo(Math.floor(Math.random() * filtered.length))
     else goTo((currentIdx + 1) % filtered.length)
   }, [shuffle, currentIdx, filtered.length, goTo])
 
   const prev = useCallback(() => {
     if (currentTime > 3 && audioRef.current) { audioRef.current.currentTime = 0; return }
+    if (filtered.length === 0) return
     goTo((currentIdx - 1 + filtered.length) % filtered.length)
   }, [currentIdx, currentTime, filtered.length, goTo])
 
@@ -215,7 +199,6 @@ export default function PlayerPage() {
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume()
     if (isPlaying) { audio.pause(); setIsPlaying(false) }
     else { audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying])
 
   // ── Audio events ───────────────────────────────────────────────────────────────
@@ -254,10 +237,6 @@ export default function PlayerPage() {
     const speeds = [0.75, 1, 1.25, 1.5, 2]
     setSpeed(s => speeds[(speeds.indexOf(s) + 1) % speeds.length])
   }
-  const cycleEQ = () => {
-    const keys = Object.keys(EQ_PRESETS) as EQPreset[]
-    setEqPreset(p => keys[(keys.indexOf(p) + 1) % keys.length])
-  }
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
@@ -265,7 +244,7 @@ export default function PlayerPage() {
   // ── Empty state ────────────────────────────────────────────────────────────────
   if (!loading && tracks.length === 0) {
     return (
-      <div className="fixed inset-0 bg-[#050508] flex flex-col items-center justify-center gap-4">
+      <div className="fixed inset-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
         <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
@@ -276,7 +255,7 @@ export default function PlayerPage() {
   }
 
   return (
-    <div className="fixed inset-0 bg-[#050508] flex flex-col overflow-hidden select-none">
+    <div className="fixed inset-0 bg-[#0a0819] flex flex-col overflow-hidden select-none">
       <audio
         ref={audioRef}
         onTimeUpdate={onTimeUpdate}
@@ -286,79 +265,77 @@ export default function PlayerPage() {
         onPause={onPause}
       />
 
-      {/* ── Animated background ──────────────────────────────────────────────── */}
+      {/* ── Blurred artwork backdrop ─────────────────────────────────────────── */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {([0, 1] as const).map(slot => (
-          <div key={slot} className="absolute inset-0 transition-opacity duration-1000"
-            style={{ opacity: bgUrls[slot] ? (bgSlot === slot ? 1 : 0) : 0 }}>
-            {bgUrls[slot] && (
-              <Image src={bgUrls[slot]!} alt="" fill unoptimized
-                className="object-cover"
-                style={{ filter: 'blur(120px) saturate(1.8) brightness(0.18)' }} />
-            )}
-          </div>
-        ))}
-        {/* Radial glow that pulses with accent color */}
+        {current?.artwork_url && (
+          <Image
+            src={current.artwork_url} alt="" fill unoptimized
+            className="object-cover transition-opacity duration-700"
+            style={{ filter: 'blur(140px) saturate(1.6) brightness(0.2)' }}
+          />
+        )}
         <div className="absolute inset-0" style={{
-          background: `radial-gradient(ellipse 60% 50% at 55% 40%, rgba(${accent[0]},${accent[1]},${accent[2]},0.12) 0%, transparent 70%)`,
-          transition: 'background 1.2s ease',
+          background: `radial-gradient(ellipse 70% 60% at 50% 40%, rgba(${accent[0]},${accent[1]},${accent[2]},0.14) 0%, transparent 70%)`,
         }} />
       </div>
 
-      {/* ── Layout: sidebar + stage ──────────────────────────────────────────── */}
-      <div className="relative flex flex-1 overflow-hidden pb-[100px]">
+      {/* ── Main layout ──────────────────────────────────────────────────────── */}
+      <div className="relative flex flex-1 overflow-hidden pb-[92px]">
 
-        {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-        <aside className="w-[280px] flex-shrink-0 flex flex-col"
-          style={{ background: 'rgba(10,8,16,0.75)', borderRight: '1px solid rgba(255,255,255,0.05)', backdropFilter: 'blur(20px)' }}>
-          {/* Header */}
-          <div className="px-4 pt-5 pb-3">
-            <p className="text-[10px] font-semibold tracking-[0.2em] text-[#444] uppercase mb-3">All Tracks</p>
+        {/* ── Sidebar: bigger, cleaner track list ─────────────────────────── */}
+        <aside className="w-[340px] flex-shrink-0 flex flex-col"
+          style={{
+            background: 'rgba(10,8,25,0.8)',
+            borderRight: '1px solid rgba(255,255,255,0.06)',
+            backdropFilter: 'blur(20px)',
+          }}>
+          <div className="px-5 pt-6 pb-4">
+            <p className="text-[10px] font-semibold tracking-[0.22em] text-[#666] uppercase mb-4">All Tracks</p>
             {/* Search */}
             <div className="relative">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#444]" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#555]" />
               <input
                 type="text" value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full bg-[#111] border border-[#1e1e1e] rounded-lg pl-7 pr-3 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30"
+                placeholder="Search tracks..."
+                className="w-full bg-[#15122a] border border-[#242038] rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa]/40"
               />
             </div>
-            {/* Sort */}
-            <div className="flex gap-1 mt-2">
-              {(['title', 'date'] as SortKey[]).map(k => (
+            {/* Sort toggle */}
+            <div className="flex gap-1 mt-3 p-1 rounded-lg bg-[#15122a]">
+              {(['date', 'title'] as SortKey[]).map(k => (
                 <button key={k} onClick={() => setSortKey(k)}
-                  className={`text-[10px] px-2.5 py-1 rounded-md transition-colors flex-1 ${sortKey === k ? 'bg-[#1e1e1e] text-white' : 'text-[#444] hover:text-[#888]'}`}>
+                  className={`text-[11px] px-3 py-1.5 rounded-md transition-all flex-1 font-medium ${sortKey === k ? 'bg-[#2a2450] text-white' : 'text-[#555] hover:text-[#aaa]'}`}>
                   {k === 'title' ? 'A–Z' : 'Recent'}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Track list */}
-          <div className="flex-1 overflow-y-auto px-2 pb-4">
+          {/* Track list — bigger tiles, cleaner type */}
+          <div className="flex-1 overflow-y-auto px-3 pb-6">
             {loading ? Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 px-2 py-2.5">
-                <div className="w-10 h-10 rounded-lg bg-[#1a1a1a] animate-pulse flex-shrink-0" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-2.5 bg-[#1a1a1a] rounded animate-pulse w-3/4" />
-                  <div className="h-2 bg-[#141414] rounded animate-pulse w-1/2" />
+              <div key={i} className="flex items-center gap-3 px-2 py-3">
+                <div className="w-12 h-12 rounded-lg bg-[#1a1630] animate-pulse flex-shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 bg-[#1a1630] rounded animate-pulse w-3/4" />
+                  <div className="h-2.5 bg-[#14122a] rounded animate-pulse w-1/2" />
                 </div>
               </div>
             )) : filtered.map((t, i) => {
               const active = i === currentIdx
               return (
                 <button key={t.id} onClick={() => goTo(i)}
-                  className={`w-full flex items-center gap-3 px-2 py-2 rounded-xl text-left transition-all mb-0.5 ${active ? 'bg-white/5' : 'hover:bg-white/3'}`}
-                  style={active ? { borderLeft: `2px solid ${accentCss}`, paddingLeft: 6 } : { borderLeft: '2px solid transparent' }}>
-                  <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-[#1a1a1a] relative">
+                  className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-left transition-all mb-1 ${active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'}`}
+                  style={active ? { borderLeft: `2px solid ${accentCss}`, paddingLeft: 8 } : { borderLeft: '2px solid transparent' }}>
+                  <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-[#1a1630] relative">
                     {t.artwork_url
                       ? <Image src={t.artwork_url} alt={t.title} fill className="object-cover" unoptimized />
-                      : <div className="w-full h-full flex items-center justify-center"><Music size={14} className="text-[#333]" /></div>}
+                      : <div className="w-full h-full flex items-center justify-center"><Music size={16} className="text-[#333]" /></div>}
                     {active && isPlaying && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                        <div className="flex gap-0.5 items-end h-4">
-                          {[1, 0.6, 0.8].map((h, j) => (
-                            <div key={j} className="w-0.5 rounded-full animate-bounce"
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+                        <div className="flex gap-[3px] items-end h-5">
+                          {[1, 0.6, 0.85].map((h, j) => (
+                            <div key={j} className="w-[3px] rounded-full animate-bounce"
                               style={{ height: `${h * 100}%`, backgroundColor: accentCss, animationDelay: `${j * 0.15}s` }} />
                           ))}
                         </div>
@@ -366,9 +343,10 @@ export default function PlayerPage() {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={`text-xs font-medium truncate transition-colors ${active ? 'text-white' : 'text-[#aaa]'}`}
-                      style={active ? { color: 'white' } : {}}>{t.title}</p>
-                    <p className="text-[10px] text-[#555] truncate mt-0.5">{t.artist}</p>
+                    <p className={`text-sm font-medium truncate leading-tight ${active ? 'text-white' : 'text-[#ccc]'}`}>
+                      {t.title}
+                    </p>
+                    <p className="text-xs text-[#666] truncate mt-1">{t.artist}</p>
                   </div>
                 </button>
               )
@@ -376,92 +354,141 @@ export default function PlayerPage() {
           </div>
         </aside>
 
-        {/* ── Center stage ─────────────────────────────────────────────────── */}
-        <main className="flex-1 flex flex-col items-center justify-center gap-5 relative overflow-hidden">
+        {/* ── Center stage: the cassette ───────────────────────────────────── */}
+        <main className="flex-1 flex flex-col items-center justify-center gap-6 px-8 relative overflow-hidden">
           {current && (
             <>
-              {/* Artwork + vinyl + visualizer stack */}
-              <div className="relative" style={{ width: 600, height: 600 }}>
-                {/* Circular frequency visualizer */}
-                <canvas ref={canvasRef} width={600} height={600}
-                  className="absolute inset-0 pointer-events-none" style={{ zIndex: 3 }} />
-
-                {/* Vinyl record */}
-                <div className="absolute" style={{
-                  width: 500, height: 500,
-                  top: '50%', left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  zIndex: 1,
-                }}>
-                  <div className="w-full h-full rounded-full" style={{
-                    background: VINYL_BG,
-                    animation: isPlaying ? 'spinVinyl 1.8s linear infinite' : 'spinVinyl 1.8s linear infinite paused',
-                    boxShadow: `0 0 80px rgba(0,0,0,0.9), 0 0 30px rgba(${accent[0]},${accent[1]},${accent[2]},0.08)`,
-                  }} />
-                </div>
-
-                {/* Album artwork */}
+              {/* Cassette shell */}
+              <div className="relative" style={{ width: 720, height: 460 }}>
+                {/* Outer shell with gradient + rounded corners */}
                 <div
-                  onClick={togglePlay}
-                  className="absolute cursor-pointer rounded-[18px] overflow-hidden transition-all duration-500"
+                  className="absolute inset-0 rounded-[18px]"
                   style={{
-                    width: 460, height: 460,
-                    top: '50%', left: '50%',
-                    transform: `translate(-50%, -50%) scale(${isPlaying ? 1 : 0.97})`,
-                    zIndex: 2,
-                    boxShadow: isPlaying
-                      ? `0 0 80px 20px rgba(${accent[0]},${accent[1]},${accent[2]},0.4), 0 30px 80px rgba(0,0,0,0.7)`
-                      : '0 20px 60px rgba(0,0,0,0.7)',
+                    background: 'linear-gradient(180deg, #1a1538 0%, #0a0720 100%)',
+                    border: '2px solid #2a2450',
+                    boxShadow: `0 30px 80px rgba(0,0,0,0.7), 0 0 60px rgba(${accent[0]},${accent[1]},${accent[2]},0.18)`,
+                  }}
+                />
+
+                {/* Corner screws */}
+                {[
+                  { t: 14, l: 14 }, { t: 14, r: 14 },
+                  { b: 14, l: 14 }, { b: 14, r: 14 },
+                ].map((p, i) => (
+                  <div key={i} className="absolute w-3 h-3 rounded-full"
+                    style={{
+                      top: p.t, left: p.l, right: p.r, bottom: p.b,
+                      background: 'radial-gradient(circle at 35% 30%, #666, #1a1a1a)',
+                      boxShadow: 'inset 0 0 0 1px #000, 0 1px 2px rgba(0,0,0,0.6)',
+                    }} />
+                ))}
+
+                {/* Colored label area */}
+                <div className="absolute overflow-hidden rounded-md"
+                  style={{ top: 36, left: 36, right: 36, bottom: 96 }}>
+                  {/* Blue top stripe */}
+                  <div style={{ height: '14%', background: STRIPE_BLUE }} className="relative flex items-center px-6">
+                    <span className="text-white/70 text-[10px] font-black tracking-[0.3em]">MOODMIX CASSETTE</span>
+                  </div>
+
+                  {/* Pink stripe — track title */}
+                  <div style={{ height: '20%', background: STRIPE_PINK }} className="relative flex items-center justify-center px-16">
+                    <span
+                      className="text-white font-black tracking-wider uppercase truncate"
+                      style={{ fontSize: current.title.length > 14 ? 28 : 40, lineHeight: 1, textShadow: '0 2px 0 rgba(0,0,0,0.3)' }}>
+                      {current.title}
+                    </span>
+                    <span className="absolute right-4 top-1 text-white text-[11px] font-black tracking-wider">MIX</span>
+                  </div>
+
+                  {/* Yellow stripe — reels + tape */}
+                  <div style={{ height: '36%', background: STRIPE_YELLOW }} className="relative flex items-center justify-center px-10">
+                    {/* Left reel */}
+                    <Reel spinning={isPlaying} accent={accentCss} />
+
+                    {/* Tape between reels */}
+                    <div className="flex-1 mx-4 relative h-6 rounded-sm overflow-hidden"
+                      style={{ background: '#0a0a0a', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.8)' }}>
+                      {/* Tape fill = progress */}
+                      <div className="absolute inset-y-0 left-0 transition-[width] duration-200"
+                        style={{
+                          width: `${pct}%`,
+                          background: `linear-gradient(180deg, #4a3a28 0%, #2a1e10 100%)`,
+                        }} />
+                      {/* Playhead mark */}
+                      <div className="absolute top-0 bottom-0 w-[2px]"
+                        style={{ left: `${pct}%`, background: accentCss, boxShadow: `0 0 6px ${accentCss}` }} />
+                    </div>
+
+                    {/* Right reel */}
+                    <Reel spinning={isPlaying} accent={accentCss} />
+                  </div>
+
+                  {/* Teal stripe — artist */}
+                  <div style={{ height: '16%', background: STRIPE_TEAL }} className="relative flex items-center justify-center px-10">
+                    <span className="text-white/95 text-base font-bold tracking-wide uppercase truncate">
+                      {current.artist}
+                    </span>
+                  </div>
+
+                  {/* Blue bottom stripe — BPM / key */}
+                  <div style={{ height: '14%', background: STRIPE_BLUE }} className="relative flex items-center justify-between px-6">
+                    <span className="text-white/70 text-[10px] font-black tracking-[0.25em]">SIDE A</span>
+                    <div className="flex items-center gap-3">
+                      {trackKey && <span className="text-white text-[11px] font-mono font-bold">{trackKey}</span>}
+                      {trackBPM && <span className="text-white text-[11px] font-mono font-bold">{trackBPM} BPM</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metal base with holes */}
+                <div className="absolute left-9 right-9 bottom-9 flex items-center justify-center gap-6 rounded-md"
+                  style={{
+                    height: 42,
+                    background: 'linear-gradient(180deg, #4a4654 0%, #2a2632 60%, #1a1622 100%)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(0,0,0,0.4)',
                   }}>
-                  {current.artwork_url
-                    ? <Image src={current.artwork_url} alt={current.title} fill className="object-cover" unoptimized />
-                    : <div className="w-full h-full flex items-center justify-center bg-[#111]"><Music size={80} className="text-[#222]" /></div>}
+                  {/* Capstan holes */}
+                  {[0, 1, 2, 3, 4].map(i => (
+                    <div key={i} className="w-3.5 h-3.5 rounded-full"
+                      style={{
+                        background: 'radial-gradient(circle at 50% 40%, #000 0%, #000 60%, #1a1a1a 100%)',
+                        boxShadow: 'inset 0 2px 3px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.05)',
+                      }} />
+                  ))}
                 </div>
               </div>
 
-              {/* Track info */}
-              <div className="text-center max-w-lg px-4">
-                <div className="flex items-center justify-center gap-2.5 flex-wrap mb-1">
-                  <h1 className="text-xl font-bold text-white leading-tight">{current.title}</h1>
-                  {trackKey && (
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border font-semibold"
-                      style={{ color: accentCss, borderColor: `rgba(${accent[0]},${accent[1]},${accent[2]},0.4)`, background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.1)` }}>
-                      {trackKey}
-                    </span>
-                  )}
-                  {trackBPM && (
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border font-semibold"
-                      style={{ color: accentCss, borderColor: `rgba(${accent[0]},${accent[1]},${accent[2]},0.4)`, background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.1)` }}>
-                      {trackBPM} BPM
-                    </span>
-                  )}
-                  {analyzing && !trackKey && (
-                    <span className="text-[10px] text-[#444] animate-pulse">analyzing…</span>
-                  )}
+              {/* Artwork thumbnail + now playing below cassette */}
+              {current.artwork_url && (
+                <div className="flex items-center gap-3 mt-2">
+                  <div className="w-10 h-10 rounded-md overflow-hidden" style={{ boxShadow: `0 0 20px rgba(${accent[0]},${accent[1]},${accent[2]},0.3)` }}>
+                    <Image src={current.artwork_url} alt="" width={40} height={40} className="object-cover w-full h-full" unoptimized />
+                  </div>
+                  <span className="text-xs text-[#777]">Now playing from <span className="text-white/80">{current.artist}</span></span>
                 </div>
-                <p className="text-sm text-[#555]">{current.artist}</p>
-              </div>
+              )}
             </>
           )}
         </main>
       </div>
 
-      {/* ── Bottom controls ───────────────────────────────────────────────────── */}
-      <div className="fixed bottom-0 left-0 right-0 h-[100px] flex flex-col justify-center px-6 gap-2.5"
-        style={{ backdropFilter: 'blur(40px)', background: 'rgba(5,5,8,0.85)', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+      {/* ── Bottom controls bar ────────────────────────────────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 h-[92px] flex flex-col justify-center px-6 gap-2.5"
+        style={{ backdropFilter: 'blur(40px)', background: 'rgba(10,8,25,0.88)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
 
         {/* Progress bar */}
         <div className="flex items-center gap-3">
-          <span className="text-[11px] text-[#444] w-10 text-right tabular-nums">{formatDuration(Math.floor(currentTime))}</span>
+          <span className="text-[11px] text-[#555] w-10 text-right tabular-nums">{formatDuration(Math.floor(currentTime))}</span>
           <div className="relative flex-1 h-[3px] rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
             <div className="absolute left-0 top-0 h-full rounded-full pointer-events-none transition-all"
-              style={{ width: `${pct}%`, background: `linear-gradient(to right, rgba(${accent[0]},${accent[1]},${accent[2]},0.7), ${accentCss})` }} />
+              style={{ width: `${pct}%`, background: `linear-gradient(to right, rgba(${accent[0]},${accent[1]},${accent[2]},0.6), ${accentCss})` }} />
             <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow transition-all pointer-events-none"
               style={{ left: `calc(${pct}% - 6px)`, background: accentCss, opacity: isPlaying ? 1 : 0.6 }} />
             <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
               onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer h-5 -top-1" />
           </div>
-          <span className="text-[11px] text-[#444] w-10 tabular-nums">{formatDuration(Math.floor(duration))}</span>
+          <span className="text-[11px] text-[#555] w-10 tabular-nums">{formatDuration(Math.floor(duration))}</span>
         </div>
 
         {/* Controls row */}
@@ -469,66 +496,73 @@ export default function PlayerPage() {
           {/* Left: Shuffle + Loop */}
           <div className="absolute left-0 flex items-center gap-1">
             <button onClick={() => setShuffle(s => !s)}
-              className={`p-2 rounded-lg transition-colors text-xs ${shuffle ? 'text-white' : 'text-[#333] hover:text-[#777]'}`}
-              style={shuffle ? { color: accentCss } : {}}>
-              <Shuffle size={14} />
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: shuffle ? accentCss : '#3a3a3a' }}>
+              <Shuffle size={15} />
             </button>
             <button onClick={cycleLoop}
               className="p-2 rounded-lg transition-colors"
-              style={loopMode !== 'none' ? { color: accentCss } : { color: '#333' }}>
-              {loopMode === 'one' ? <Repeat1 size={14} /> : <Repeat size={14} />}
+              style={{ color: loopMode !== 'none' ? accentCss : '#3a3a3a' }}>
+              {loopMode === 'one' ? <Repeat1 size={15} /> : <Repeat size={15} />}
             </button>
           </div>
 
           {/* Center: Prev | Play/Pause | Next */}
-          <button onClick={prev} className="p-2 text-[#666] hover:text-white transition-colors"><SkipBack size={18} /></button>
-
+          <button onClick={prev} className="p-2 text-[#777] hover:text-white transition-colors"><SkipBack size={20} /></button>
           <button onClick={togglePlay}
-            className="w-11 h-11 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
-            style={{ background: accentCss, boxShadow: `0 0 20px rgba(${accent[0]},${accent[1]},${accent[2]},0.5)` }}>
+            className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+            style={{ background: accentCss, boxShadow: `0 0 24px rgba(${accent[0]},${accent[1]},${accent[2]},0.55)` }}>
             {isPlaying
-              ? <Pause size={20} fill="#000" className="text-black" />
-              : <Play size={20} fill="#000" className="text-black ml-0.5" />}
+              ? <Pause size={22} fill="#000" className="text-black" />
+              : <Play size={22} fill="#000" className="text-black ml-0.5" />}
           </button>
+          <button onClick={next} className="p-2 text-[#777] hover:text-white transition-colors"><SkipForward size={20} /></button>
 
-          <button onClick={next} className="p-2 text-[#666] hover:text-white transition-colors"><SkipForward size={18} /></button>
-
-          {/* Right: Speed + EQ + Volume */}
+          {/* Right: Settings menu + Volume */}
           <div className="absolute right-0 flex items-center gap-3">
-            {/* Speed */}
-            <button onClick={cycleSpeed}
-              className="text-[10px] font-mono px-2 py-1 rounded-md transition-colors"
-              style={speed !== 1 ? { color: accentCss, background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.1)` } : { color: '#444' }}>
-              {speed}×
-            </button>
-
-            {/* EQ */}
+            {/* Settings (Speed + EQ hidden behind one menu) */}
             <div className="relative">
-              <button onClick={() => setShowEQ(v => !v)}
-                className="text-[10px] font-mono px-2 py-1 rounded-md transition-colors"
-                style={eqPreset !== 'Flat' ? { color: accentCss, background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.1)` } : { color: '#444' }}>
-                {eqPreset}
+              <button onClick={() => setShowSettings(v => !v)}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : '#3a3a3a' }}>
+                <Sliders size={15} />
               </button>
-              {showEQ && (
-                <div className="absolute bottom-8 right-0 rounded-xl border border-[#1e1e1e] overflow-hidden shadow-2xl z-50"
-                  style={{ background: 'rgba(12,10,18,0.95)', backdropFilter: 'blur(20px)' }}>
-                  {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
-                    <button key={p} onClick={() => { setEqPreset(p); setShowEQ(false) }}
-                      className="block w-full text-left px-4 py-2 text-xs transition-colors hover:bg-white/5"
-                      style={eqPreset === p ? { color: accentCss } : { color: '#888' }}>
-                      {p}
+              {showSettings && (
+                <div className="absolute bottom-10 right-0 rounded-xl border border-[#242038] overflow-hidden shadow-2xl z-50 min-w-[200px]"
+                  style={{ background: 'rgba(14,10,28,0.96)', backdropFilter: 'blur(24px)' }}>
+                  {/* Speed */}
+                  <div className="px-3 py-2.5 border-b border-[#242038]">
+                    <p className="text-[10px] text-[#555] uppercase tracking-wider mb-1.5">Speed</p>
+                    <button onClick={cycleSpeed}
+                      className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
+                      {speed}× <span className="text-[#555] text-xs">(click to cycle)</span>
                     </button>
-                  ))}
+                  </div>
+                  {/* EQ */}
+                  <div className="px-3 py-2.5">
+                    <p className="text-[10px] text-[#555] uppercase tracking-wider mb-1.5">EQ Preset</p>
+                    <div className="flex flex-wrap gap-1">
+                      {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
+                        <button key={p} onClick={() => setEqPreset(p)}
+                          className="text-[11px] px-2 py-1 rounded-md transition-colors font-medium"
+                          style={eqPreset === p
+                            ? { color: '#fff', background: accentCss }
+                            : { color: '#888', background: '#1a1630' }}>
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Volume */}
             <div className="flex items-center gap-1.5">
-              <Volume2 size={12} className="text-[#333]" />
+              <Volume2 size={13} className="text-[#444]" />
               <div className="relative w-20 h-[3px] rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
                 <div className="absolute left-0 top-0 h-full rounded-full pointer-events-none"
-                  style={{ width: `${volume * 100}%`, background: 'rgba(255,255,255,0.3)' }} />
+                  style={{ width: `${volume * 100}%`, background: 'rgba(255,255,255,0.35)' }} />
                 <input type="range" min={0} max={1} step={0.01} value={volume}
                   onChange={e => setVolume(parseFloat(e.target.value))}
                   className="absolute inset-0 w-full opacity-0 cursor-pointer h-4 -top-1.5" />
@@ -538,10 +572,9 @@ export default function PlayerPage() {
         </div>
       </div>
 
-      {/* CSS animations */}
+      {/* Reel spin animation */}
       <style>{`
-        @keyframes spinVinyl { to { transform: rotate(360deg); } }
-        .hover\\:bg-white\\/3:hover { background: rgba(255,255,255,0.03); }
+        @keyframes reelSpin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   )

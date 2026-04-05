@@ -23,10 +23,11 @@ export async function GET() {
   const tracks: Track[] = (data ?? []).map((v) => {
     const project = Array.isArray(v.mf_projects) ? v.mf_projects[0] : v.mf_projects
     const projectTitle: string = project?.title ?? 'Unknown'
-    const versionLabel: string = v.label ?? `v${v.version_number}`
+    // Only show a custom label (e.g. "final mix") — never the auto "v1/v2/..." numbering.
+    const title = v.label ? `${projectTitle} — ${v.label}` : projectTitle
     return {
       id: v.id,
-      title: `${projectTitle} — ${versionLabel}`,
+      title,
       artist: projectTitle,
       artwork_url: project?.artwork_url ?? null,
       audio_url: v.audio_url,

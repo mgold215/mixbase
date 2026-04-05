@@ -135,7 +135,6 @@ export default async function DashboardPage() {
                     const latestStatus = latestVersion?.status ?? 'WIP'
                     const stage = getWorkflowStage(versions, releases)
                     const stageConf = STAGE_CONFIG[stage]
-                    const showPipelineLink = stage === 'finished' || stage === 'in_pipeline' || stage === 'released'
 
                     return (
                       <div key={project.id} className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2a2a2a] rounded-2xl overflow-hidden transition-colors flex flex-col">
@@ -186,16 +185,14 @@ export default async function DashboardPage() {
                           </div>
                         </Link>
 
-                        {/* Pipeline CTA */}
-                        {showPipelineLink && (
-                          <div className="px-4 pb-4">
-                            <AddToPipelineButton
-                              projectId={project.id}
-                              projectTitle={project.title}
-                              hasRelease={releases.length > 0}
-                            />
-                          </div>
-                        )}
+                        {/* Pipeline CTA — available for every project */}
+                        <div className="px-4 pb-4">
+                          <AddToPipelineButton
+                            projectId={project.id}
+                            projectTitle={project.title}
+                            hasRelease={releases.length > 0}
+                          />
+                        </div>
                       </div>
                     )
                   })}

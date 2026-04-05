@@ -59,6 +59,7 @@ export type Release = {
   title: string
   release_date: string | null
   project_id: string | null
+  final_version_id: string | null
   genre: string | null
   label: string | null
   isrc: string | null
