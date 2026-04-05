@@ -423,32 +423,65 @@ export default function PlayerPage() {
                   <span className="absolute right-4 top-2 text-white text-[11px] font-black tracking-wider">MIX</span>
                 </div>
 
-                {/* Yellow stripe — reels + tape */}
-                <div style={{ height: 160, background: STRIPE_YELLOW }} className="relative flex items-center justify-center px-12">
-                  <Reel spinning={isPlaying} />
-
-                  {/* Tape between reels — shiny brown magnetic tape */}
-                  <div className="flex-1 mx-5 relative h-8 rounded-sm overflow-hidden"
+                {/* Yellow stripe — reels sit in a 3D recessed tape window */}
+                <div style={{ height: 150, background: STRIPE_YELLOW }} className="relative">
+                  {/* Recessed dark window — heavy inset shadows + bottom highlight sell the depth */}
+                  <div
+                    className="absolute left-1/2 -translate-x-1/2 rounded-lg overflow-visible"
                     style={{
-                      background: '#0a0a0a',
-                      boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.9), inset 0 -1px 2px rgba(255,255,255,0.04)',
-                    }}>
-                    {/* Consumed tape (playhead has passed) */}
-                    <div className="absolute inset-y-0 left-0 transition-[width] duration-200"
+                      top: 14, bottom: 14, width: 250,
+                      background: 'radial-gradient(ellipse at 50% 25%, #2a2a2a 0%, #0a0a0a 75%)',
+                      boxShadow: [
+                        'inset 0 5px 12px rgba(0,0,0,0.95)',
+                        'inset 0 -2px 3px rgba(255,255,255,0.06)',
+                        'inset 0 0 0 1px rgba(0,0,0,0.6)',
+                        '0 1px 0 rgba(255,255,255,0.55)',
+                      ].join(', '),
+                    }}
+                  >
+                    {/* Reels close together with a short visible tape bridge */}
+                    <div className="absolute inset-0 flex items-center justify-center gap-1">
+                      <Reel spinning={isPlaying} />
+                      <div
+                        className="h-[3px] rounded-sm"
+                        style={{
+                          width: 14,
+                          background: 'linear-gradient(180deg, #7a4828 0%, #3a2010 50%, #1a0a04 100%)',
+                          boxShadow: '0 1px 0 rgba(255,180,120,0.15)',
+                        }}
+                      />
+                      <Reel spinning={isPlaying} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress bar — an exposed tape strip below the window */}
+                <div style={{ height: 30, background: STRIPE_YELLOW }} className="relative flex items-center px-8">
+                  <div
+                    className="flex-1 relative h-3 rounded-sm overflow-hidden"
+                    style={{
+                      background: '#080808',
+                      boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.95), inset 0 -1px 1px rgba(255,255,255,0.05), 0 1px 0 rgba(255,255,255,0.25)',
+                    }}
+                  >
+                    <div
+                      className="absolute inset-y-0 left-0 transition-[width] duration-200"
                       style={{
                         width: `${pct}%`,
-                        background: 'linear-gradient(180deg, #6b3e20 0%, #3a2010 50%, #2a1608 100%)',
-                        boxShadow: 'inset 0 1px 0 rgba(255,180,120,0.15)',
-                      }} />
-                    {/* Playhead marker */}
-                    <div className="absolute top-0 bottom-0 w-[2px] pointer-events-none"
-                      style={{ left: `${pct}%`, background: accentCss, boxShadow: `0 0 8px ${accentCss}` }} />
-                    {/* Seek input overlays the whole tape */}
-                    <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                      onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                        background: 'linear-gradient(180deg, #7a4828 0%, #3a2010 50%, #1a0a04 100%)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,180,120,0.18)',
+                      }}
+                    />
+                    <div
+                      className="absolute top-0 bottom-0 w-[2px] pointer-events-none"
+                      style={{ left: `${pct}%`, background: accentCss, boxShadow: `0 0 8px ${accentCss}` }}
+                    />
+                    <input
+                      type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+                      onChange={seek}
+                      className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                    />
                   </div>
-
-                  <Reel spinning={isPlaying} />
                 </div>
 
                 {/* Teal (green) stripe — clean decorative band (no text, per request) */}
