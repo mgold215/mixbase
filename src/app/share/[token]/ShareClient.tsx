@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic'
 import FeedbackForm from '@/components/FeedbackForm'
 import type { Version } from '@/lib/supabase'
+import { audioProxyUrl } from '@/lib/supabase'
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 
@@ -16,7 +17,7 @@ export default function ShareClient({ version }: Props) {
       {/* Waveform player */}
       <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-5">
         <WaveformPlayer
-          audioUrl={version.audio_url}
+          audioUrl={audioProxyUrl(version.audio_url)}
           allowDownload={version.allow_download}
           filename={version.audio_filename ?? undefined}
         />

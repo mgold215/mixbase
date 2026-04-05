@@ -137,25 +137,45 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // Route through Railway server using service role key — bypasses Supabase anon 50MB limit
-    const xhrResult = await new Promise<{ ok: boolean; audioUrl?: string; error?: string }>((resolve) => {
+    // Step 1: Get a signed upload URL (server uses service-role key; no Railway body limit involved)
+    setUploadStatus('Preparing upload...')
+    let signedUrl: string
+    let publicUrl: string
+    try {
+      const urlRes = await fetch('/api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, contentType }),
+      })
+      if (!urlRes.ok) {
+        const { error } = await urlRes.json().catch(() => ({ error: urlRes.statusText }))
+        setUploadStatus(`Error: ${error ?? 'Could not get upload URL'}`)
+        setUploadPct(0)
+        setUploading(false)
+        return
+      }
+      ;({ signedUrl, publicUrl } = await urlRes.json())
+    } catch (err) {
+      setUploadStatus(`Error: ${err instanceof Error ? err.message : 'Network error'}`)
+      setUploadPct(0)
+      setUploading(false)
+      return
+    }
+
+    // Step 2: PUT the file directly to Supabase — bypasses Railway's HTTP proxy entirely
+    setUploadStatus('Uploading...')
+    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       const xhr = new XMLHttpRequest()
       xhr.upload.addEventListener('progress', (ev) => {
         if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
       })
       xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try { resolve({ ok: true, audioUrl: JSON.parse(xhr.responseText).audioUrl }) }
-          catch { resolve({ ok: false, error: 'Invalid response' }) }
-        } else {
-          try { resolve({ ok: false, error: JSON.parse(xhr.responseText).error ?? xhr.responseText }) }
-          catch { resolve({ ok: false, error: xhr.responseText }) }
-        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
+        else resolve({ ok: false, error: `HTTP ${xhr.status}: ${xhr.responseText}` })
       })
       xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('POST', '/api/upload')
-      xhr.setRequestHeader('x-filename', filename)
-      xhr.setRequestHeader('x-content-type', contentType)
+      xhr.open('PUT', signedUrl)
+      xhr.setRequestHeader('Content-Type', contentType)
       xhr.send(selectedFile)
     })
 
@@ -166,7 +186,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       return
     }
 
-    const audioUrl = xhrResult.audioUrl!
+    const audioUrl = publicUrl
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
