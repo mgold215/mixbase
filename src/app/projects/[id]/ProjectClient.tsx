@@ -5,7 +5,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, type Project, type Version, type Feedback } from '@/lib/supabase'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil
@@ -99,7 +99,9 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     setUploadPct(0)
     setUploadStatus('Uploading...')
 
-    // Build a content-type fallback — many browsers don't set file.type for .wav/.aiff
+    const ext = selectedFile.name.split('.').pop()
+    const filename = `${project.id}/${Date.now()}.${ext}`
+
     const mimeByExt: Record<string, string> = {
       wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
       mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
@@ -107,37 +109,25 @@ export default function ProjectClient({ project, initialVersions }: Props) {
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // Step 1: ask our API for a one-time signed upload URL.
-    // This tiny JSON request is the ONLY thing that touches Railway.
-    const urlRes = await fetch('/api/upload-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: project.id, filename: selectedFile.name }),
-    })
-    const urlData = await urlRes.json()
-    if (!urlRes.ok) {
-      setUploadStatus(`Error: ${urlData.error ?? 'Could not get upload URL'}`)
-      setUploadPct(0)
-      setUploading(false)
-      return
-    }
-
-    // Step 2: PUT the audio file DIRECTLY to Supabase Storage using the
-    // signed URL. Railway's HTTP proxy is completely out of the path now,
-    // so the 50MB request-body limit that was truncating files is gone.
-    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    // Route through Railway server using service role key — bypasses Supabase anon 50MB limit
+    const xhrResult = await new Promise<{ ok: boolean; audioUrl?: string; error?: string }>((resolve) => {
       const xhr = new XMLHttpRequest()
       xhr.upload.addEventListener('progress', (ev) => {
         if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
       })
       xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
-        else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve({ ok: true, audioUrl: JSON.parse(xhr.responseText).audioUrl }) }
+          catch { resolve({ ok: false, error: 'Invalid response' }) }
+        } else {
+          try { resolve({ ok: false, error: JSON.parse(xhr.responseText).error ?? xhr.responseText }) }
+          catch { resolve({ ok: false, error: xhr.responseText }) }
+        }
       })
       xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('PUT', urlData.signedUrl)
-      xhr.setRequestHeader('Content-Type', contentType)
-      xhr.setRequestHeader('x-upsert', 'false')
+      xhr.open('POST', '/api/upload')
+      xhr.setRequestHeader('x-filename', filename)
+      xhr.setRequestHeader('x-content-type', contentType)
       xhr.send(selectedFile)
     })
 
@@ -148,7 +138,7 @@ export default function ProjectClient({ project, initialVersions }: Props) {
       return
     }
 
-    const audioUrl = urlData.publicUrl as string
+    const audioUrl = xhrResult.audioUrl!
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
