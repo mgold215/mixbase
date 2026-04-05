@@ -15,14 +15,22 @@ export type Track = {
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from('mf_versions')
-    .select('id, label, version_number, audio_url, status, created_at, mf_projects(title, artwork_url)')
-    .order('created_at', { ascending: false })
+    .select('id, project_id, label, version_number, audio_url, status, created_at, mf_projects(title, artwork_url)')
+    .order('version_number', { ascending: false })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const tracks: Track[] = (data ?? []).map((v) => {
+  // Keep only the highest version_number per project (latest version per track).
+  const seen = new Set<string>()
+  const latest = (data ?? []).filter((v) => {
+    if (seen.has(v.project_id)) return false
+    seen.add(v.project_id)
+    return true
+  })
+
+  const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mf_projects) ? v.mf_projects[0] : v.mf_projects
     const projectTitle: string = project?.title ?? 'Unknown'
     return {

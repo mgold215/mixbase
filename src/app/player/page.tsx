@@ -177,20 +177,32 @@ export default function PlayerPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIdx, filtered])
 
-  // ── Responsive scaling — fit the 760px cassette to any viewport ──────────────
+  // ── Responsive scaling — fit the 760px cassette within viewport bounds ──────
   useEffect(() => {
     const update = () => {
       const vw = window.innerWidth
+      const vh = window.innerHeight
       // Sidebar is 340px but only visible on md+ (>=768px)
       const sidebarW = vw >= 768 ? 340 : 0
-      const margin = 24
-      const availableW = vw - sidebarW - margin
-      setScale(Math.min(1, availableW / 760))
-      if (cassetteRef.current) setCassetteH(cassetteRef.current.offsetHeight)
+      const isDesktop = vw >= 640
+      // Control bar: ~80px desktop, ~112px mobile (extra progress row)
+      const controlBarH = isDesktop ? 80 : 112
+      const navH = 56
+      const horizontalMargin = isDesktop ? 48 : 24
+      const verticalMargin = 48 // top + bottom padding on the cassette stage
+      const availableW = vw - sidebarW - horizontalMargin
+      const availableH = vh - navH - controlBarH - verticalMargin
+      const natural = cassetteRef.current
+      const naturalH = natural?.offsetHeight ?? cassetteH
+      const scaleW = availableW / 760
+      const scaleH = availableH / naturalH
+      setScale(Math.max(0.25, Math.min(1, scaleW, scaleH)))
+      if (natural) setCassetteH(natural.offsetHeight)
     }
     update()
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current])
 
   useEffect(() => { if (audioRef.current) audioRef.current.volume = volume }, [volume])
@@ -630,7 +642,7 @@ export default function PlayerPage() {
                 <div className="absolute inset-y-0 left-0 rounded-full"
                   style={{ width: `${pct}%`, background: accentCss }} />
                 <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                  onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                  onChange={seek} className="absolute left-0 w-full h-6 -top-2.5 opacity-0 cursor-pointer" />
               </div>
               <span className="text-[11px] text-white/40 font-mono tabular-nums">
                 −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
