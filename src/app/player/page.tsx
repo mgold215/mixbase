@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Sliders,
+  Repeat, Repeat1, Search, ListMusic, Sliders, Menu, X,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -97,6 +97,9 @@ export default function PlayerPage() {
   const [eqPreset, setEqPreset] = useState<EQPreset>('Flat')
   const [speed, setSpeed] = useState(1)
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [scale, setScale] = useState(1)
+  const [cassetteH, setCassetteH] = useState(500)
 
   // BPM / key analysis
   const [trackBPM, setTrackBPM] = useState<number | null>(null)
@@ -112,6 +115,7 @@ export default function PlayerPage() {
   const midRef = useRef<BiquadFilterNode | null>(null)
   const trebleRef = useRef<BiquadFilterNode | null>(null)
   const analysisAbortRef = useRef<AbortController | null>(null)
+  const cassetteRef = useRef<HTMLDivElement>(null)
 
   const current = filtered[currentIdx] ?? null
 
@@ -172,6 +176,22 @@ export default function PlayerPage() {
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIdx, filtered])
+
+  // ── Responsive scaling — fit the 760px cassette to any viewport ──────────────
+  useEffect(() => {
+    const update = () => {
+      const vw = window.innerWidth
+      // Sidebar is 340px but only visible on md+ (>=768px)
+      const sidebarW = vw >= 768 ? 340 : 0
+      const margin = 24
+      const availableW = vw - sidebarW - margin
+      setScale(Math.min(1, availableW / 760))
+      if (cassetteRef.current) setCassetteH(cassetteRef.current.offsetHeight)
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [current])
 
   useEffect(() => { if (audioRef.current) audioRef.current.volume = volume }, [volume])
   useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = speed }, [speed])
@@ -297,15 +317,38 @@ export default function PlayerPage() {
         }} />
       </div>
 
-      {/* ── Sidebar: track list ─────────────────────────────────────────────── */}
-      <aside className="relative w-[340px] flex-shrink-0 flex flex-col z-10"
+      {/* ── Mobile backdrop (only when sidebar open) ─────────────────────── */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="md:hidden absolute inset-0 bg-black/60 z-20"
+        />
+      )}
+
+      {/* ── Sidebar: track list (fixed drawer on mobile, inline on desktop) ── */}
+      <aside
+        className={`
+          flex flex-col z-30 transition-transform duration-300
+          md:relative md:w-[340px] md:flex-shrink-0 md:translate-x-0
+          absolute inset-y-0 left-0 w-[300px] max-w-[85vw]
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
         style={{
-          background: 'rgba(8,6,18,0.72)',
+          background: 'rgba(8,6,18,0.92)',
           borderRight: '1px solid rgba(255,255,255,0.06)',
           backdropFilter: 'blur(24px)',
         }}>
         <div className="px-5 pt-6 pb-4">
-          <p className="text-[10px] font-semibold tracking-[0.22em] text-[#777] uppercase mb-4">All Tracks</p>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-semibold tracking-[0.22em] text-[#777] uppercase">All Tracks</p>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="md:hidden p-1.5 rounded-md text-[#666] hover:text-white hover:bg-white/5 transition-colors"
+              title="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#555]" />
             <input
@@ -336,7 +379,7 @@ export default function PlayerPage() {
           )) : filtered.map((t, i) => {
             const active = i === currentIdx
             return (
-              <button key={t.id} onClick={() => goTo(i)}
+              <button key={t.id} onClick={() => { goTo(i); setSidebarOpen(false) }}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-left transition-all mb-1 ${active ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'}`}
                 style={active ? { borderLeft: `2px solid ${accentCss}`, paddingLeft: 8 } : { borderLeft: '2px solid transparent' }}>
                 <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 relative">
@@ -359,7 +402,7 @@ export default function PlayerPage() {
                     {t.title}
                   </p>
                   <p className="text-xs text-[#666] truncate mt-1">
-                    <span className="font-mono">{t.version}</span>
+                    <span className="font-mono">v{String(t.version).replace(/^v/i, '')}</span>
                     <span className="mx-1.5 text-[#444]">·</span>
                     <span>{t.status}</span>
                   </p>
@@ -371,9 +414,29 @@ export default function PlayerPage() {
       </aside>
 
       {/* ── Main stage: the cassette (with controls inside) ────────────────── */}
-      <main className="relative flex-1 flex items-center justify-center px-8 overflow-hidden z-10">
+      <main className="relative flex-1 flex items-center justify-center px-3 sm:px-8 overflow-hidden z-10">
+        {/* Mobile hamburger — opens the track-list drawer */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="md:hidden absolute top-3 left-3 z-10 p-2 rounded-lg bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          title="Open track list"
+        >
+          <Menu size={18} />
+        </button>
         {current && status && (
-          <div className="relative" style={{ width: 760, maxWidth: '100%' }}>
+          <div
+            className="relative"
+            style={{ width: 760 * scale, height: cassetteH * scale }}
+          >
+            <div
+              ref={cassetteRef}
+              className="relative"
+              style={{
+                width: 760,
+                transform: `scale(${scale})`,
+                transformOrigin: 'top left',
+              }}
+            >
             {/* Cassette shell — chamfered bottom corners like a real cassette */}
             <div
               className="relative overflow-hidden"
@@ -627,6 +690,7 @@ export default function PlayerPage() {
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         )}
