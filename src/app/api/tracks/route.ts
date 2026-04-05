@@ -8,6 +8,7 @@ export type Track = {
   artwork_url: string | null
   audio_url: string
   status: string
+  version: string
   uploaded_at: number
 }
 
@@ -24,15 +25,15 @@ export async function GET() {
   const tracks: Track[] = (data ?? []).map((v) => {
     const project = Array.isArray(v.mf_projects) ? v.mf_projects[0] : v.mf_projects
     const projectTitle: string = project?.title ?? 'Unknown'
-    // Only show a custom label (e.g. "final mix") — never the auto "v1/v2/..." numbering.
-    const title = v.label ? `${projectTitle} — ${v.label}` : projectTitle
     return {
       id: v.id,
-      title,
+      // Title is just the project title — the version label lives in its own field.
+      title: projectTitle,
       artist: projectTitle,
       artwork_url: project?.artwork_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',
+      version: v.label || `v${v.version_number}`,
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
     }
   })

@@ -406,7 +406,7 @@ export default function PlayerPage() {
                 {/* Blue top stripe — brand */}
                 <div style={{ height: 44, background: STRIPE_BLUE }} className="relative flex items-center px-6">
                   <span className="text-white/80 text-[11px] font-black tracking-[0.32em] lowercase">moodmixformat</span>
-                  <span className="ml-auto text-white/60 text-[9px] font-bold tracking-[0.2em]">TYPE I · NORMAL BIAS · 120μs EQ</span>
+                  <span className="ml-auto text-white text-[12px] font-black tracking-[0.2em] uppercase px-2 py-0.5 rounded bg-white/10">{current.version}</span>
                 </div>
 
                 {/* Pink stripe — track title */}
