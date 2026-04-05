@@ -65,13 +65,15 @@ function Reel({ spinning, size = 78 }: { spinning: boolean; size?: number }) {
         filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))',
       }}
     >
-      {/* Outer plastic tire — very dark with a subtle rim highlight */}
-      <circle r="48" fill="#0a0a0a" />
-      <circle r="48" fill="none" stroke="#2a2a2a" strokeWidth="0.8" />
-      <circle r="44" fill="none" stroke="#1a1a1a" strokeWidth="0.5" />
-      {/* Inner disc — slightly lighter ring for depth */}
-      <circle r="38" fill="#050505" />
-      <circle r="38" fill="none" stroke="#1a1a1a" strokeWidth="0.4" />
+      {/* Outer wound tape — concentric brown rings fading inward */}
+      <circle r="48" fill="#2a1608" />
+      <circle r="48" fill="none" stroke="#3a1e0a" strokeWidth="0.8" />
+      {[46, 43, 40, 37, 34, 31].map((r, i) => (
+        <circle key={r} r={r} fill="none" stroke={i % 2 ? '#1a0d05' : '#3a1e0a'} strokeWidth="1" />
+      ))}
+      {/* Inner black hub disc */}
+      <circle r="28" fill="#0a0a0a" />
+      <circle r="28" fill="none" stroke="#1a1a1a" strokeWidth="0.5" />
       {/* 6-point star spindle cutout */}
       <polygon points={star} fill="#1a1a1a" stroke="#000" strokeWidth="0.5" strokeLinejoin="miter" />
       <circle r="3" fill="#000" />
@@ -428,36 +430,39 @@ export default function PlayerPage() {
                 {/* Yellow stripe — pill-shaped window with two black hubs touching,
                     separated by a thin silver divider (matches the MMF logo). */}
                 <div style={{ height: 126, background: STRIPE_YELLOW }} className="relative">
-                  {/* Pill-shaped translucent window — the cassette's tape window cutout */}
+                  {/* Pill-shaped smoked-glass window — dark interior with slight
+                      translucency, so you can faintly see detail behind it */}
                   <div
                     className="absolute left-1/2 -translate-x-1/2 rounded-full overflow-hidden"
                     style={{
                       top: 14, bottom: 14, width: 360,
-                      background: 'linear-gradient(180deg, rgba(235,235,240,0.85) 0%, rgba(200,200,210,0.75) 50%, rgba(220,220,225,0.85) 100%)',
-                      backdropFilter: 'blur(6px)',
+                      background: 'linear-gradient(180deg, rgba(38,34,44,0.88) 0%, rgba(18,16,22,0.92) 55%, rgba(28,24,32,0.88) 100%)',
+                      backdropFilter: 'blur(4px)',
                       boxShadow: [
-                        'inset 0 3px 8px rgba(0,0,0,0.35)',
-                        'inset 0 -2px 4px rgba(255,255,255,0.5)',
-                        'inset 0 0 0 1px rgba(255,255,255,0.4)',
-                        '0 1px 0 rgba(255,255,255,0.7)',
+                        'inset 0 4px 10px rgba(0,0,0,0.85)',
+                        'inset 0 -2px 4px rgba(255,255,255,0.08)',
+                        'inset 0 0 0 1px rgba(0,0,0,0.6)',
+                        'inset 0 0 0 2px rgba(255,255,255,0.08)',
+                        '0 1px 0 rgba(255,255,255,0.55)',
                       ].join(', '),
                     }}
                   >
-                    {/* Two hubs nearly touching, center silver divider between them */}
-                    <div className="absolute inset-0 flex items-center justify-center gap-1.5">
+                    {/* Two hubs spaced apart with real cassette proportions */}
+                    <div className="absolute inset-0 flex items-center justify-center gap-[88px]">
                       <Reel spinning={isPlaying} />
-                      {/* Thin silver center divider — tape-guide bar */}
-                      <div
-                        className="rounded-[1px]"
-                        style={{
-                          width: 4,
-                          height: 72,
-                          background: 'linear-gradient(180deg, #d4d4d4 0%, #888 40%, #555 60%, #2a2a2a 100%)',
-                          boxShadow: 'inset 0 0 0 0.5px #000, 0 0 4px rgba(0,0,0,0.6)',
-                        }}
-                      />
                       <Reel spinning={isPlaying} />
                     </div>
+                    {/* Thin exposed tape stretched across the top between hubs */}
+                    <div
+                      className="absolute h-[2px] pointer-events-none"
+                      style={{
+                        top: '32%',
+                        left: '22%',
+                        right: '22%',
+                        background: 'linear-gradient(180deg, #6b3e20 0%, #3a2010 60%, #1a0a04 100%)',
+                        boxShadow: '0 1px 0 rgba(255,180,120,0.1), 0 -1px 0 rgba(0,0,0,0.4)',
+                      }}
+                    />
                   </div>
                 </div>
 
