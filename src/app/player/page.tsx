@@ -413,16 +413,17 @@ export default function PlayerPage() {
         </div>
       </aside>
 
-      {/* ── Main stage: the cassette (with controls inside) ────────────────── */}
-      <main className="relative flex-1 flex items-center justify-center px-3 sm:px-8 overflow-hidden z-10">
+      {/* ── Main stage: the cassette + full-width control bar ─────────────── */}
+      <main className="relative flex-1 flex flex-col overflow-hidden z-10">
         {/* Mobile hamburger — opens the track-list drawer */}
         <button
           onClick={() => setSidebarOpen(true)}
-          className="md:hidden absolute top-3 left-3 z-10 p-2 rounded-lg bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          className="md:hidden absolute top-3 left-3 z-20 p-2 rounded-lg bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
           title="Open track list"
         >
           <Menu size={18} />
         </button>
+        <div className="flex-1 flex items-center justify-center px-3 sm:px-8 py-6 overflow-y-auto">
         {current && status && (
           <div
             className="relative"
@@ -583,114 +584,164 @@ export default function PlayerPage() {
                 </div>
               </div>
 
-              {/* Time readout */}
-              <div className="flex items-center justify-between px-2 pt-3 pb-2">
-                <span className="text-[11px] text-white/60 font-mono tabular-nums tracking-wide">
-                  {formatDuration(Math.floor(currentTime))}
-                </span>
-                <span className="text-[11px] text-white/40 font-mono tabular-nums tracking-wide">
-                  −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
-                </span>
-              </div>
-
-              {/* Metal base with controls inside */}
+              {/* Metal base — decorative, shows the real cassette hub-drive
+                  holes + capstan/pinch-roller holes along the bottom shell */}
               <div
-                className="relative rounded-md flex items-center justify-between px-6"
+                className="relative rounded-md flex items-center justify-center gap-8 px-6"
                 style={{
-                  height: 72,
+                  height: 56,
                   background: 'linear-gradient(180deg, #5a5664 0%, #3a3642 45%, #1a161e 100%)',
                   boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3)',
                 }}>
-                {/* Shuffle + loop (left) */}
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setShuffle(s => !s)}
-                    className="p-2 rounded-md hover:bg-white/5 transition-colors"
-                    style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.4)' }}
-                    title="Shuffle">
-                    <Shuffle size={15} />
-                  </button>
-                  <button onClick={cycleLoop}
-                    className="p-2 rounded-md hover:bg-white/5 transition-colors"
-                    style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.4)' }}
-                    title={`Loop: ${loopMode}`}>
-                    {loopMode === 'one' ? <Repeat1 size={15} /> : <Repeat size={15} />}
-                  </button>
-                </div>
-
-                {/* Transport (center) */}
-                <div className="flex items-center gap-4">
-                  <button onClick={prev}
-                    className="p-2 text-white/70 hover:text-white transition-colors"
-                    title="Previous">
-                    <SkipBack size={22} fill="currentColor" />
-                  </button>
-                  <button onClick={togglePlay}
-                    className="w-14 h-14 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                {/* 5 decorative drive holes, like a real cassette bottom */}
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i}
+                    className="rounded-full"
                     style={{
-                      background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.8))`,
-                      boxShadow: `0 0 28px rgba(${accent[0]},${accent[1]},${accent[2]},0.6), inset 0 1px 0 rgba(255,255,255,0.25)`,
+                      width: i === 2 ? 8 : 14,
+                      height: i === 2 ? 8 : 14,
+                      background: 'radial-gradient(circle at 50% 30%, #000 0%, #1a1a1a 70%, #2a2a2a 100%)',
+                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.9), inset 0 -1px 0 rgba(255,255,255,0.08)',
                     }}
-                    title={isPlaying ? 'Pause' : 'Play'}>
-                    {isPlaying
-                      ? <Pause size={24} fill="#000" className="text-black" />
-                      : <Play size={24} fill="#000" className="text-black ml-0.5" />}
-                  </button>
-                  <button onClick={next}
-                    className="p-2 text-white/70 hover:text-white transition-colors"
-                    title="Next">
-                    <SkipForward size={22} fill="currentColor" />
-                  </button>
-                </div>
-
-                {/* Volume + settings (right) */}
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <Volume2 size={13} className="text-white/40" />
-                    <div className="relative w-20 h-[3px] rounded-full bg-white/10">
-                      <div className="absolute left-0 top-0 h-full rounded-full pointer-events-none"
-                        style={{ width: `${volume * 100}%`, background: 'rgba(255,255,255,0.5)' }} />
-                      <input type="range" min={0} max={1} step={0.01} value={volume}
-                        onChange={e => setVolume(parseFloat(e.target.value))}
-                        className="absolute inset-0 w-full opacity-0 cursor-pointer h-4 -top-1.5" />
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <button onClick={() => setShowSettings(v => !v)}
-                      className="p-2 rounded-md hover:bg-white/5 transition-colors"
-                      style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : 'rgba(255,255,255,0.4)' }}
-                      title="Settings">
-                      <Sliders size={15} />
-                    </button>
-                    {showSettings && (
-                      <div className="absolute bottom-10 right-0 rounded-xl border border-white/10 overflow-hidden shadow-2xl z-50 min-w-[220px]"
-                        style={{ background: 'rgba(14,10,28,0.98)', backdropFilter: 'blur(24px)' }}>
-                        <div className="px-3 py-2.5 border-b border-white/5">
-                          <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
-                          <button onClick={cycleSpeed}
-                            className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
-                            {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
-                          </button>
-                        </div>
-                        <div className="px-3 py-2.5">
-                          <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">EQ Preset</p>
-                          <div className="flex flex-wrap gap-1">
-                            {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
-                              <button key={p} onClick={() => setEqPreset(p)}
-                                className="text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium"
-                                style={eqPreset === p
-                                  ? { color: '#fff', background: accentCss }
-                                  : { color: '#888', background: 'rgba(255,255,255,0.06)' }}>
-                                {p}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  />
+                ))}
               </div>
             </div>
+            </div>
+          </div>
+        )}
+        </div>
+
+        {/* ── Full-width native-size control bar ───────────────────────────── */}
+        {current && (
+          <div
+            className="flex-shrink-0 w-full border-t border-white/10 px-3 sm:px-6 py-3"
+            style={{
+              background: 'rgba(8,6,18,0.85)',
+              backdropFilter: 'blur(24px)',
+            }}
+          >
+            {/* Time + progress (above controls on mobile, hidden on wide) */}
+            <div className="flex items-center gap-3 mb-2 sm:hidden">
+              <span className="text-[11px] text-white/60 font-mono tabular-nums">
+                {formatDuration(Math.floor(currentTime))}
+              </span>
+              <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div className="absolute inset-y-0 left-0 rounded-full"
+                  style={{ width: `${pct}%`, background: accentCss }} />
+                <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+                  onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+              </div>
+              <span className="text-[11px] text-white/40 font-mono tabular-nums">
+                −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 sm:gap-6">
+              {/* Left: shuffle + loop */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button onClick={() => setShuffle(s => !s)}
+                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  title="Shuffle">
+                  <Shuffle size={20} />
+                </button>
+                <button onClick={cycleLoop}
+                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  title={`Loop: ${loopMode}`}>
+                  {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
+                </button>
+              </div>
+
+              {/* Center: transport + (desktop) inline progress */}
+              <div className="flex-1 flex items-center gap-4 sm:gap-5 min-w-0 justify-center">
+                <button onClick={prev}
+                  className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0"
+                  title="Previous">
+                  <SkipBack size={26} fill="currentColor" />
+                </button>
+                <button onClick={togglePlay}
+                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+                  style={{
+                    background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.8))`,
+                    boxShadow: `0 0 28px rgba(${accent[0]},${accent[1]},${accent[2]},0.6), inset 0 1px 0 rgba(255,255,255,0.25)`,
+                  }}
+                  title={isPlaying ? 'Pause' : 'Play'}>
+                  {isPlaying
+                    ? <Pause size={28} fill="#000" className="text-black" />
+                    : <Play size={28} fill="#000" className="text-black ml-0.5" />}
+                </button>
+                <button onClick={next}
+                  className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0"
+                  title="Next">
+                  <SkipForward size={26} fill="currentColor" />
+                </button>
+
+                {/* Desktop inline progress bar */}
+                <div className="hidden sm:flex flex-1 items-center gap-3 min-w-0 max-w-[520px]">
+                  <span className="text-[11px] text-white/60 font-mono tabular-nums flex-shrink-0">
+                    {formatDuration(Math.floor(currentTime))}
+                  </span>
+                  <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div className="absolute inset-y-0 left-0 rounded-full"
+                      style={{ width: `${pct}%`, background: accentCss }} />
+                    <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+                      onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                  </div>
+                  <span className="text-[11px] text-white/40 font-mono tabular-nums flex-shrink-0">
+                    −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
+                  </span>
+                </div>
+              </div>
+
+              {/* Right: volume + settings */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="hidden sm:flex items-center gap-2">
+                  <Volume2 size={16} className="text-white/50" />
+                  <div className="relative w-24 h-1.5 rounded-full bg-white/10">
+                    <div className="absolute left-0 top-0 h-full rounded-full pointer-events-none"
+                      style={{ width: `${volume * 100}%`, background: 'rgba(255,255,255,0.6)' }} />
+                    <input type="range" min={0} max={1} step={0.01} value={volume}
+                      onChange={e => setVolume(parseFloat(e.target.value))}
+                      className="absolute inset-0 w-full opacity-0 cursor-pointer h-4 -top-1.5" />
+                  </div>
+                </div>
+                <div className="relative">
+                  <button onClick={() => setShowSettings(v => !v)}
+                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                    style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : 'rgba(255,255,255,0.55)' }}
+                    title="Settings">
+                    <Sliders size={20} />
+                  </button>
+                  {showSettings && (
+                    <div className="absolute bottom-12 right-0 rounded-xl border border-white/10 overflow-hidden shadow-2xl z-50 min-w-[220px]"
+                      style={{ background: 'rgba(14,10,28,0.98)', backdropFilter: 'blur(24px)' }}>
+                      <div className="px-3 py-2.5 border-b border-white/5">
+                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
+                        <button onClick={cycleSpeed}
+                          className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
+                          {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
+                        </button>
+                      </div>
+                      <div className="px-3 py-2.5">
+                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">EQ Preset</p>
+                        <div className="flex flex-wrap gap-1">
+                          {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
+                            <button key={p} onClick={() => setEqPreset(p)}
+                              className="text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium"
+                              style={eqPreset === p
+                                ? { color: '#fff', background: accentCss }
+                                : { color: '#888', background: 'rgba(255,255,255,0.06)' }}>
+                              {p}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
