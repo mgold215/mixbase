@@ -10,6 +10,7 @@ import {
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
+import Nav from '@/components/Nav'
 
 type LoopMode = 'none' | 'all' | 'one'
 type EQPreset = 'Flat' | 'Bass' | 'Vocal' | 'Air' | 'Lo-Fi'
@@ -254,18 +255,23 @@ export default function PlayerPage() {
   // ── Empty state ────────────────────────────────────────────────────────────────
   if (!loading && tracks.length === 0) {
     return (
-      <div className="fixed inset-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
+      <>
+      <Nav />
+      <div className="fixed top-14 left-0 right-0 bottom-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
         <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
           Go upload some mixes →
         </Link>
       </div>
+      </>
     )
   }
 
   return (
-    <div className="fixed inset-0 bg-black flex overflow-hidden select-none">
+    <>
+    <Nav />
+    <div className="fixed top-14 left-0 right-0 bottom-0 bg-black flex overflow-hidden select-none">
       <audio
         ref={audioRef}
         onTimeUpdate={onTimeUpdate}
@@ -281,7 +287,7 @@ export default function PlayerPage() {
           <Image
             src={current.artwork_url} alt="" fill unoptimized
             className="object-cover transition-opacity duration-700"
-            style={{ filter: 'blur(32px) saturate(1.8) brightness(0.55)' }}
+            style={{ filter: 'blur(14px) saturate(1.5) brightness(0.6)' }}
           />
         )}
         {/* Vignette for readability */}
@@ -587,5 +593,6 @@ export default function PlayerPage() {
         @keyframes reelSpin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
+    </>
   )
 }
