@@ -5,7 +5,8 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import { supabase, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import * as tus from 'tus-js-client'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
@@ -137,50 +138,38 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // Step 1: Get a signed upload URL (server uses service-role key; no Railway body limit involved)
-    setUploadStatus('Preparing upload...')
-    let signedUrl: string
-    let publicUrl: string
-    try {
-      const urlRes = await fetch('/api/upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, contentType }),
-      })
-      if (!urlRes.ok) {
-        const { error } = await urlRes.json().catch(() => ({ error: urlRes.statusText }))
-        setUploadStatus(`Error: ${error ?? 'Could not get upload URL'}`)
-        setUploadPct(0)
-        setUploading(false)
-        return
-      }
-      ;({ signedUrl, publicUrl } = await urlRes.json())
-    } catch (err) {
-      setUploadStatus(`Error: ${err instanceof Error ? err.message : 'Network error'}`)
-      setUploadPct(0)
-      setUploading(false)
-      return
-    }
-
-    // Step 2: PUT the file directly to Supabase — bypasses Railway's HTTP proxy entirely
+    // Upload directly to Supabase via TUS (chunked/resumable) — bypasses Railway entirely,
+    // no single-request size limit, works for files of any size
     setUploadStatus('Uploading...')
-    const xhrResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      const xhr = new XMLHttpRequest()
-      xhr.upload.addEventListener('progress', (ev) => {
-        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/mf-audio/${filename}`
+    const tusResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const upload = new tus.Upload(selectedFile, {
+        endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
+        retryDelays: [0, 3000, 5000, 10000, 20000],
+        headers: {
+          authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          'x-upsert': 'true',
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        chunkSize: 6 * 1024 * 1024, // 6 MB chunks
+        metadata: {
+          bucketName: 'mf-audio',
+          objectName: filename,
+          contentType,
+          cacheControl: '3600',
+        },
+        onError: (err) => resolve({ ok: false, error: err.message }),
+        onProgress: (bytesUploaded, bytesTotal) => {
+          if (bytesTotal) setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
+        },
+        onSuccess: () => resolve({ ok: true }),
       })
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
-        else resolve({ ok: false, error: `HTTP ${xhr.status}: ${xhr.responseText}` })
-      })
-      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('PUT', signedUrl)
-      xhr.setRequestHeader('Content-Type', contentType)
-      xhr.send(selectedFile)
+      upload.start()
     })
 
-    if (!xhrResult.ok) {
-      setUploadStatus(`Error: ${xhrResult.error ?? 'Upload failed'}`)
+    if (!tusResult.ok) {
+      setUploadStatus(`Error: ${tusResult.error ?? 'Upload failed'}`)
       setUploadPct(0)
       setUploading(false)
       return
