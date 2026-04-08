@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { Play, Pause, Download } from 'lucide-react'
 import { formatDuration } from '@/lib/supabase'
 
@@ -53,12 +53,44 @@ export default function WaveformPlayer({
     }
   }, [syncPosition, duration])
 
-  function togglePlay() {
+  const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
     if (isPlaying) { audio.pause(); setIsPlaying(false) }
     else { audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
-  }
+  }, [isPlaying])
+
+  // ── Media Session API ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: filename ?? 'Track',
+      artist: '',
+      artwork: [],
+    })
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
+    set('play',         () => togglePlay())
+    set('pause',        () => togglePlay())
+    set('seekbackward', (d) => {
+      if (!audioRef.current) return
+      audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10))
+    })
+    set('seekforward', (d) => {
+      if (!audioRef.current) return
+      audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10))
+    })
+    set('seekto', (d) => {
+      if (d.seekTime == null || !audioRef.current) return
+      audioRef.current.currentTime = Math.min(d.seekTime, audioRef.current.duration || 0)
+    })
+    return () => {
+      ;(['play','pause','seekbackward','seekforward','seekto'] as MediaSessionAction[])
+        .forEach(a => set(a, null))
+    }
+  }, [audioUrl, isPlaying, filename, togglePlay])
 
   function seek(e: React.ChangeEvent<HTMLInputElement>) {
     const audio = audioRef.current

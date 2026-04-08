@@ -266,6 +266,78 @@ export default function PlayerPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [togglePlay, prev, next])
 
+  // ── Media Session API ──────────────────────────────────────────────────────────
+
+  // 1. Metadata — update lock screen / control center when track changes
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !current) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: current.title,
+      artist: current.artist,
+      artwork: current.artwork_url
+        ? [{ src: current.artwork_url, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+  }, [current])
+
+  // 2. Action handlers — wire hardware/control-center buttons to player
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
+    set('play',          () => togglePlay())
+    set('pause',         () => togglePlay())
+    set('previoustrack', () => prev())
+    set('nexttrack',     () => next())
+    set('seekbackward', (d) => {
+      if (!audioRef.current) return
+      audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10))
+    })
+    set('seekforward', (d) => {
+      if (!audioRef.current) return
+      audioRef.current.currentTime = Math.min(duration, audioRef.current.currentTime + (d.seekOffset ?? 10))
+    })
+    set('seekto', (d) => {
+      if (d.seekTime == null || !audioRef.current) return
+      audioRef.current.currentTime = Math.min(d.seekTime, duration)
+    })
+    return () => {
+      ;(['play','pause','previoustrack','nexttrack','seekbackward','seekforward','seekto'] as MediaSessionAction[])
+        .forEach(a => set(a, null))
+    }
+  }, [togglePlay, prev, next, duration])
+
+  // 3. playbackState — keep OS media UI in sync
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [isPlaying])
+
+  // 4. setPositionState — drives the control center scrubber
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || duration <= 0) return
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        position: Math.min(currentTime, duration),
+        playbackRate: speed,
+      })
+    } catch { /* guard against race where position > duration */ }
+  }, [currentTime, duration, speed])
+
+  // 5. visibilitychange — resume AudioContext when returning from background
+  // 'suspended' = Chrome/Firefox; 'interrupted' = iOS Safari
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && audioCtxRef.current?.state !== 'running') {
+        audioCtxRef.current?.resume().catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
+
   const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const t = parseFloat(e.target.value)
     if (audioRef.current) audioRef.current.currentTime = t
