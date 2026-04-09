@@ -41,10 +41,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [showAB, setShowAB] = useState(false)
   const [expandedVersion, setExpandedVersion] = useState<string | null>(versions[0]?.id ?? null)
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
-  const [uploadForm, setUploadForm] = useState({
-    label: '', change_log: '', private_notes: '', public_notes: '',
-    status: 'WIP' as Version['status'], allow_download: false,
-  })
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
@@ -207,7 +203,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         audio_filename: selectedFile.name,
         duration_seconds: duration,
         file_size_bytes: selectedFile.size,
-        ...uploadForm,
       }),
     })
 
@@ -220,7 +215,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         setExpandedVersion(newVersion.id)
         setShowUpload(false)
         setSelectedFile(null)
-        setUploadForm({ label: '', change_log: '', private_notes: '', public_notes: '', status: 'WIP', allow_download: false })
         setUploadPct(0)
         setUploadStatus('')
         setUploading(false)
@@ -363,8 +357,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             onClick={() => setShowUpload(!showUpload)}
             className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
           >
-            <Plus size={15} />
-            Add Version
+            <Upload size={15} />
+            Update Track
           </button>
 
           {versions.length >= 2 && (
@@ -383,7 +377,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         {/* Upload form */}
         {showUpload && (
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
-            <h2 className="text-sm font-semibold text-white mb-4">Upload New Version</h2>
             <div className="space-y-4">
               {!selectedFile ? (
                 <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
@@ -434,80 +427,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Version label</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. More low end"
-                    value={uploadForm.label}
-                    onChange={e => setUploadForm(p => ({ ...p, label: e.target.value }))}
-                    className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Status</label>
-                  <select
-                    value={uploadForm.status}
-                    onChange={e => setUploadForm(p => ({ ...p, status: e.target.value as Version['status'] }))}
-                    className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 appearance-none"
-                  >
-                    {STATUSES.map(s => <option key={s} value={s} className="bg-[#111]">{s}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs text-[#666] mb-1.5">What changed from last version?</label>
-                <textarea
-                  placeholder="e.g. Boosted the sub, tightened the reverb tail on the snare..."
-                  value={uploadForm.change_log}
-                  onChange={e => setUploadForm(p => ({ ...p, change_log: e.target.value }))}
-                  rows={2}
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40 resize-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Private notes</label>
-                  <textarea
-                    placeholder="Internal notes..."
-                    value={uploadForm.private_notes}
-                    onChange={e => setUploadForm(p => ({ ...p, private_notes: e.target.value }))}
-                    rows={2}
-                    className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40 resize-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-[#666] mb-1.5">Public notes (share page)</label>
-                  <textarea
-                    placeholder="Notes for listener..."
-                    value={uploadForm.public_notes}
-                    onChange={e => setUploadForm(p => ({ ...p, public_notes: e.target.value }))}
-                    rows={2}
-                    className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40 resize-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="allow_download"
-                  checked={uploadForm.allow_download}
-                  onChange={e => setUploadForm(p => ({ ...p, allow_download: e.target.checked }))}
-                  className="accent-[#a78bfa]"
-                />
-                <label htmlFor="allow_download" className="text-xs text-[#666]">Allow download on share page</label>
-              </div>
-
               <button
                 onClick={handleUploadSubmit}
                 disabled={!selectedFile || uploading}
                 className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-3 transition-colors"
               >
-                {uploading ? (uploadStatus.startsWith('Error') ? 'Upload Version' : uploadStatus) : uploadStatus.startsWith('Error') ? 'Try Again' : 'Upload Version'}
+                {uploading ? (uploadStatus.startsWith('Error') ? 'Upload' : uploadStatus) : uploadStatus.startsWith('Error') ? 'Try Again' : 'Upload'}
               </button>
             </div>
           </div>
