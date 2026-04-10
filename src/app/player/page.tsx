@@ -83,7 +83,7 @@ function Reel({ spinning, size = 78 }: { spinning: boolean; size?: number }) {
 }
 
 export default function PlayerPage() {
-  const { pause: pauseGlobal } = usePlayer()
+  const { pause: pauseGlobal, currentTrack: globalCurrentTrack, currentTime: globalCurrentTime, isPlaying: globalIsPlaying } = usePlayer()
 
   const [tracks, setTracks] = useState<Track[]>([])
   const [filtered, setFiltered] = useState<Track[]>([])
@@ -119,11 +119,21 @@ export default function PlayerPage() {
   const trebleRef = useRef<BiquadFilterNode | null>(null)
   const analysisAbortRef = useRef<AbortController | null>(null)
   const cassetteRef = useRef<HTMLDivElement>(null)
+  // Stores the global player's position so we can resume from it when entering the full player
+  const resumeAtRef = useRef<{ projectId: string; time: number } | null>(null)
+  // Captured at mount so the deep-link effect can fall back to it even after the global player is paused
+  const globalTrackIdOnMountRef = useRef<string | null>(globalCurrentTrack?.project_id ?? null)
 
   const current = filtered[currentIdx] ?? null
 
-  // ── Stop mini-player when entering the full player ────────────────────────────
-  useEffect(() => { pauseGlobal() }, [pauseGlobal])
+  // ── Hand off from mini-player: capture position then stop global audio ────────
+  useEffect(() => {
+    if (globalCurrentTrack && globalIsPlaying) {
+      resumeAtRef.current = { projectId: globalCurrentTrack.project_id, time: globalCurrentTime }
+    }
+    pauseGlobal()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pauseGlobal])
 
   // ── Fetch tracks ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -144,10 +154,11 @@ export default function PlayerPage() {
     setCurrentIdx(0)
   }, [tracks, sortKey, search])
 
-  // ── Deep-link: ?track=<project_id> from mini-player expand ───────────────────
+  // ── Deep-link: ?track=<project_id> OR fall back to whatever was playing globally
   useEffect(() => {
     if (filtered.length === 0) return
     const targetProjectId = new URLSearchParams(window.location.search).get('track')
+      ?? globalTrackIdOnMountRef.current
     if (!targetProjectId) return
     const idx = filtered.findIndex(t => t.project_id === targetProjectId)
     if (idx !== -1) { setCurrentIdx(idx); setIsPlaying(true) }
@@ -176,6 +187,12 @@ export default function PlayerPage() {
     audio.volume = volume
     audio.playbackRate = speed
     setCurrentTime(0); setDuration(0); setTrackBPM(null); setTrackKey(null)
+    // Resume from global player's position if this is the handed-off track
+    const resume = resumeAtRef.current
+    if (resume && current.project_id === resume.projectId) {
+      resumeAtRef.current = null
+      audio.currentTime = resume.time
+    }
     if (isPlaying) audio.play().catch(() => setIsPlaying(false))
 
     if (current.artwork_url) {
