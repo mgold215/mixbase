@@ -343,12 +343,24 @@ export default function PlayerPage() {
     } catch { /* guard against race where position > duration */ }
   }, [currentTime, duration, speed])
 
-  // 5. visibilitychange — resume AudioContext when returning from background
-  // 'suspended' = Chrome/Firefox; 'interrupted' = iOS Safari
+  // 5. visibilitychange — resume AudioContext + audio element when returning from background
+  // On iOS, minimizing the browser:
+  //   • Suspends the AudioContext ('interrupted' on Safari, 'suspended' on Chrome)
+  //   • Fires a 'pause' event on the <audio> element (setting isPlaying=false)
+  // Resuming only the AudioContext leaves the audio element paused. We must also
+  // call audio.play() if audio was playing before the page was hidden.
   useEffect(() => {
+    let wasPlaying = false
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && audioCtxRef.current?.state !== 'running') {
-        audioCtxRef.current?.resume().catch(() => {})
+      if (document.visibilityState === 'hidden') {
+        wasPlaying = !(audioRef.current?.paused ?? true)
+      } else if (document.visibilityState === 'visible') {
+        if (audioCtxRef.current?.state !== 'running') {
+          audioCtxRef.current?.resume().catch(() => {})
+        }
+        if (wasPlaying && audioRef.current?.paused) {
+          audioRef.current.play().catch(() => {})
+        }
       }
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
