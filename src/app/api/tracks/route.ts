@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 
 export type Track = {
   id: string
+  project_id: string
   title: string
   artist: string
   artwork_url: string | null
@@ -35,6 +36,7 @@ export async function GET() {
     const projectTitle: string = project?.title ?? 'Unknown'
     return {
       id: v.id,
+      project_id: v.project_id,
       // Title is just the project title — the version label lives in its own field.
       title: projectTitle,
       artist: projectTitle,
