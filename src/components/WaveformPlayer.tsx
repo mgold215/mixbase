@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Play, Pause, Download } from 'lucide-react'
 import { formatDuration } from '@/lib/supabase'
 
@@ -92,7 +92,7 @@ export default function WaveformPlayer({
     }
   }, [audioUrl, isPlaying, filename, togglePlay])
 
-  function seek(e: React.ChangeEvent<HTMLInputElement>) {
+  function seek(e: ChangeEvent<HTMLInputElement>) {
     const audio = audioRef.current
     if (!audio) return
     audio.currentTime = Number(e.target.value)
@@ -104,7 +104,7 @@ export default function WaveformPlayer({
     if (audioRef.current) audioRef.current.playbackRate = s
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
+  function handleKeyDown(e: KeyboardEvent) {
     if (e.key === ' ') { e.preventDefault(); togglePlay() }
     if (e.key === 'ArrowRight' && audioRef.current) audioRef.current.currentTime += 5
     if (e.key === 'ArrowLeft' && audioRef.current) audioRef.current.currentTime -= 5

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 
@@ -22,7 +22,7 @@ type PlayerCtx = {
 
 const PlayerContext = createContext<PlayerCtx | null>(null)
 
-export function PlayerProvider({ children }: { children: React.ReactNode }) {
+export function PlayerProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([])
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -88,24 +88,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     } catch { /* position race */ }
   }, [currentTime, duration])
 
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return
-    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
-      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
-    }
-    set('play',          () => audioRef.current?.play().catch(() => {}))
-    set('pause',         () => audioRef.current?.pause())
-    set('previoustrack', () => prev())
-    set('nexttrack',     () => next())
-    set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
-    set('seekbackward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
-    set('seekforward',   (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
-    return () => {
-      ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
-        .forEach(a => set(a, null))
-    }
-  }, [prev, next])
-
   // ── visibilitychange — resume audio after iOS suspends it on minimize ────────
   useEffect(() => {
     let wasPlaying = false
@@ -170,6 +152,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const prevTrack = tracks[(idx - 1 + tracks.length) % tracks.length]
     if (prevTrack) playTrack(prevTrack.project_id)
   }, [tracks, currentProjectId, playTrack])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
+    set('play',          () => audioRef.current?.play().catch(() => {}))
+    set('pause',         () => audioRef.current?.pause())
+    set('previoustrack', () => prev())
+    set('nexttrack',     () => next())
+    set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
+    set('seekbackward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
+    set('seekforward',   (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
+    return () => {
+      ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
+        .forEach(a => set(a, null))
+    }
+  }, [prev, next])
 
   return (
     <PlayerContext.Provider value={{
