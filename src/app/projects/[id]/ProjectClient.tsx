@@ -182,10 +182,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     let duration: number | null = null
     try {
       duration = await new Promise((resolve) => {
-        const audio = new Audio(audioUrl)
+        const audio = new Audio(audioProxyUrl(audioUrl))
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
-        setTimeout(() => resolve(null), 3000)
+        setTimeout(() => resolve(null), 8000)
       })
     } catch {
       duration = null
