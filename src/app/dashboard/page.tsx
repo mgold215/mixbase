@@ -3,8 +3,9 @@ import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Plus, Music, Clock } from 'lucide-react'
+import { Plus, Music } from 'lucide-react'
 import AddToPipelineButton from '@/components/AddToPipelineButton'
+import DashPlayButton from '@/components/DashPlayButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,7 +33,6 @@ function getWorkflowStage(
 }
 
 export default async function DashboardPage() {
-  // Fetch projects, recent activity, and stats in parallel
   const [projectsRes, activityRes] = await Promise.all([
     supabaseAdmin
       .from('mf_projects')
@@ -48,7 +48,6 @@ export default async function DashboardPage() {
   const projects = projectsRes.data ?? []
   const activity = activityRes.data ?? []
 
-  // Compute stats
   const stats = {
     total: projects.length,
     wip: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
@@ -77,39 +76,40 @@ export default async function DashboardPage() {
     <div className="min-h-screen bg-[#080808]">
       <Nav />
       <div className="pt-14">
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
 
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-white">Your Projects</h1>
-              <p className="text-[#555] text-sm mt-0.5">Track every version from first idea to release</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-white">Your Projects</h1>
+              <p className="text-[#555] text-xs sm:text-sm mt-0.5">Track every version from first idea to release</p>
             </div>
             <Link
               href="/projects/new"
-              className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+              className="flex items-center gap-1.5 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"
             >
-              <Plus size={16} />
-              New Project
+              <Plus size={15} />
+              <span className="hidden sm:inline">New Project</span>
+              <span className="sm:hidden">New</span>
             </Link>
           </div>
 
-          {/* Stats bar */}
-          <div className="grid grid-cols-4 gap-3 mb-8">
+          {/* Stats bar — 2×2 on mobile, 4-col on sm+ */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             {[
               { label: 'Total', value: stats.total, color: 'text-white' },
               { label: 'WIP', value: stats.wip, color: 'text-yellow-400' },
               { label: 'Finished', value: stats.finished, color: 'text-emerald-400' },
               { label: 'Released', value: stats.released, color: 'text-purple-400' },
             ].map(stat => (
-              <div key={stat.label} className="bg-[#111] border border-[#1a1a1a] rounded-xl p-4">
-                <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+              <div key={stat.label} className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3 sm:p-4">
+                <p className={`text-xl sm:text-2xl font-bold ${stat.color}`}>{stat.value}</p>
                 <p className="text-[#555] text-xs mt-0.5">{stat.label}</p>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 lg:gap-8">
             {/* Projects grid */}
             <div>
               {projects.length === 0 ? (
@@ -127,7 +127,7 @@ export default async function DashboardPage() {
                   </Link>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                   {projects.map(project => {
                     const versions: { status: string }[] = project.mf_versions ?? []
                     const releases: { id: string }[] = project.mf_releases ?? []
@@ -150,48 +150,52 @@ export default async function DashboardPage() {
                               />
                             ) : (
                               <div className="absolute inset-0 flex items-center justify-center">
-                                <Music size={32} className="text-[#222]" />
+                                <Music size={28} className="text-[#222]" />
                               </div>
                             )}
-                            {/* Status badge overlay */}
-                            <div className="absolute top-3 right-3">
+                            {/* Status badge */}
+                            <div className="absolute top-2 right-2">
                               <StatusBadge status={latestStatus} size="sm" />
                             </div>
                             {/* Workflow stage badge */}
-                            <div className="absolute top-3 left-3">
-                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${stageConf.color}`}>
+                            <div className="absolute top-2 left-2">
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${stageConf.color}`}>
                                 {stageConf.label}
                               </span>
                             </div>
                           </div>
-
-                          {/* Info */}
-                          <div className="p-4 pb-3">
-                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors">
-                              {project.title}
-                            </h3>
-                            <div className="flex items-center gap-3 mt-1.5">
-                              {project.genre && (
-                                <span className="text-xs text-[#555]">{project.genre}</span>
-                              )}
-                              {project.bpm && (
-                                <span className="text-xs text-[#444]">{project.bpm} BPM</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-2 text-[#444] text-xs">
-                              <Clock size={11} />
-                              <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
-                            </div>
-                          </div>
                         </Link>
 
-                        {/* Pipeline CTA — available for every project */}
-                        <div className="px-4 pb-4">
-                          <AddToPipelineButton
-                            projectId={project.id}
-                            projectTitle={project.title}
-                            hasRelease={releases.length > 0}
-                          />
+                        {/* Info + actions */}
+                        <div className="p-3 flex flex-col gap-2 flex-1">
+                          <Link href={`/projects/${project.id}`} className="block min-w-0">
+                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors leading-tight">
+                              {project.title}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              {project.genre && (
+                                <span className="text-[11px] text-[#555]">{project.genre}</span>
+                              )}
+                              {project.bpm && (
+                                <span className="text-[11px] text-[#444]">{project.bpm} BPM</span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-[#444] mt-1">
+                              {versions.length} version{versions.length !== 1 ? 's' : ''}
+                            </p>
+                          </Link>
+
+                          {/* Bottom actions row */}
+                          <div className="flex items-center gap-2 mt-auto">
+                            <DashPlayButton projectId={project.id} />
+                            <div className="flex-1 min-w-0">
+                              <AddToPipelineButton
+                                projectId={project.id}
+                                projectTitle={project.title}
+                                hasRelease={releases.length > 0}
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )
@@ -200,8 +204,8 @@ export default async function DashboardPage() {
               )}
             </div>
 
-            {/* Activity feed */}
-            <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-5 h-fit">
+            {/* Activity feed — hidden on mobile, visible on lg+ */}
+            <div className="hidden lg:block bg-[#111] border border-[#1a1a1a] rounded-2xl p-5 h-fit">
               <h2 className="text-sm font-semibold text-white mb-4">Recent Activity</h2>
               {activity.length === 0 ? (
                 <p className="text-[#444] text-xs">No activity yet</p>

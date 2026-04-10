@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { PlayerProvider } from "@/contexts/PlayerContext";
+import MiniPlayer from "@/components/MiniPlayer";
 
 export const metadata: Metadata = {
   title: "Mixfolio",
@@ -13,7 +15,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full">
-      <body className="min-h-full bg-[#080808] text-[#f0f0f0]">{children}</body>
+      <body className="min-h-full bg-[#080808] text-[#f0f0f0] pb-16">
+        <PlayerProvider>
+          <MiniPlayer />
+          {children}
+        </PlayerProvider>
+      </body>
     </html>
   );
 }

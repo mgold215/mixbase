@@ -11,6 +11,7 @@ import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import Nav from '@/components/Nav'
+import { usePlayer } from '@/contexts/PlayerContext'
 
 type LoopMode = 'none' | 'all' | 'one'
 type EQPreset = 'Flat' | 'Bass' | 'Vocal' | 'Air' | 'Lo-Fi'
@@ -82,6 +83,8 @@ function Reel({ spinning, size = 78 }: { spinning: boolean; size?: number }) {
 }
 
 export default function PlayerPage() {
+  const { pause: pauseGlobal } = usePlayer()
+
   const [tracks, setTracks] = useState<Track[]>([])
   const [filtered, setFiltered] = useState<Track[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,6 +122,9 @@ export default function PlayerPage() {
 
   const current = filtered[currentIdx] ?? null
 
+  // ── Stop mini-player when entering the full player ────────────────────────────
+  useEffect(() => { pauseGlobal() }, [pauseGlobal])
+
   // ── Fetch tracks ──────────────────────────────────────────────────────────────
   useEffect(() => {
     fetch('/api/tracks').then(r => r.json()).then((d: Track[]) => {
@@ -137,6 +143,17 @@ export default function PlayerPage() {
     setFiltered(list)
     setCurrentIdx(0)
   }, [tracks, sortKey, search])
+
+  // ── Deep-link: ?track=<project_id> from mini-player expand ───────────────────
+  useEffect(() => {
+    if (filtered.length === 0) return
+    const targetProjectId = new URLSearchParams(window.location.search).get('track')
+    if (!targetProjectId) return
+    const idx = filtered.findIndex(t => t.project_id === targetProjectId)
+    if (idx !== -1) { setCurrentIdx(idx); setIsPlaying(true) }
+  // Only run once after first filtered population
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered.length > 0 ? 'ready' : 'empty'])
 
   // ── Setup Web Audio chain (once, on first interaction) ─────────────────────────
   function ensureAudioChain() {
