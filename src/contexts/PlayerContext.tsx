@@ -64,6 +64,64 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const currentTrack = tracks.find(t => t.project_id === currentProjectId) ?? null
 
+  // ── Media Session API ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !currentTrack) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      artwork: currentTrack.artwork_url
+        ? [{ src: currentTrack.artwork_url, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+  }, [currentTrack])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [isPlaying])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || duration <= 0) return
+    try {
+      navigator.mediaSession.setPositionState({ duration, position: Math.min(currentTime, duration), playbackRate: 1 })
+    } catch { /* position race */ }
+  }, [currentTime, duration])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
+    set('play',          () => audioRef.current?.play().catch(() => {}))
+    set('pause',         () => audioRef.current?.pause())
+    set('previoustrack', () => prev())
+    set('nexttrack',     () => next())
+    set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
+    set('seekbackward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
+    set('seekforward',   (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
+    return () => {
+      ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
+        .forEach(a => set(a, null))
+    }
+  }, [prev, next])
+
+  // ── visibilitychange — resume audio after iOS suspends it on minimize ────────
+  useEffect(() => {
+    let wasPlaying = false
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wasPlaying = !(audioRef.current?.paused ?? true)
+      } else if (document.visibilityState === 'visible') {
+        if (wasPlaying && audioRef.current?.paused) {
+          audioRef.current.play().catch(() => {})
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
   const playTrack = useCallback((projectId: string) => {
     const audio = audioRef.current
     if (!audio) return
