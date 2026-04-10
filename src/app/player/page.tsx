@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import {
@@ -338,7 +338,7 @@ export default function PlayerPage() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [])
 
-  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const t = parseFloat(e.target.value)
     if (audioRef.current) audioRef.current.currentTime = t
     setCurrentTime(t)
