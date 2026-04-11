@@ -13,7 +13,7 @@ type PlayerCtx = {
   duration: number
   volume: number
   /** The persistent <audio> element — share with the full player for seamless handoff */
-  audioRef: RefObject<HTMLAudioElement>
+  audioRef: RefObject<HTMLAudioElement | null>
   playTrack: (projectId: string) => void
   pause: () => void
   togglePlay: () => void
