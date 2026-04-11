@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
@@ -71,7 +71,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     ? versions.filter(v => v.project_id === form.project_id)
     : []
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
     setSaveError(null)

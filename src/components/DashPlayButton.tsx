@@ -1,5 +1,6 @@
 'use client'
 
+import type { MouseEvent } from 'react'
 import { Play, Pause } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 
@@ -7,7 +8,7 @@ export default function DashPlayButton({ projectId }: { projectId: string }) {
   const { playTrack, pause, currentTrack, isPlaying } = usePlayer()
   const isActive = currentTrack?.project_id === projectId
 
-  function handleClick(e: React.MouseEvent) {
+  function handleClick(e: MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
     if (isActive && isPlaying) {

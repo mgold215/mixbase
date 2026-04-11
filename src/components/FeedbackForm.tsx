@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Star } from 'lucide-react'
 
 type Props = {
@@ -17,7 +17,7 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!comment.trim()) return
     setSubmitting(true)

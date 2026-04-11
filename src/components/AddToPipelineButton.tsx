@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Loader2 } from 'lucide-react'
 
@@ -14,7 +14,7 @@ export default function AddToPipelineButton({ projectId, projectTitle, hasReleas
   const router = useRouter()
   const [loading, setLoading] = useState(false)
 
-  async function handleClick(e: React.MouseEvent) {
+  async function handleClick(e: MouseEvent) {
     e.preventDefault()
     if (hasRelease) {
       router.push('/pipeline')

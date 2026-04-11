@@ -83,16 +83,13 @@ function Reel({ spinning, size = 78 }: { spinning: boolean; size?: number }) {
 }
 
 export default function PlayerPage() {
-  const { pause: pauseGlobal, currentTrack: globalCurrentTrack, currentTime: globalCurrentTime, isPlaying: globalIsPlaying } = usePlayer()
+  const {
+    tracks, loading, currentTrack, isPlaying, currentTime, duration,
+    volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
+    ensureAudioChain, setEQGains, audioRef,
+  } = usePlayer()
 
-  const [tracks, setTracks] = useState<Track[]>([])
   const [filtered, setFiltered] = useState<Track[]>([])
-  const [loading, setLoading] = useState(true)
-  const [currentIdx, setCurrentIdx] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [volume, setVolume] = useState(0.85)
   const [loopMode, setLoopMode] = useState<LoopMode>('none')
   const [shuffle, setShuffle] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('date')
@@ -112,37 +109,18 @@ export default function PlayerPage() {
   const [accent, setAccent] = useState<[number, number, number]>([167, 139, 250])
 
   // Refs
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const bassRef = useRef<BiquadFilterNode | null>(null)
-  const midRef = useRef<BiquadFilterNode | null>(null)
-  const trebleRef = useRef<BiquadFilterNode | null>(null)
   const analysisAbortRef = useRef<AbortController | null>(null)
   const cassetteRef = useRef<HTMLDivElement>(null)
-  // Stores the global player's position so we can resume from it when entering the full player
-  const resumeAtRef = useRef<{ projectId: string; time: number } | null>(null)
-  // Captured at mount so the deep-link effect can fall back to it even after the global player is paused
-  const globalTrackIdOnMountRef = useRef<string | null>(globalCurrentTrack?.project_id ?? null)
 
-  const current = filtered[currentIdx] ?? null
+  // current = whatever the shared audio engine is playing right now
+  const current = currentTrack
+  // index of current track within the filtered sidebar list (for nav + highlight)
+  const currentIdx = filtered.findIndex(t => t.project_id === currentTrack?.project_id)
 
-  // ── Hand off from mini-player: capture position then stop global audio ────────
-  useEffect(() => {
-    if (globalCurrentTrack && globalIsPlaying) {
-      resumeAtRef.current = { projectId: globalCurrentTrack.project_id, time: globalCurrentTime }
-    }
-    pauseGlobal()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pauseGlobal])
+  // ── Init EQ chain when entering the full player ────────────────────────────
+  useEffect(() => { ensureAudioChain() }, [ensureAudioChain])
 
-  // ── Fetch tracks ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    fetch('/api/tracks').then(r => r.json()).then((d: Track[]) => {
-      setTracks(d); setLoading(false)
-    }).catch(() => setLoading(false))
-  }, [])
-
-  // ── Sort + search ─────────────────────────────────────────────────────────────
+  // ── Sort + search (uses tracks from context) ──────────────────────────────
   useEffect(() => {
     let list = [...tracks]
     if (search.trim()) {
@@ -151,65 +129,46 @@ export default function PlayerPage() {
     }
     list.sort((a, b) => sortKey === 'title' ? a.title.localeCompare(b.title) : b.uploaded_at - a.uploaded_at)
     setFiltered(list)
-    setCurrentIdx(0)
   }, [tracks, sortKey, search])
 
-  // ── Deep-link: ?track=<project_id> OR fall back to whatever was playing globally
+  // ── Deep-link / autoplay ───────────────────────────────────────────────────
+  // If a ?track= param is present, switch to it (but don't restart if already on it).
+  // If nothing is playing yet, autoplay the first track.
   useEffect(() => {
     if (filtered.length === 0) return
-    const targetProjectId = new URLSearchParams(window.location.search).get('track')
-      ?? globalTrackIdOnMountRef.current
-    if (!targetProjectId) return
-    const idx = filtered.findIndex(t => t.project_id === targetProjectId)
-    if (idx !== -1) { setCurrentIdx(idx); setIsPlaying(true) }
-  // Only run once after first filtered population
+    const targetId = new URLSearchParams(window.location.search).get('track')
+    if (targetId) {
+      if (currentTrack?.project_id !== targetId) {
+        const t = filtered.find(t => t.project_id === targetId)
+        if (t) playTrack(t.project_id)
+      }
+    } else if (!currentTrack && filtered[0]) {
+      playTrack(filtered[0].project_id)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered.length > 0 ? 'ready' : 'empty'])
 
-  // ── Setup Web Audio chain (once, on first interaction) ─────────────────────────
-  function ensureAudioChain() {
-    if (audioCtxRef.current || !audioRef.current) return
-    const ctx = new AudioContext()
-    const src = ctx.createMediaElementSource(audioRef.current)
-    const bass = ctx.createBiquadFilter(); bass.type = 'lowshelf'; bass.frequency.value = 200
-    const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1200; mid.Q.value = 1.2
-    const treble = ctx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 4000
-    src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(ctx.destination)
-    audioCtxRef.current = ctx
-    bassRef.current = bass; midRef.current = mid; trebleRef.current = treble
-  }
-
-  // ── Load track ─────────────────────────────────────────────────────────────────
+  // ── Accent color from artwork ──────────────────────────────────────────────
   useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !current) return
-    audio.src = audioProxyUrl(current.audio_url)
-    audio.volume = volume
-    audio.playbackRate = speed
-    setCurrentTime(0); setDuration(0); setTrackBPM(null); setTrackKey(null)
-    // Resume from global player's position if this is the handed-off track
-    const resume = resumeAtRef.current
-    if (resume && current.project_id === resume.projectId) {
-      resumeAtRef.current = null
-      audio.currentTime = resume.time
-    }
-    if (isPlaying) audio.play().catch(() => setIsPlaying(false))
-
-    if (current.artwork_url) {
+    if (current?.artwork_url) {
       extractDominantColor(current.artwork_url).then(setAccent).catch(() => setAccent([167, 139, 250]))
     } else {
       setAccent([167, 139, 250])
     }
+  }, [current])
 
+  // ── BPM / key analysis ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!current) return
     analysisAbortRef.current?.abort()
     const abort = new AbortController()
     analysisAbortRef.current = abort
+    setTrackBPM(null); setTrackKey(null)
     analyzeAudioUrl(audioProxyUrl(current.audio_url)).then(result => {
       if (abort.signal.aborted) return
       if (result) { setTrackBPM(result.bpm); setTrackKey(result.key) }
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIdx, filtered])
+  }, [current])
 
   // ── Responsive scaling — fit the 760px cassette within viewport bounds ──────
   useEffect(() => {
@@ -239,53 +198,47 @@ export default function PlayerPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current])
 
-  useEffect(() => { if (audioRef.current) audioRef.current.volume = volume }, [volume])
-  useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = speed }, [speed])
+  // Speed syncs directly to the shared audio element
+  useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = speed }, [speed, audioRef])
 
+  // EQ preset → gain values via context
   useEffect(() => {
     const [bv, mv, tv] = EQ_PRESETS[eqPreset]
-    if (bassRef.current) bassRef.current.gain.value = bv
-    if (midRef.current) midRef.current.gain.value = mv
-    if (trebleRef.current) trebleRef.current.gain.value = tv
-  }, [eqPreset])
+    setEQGains(bv, mv, tv)
+  }, [eqPreset, setEQGains])
 
-  // ── Playback ───────────────────────────────────────────────────────────────────
-  const goTo = useCallback((idx: number, play = true) => {
-    setCurrentIdx(idx); if (play) setIsPlaying(true)
-  }, [])
+  // ── Playback (operates on shared context state + filtered list) ───────────
+  const goTo = useCallback((idx: number) => {
+    if (filtered[idx]) playTrack(filtered[idx].project_id)
+  }, [filtered, playTrack])
 
   const next = useCallback(() => {
     if (filtered.length === 0) return
+    const idx = currentIdx >= 0 ? currentIdx : 0
     if (shuffle) goTo(Math.floor(Math.random() * filtered.length))
-    else goTo((currentIdx + 1) % filtered.length)
+    else goTo((idx + 1) % filtered.length)
   }, [shuffle, currentIdx, filtered.length, goTo])
 
   const prev = useCallback(() => {
-    if (currentTime > 3 && audioRef.current) { audioRef.current.currentTime = 0; return }
+    if (currentTime > 3) { ctxSeek(0); return }
     if (filtered.length === 0) return
-    goTo((currentIdx - 1 + filtered.length) % filtered.length)
-  }, [currentIdx, currentTime, filtered.length, goTo])
+    const idx = currentIdx >= 0 ? currentIdx : 0
+    goTo((idx - 1 + filtered.length) % filtered.length)
+  }, [currentIdx, currentTime, filtered.length, goTo, ctxSeek])
 
-  const togglePlay = useCallback(() => {
+  // ── Loop mode: add ended listener to the shared audio element ────────────
+  useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
-    ensureAudioChain()
-    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume()
-    if (isPlaying) { audio.pause(); setIsPlaying(false) }
-    else { audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
-  }, [isPlaying])
-
-  // ── Audio events ───────────────────────────────────────────────────────────────
-  const onTimeUpdate = () => setCurrentTime(audioRef.current?.currentTime ?? 0)
-  const onDurationChange = () => setDuration(audioRef.current?.duration ?? 0)
-  const onPlay = () => setIsPlaying(true)
-  const onPause = () => setIsPlaying(false)
-  const onEnded = useCallback(() => {
-    if (loopMode === 'one') { audioRef.current?.play().catch(() => {}); return }
-    if (loopMode === 'all') { next(); return }
-    if (currentIdx < filtered.length - 1) next()
-    else setIsPlaying(false)
-  }, [loopMode, currentIdx, filtered.length, next])
+    const handleEnded = () => {
+      if (loopMode === 'one') { audio.play().catch(() => {}); return }
+      if (loopMode === 'all') { next(); return }
+      const idx = currentIdx >= 0 ? currentIdx : 0
+      if (idx < filtered.length - 1) next()
+    }
+    audio.addEventListener('ended', handleEnded)
+    return () => audio.removeEventListener('ended', handleEnded)
+  }, [audioRef, loopMode, currentIdx, filtered.length, next])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -300,21 +253,8 @@ export default function PlayerPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [togglePlay, prev, next])
 
-  // ── Media Session API ──────────────────────────────────────────────────────────
-
-  // 1. Metadata — update lock screen / control center when track changes
-  useEffect(() => {
-    if (!('mediaSession' in navigator) || !current) return
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: current.title,
-      artist: current.artist,
-      artwork: current.artwork_url
-        ? [{ src: current.artwork_url, sizes: '512x512', type: 'image/jpeg' }]
-        : [],
-    })
-  }, [current])
-
-  // 2. Action handlers — wire hardware/control-center buttons to player
+  // ── Media Session: override context's action handlers with full-player nav ─
+  // (shuffle + filtered-list next/prev). Context handles metadata + position state.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
@@ -336,19 +276,14 @@ export default function PlayerPage() {
       if (d.seekTime == null || !audioRef.current) return
       audioRef.current.currentTime = Math.min(d.seekTime, duration)
     })
+    // On unmount, restore context's global handlers by re-triggering its effect
     return () => {
       ;(['play','pause','previoustrack','nexttrack','seekbackward','seekforward','seekto'] as MediaSessionAction[])
         .forEach(a => set(a, null))
     }
-  }, [togglePlay, prev, next, duration])
+  }, [togglePlay, prev, next, duration, audioRef])
 
-  // 3. playbackState — keep OS media UI in sync
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return
-    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
-  }, [isPlaying])
-
-  // 4. setPositionState — drives the control center scrubber
+  // setPositionState with playbackRate (context handles the rest)
   useEffect(() => {
     if (!('mediaSession' in navigator) || duration <= 0) return
     try {
@@ -360,34 +295,8 @@ export default function PlayerPage() {
     } catch { /* guard against race where position > duration */ }
   }, [currentTime, duration, speed])
 
-  // 5. visibilitychange — resume AudioContext + audio element when returning from background
-  // On iOS, minimizing the browser:
-  //   • Suspends the AudioContext ('interrupted' on Safari, 'suspended' on Chrome)
-  //   • Fires a 'pause' event on the <audio> element (setting isPlaying=false)
-  // Resuming only the AudioContext leaves the audio element paused. We must also
-  // call audio.play() if audio was playing before the page was hidden.
-  useEffect(() => {
-    let wasPlaying = false
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        wasPlaying = !(audioRef.current?.paused ?? true)
-      } else if (document.visibilityState === 'visible') {
-        if (audioCtxRef.current?.state !== 'running') {
-          audioCtxRef.current?.resume().catch(() => {})
-        }
-        if (wasPlaying && audioRef.current?.paused) {
-          audioRef.current.play().catch(() => {})
-        }
-      }
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [])
-
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
-    const t = parseFloat(e.target.value)
-    if (audioRef.current) audioRef.current.currentTime = t
-    setCurrentTime(t)
+    ctxSeek(parseFloat(e.target.value))
   }
 
   const cycleLoop = () => setLoopMode(m => m === 'none' ? 'all' : m === 'all' ? 'one' : 'none')
@@ -401,7 +310,7 @@ export default function PlayerPage() {
   const status = current ? statusTag(current.status) : null
 
   // ── Empty state ────────────────────────────────────────────────────────────────
-  if (!loading && tracks.length === 0) {
+  if (!loading && tracks.length === 0) {  // tracks + loading come from PlayerContext
     return (
       <>
       <Nav />
@@ -420,14 +329,7 @@ export default function PlayerPage() {
     <>
     <Nav />
     <div className="fixed top-14 left-0 right-0 bottom-0 bg-black flex overflow-hidden select-none">
-      <audio
-        ref={audioRef}
-        onTimeUpdate={onTimeUpdate}
-        onDurationChange={onDurationChange}
-        onEnded={onEnded}
-        onPlay={onPlay}
-        onPause={onPause}
-      />
+      {/* No local <audio> — playback runs through the shared PlayerContext element */}
 
       {/* ── BIG album art backdrop (the whole screen) ─────────────────────────── */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -507,7 +409,7 @@ export default function PlayerPage() {
               </div>
             </div>
           )) : filtered.map((t, i) => {
-            const active = i === currentIdx
+            const active = t.project_id === currentTrack?.project_id
             return (
               <button key={t.id} onClick={() => { goTo(i); setSidebarOpen(false) }}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-left transition-all mb-1 ${active ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'}`}

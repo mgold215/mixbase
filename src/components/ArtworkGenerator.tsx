@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { Sparkles, Upload, X } from 'lucide-react'
 import Image from 'next/image'
 
@@ -41,7 +41,7 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     setGenerating(false)
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
 

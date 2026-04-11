@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { ArrowLeft } from 'lucide-react'
@@ -19,7 +19,7 @@ export default function NewProjectPage() {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!form.title.trim()) return
     setLoading(true)

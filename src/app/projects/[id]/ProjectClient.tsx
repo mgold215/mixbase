@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
@@ -96,7 +96,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     setSelectedFile(file); setUploadStatus('')
