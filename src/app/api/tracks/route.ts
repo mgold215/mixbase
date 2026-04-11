@@ -15,8 +15,8 @@ export type Track = {
 
 export async function GET() {
   const { data, error } = await supabaseAdmin
-    .from('mf_versions')
-    .select('id, project_id, label, version_number, audio_url, status, created_at, mf_projects(title, artwork_url)')
+    .from('mb_versions')
+    .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
     .order('version_number', { ascending: false })
 
   if (error) {
@@ -32,7 +32,7 @@ export async function GET() {
   })
 
   const tracks: Track[] = latest.map((v) => {
-    const project = Array.isArray(v.mf_projects) ? v.mf_projects[0] : v.mf_projects
+    const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
     const projectTitle: string = project?.title ?? 'Unknown'
     return {
       id: v.id,

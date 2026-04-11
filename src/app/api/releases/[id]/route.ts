@@ -6,7 +6,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/releas
   const body = await request.json()
 
   const { data, error } = await supabaseAdmin
-    .from('mf_releases')
+    .from('mb_releases')
     .update({ ...body, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -18,7 +18,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/releas
 
 export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/releases/[id]'>) {
   const { id } = await ctx.params
-  const { error } = await supabaseAdmin.from('mf_releases').delete().eq('id', id)
+  const { error } = await supabaseAdmin.from('mb_releases').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

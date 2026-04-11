@@ -7,7 +7,7 @@ create extension if not exists "pgcrypto";
 -- ============================================================
 -- PROJECTS: Each mix project (song/track)
 -- ============================================================
-create table if not exists mf_projects (
+create table if not exists mb_projects (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   artwork_url text,
@@ -21,9 +21,9 @@ create table if not exists mf_projects (
 -- ============================================================
 -- VERSIONS: Each iteration of a mix (v1, v2, v3...)
 -- ============================================================
-create table if not exists mf_versions (
+create table if not exists mb_versions (
   id uuid primary key default gen_random_uuid(),
-  project_id uuid references mf_projects(id) on delete cascade,
+  project_id uuid references mb_projects(id) on delete cascade,
   version_number integer not null,
   label text,                          -- e.g. "More low end", "Fixed chorus"
   audio_url text not null,
@@ -42,9 +42,9 @@ create table if not exists mf_versions (
 -- ============================================================
 -- FEEDBACK: Listener responses on share pages
 -- ============================================================
-create table if not exists mf_feedback (
+create table if not exists mb_feedback (
   id uuid primary key default gen_random_uuid(),
-  version_id uuid references mf_versions(id) on delete cascade,
+  version_id uuid references mb_versions(id) on delete cascade,
   reviewer_name text not null default 'Anonymous',
   rating integer check (rating >= 1 and rating <= 5),
   comment text,
@@ -55,11 +55,11 @@ create table if not exists mf_feedback (
 -- ============================================================
 -- RELEASES: Release pipeline planning
 -- ============================================================
-create table if not exists mf_releases (
+create table if not exists mb_releases (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   release_date date,
-  project_id uuid references mf_projects(id) on delete set null,
+  project_id uuid references mb_projects(id) on delete set null,
   genre text,
   label text,
   isrc text,
@@ -86,10 +86,10 @@ create table if not exists mf_releases (
 -- ============================================================
 -- ACTIVITY LOG: For the dashboard activity feed
 -- ============================================================
-create table if not exists mf_activity (
+create table if not exists mb_activity (
   id uuid primary key default gen_random_uuid(),
   type text not null,                  -- version_upload | status_change | feedback_received | release_created
-  project_id uuid references mf_projects(id) on delete cascade,
+  project_id uuid references mb_projects(id) on delete cascade,
   version_id uuid,
   release_id uuid,
   description text,
@@ -99,18 +99,18 @@ create table if not exists mf_activity (
 -- ============================================================
 -- INDEXES for performance
 -- ============================================================
-create index if not exists idx_versions_project_id on mf_versions(project_id);
-create index if not exists idx_versions_share_token on mf_versions(share_token);
-create index if not exists idx_feedback_version_id on mf_feedback(version_id);
-create index if not exists idx_releases_project_id on mf_releases(project_id);
-create index if not exists idx_activity_project_id on mf_activity(project_id);
-create index if not exists idx_activity_created on mf_activity(created_at desc);
+create index if not exists idx_versions_project_id on mb_versions(project_id);
+create index if not exists idx_versions_share_token on mb_versions(share_token);
+create index if not exists idx_feedback_version_id on mb_feedback(version_id);
+create index if not exists idx_releases_project_id on mb_releases(project_id);
+create index if not exists idx_activity_project_id on mb_activity(project_id);
+create index if not exists idx_activity_created on mb_activity(created_at desc);
 
 -- ============================================================
 -- DISABLE RLS (password gate is handled at app level)
 -- ============================================================
-alter table mf_projects disable row level security;
-alter table mf_versions disable row level security;
-alter table mf_feedback disable row level security;
-alter table mf_releases disable row level security;
-alter table mf_activity disable row level security;
+alter table mb_projects disable row level security;
+alter table mb_versions disable row level security;
+alter table mb_feedback disable row level security;
+alter table mb_releases disable row level security;
+alter table mb_activity disable row level security;

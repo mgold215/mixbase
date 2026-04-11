@@ -12,14 +12,14 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   // Look up the version by its share token
   const { data: version, error } = await supabaseAdmin
-    .from('mf_versions')
-    .select('*, mf_projects(*)')
+    .from('mb_versions')
+    .select('*, mb_projects(*)')
     .eq('share_token', token)
     .single()
 
   if (error || !version) notFound()
 
-  const project = version.mf_projects
+  const project = version.mb_projects
 
   return (
     <div className="min-h-screen bg-[#080808] flex flex-col">

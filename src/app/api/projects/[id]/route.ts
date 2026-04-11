@@ -6,10 +6,10 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/projects/[i
   const { id } = await ctx.params
 
   const [projectRes, versionsRes] = await Promise.all([
-    supabaseAdmin.from('mf_projects').select('*').eq('id', id).single(),
+    supabaseAdmin.from('mb_projects').select('*').eq('id', id).single(),
     supabaseAdmin
-      .from('mf_versions')
-      .select('*, mf_feedback(count)')
+      .from('mb_versions')
+      .select('*, mb_feedback(count)')
       .eq('project_id', id)
       .order('version_number', { ascending: false }),
   ])
@@ -28,7 +28,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/projec
   const body = await request.json()
 
   const { data, error } = await supabaseAdmin
-    .from('mf_projects')
+    .from('mb_projects')
     .update({ ...body, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -42,7 +42,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/projec
 export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/projects/[id]'>) {
   const { id } = await ctx.params
 
-  const { error } = await supabaseAdmin.from('mf_projects').delete().eq('id', id)
+  const { error } = await supabaseAdmin.from('mb_projects').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

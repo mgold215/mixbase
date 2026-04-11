@@ -26,7 +26,7 @@ const CHECKLIST_ITEMS = [
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
 
-type VersionWithFeedback = Version & { mf_feedback: Feedback[] }
+type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
 
 type Props = {
   project: Project
@@ -211,7 +211,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setUploadPct(100)
       setUploadStatus('Done!')
       setTimeout(() => {
-        setVersions(prev => [{ ...newVersion, mf_feedback: [] }, ...prev])
+        setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
         setExpandedVersion(newVersion.id)
         setShowUpload(false)
         setSelectedFile(null)
@@ -531,7 +531,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           ) : (
             versions.map((version, index) => {
               const isExpanded = expandedVersion === version.id
-              const feedback = version.mf_feedback ?? []
+              const feedback = version.mb_feedback ?? []
               const ratedFeedback = feedback.filter(f => f.rating)
               const avgRating = ratedFeedback.length > 0
                 ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)

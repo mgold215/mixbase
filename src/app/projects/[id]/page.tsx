@@ -9,14 +9,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { id } = await params
 
   const [projectRes, versionsRes, releaseRes] = await Promise.all([
-    supabaseAdmin.from('mf_projects').select('*').eq('id', id).single(),
+    supabaseAdmin.from('mb_projects').select('*').eq('id', id).single(),
     supabaseAdmin
-      .from('mf_versions')
-      .select('*, mf_feedback(*)')
+      .from('mb_versions')
+      .select('*, mb_feedback(*)')
       .eq('project_id', id)
       .order('version_number', { ascending: false }),
     supabaseAdmin
-      .from('mf_releases')
+      .from('mb_releases')
       .select('*')
       .eq('project_id', id)
       .maybeSingle(),

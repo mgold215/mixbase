@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
 import type { Release } from '@/lib/supabase'
 
-type ReleaseWithProject = Release & { mf_projects: { title: string; artwork_url: string | null } | null }
+type ReleaseWithProject = Release & { mb_projects: { title: string; artwork_url: string | null } | null }
 type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string }
 
 type Props = {
@@ -92,7 +92,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
       })
       const data = await res.json()
       if (res.ok) {
-        setReleases(prev => [{ ...data, mf_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
+        setReleases(prev => [{ ...data, mb_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
         setShowForm(false)
         setForm({ title: '', release_date: '', project_id: '', final_version_id: '', genre: '', label: '', isrc: '', notes: '' })
       } else {
@@ -139,8 +139,8 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         >
           {/* Artwork / icon */}
           <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-[#1a1a1a] flex-shrink-0">
-            {release.mf_projects?.artwork_url ? (
-              <Image src={release.mf_projects.artwork_url} alt={release.title} fill className="object-cover" />
+            {release.mb_projects?.artwork_url ? (
+              <Image src={release.mb_projects.artwork_url} alt={release.title} fill className="object-cover" />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center text-[#333] text-lg">♪</div>
             )}
@@ -149,10 +149,10 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-white truncate">{release.title}</span>
-              {release.mf_projects && (
+              {release.mb_projects && (
                 release.project_id
-                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#a78bfa] truncate transition-colors">← {release.mf_projects.title}</Link>
-                  : <span className="text-xs text-[#444] truncate">← {release.mf_projects.title}</span>
+                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#a78bfa] truncate transition-colors">← {release.mb_projects.title}</Link>
+                  : <span className="text-xs text-[#444] truncate">← {release.mb_projects.title}</span>
               )}
             </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-[#444]">

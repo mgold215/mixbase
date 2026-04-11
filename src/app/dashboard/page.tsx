@@ -35,11 +35,11 @@ function getWorkflowStage(
 export default async function DashboardPage() {
   const [projectsRes, activityRes] = await Promise.all([
     supabaseAdmin
-      .from('mf_projects')
-      .select('*, mf_versions(id, status, created_at), mf_releases(id)')
+      .from('mb_projects')
+      .select('*, mb_versions(id, status, created_at), mb_releases(id)')
       .order('updated_at', { ascending: false }),
     supabaseAdmin
-      .from('mf_activity')
+      .from('mb_activity')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(20),
@@ -50,9 +50,9 @@ export default async function DashboardPage() {
 
   const stats = {
     total: projects.length,
-    wip: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
-    finished: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'Finished')).length,
-    released: projects.filter(p => p.mf_versions?.some((v: { status: string }) => v.status === 'Released')).length,
+    wip: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
+    finished: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Finished')).length,
+    released: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Released')).length,
   }
 
   function activityIcon(type: string) {
@@ -129,8 +129,8 @@ export default async function DashboardPage() {
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                   {projects.map(project => {
-                    const versions: { status: string }[] = project.mf_versions ?? []
-                    const releases: { id: string }[] = project.mf_releases ?? []
+                    const versions: { status: string }[] = project.mb_versions ?? []
+                    const releases: { id: string }[] = project.mb_releases ?? []
                     const latestVersion = versions[versions.length - 1] as { status: string } | undefined
                     const latestStatus = latestVersion?.status ?? 'WIP'
                     const stage = getWorkflowStage(versions, releases)

@@ -7,15 +7,15 @@ export const dynamic = 'force-dynamic'
 export default async function PipelinePage() {
   const [releasesRes, projectsRes, versionsRes] = await Promise.all([
     supabaseAdmin
-      .from('mf_releases')
-      .select('*, mf_projects(title, artwork_url)')
+      .from('mb_releases')
+      .select('*, mb_projects(title, artwork_url)')
       .order('release_date', { ascending: true, nullsFirst: false }),
     supabaseAdmin
-      .from('mf_projects')
+      .from('mb_projects')
       .select('id, title')
       .order('title'),
     supabaseAdmin
-      .from('mf_versions')
+      .from('mb_versions')
       .select('id, project_id, version_number, label, status')
       .order('version_number', { ascending: false }),
   ])

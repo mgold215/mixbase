@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   // Find the next version number for this project
   const { data: existing } = await supabaseAdmin
-    .from('mf_versions')
+    .from('mb_versions')
     .select('version_number')
     .eq('project_id', project_id)
     .order('version_number', { ascending: false })
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   const nextVersion = (existing?.[0]?.version_number ?? 0) + 1
 
   const { data, error } = await supabaseAdmin
-    .from('mf_versions')
+    .from('mb_versions')
     .insert({
       project_id,
       version_number: nextVersion,
@@ -47,12 +47,12 @@ export async function POST(request: NextRequest) {
 
   // Update project's updated_at timestamp
   await supabaseAdmin
-    .from('mf_projects')
+    .from('mb_projects')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', project_id)
 
   // Log activity
-  await supabaseAdmin.from('mf_activity').insert({
+  await supabaseAdmin.from('mb_activity').insert({
     type: 'version_upload',
     project_id,
     version_id: data.id,

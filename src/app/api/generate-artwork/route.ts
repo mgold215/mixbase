@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
 
   if (project_id) {
     await supabaseAdmin
-      .from('mf_projects')
+      .from('mb_projects')
       .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
       .eq('id', project_id)
   }

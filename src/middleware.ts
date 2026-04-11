@@ -21,7 +21,7 @@ export function middleware(request: NextRequest) {
   if (!secret) return NextResponse.next()
 
   // Check for valid session cookie
-  const session = request.cookies.get('mf-session')
+  const session = request.cookies.get('mb-session')
   if (!session || session.value !== secret) {
     return NextResponse.redirect(new URL('/login', request.url))
   }

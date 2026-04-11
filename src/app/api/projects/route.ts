@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 // GET /api/projects — list all projects
 export async function GET() {
   const { data, error } = await supabaseAdmin
-    .from('mf_projects')
+    .from('mb_projects')
     .select('*')
     .order('updated_at', { ascending: false })
 
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { data, error } = await supabaseAdmin
-    .from('mf_projects')
+    .from('mb_projects')
     .insert({ title: title.trim(), genre, bpm, key_signature })
     .select()
     .single()
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Log activity
-  await supabaseAdmin.from('mf_activity').insert({
+  await supabaseAdmin.from('mb_activity').insert({
     type: 'project_created',
     project_id: data.id,
     description: `Project "${data.title}" created`,

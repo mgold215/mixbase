@@ -5,7 +5,7 @@ import { cookies } from 'next/headers'
 export async function POST(request: NextRequest) {
   const { password } = await request.json()
 
-  const correctPassword = process.env.MIXFOLIO_PASSWORD
+  const correctPassword = process.env.MIXBASE_PASSWORD
   const sessionSecret = process.env.SESSION_SECRET
 
   if (!correctPassword || !sessionSecret) {
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
   // Set a session cookie that expires in 30 days
   const cookieStore = await cookies()
-  cookieStore.set('mf-session', sessionSecret, {
+  cookieStore.set('mb-session', sessionSecret, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
