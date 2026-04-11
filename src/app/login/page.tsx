@@ -34,7 +34,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold tracking-tight text-white">Mixfolio</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-white">mixBase</h1>
           <p className="text-[#666] text-sm mt-2">Track the evolution of your mixes</p>
         </div>
 

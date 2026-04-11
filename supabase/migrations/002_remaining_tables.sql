@@ -1,4 +1,4 @@
--- Mixfolio: All tables (full schema)
+-- mixBase: All tables (full schema)
 
 create table if not exists mf_projects (
   id uuid primary key default gen_random_uuid(),

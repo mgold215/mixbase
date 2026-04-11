@@ -25,7 +25,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     <div className="min-h-screen bg-[#080808] flex flex-col">
       {/* Minimal header */}
       <header className="border-b border-[#111] px-6 py-4 flex items-center justify-between">
-        <span className="text-sm font-bold text-[#555] tracking-tight">Mixfolio</span>
+        <span className="text-sm font-bold text-[#555] tracking-tight">mixBase</span>
         <span className="text-xs text-[#333]">Private share</span>
       </header>
 

@@ -1,4 +1,4 @@
--- Create Supabase Storage buckets for Mixfolio
+-- Create Supabase Storage buckets for mixBase
 -- mf-audio: audio files (max 50MB per Supabase free tier)
 -- mf-artwork: project artwork images
 

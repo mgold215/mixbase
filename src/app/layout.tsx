@@ -5,7 +5,7 @@ import { PlayerProvider } from "@/contexts/PlayerContext";
 import MiniPlayer from "@/components/MiniPlayer";
 
 export const metadata: Metadata = {
-  title: "Mixfolio",
+  title: "mixBase",
   description: "Track the evolution of your mixes",
 };
 

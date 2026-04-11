@@ -188,7 +188,7 @@ async function cleanup(filename) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`\n🎵 Mixfolio upload + playback tests → ${BASE}\n`)
+  console.log(`\n🎵 mixBase upload + playback tests → ${BASE}\n`)
 
   const filename = `test/${Date.now()}.wav`
   const fileSize = 20 * 1024 * 1024 // 20 MB — large enough to require multiple 8 MB chunks

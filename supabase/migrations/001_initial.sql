@@ -1,4 +1,4 @@
--- Mixfolio Database Schema
+-- mixBase Database Schema
 -- Run this in the Supabase SQL editor for project: mdefkqaawrusoaojstpq
 
 -- Enable UUID generation

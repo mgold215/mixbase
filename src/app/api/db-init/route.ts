@@ -94,7 +94,7 @@ alter table mf_releases disable row level security;
 alter table mf_activity disable row level security;
 `
 
-// GET /api/db-init — run Mixfolio database migrations via the Supabase Management API.
+// GET /api/db-init — run mixBase database migrations via the Supabase Management API.
 // Requires SUPABASE_MANAGEMENT_TOKEN env var (create one at supabase.com/dashboard/account/tokens).
 // Also auto-creates storage buckets using the service role key.
 export async function GET() {
