@@ -34,7 +34,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold tracking-tight text-white">mixBase</h1>
+          <h1 className="text-3xl font-bold tracking-[0.04em] text-white font-[family-name:var(--font-jost)]">
+            <span className="text-white">MIX</span><span className="text-[#5eead4]">BASE</span>
+          </h1>
           <p className="text-[#666] text-sm mt-2">Track the evolution of your mixes</p>
         </div>
 
@@ -49,7 +51,7 @@ export default function LoginPage() {
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Enter password"
                 autoFocus
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl px-4 py-3 text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa] focus:ring-1 focus:ring-[#a78bfa]/30"
+                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl px-4 py-3 text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf] focus:ring-1 focus:ring-[#2dd4bf]/30"
               />
             </div>
 
@@ -60,7 +62,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !password}
-              className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-3 transition-colors"
+              className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] font-semibold rounded-xl py-3 transition-colors"
             >
               {loading ? 'Entering...' : 'Enter'}
             </button>

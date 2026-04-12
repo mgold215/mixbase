@@ -120,11 +120,11 @@ export default function WaveformPlayer({
       <div className={`relative w-full ${compact ? 'h-10' : 'h-14'} bg-[#0f0f0f] rounded-lg overflow-hidden mb-2`}>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-4 h-4 border-2 border-[#a78bfa]/30 border-t-[#a78bfa] rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
           </div>
         )}
         <div
-          className="absolute bottom-0 left-0 h-1 bg-[#a78bfa] transition-all duration-100"
+          className="absolute bottom-0 left-0 h-1 bg-[#2dd4bf] transition-all duration-100"
           style={{ width: `${pct}%` }}
         />
         <input
@@ -143,7 +143,7 @@ export default function WaveformPlayer({
         <button
           onClick={togglePlay}
           disabled={loading}
-          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-[#1e1e1e] hover:bg-[#a78bfa]/20 border border-[#2a2a2a] hover:border-[#a78bfa]/30 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-[#1e1e1e] hover:bg-[#2dd4bf]/20 border border-[#2a2a2a] hover:border-[#2dd4bf]/30 disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] transition-colors"
         >
           {isPlaying ? <Pause size={14} /> : <Play size={14} />}
         </button>
@@ -160,7 +160,7 @@ export default function WaveformPlayer({
               key={s}
               onClick={() => changeSpeed(s)}
               className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
-                speed === s ? 'bg-[#a78bfa]/20 text-[#a78bfa]' : 'text-[#444] hover:text-[#888]'
+                speed === s ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#444] hover:text-[#888]'
               }`}
             >
               {s}x

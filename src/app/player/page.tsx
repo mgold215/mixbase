@@ -317,7 +317,7 @@ export default function PlayerPage() {
       <div className="fixed top-14 left-0 right-0 bottom-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
-        <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
+        <Link href="/dashboard" className="text-sm text-[#2dd4bf] hover:text-[#5eead4] transition-colors">
           Go upload some mixes →
         </Link>
       </div>
@@ -752,7 +752,7 @@ export default function PlayerPage() {
                       <div className="px-3 py-2.5 border-b border-white/5">
                         <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
                         <button onClick={cycleSpeed}
-                          className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
+                          className="text-sm font-mono text-white tabular-nums hover:text-[#2dd4bf] transition-colors">
                           {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
                         </button>
                       </div>

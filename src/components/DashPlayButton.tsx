@@ -23,7 +23,7 @@ export default function DashPlayButton({ projectId }: { projectId: string }) {
       onClick={handleClick}
       className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
         isActive
-          ? 'bg-[#a78bfa] hover:bg-[#9370f0]'
+          ? 'bg-[#2dd4bf] hover:bg-[#14b8a6]'
           : 'bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a]'
       }`}
       aria-label={isActive && isPlaying ? 'Pause' : 'Play'}

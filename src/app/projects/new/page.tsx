@@ -60,14 +60,14 @@ export default function NewProjectPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm text-[#888] mb-2">Track Title <span className="text-[#a78bfa]">*</span></label>
+              <label className="block text-sm text-[#888] mb-2">Track Title <span className="text-[#2dd4bf]">*</span></label>
               <input
                 type="text"
                 value={form.title}
                 onChange={e => set('title', e.target.value)}
                 placeholder="e.g. After Dark"
                 autoFocus
-                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/50"
+                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
               />
             </div>
 
@@ -79,7 +79,7 @@ export default function NewProjectPage() {
                   value={form.genre}
                   onChange={e => set('genre', e.target.value)}
                   placeholder="e.g. R&B, Afrobeat"
-                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/50"
+                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
                 />
               </div>
               <div>
@@ -91,7 +91,7 @@ export default function NewProjectPage() {
                   placeholder="e.g. 98"
                   min={40}
                   max={300}
-                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/50"
+                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
                 />
               </div>
             </div>
@@ -101,7 +101,7 @@ export default function NewProjectPage() {
               <select
                 value={form.key_signature}
                 onChange={e => set('key_signature', e.target.value)}
-                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#a78bfa]/50 appearance-none"
+                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#2dd4bf]/50 appearance-none"
               >
                 <option value="" className="bg-[#111]">Select key</option>
                 {KEYS.map(k => (
@@ -115,7 +115,7 @@ export default function NewProjectPage() {
             <button
               type="submit"
               disabled={loading || !form.title.trim()}
-              className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-3 transition-colors"
+              className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] font-semibold rounded-xl py-3 transition-colors"
             >
               {loading ? 'Creating...' : 'Create Project'}
             </button>

@@ -16,8 +16,8 @@ const STAGE_CONFIG: Record<WorkflowStage, { label: string; color: string }> = {
   wip:         { label: 'Mixing',      color: 'text-yellow-400 bg-yellow-400/10' },
   mix_master:  { label: 'Mix/Master',  color: 'text-blue-400 bg-blue-400/10' },
   finished:    { label: 'Finished',    color: 'text-emerald-400 bg-emerald-400/10' },
-  in_pipeline: { label: 'In Pipeline', color: 'text-[#a78bfa] bg-[#a78bfa]/10' },
-  released:    { label: 'Released',    color: 'text-purple-300 bg-purple-300/10' },
+  in_pipeline: { label: 'In Pipeline', color: 'text-[#2dd4bf] bg-[#2dd4bf]/10' },
+  released:    { label: 'Released',    color: 'text-teal-300 bg-teal-300/10' },
 }
 
 function getWorkflowStage(
@@ -86,7 +86,7 @@ export default async function DashboardPage() {
             </div>
             <Link
               href="/projects/new"
-              className="flex items-center gap-1.5 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"
+              className="flex items-center gap-1.5 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"
             >
               <Plus size={15} />
               <span className="hidden sm:inline">New Project</span>
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
               { label: 'Total', value: stats.total, color: 'text-white' },
               { label: 'WIP', value: stats.wip, color: 'text-yellow-400' },
               { label: 'Finished', value: stats.finished, color: 'text-emerald-400' },
-              { label: 'Released', value: stats.released, color: 'text-purple-400' },
+              { label: 'Released', value: stats.released, color: 'text-teal-400' },
             ].map(stat => (
               <div key={stat.label} className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3 sm:p-4">
                 <p className={`text-xl sm:text-2xl font-bold ${stat.color}`}>{stat.value}</p>
@@ -120,7 +120,7 @@ export default async function DashboardPage() {
                   <p className="text-[#555] mb-4">No projects yet</p>
                   <Link
                     href="/projects/new"
-                    className="flex items-center gap-2 text-[#a78bfa] text-sm hover:text-[#9370f0] transition-colors"
+                    className="flex items-center gap-2 text-[#2dd4bf] text-sm hover:text-[#14b8a6] transition-colors"
                   >
                     <Plus size={14} />
                     Create your first project
@@ -169,7 +169,7 @@ export default async function DashboardPage() {
                         {/* Info + actions */}
                         <div className="p-3 flex flex-col gap-2 flex-1">
                           <Link href={`/projects/${project.id}`} className="block min-w-0">
-                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#a78bfa] transition-colors leading-tight">
+                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#2dd4bf] transition-colors leading-tight">
                               {project.title}
                             </h3>
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -213,7 +213,7 @@ export default async function DashboardPage() {
                 <div className="space-y-3">
                   {activity.map(item => (
                     <div key={item.id} className="flex gap-3">
-                      <span className="text-[#a78bfa] text-sm mt-0.5 flex-shrink-0 w-4 text-center">
+                      <span className="text-[#2dd4bf] text-sm mt-0.5 flex-shrink-0 w-4 text-center">
                         {activityIcon(item.type)}
                       </span>
                       <div className="min-w-0">
