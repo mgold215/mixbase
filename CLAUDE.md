@@ -1,7 +1,7 @@
 @AGENTS.md
 
 # Deployment
-- Railway production URL: https://mixfolio-production.up.railway.app
+- Railway production URL: https://mixbase-production.up.railway.app
 - Supabase project: mdefkqaawrusoaojstpq (mmf-agents, us-east-1)
 - Supabase URL: https://mdefkqaawrusoaojstpq.supabase.co
 
@@ -49,7 +49,7 @@ Without Range support the browser cannot determine audio duration or seek.
 ## Testing
 Run after every deploy that touches upload or audio playback:
 ```
-SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixfolio-production.up.railway.app
+SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixbase-production.up.railway.app
 ```
 The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies it's stored at full size in Supabase, and tests the audio proxy Range requests. All tests must pass before telling the user a fix is done.
 
