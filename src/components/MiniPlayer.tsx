@@ -17,7 +17,7 @@ export default function MiniPlayer() {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0d0d0d]/95 backdrop-blur-md border-t border-[#1e1e1e]"
+    <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 bg-[#0d0d0d]/95 backdrop-blur-md border-t border-[#1e1e1e] mb-16 md:mb-0"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Progress bar — thin line along top edge */}

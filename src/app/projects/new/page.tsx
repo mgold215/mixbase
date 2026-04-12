@@ -46,44 +46,47 @@ export default function NewProjectPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080808]">
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-page)' }}>
       <Nav />
       <div className="pt-14">
         <div className="max-w-lg mx-auto px-6 py-12">
-          <Link href="/dashboard" className="flex items-center gap-2 text-[#555] hover:text-white text-sm mb-8 transition-colors w-fit">
+          <Link href="/dashboard" className="flex items-center gap-2 text-sm mb-8 transition-colors w-fit"
+            style={{ color: 'var(--text-muted)' }}>
             <ArrowLeft size={14} />
             Back
           </Link>
 
-          <h1 className="text-2xl font-bold text-white mb-1">New Project</h1>
-          <p className="text-[#555] text-sm mb-8">Add a track to start tracking your mix versions</p>
+          <h1 className="text-2xl font-bold mb-1" style={{ color: 'var(--text)' }}>New Project</h1>
+          <p className="text-sm mb-8" style={{ color: 'var(--text-muted)' }}>Add a track to start tracking your mix versions</p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm text-[#888] mb-2">Track Title <span className="text-[#2dd4bf]">*</span></label>
+              <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Track Title <span style={{ color: 'var(--accent)' }}>*</span></label>
               <input
                 type="text"
                 value={form.title}
                 onChange={e => set('title', e.target.value)}
                 placeholder="e.g. After Dark"
                 autoFocus
-                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
+                className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-[#888] mb-2">Genre</label>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Genre</label>
                 <input
                   type="text"
                   value={form.genre}
                   onChange={e => set('genre', e.target.value)}
                   placeholder="e.g. R&B, Afrobeat"
-                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
                 />
               </div>
               <div>
-                <label className="block text-sm text-[#888] mb-2">BPM</label>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>BPM</label>
                 <input
                   type="number"
                   value={form.bpm}
@@ -91,21 +94,23 @@ export default function NewProjectPage() {
                   placeholder="e.g. 98"
                   min={40}
                   max={300}
-                  className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/50"
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm text-[#888] mb-2">Key</label>
+              <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Key</label>
               <select
                 value={form.key_signature}
                 onChange={e => set('key_signature', e.target.value)}
-                className="w-full bg-[#111] border border-[#222] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#2dd4bf]/50 appearance-none"
+                className="w-full rounded-xl px-4 py-3 focus:outline-none appearance-none transition-colors"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
               >
-                <option value="" className="bg-[#111]">Select key</option>
+                <option value="" style={{ backgroundColor: 'var(--input-bg)' }}>Select key</option>
                 {KEYS.map(k => (
-                  <option key={k} value={k} className="bg-[#111]">{k}</option>
+                  <option key={k} value={k} style={{ backgroundColor: 'var(--input-bg)' }}>{k}</option>
                 ))}
               </select>
             </div>
@@ -115,7 +120,8 @@ export default function NewProjectPage() {
             <button
               type="submit"
               disabled={loading || !form.title.trim()}
-              className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] font-semibold rounded-xl py-3 transition-colors"
+              className="w-full font-semibold rounded-xl py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: 'var(--accent)', color: 'var(--bg)' }}
             >
               {loading ? 'Creating...' : 'Create Project'}
             </button>

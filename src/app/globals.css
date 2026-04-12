@@ -1,26 +1,69 @@
 @import "tailwindcss";
 
-:root {
+/* Dark theme (default) */
+:root,
+[data-theme="dark"] {
   --bg: #080808;
+  --bg-page: #080808;
   --surface: #111111;
   --surface-2: #1a1a1a;
+  --surface-3: #222222;
   --border: #222222;
+  --text: #f0f0f0;
+  --text-secondary: #999999;
+  --text-muted: #666666;
   --accent: #2dd4bf;
-  --accent-dim: rgba(167, 139, 250, 0.12);
+  --accent-dim: rgba(45, 212, 191, 0.12);
+  --accent-hover: #5eead4;
+  --nav-bg: #0a0a0a;
+  --card-bg: #111111;
+  --input-bg: #161616;
+  --scrollbar: #2a2a2a;
+  --scrollbar-hover: #444444;
+  --badge-wip: #eab308;
+  --badge-mix: #3b82f6;
+  --badge-done: #22c55e;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+/* Light theme — sand/offwhite with light blue accent */
+[data-theme="light"] {
+  --bg: #f5f0e8;
+  --bg-page: #f5f0e8;
+  --surface: #ffffff;
+  --surface-2: #ede8df;
+  --surface-3: #e0dbd2;
+  --border: #d4cfc6;
+  --text: #1a1a1a;
+  --text-secondary: #5a5549;
+  --text-muted: #8a8478;
+  --accent: #3b82f6;
+  --accent-dim: rgba(59, 130, 246, 0.1);
+  --accent-hover: #60a5fa;
+  --nav-bg: #ede8df;
+  --card-bg: #ffffff;
+  --input-bg: #ede8df;
+  --scrollbar: #d4cfc6;
+  --scrollbar-hover: #b8b3aa;
+  --badge-wip: #ca8a04;
+  --badge-mix: #2563eb;
+  --badge-done: #16a34a;
+  --shadow: rgba(0, 0, 0, 0.08);
 }
 
 body {
-  background-color: #080808;
-  color: #f0f0f0;
+  background-color: var(--bg-page);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #444; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
 /* Waveform overflow fix */
 .waveform-container wave {

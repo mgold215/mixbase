@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Plus, Music } from 'lucide-react'
 import AddToPipelineButton from '@/components/AddToPipelineButton'
 import DashPlayButton from '@/components/DashPlayButton'
+import ActivityFeed from '@/components/ActivityFeed'
 
 export const dynamic = 'force-dynamic'
 
@@ -53,23 +54,6 @@ export default async function DashboardPage() {
     wip: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
     finished: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Finished')).length,
     released: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Released')).length,
-  }
-
-  function activityIcon(type: string) {
-    if (type === 'version_upload') return '↑'
-    if (type === 'status_change') return '→'
-    if (type === 'feedback_received') return '★'
-    if (type === 'release_created') return '◆'
-    return '·'
-  }
-
-  function timeAgo(date: string) {
-    const diff = Date.now() - new Date(date).getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 60) return `${mins}m ago`
-    const hrs = Math.floor(mins / 60)
-    if (hrs < 24) return `${hrs}h ago`
-    return `${Math.floor(hrs / 24)}d ago`
   }
 
   return (
@@ -205,26 +189,7 @@ export default async function DashboardPage() {
             </div>
 
             {/* Activity feed — hidden on mobile, visible on lg+ */}
-            <div className="hidden lg:block bg-[#111] border border-[#1a1a1a] rounded-2xl p-5 h-fit">
-              <h2 className="text-sm font-semibold text-white mb-4">Recent Activity</h2>
-              {activity.length === 0 ? (
-                <p className="text-[#444] text-xs">No activity yet</p>
-              ) : (
-                <div className="space-y-3">
-                  {activity.map(item => (
-                    <div key={item.id} className="flex gap-3">
-                      <span className="text-[#2dd4bf] text-sm mt-0.5 flex-shrink-0 w-4 text-center">
-                        {activityIcon(item.type)}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs text-[#888] leading-relaxed">{item.description}</p>
-                        <p className="text-[10px] text-[#444] mt-0.5">{timeAgo(item.created_at)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ActivityFeed activity={activity} projects={projects} />
           </div>
         </div>
       </div>
