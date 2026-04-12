@@ -47,9 +47,11 @@ struct ContentView: View {
                     .font(.system(size: 36, weight: .bold))
                     .foregroundColor(Color(hex: "#2dd4bf"))
 
-                Text("Music Mix Versioning")
-                    .font(.subheadline)
-                    .foregroundColor(Color(hex: "#f0f0f0").opacity(0.6))
+                Text("ROUGH-TO-RELEASE")
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#f0f0f0").opacity(0.3))
+                    .textCase(.uppercase)
+                    .tracking(2)
 
                 // Password input field
                 SecureField("Enter password", text: $passwordInput)

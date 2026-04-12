@@ -17,6 +17,7 @@
 		A100000012 /* Release.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000012; };
 		A100000013 /* Feedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000013; };
 		A100000014 /* Activity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000014; };
+		A100000015 /* Collection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000015; };
 
 		/* Services */
 		A100000020 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000020; };
@@ -70,6 +71,7 @@
 		B100000012 /* Release.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Release.swift; sourceTree = "<group>"; };
 		B100000013 /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
 		B100000014 /* Activity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity.swift; sourceTree = "<group>"; };
+		B100000015 /* Collection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Collection.swift; sourceTree = "<group>"; };
 
 		/* Services */
 		B100000020 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				B100000012 /* Release.swift */,
 				B100000013 /* Feedback.swift */,
 				B100000014 /* Activity.swift */,
+				B100000015 /* Collection.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -353,6 +356,7 @@
 				A100000012 /* Release.swift in Sources */,
 				A100000013 /* Feedback.swift in Sources */,
 				A100000014 /* Activity.swift in Sources */,
+				A100000015 /* Collection.swift in Sources */,
 				A100000020 /* SupabaseService.swift in Sources */,
 				A100000021 /* AudioService.swift in Sources */,
 				A100000022 /* ArtworkService.swift in Sources */,

@@ -289,6 +289,80 @@ class SupabaseService {
         try validateResponse(response)
     }
 
+    // MARK: - Collections
+
+    /// Fetch all collections, newest first
+    func fetchCollections() async throws -> [Collection] {
+        let request = makeRequest(path: "/rest/v1/mb_collections?order=updated_at.desc")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+        return try decoder.decode([Collection].self, from: data)
+    }
+
+    /// Create a new collection (playlist, EP, or album)
+    func createCollection(title: String, type: String) async throws -> Collection {
+        let fields: [String: Any] = ["title": title, "type": type]
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(path: "/rest/v1/mb_collections", method: "POST", body: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+        let collections = try decoder.decode([Collection].self, from: data)
+        guard let collection = collections.first else {
+            throw SupabaseError.decodingFailed("Failed to decode created collection")
+        }
+        return collection
+    }
+
+    /// Fetch items in a collection, ordered by position
+    func fetchCollectionItems(collectionId: UUID) async throws -> [CollectionItem] {
+        let path = "/rest/v1/mb_collection_items?collection_id=eq.\(collectionId.uuidString)&order=position.asc"
+        let request = makeRequest(path: path)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+        return try decoder.decode([CollectionItem].self, from: data)
+    }
+
+    /// Add a project to a collection at a given position
+    func addToCollection(collectionId: UUID, projectId: UUID, position: Int) async throws -> CollectionItem {
+        let fields: [String: Any] = [
+            "collection_id": collectionId.uuidString,
+            "project_id": projectId.uuidString,
+            "position": position
+        ]
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(path: "/rest/v1/mb_collection_items", method: "POST", body: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+        let items = try decoder.decode([CollectionItem].self, from: data)
+        guard let item = items.first else {
+            throw SupabaseError.decodingFailed("Failed to decode collection item")
+        }
+        return item
+    }
+
+    /// Remove a project from a collection
+    func removeFromCollection(itemId: UUID) async throws {
+        let request = makeRequest(
+            path: "/rest/v1/mb_collection_items?id=eq.\(itemId.uuidString)",
+            method: "DELETE"
+        )
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+    }
+
+    /// Update position of items in a collection (for reordering)
+    func updateCollectionItemPosition(itemId: UUID, position: Int) async throws {
+        let fields: [String: Any] = ["position": position]
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(
+            path: "/rest/v1/mb_collection_items?id=eq.\(itemId.uuidString)",
+            method: "PATCH",
+            body: body
+        )
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response)
+    }
+
     // MARK: - Feedback
 
     /// Fetch all feedback for a specific version

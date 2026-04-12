@@ -1,196 +1,322 @@
 import SwiftUI
 
 // MARK: - PlayerView
-// The full-screen player — the centerpiece of the app.
-// Shows large artwork, track info, waveform/progress, playback controls,
-// version switcher pills, and an A/B compare toggle.
+// The Player tab. Two sections:
+// 1. If a track is playing, show the full player at the top (artwork, controls, version switcher)
+// 2. Below (or if nothing is playing), show a browsable list of ALL tracks across all projects.
+//    Each row shows the project name, latest version, artwork, and a play button.
+//    You can tap to play, or long-press to edit/arrange.
 
 struct PlayerView: View {
 
-    // Access the shared audio service for all playback state
     @EnvironmentObject var audioService: AudioService
 
-    // All versions for the current project (for version switching)
+    // All projects with their versions, loaded from Supabase
+    @State private var trackList: [TrackItem] = []
     @State private var allVersions: [Version] = []
+    @State private var isLoading = true
 
-    // A/B compare toggle state
+    // A/B compare toggle
     @State private var abCompareEnabled = false
 
     var body: some View {
-        ZStack {
-            // Dark background
-            Color(hex: "#080808")
-                .ignoresSafeArea()
+        NavigationStack {
+            ZStack {
+                Color(hex: "#080808")
+                    .ignoresSafeArea()
 
-            if let version = audioService.currentVersion {
-                // Content when a track is loaded
-                VStack(spacing: 0) {
-                    Spacer(minLength: 20)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // MARK: - Now Playing (full player)
+                        // Only shows when a track is actively loaded
+                        if let version = audioService.currentVersion {
+                            nowPlayingSection(version: version)
+                                .padding(.bottom, 16)
 
-                    // MARK: - Large Artwork
-                    artworkImage
-                        .padding(.horizontal, 40)
-
-                    Spacer(minLength: 20)
-
-                    // MARK: - Track Info
-                    VStack(spacing: 6) {
-                        Text(audioService.currentTrackName ?? "Unknown Track")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                            .lineLimit(1)
-
-                        HStack(spacing: 6) {
-                            Text("v\(version.versionNumber)")
-                                .fontWeight(.medium)
-                            if let label = version.label {
-                                Text("- \(label)")
-                            }
-                            StatusBadge(status: version.status)
+                            // Divider between player and track list
+                            Rectangle()
+                                .fill(Color(hex: "#1a1a1a"))
+                                .frame(height: 1)
+                                .padding(.horizontal)
                         }
-                        .font(.subheadline)
-                        .foregroundColor(Color(hex: "#2dd4bf"))
+
+                        // MARK: - All Tracks list
+                        trackListSection
                     }
-                    .padding(.horizontal)
-
-                    Spacer(minLength: 16)
-
-                    // MARK: - Waveform / Progress Bar
-                    // A tappable rounded rectangle that shows playback progress
-                    waveformBar
-                        .padding(.horizontal, 24)
-
-                    // MARK: - Time Display
-                    // Elapsed time on the left, remaining time on the right
-                    HStack {
-                        Text(formatTime(audioService.currentTime))
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                        Spacer()
-                        Text("-\(formatTime(max(0, audioService.duration - audioService.currentTime)))")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 4)
-
-                    Spacer(minLength: 16)
-
-                    // MARK: - Playback Controls
-                    playbackControls
-
-                    Spacer(minLength: 16)
-
-                    // MARK: - Version Switcher
-                    // Horizontal row of pill buttons (v1, v2, v3...)
-                    versionSwitcher
-
-                    Spacer(minLength: 12)
-
-                    // MARK: - A/B Compare Toggle
-                    HStack {
-                        Spacer()
-                        Toggle(isOn: $abCompareEnabled) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.left.arrow.right")
-                                Text("A/B Compare")
-                            }
-                            .font(.subheadline)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                        }
-                        .toggleStyle(SwitchToggleStyle(tint: Color(hex: "#2dd4bf")))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 24)
-
-                    Spacer(minLength: 80) // Space for mini player / tab bar
-                }
-            } else {
-                // Empty state when nothing is playing
-                VStack(spacing: 16) {
-                    Image(systemName: "play.circle")
-                        .font(.system(size: 64))
-                        .foregroundColor(.gray.opacity(0.3))
-                    Text("No track loaded")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                    Text("Select a version from a project to start playing")
-                        .font(.subheadline)
-                        .foregroundColor(.gray.opacity(0.6))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+                    .padding(.bottom, 80)
                 }
             }
-        }
-        // Load all versions for the current project when the view appears
-        .task(id: audioService.currentVersion?.projectId) {
-            if let projectId = audioService.currentVersion?.projectId {
-                await loadVersions(projectId: projectId)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .task {
+                await loadAllTracks()
             }
         }
     }
 
-    // MARK: - Large Artwork Image
-    // Fills ~60% of screen width, centered, with rounded corners
+    // MARK: - Now Playing Section
+    // Compact but full-featured player: artwork, info, progress, controls, version pills
+    @ViewBuilder
+    private func nowPlayingSection(version: Version) -> some View {
+        VStack(spacing: 12) {
+            // Artwork — large, centered
+            artworkImage
+                .padding(.horizontal, 60)
+                .padding(.top, 8)
+
+            // Track title + version info
+            VStack(spacing: 4) {
+                Text(audioService.currentTrackName ?? "Unknown Track")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text("v\(version.versionNumber)")
+                        .fontWeight(.medium)
+                    if let label = version.label {
+                        Text("- \(label)")
+                    }
+                    StatusBadge(status: version.status)
+                }
+                .font(.caption)
+                .foregroundColor(Color(hex: "#2dd4bf"))
+            }
+
+            // Progress bar (tappable to seek)
+            waveformBar
+                .padding(.horizontal, 24)
+
+            // Time display
+            HStack {
+                Text(formatTime(audioService.currentTime))
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+                Text("-\(formatTime(max(0, audioService.duration - audioService.currentTime)))")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+            .padding(.horizontal, 24)
+
+            // Playback controls
+            playbackControls
+
+            // Version switcher pills
+            if !allVersions.isEmpty {
+                versionSwitcher
+            }
+        }
+        // Reload versions when the playing project changes
+        .task(id: version.projectId) {
+            await loadVersionsForCurrentProject(projectId: version.projectId)
+        }
+    }
+
+    // MARK: - Track List Section
+    // Browsable list of ALL projects with their latest version.
+    // Tap a row to play the latest version. Tap the project name to go to detail.
+    private var trackListSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Section header
+            HStack {
+                Text("All Tracks")
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                Spacer()
+                Text("\(trackList.count) projects")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            .padding(.horizontal)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            if isLoading {
+                ProgressView()
+                    .tint(Color(hex: "#2dd4bf"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+            } else if trackList.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 36))
+                        .foregroundColor(.gray.opacity(0.3))
+                    Text("No tracks yet")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            } else {
+                // List of tracks
+                LazyVStack(spacing: 2) {
+                    ForEach(trackList) { item in
+                        trackRow(item: item)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Track Row
+    // A single row: artwork thumbnail, project title, version info, play button
+    @ViewBuilder
+    private func trackRow(item: TrackItem) -> some View {
+        HStack(spacing: 12) {
+            // Play button overlaid on artwork thumbnail
+            Button(action: {
+                audioService.play(
+                    version: item.latestVersion,
+                    trackName: item.project.title,
+                    artworkUrl: item.project.artworkUrl
+                )
+            }) {
+                ZStack {
+                    // Artwork thumbnail
+                    if let artworkUrl = item.project.artworkUrl,
+                       let url = URL(string: artworkUrl) {
+                        AsyncImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(hex: "#1a1a1a"))
+                        }
+                        .frame(width: 50, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(hex: "#1a1a1a"))
+                            .frame(width: 50, height: 50)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.gray.opacity(0.4))
+                                    .font(.caption)
+                            )
+                    }
+
+                    // Play icon overlay (shows when this track is NOT currently playing)
+                    if !isCurrentlyPlaying(item) {
+                        Circle()
+                            .fill(Color.black.opacity(0.5))
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white)
+                            )
+                    } else {
+                        // Equalizer-style indicator for currently playing track
+                        Circle()
+                            .fill(Color(hex: "#2dd4bf").opacity(0.8))
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Image(systemName: audioService.isPlaying ? "waveform" : "pause.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white)
+                            )
+                    }
+                }
+            }
+
+            // Track info
+            NavigationLink(destination: ProjectDetailView(projectId: item.project.id)) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.project.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(
+                            isCurrentlyPlaying(item)
+                                ? Color(hex: "#2dd4bf")
+                                : Color(hex: "#f0f0f0")
+                        )
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Text("v\(item.latestVersion.versionNumber)")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+
+                        if let genre = item.project.genre {
+                            Text(genre)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+
+                        if let bpm = item.project.bpm {
+                            Text("\(bpm) BPM")
+                                .font(.caption2)
+                                .foregroundColor(.gray.opacity(0.6))
+                        }
+                    }
+                }
+
+                Spacer()
+            }
+            .buttonStyle(.plain)
+
+            // Version count + status badge
+            VStack(alignment: .trailing, spacing: 4) {
+                StatusBadge(status: item.latestVersion.status)
+                Text("\(item.versionCount) ver\(item.versionCount != 1 ? "s" : "")")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.5))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(
+            isCurrentlyPlaying(item)
+                ? Color(hex: "#2dd4bf").opacity(0.05)
+                : Color.clear
+        )
+    }
+
+    // MARK: - Artwork Image (for now playing)
     private var artworkImage: some View {
         Group {
             if let artworkUrl = audioService.currentArtworkUrl,
                let url = URL(string: artworkUrl) {
                 AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                    image.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: {
-                    // Gradient placeholder while loading
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(hex: "#1a1a1a"), Color(hex: "#111111")],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.system(size: 48))
-                                .foregroundColor(.gray.opacity(0.3))
-                        )
+                    artworkPlaceholder
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
             } else {
-                // No artwork — show gradient placeholder
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(hex: "#1a1a1a"), Color(hex: "#111111")],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .aspectRatio(1, contentMode: .fit)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: 48))
-                            .foregroundColor(.gray.opacity(0.3))
-                    )
+                artworkPlaceholder
                     .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
             }
         }
     }
 
+    private var artworkPlaceholder: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(
+                LinearGradient(
+                    colors: [Color(hex: "#1a1a1a"), Color(hex: "#111111")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .aspectRatio(1, contentMode: .fit)
+            .overlay(
+                Image(systemName: "music.note")
+                    .font(.system(size: 48))
+                    .foregroundColor(.gray.opacity(0.3))
+            )
+    }
+
     // MARK: - Waveform / Progress Bar
-    // A rounded rectangle with gradient fill showing playback progress.
-    // Tappable to seek to a position.
     private var waveformBar: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                // Background track
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color(hex: "#222222"))
 
-                // Filled progress with gradient
                 RoundedRectangle(cornerRadius: 6)
                     .fill(
                         LinearGradient(
@@ -204,59 +330,51 @@ struct PlayerView: View {
                     )
                     .frame(width: geo.size.width * playbackProgress)
             }
-            // Tap to seek
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        // Calculate the new time based on tap position
                         let fraction = max(0, min(1, value.location.x / geo.size.width))
                         let newTime = Double(fraction) * audioService.duration
                         audioService.seek(to: newTime)
                     }
             )
         }
-        .frame(height: 28)
+        .frame(height: 24)
     }
 
     // MARK: - Playback Controls
-    // Previous version, play/pause, next version
     private var playbackControls: some View {
-        HStack(spacing: 40) {
-            // Previous version button
+        HStack(spacing: 36) {
             Button(action: previousVersion) {
                 Image(systemName: "backward.end.fill")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundColor(Color(hex: "#f0f0f0"))
             }
 
-            // Play / Pause button — large teal circle
             Button(action: { audioService.togglePlayPause() }) {
                 Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundColor(Color(hex: "#080808"))
-                    .frame(width: 56, height: 56)
+                    .frame(width: 52, height: 52)
                     .background(Color(hex: "#2dd4bf"))
                     .clipShape(Circle())
             }
 
-            // Next version button
             Button(action: nextVersion) {
                 Image(systemName: "forward.end.fill")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundColor(Color(hex: "#f0f0f0"))
             }
         }
     }
 
     // MARK: - Version Switcher
-    // Horizontal ScrollView of pill buttons for each version
     private var versionSwitcher: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ForEach(allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })) { version in
                     Button(action: {
-                        // Switch to this version
                         audioService.play(
                             version: version,
                             trackName: audioService.currentTrackName ?? "Unknown",
@@ -264,10 +382,10 @@ struct PlayerView: View {
                         )
                     }) {
                         Text("v\(version.versionNumber)")
-                            .font(.caption)
+                            .font(.caption2)
                             .fontWeight(.semibold)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                             .foregroundColor(
                                 isCurrentVersion(version)
                                     ? Color(hex: "#080808")
@@ -279,15 +397,6 @@ struct PlayerView: View {
                                     : Color(hex: "#222222")
                             )
                             .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(
-                                        isCurrentVersion(version)
-                                            ? Color(hex: "#2dd4bf")
-                                            : Color.clear,
-                                        lineWidth: 1.5
-                                    )
-                            )
                     }
                 }
             }
@@ -297,18 +406,20 @@ struct PlayerView: View {
 
     // MARK: - Helpers
 
-    // Calculate playback progress as a fraction (0.0 to 1.0)
     private var playbackProgress: CGFloat {
         guard audioService.duration > 0 else { return 0 }
         return CGFloat(audioService.currentTime / audioService.duration)
     }
 
-    // Check if a version is the currently playing one
     private func isCurrentVersion(_ version: Version) -> Bool {
         audioService.currentVersion?.id == version.id
     }
 
-    // Format seconds into "M:SS" (e.g. 95.3 -> "1:35")
+    private func isCurrentlyPlaying(_ item: TrackItem) -> Bool {
+        guard let current = audioService.currentVersion else { return false }
+        return current.projectId == item.project.id
+    }
+
     private func formatTime(_ time: Double) -> String {
         let totalSeconds = Int(time)
         let minutes = totalSeconds / 60
@@ -316,40 +427,74 @@ struct PlayerView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    // Skip to the previous version in the list
     private func previousVersion() {
         guard let current = audioService.currentVersion else { return }
         let sorted = allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })
         if let index = sorted.firstIndex(where: { $0.id == current.id }), index > 0 {
-            let prev = sorted[index - 1]
             audioService.play(
-                version: prev,
+                version: sorted[index - 1],
                 trackName: audioService.currentTrackName ?? "Unknown",
                 artworkUrl: audioService.currentArtworkUrl
             )
         }
     }
 
-    // Skip to the next version in the list
     private func nextVersion() {
         guard let current = audioService.currentVersion else { return }
         let sorted = allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })
         if let index = sorted.firstIndex(where: { $0.id == current.id }), index < sorted.count - 1 {
-            let next = sorted[index + 1]
             audioService.play(
-                version: next,
+                version: sorted[index + 1],
                 trackName: audioService.currentTrackName ?? "Unknown",
                 artworkUrl: audioService.currentArtworkUrl
             )
         }
     }
 
-    // Load all versions for the given project
-    private func loadVersions(projectId: UUID) async {
+    // MARK: - Data Loading
+
+    // Load all projects + their latest versions for the track list
+    private func loadAllTracks() async {
+        isLoading = true
+        do {
+            let projects = try await SupabaseService.shared.fetchProjects()
+            var items: [TrackItem] = []
+
+            // For each project, fetch its versions and pick the latest
+            for project in projects {
+                let versions = try await SupabaseService.shared.fetchVersions(projectId: project.id)
+                if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
+                    items.append(TrackItem(
+                        project: project,
+                        latestVersion: latest,
+                        versionCount: versions.count
+                    ))
+                }
+            }
+
+            trackList = items
+        } catch {
+            print("PlayerView: Failed to load tracks — \(error.localizedDescription)")
+        }
+        isLoading = false
+    }
+
+    // Load versions for the currently playing project (for version switcher)
+    private func loadVersionsForCurrentProject(projectId: UUID) async {
         do {
             allVersions = try await SupabaseService.shared.fetchVersions(projectId: projectId)
         } catch {
             print("PlayerView: Failed to load versions — \(error.localizedDescription)")
         }
     }
+}
+
+// MARK: - TrackItem
+// A helper struct that pairs a project with its latest version for the track list.
+struct TrackItem: Identifiable {
+    let project: Project
+    let latestVersion: Version
+    let versionCount: Int
+
+    var id: UUID { project.id }
 }
