@@ -12,7 +12,9 @@
 
 @media (max-width: 767px) {
   :root {
-    --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    /* 6rem = 96px: enough to clear a standard iOS tab bar (83px) even when
+       env(safe-area-inset-bottom) returns 0 (no viewport-fit:cover) */
+    --player-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
   }
 }
 

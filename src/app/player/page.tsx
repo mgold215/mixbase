@@ -181,8 +181,8 @@ export default function PlayerPage() {
       // Control bar: ~80px desktop, ~112px mobile (extra progress row)
       const controlBarH = isDesktop ? 80 : 112
       const navH = 56
-      // Bottom nav bar on mobile (64px) — matches --player-bottom CSS var
-      const bottomNavH = vw >= 768 ? 0 : 64
+      // Bottom nav bar on mobile (96px) — matches --player-bottom CSS var (6rem)
+      const bottomNavH = vw >= 768 ? 0 : 96
       const horizontalMargin = isDesktop ? 48 : 24
       const verticalMargin = 48 // top + bottom padding on the cassette stage
       const availableW = vw - sidebarW - horizontalMargin
