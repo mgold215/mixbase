@@ -24,6 +24,7 @@
   --badge-mix: #3b82f6;
   --badge-done: #22c55e;
   --shadow: rgba(0, 0, 0, 0.5);
+  --player-bottom: 0px;
 }
 
 /* Light theme — sand/offwhite with light blue accent */
@@ -57,6 +58,11 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Player bottom clearance — clears mobile tab bar (h-16) + safe area */
+@media (max-width: 767px) {
+  :root { --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* Custom scrollbar */

@@ -129,6 +129,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1200; mid.Q.value = 1.2
     const treble = ctx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 4000
     src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(ctx.destination)
+    // iOS suspends the AudioContext when backgrounded; re-resume it so background playback continues
+    ctx.onstatechange = () => {
+      if (ctx.state === 'suspended' && audioRef.current && !audioRef.current.paused) {
+        ctx.resume().catch(() => {})
+      }
+    }
     audioCtxRef.current = ctx
     bassRef.current = bass; midRef.current = mid; trebleRef.current = treble
   }, [])

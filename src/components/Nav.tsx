@@ -49,7 +49,7 @@ export default function Nav() {
         {/* Logo */}
         <Link href="/dashboard" className="mr-6 flex items-baseline gap-0.5 font-[family-name:var(--font-jost)]">
           <span className="text-[15px] font-bold text-[#e0e0e0] uppercase tracking-[0.04em]">mix</span>
-          <span className="text-[15px] font-bold text-[#5eead4] uppercase tracking-[0.04em]">Base</span>
+          <span className="text-[15px] font-bold text-[#86efac] uppercase tracking-[0.04em]">Base</span>
         </Link>
 
         {/* Divider — hidden on mobile */}

@@ -37,7 +37,7 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold tracking-[0.04em] font-[family-name:var(--font-jost)]">
             <span style={{ color: 'var(--text)' }}>MIX</span><span style={{ color: 'var(--accent)' }}>BASE</span>
           </h1>
-          <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: 'var(--text-muted)' }}>ROUGH-TO-RELEASE</p>
+          <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#86efac' }}>ROUGH-TO-RELEASE</p>
           <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Track the evolution of your mixes</p>
         </div>
 
