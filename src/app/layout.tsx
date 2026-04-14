@@ -7,7 +7,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import MiniPlayer from "@/components/MiniPlayer";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 
-const jost = Jost({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-jost" });
+const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
 
 export const metadata: Metadata = {
   title: "mixBase",
