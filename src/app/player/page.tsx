@@ -181,10 +181,12 @@ export default function PlayerPage() {
       // Control bar: ~80px desktop, ~112px mobile (extra progress row)
       const controlBarH = isDesktop ? 80 : 112
       const navH = 56
+      // Bottom nav bar on mobile (64px) — matches --player-bottom CSS var
+      const bottomNavH = vw >= 768 ? 0 : 64
       const horizontalMargin = isDesktop ? 48 : 24
       const verticalMargin = 48 // top + bottom padding on the cassette stage
       const availableW = vw - sidebarW - horizontalMargin
-      const availableH = vh - navH - controlBarH - verticalMargin
+      const availableH = vh - navH - bottomNavH - controlBarH - verticalMargin
       const natural = cassetteRef.current
       const naturalH = natural?.offsetHeight ?? cassetteH
       const scaleW = availableW / 760
@@ -314,7 +316,7 @@ export default function PlayerPage() {
     return (
       <>
       <Nav />
-      <div className="fixed top-14 left-0 right-0 bottom-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
+      <div className="fixed top-14 left-0 right-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4" style={{ bottom: 'var(--player-bottom, 0px)' }}>
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
         <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
@@ -328,7 +330,7 @@ export default function PlayerPage() {
   return (
     <>
     <Nav />
-    <div className="fixed top-14 left-0 right-0 bottom-0 bg-black flex overflow-hidden select-none">
+    <div className="fixed top-14 left-0 right-0 bg-black flex overflow-hidden select-none" style={{ bottom: 'var(--player-bottom, 0px)' }}>
       {/* No local <audio> — playback runs through the shared PlayerContext element */}
 
       {/* ── BIG album art backdrop (the whole screen) ─────────────────────────── */}

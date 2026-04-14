@@ -7,6 +7,13 @@
   --border: #222222;
   --accent: #a78bfa;
   --accent-dim: rgba(167, 139, 250, 0.12);
+  --player-bottom: 0px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 body {
