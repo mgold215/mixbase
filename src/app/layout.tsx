@@ -39,7 +39,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`h-full ${jost.variable}`}>
-      <body className="min-h-full pb-32 md:pb-16" style={{ backgroundColor: "var(--bg-page)", color: "var(--text)" }}>
+      <body className="min-h-full" style={{ backgroundColor: "var(--bg-page)", color: "var(--text)" }}>
         <ThemeProvider>
           <PlayerProvider>
             <ServiceWorkerRegistrar />

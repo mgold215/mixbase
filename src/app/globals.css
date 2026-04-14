@@ -63,6 +63,12 @@ body {
 /* Player bottom clearance — clears mobile tab bar (h-16) + safe area */
 @media (max-width: 767px) {
   :root { --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
+
+  /* Page wrappers: shrink min-height and add padding so content never hides behind the fixed tab bar */
+  .min-h-screen {
+    min-height: calc(100dvh - var(--player-bottom));
+    padding-bottom: var(--player-bottom);
+  }
 }
 
 /* Custom scrollbar */
