@@ -10,13 +10,13 @@ import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
 
 export const metadata: Metadata = {
-  title: "mixBase",
+  title: "mixBASE",
   description: "Rough-to-release. Version control for music.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "mixBase",
+    title: "mixBASE",
   },
   icons: {
     icon: "/icons/icon-192.png",

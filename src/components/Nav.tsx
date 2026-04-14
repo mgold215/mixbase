@@ -48,7 +48,7 @@ export default function Nav() {
       <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)' }}>
         {/* Logo */}
         <Link href="/dashboard" className="mr-6 flex items-baseline gap-0.5 font-[family-name:var(--font-jost)]">
-          <span className="text-[15px] font-bold text-[#e0e0e0] tracking-[0.04em]">mix</span><span className="text-[15px] font-bold text-[#86efac] tracking-[0.04em]">Base</span>
+          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span><span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
         </Link>
 
         {/* Divider — hidden on mobile */}
