@@ -44,6 +44,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const midRef = useRef<BiquadFilterNode | null>(null)
   const trebleRef = useRef<BiquadFilterNode | null>(null)
 
+  // Tracks user *intent* to play — iOS can pause the audio element before visibilitychange
+  // fires, so we can't rely on audio.paused to know if we should restore playback.
+  const playIntentRef = useRef(false)
+
   // Load tracks once on mount
   useEffect(() => {
     fetch('/api/tracks')
@@ -60,7 +64,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
     const onPlay = () => setIsPlaying(true)
     const onPause = () => setIsPlaying(false)
-    const onEnded = () => setIsPlaying(false)
+    const onEnded = () => { playIntentRef.current = false; setIsPlaying(false) }
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('durationchange', onDurationChange)
     audio.addEventListener('play', onPlay)
@@ -102,16 +106,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [currentTime, duration])
 
   // ── visibilitychange — resume AudioContext + audio element after iOS suspends ─
+  // iOS can pause <audio> *before* firing visibilitychange:hidden, so we track
+  // user intent (playIntentRef) rather than the live audio.paused value.
   useEffect(() => {
-    let wasPlaying = false
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        wasPlaying = !(audioRef.current?.paused ?? true)
-      } else if (document.visibilityState === 'visible') {
-        if (audioCtxRef.current?.state !== 'running') {
-          audioCtxRef.current?.resume().catch(() => {})
+      if (document.visibilityState === 'visible') {
+        const ctx = audioCtxRef.current
+        if (ctx && ctx.state !== 'running') {
+          ctx.resume().catch(() => {})
         }
-        if (wasPlaying && audioRef.current?.paused) {
+        if (playIntentRef.current && audioRef.current?.paused) {
           audioRef.current.play().catch(() => {})
         }
       }
@@ -129,10 +133,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1200; mid.Q.value = 1.2
     const treble = ctx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 4000
     src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(ctx.destination)
-    // iOS suspends the AudioContext when backgrounded; re-resume it so background playback continues
+    // iOS suspends the AudioContext when backgrounded; re-resume it so background playback continues.
+    // Use playIntentRef rather than audio.paused — iOS may pause the element before suspending the context.
     ctx.onstatechange = () => {
-      if (ctx.state === 'suspended' && audioRef.current && !audioRef.current.paused) {
-        ctx.resume().catch(() => {})
+      if (ctx.state === 'suspended' && playIntentRef.current) {
+        ctx.resume().then(() => {
+          // Restart the audio element too if iOS paused it alongside the context
+          if (audioRef.current?.paused) audioRef.current.play().catch(() => {})
+        }).catch(() => {})
       }
     }
     audioCtxRef.current = ctx
@@ -157,11 +165,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setDuration(0)
     }
     audio.volume = volume
+    playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
     audio.play().catch(() => {})
   }, [tracks, currentProjectId, volume])
 
   const pause = useCallback(() => {
+    playIntentRef.current = false
     audioRef.current?.pause()
   }, [])
 
@@ -169,8 +179,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current
     if (!audio || !currentTrack) return
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    if (isPlaying) audio.pause()
-    else audio.play().catch(() => {})
+    if (isPlaying) { playIntentRef.current = false; audio.pause() }
+    else { playIntentRef.current = true; audio.play().catch(() => {}) }
   }, [isPlaying, currentTrack])
 
   const seek = useCallback((time: number) => {
@@ -234,8 +244,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ensureAudioChain,
       setEQGains,
     }}>
-      {/* Hidden audio element — persists for the lifetime of the app session */}
-      <audio ref={audioRef} style={{ display: 'none' }} />
+      {/* Hidden audio element — persists for the lifetime of the app session.
+          Do NOT use display:none — iOS needs the element in the render tree
+          for proper background audio session registration. */}
+      <audio ref={audioRef} style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
       {children}
     </PlayerContext.Provider>
   )
