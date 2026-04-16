@@ -30,26 +30,30 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080808] flex items-center justify-center px-4">
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: 'var(--bg-page)' }}>
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold tracking-tight text-white">mixBase</h1>
-          <p className="text-[#666] text-sm mt-2">Track the evolution of your mixes</p>
+          <h1 className="text-3xl font-bold tracking-[0.04em] font-[family-name:var(--font-jost)]">
+            <span style={{ color: 'var(--text)' }}>mix</span><span style={{ color: 'var(--accent)' }}>BASE</span>
+          </h1>
+          <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#86efac' }}>ROUGH-TO-RELEASE</p>
+          <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Track the evolution of your mixes</p>
         </div>
 
         {/* Login card */}
-        <div className="bg-[#111] border border-[#222] rounded-2xl p-8">
+        <div className="rounded-2xl p-8" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm text-[#888] mb-2">Password</label>
+              <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Enter password"
                 autoFocus
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl px-4 py-3 text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa] focus:ring-1 focus:ring-[#a78bfa]/30"
+                className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
               />
             </div>
 
@@ -60,7 +64,8 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !password}
-              className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-3 transition-colors"
+              className="w-full font-semibold rounded-xl py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: 'var(--accent)', color: 'var(--bg)' }}
             >
               {loading ? 'Entering...' : 'Enter'}
             </button>

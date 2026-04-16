@@ -151,7 +151,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               <span className="text-sm font-semibold text-white truncate">{release.title}</span>
               {release.mb_projects && (
                 release.project_id
-                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#a78bfa] truncate transition-colors">← {release.mb_projects.title}</Link>
+                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[#444] hover:text-[#2dd4bf] truncate transition-colors">← {release.mb_projects.title}</Link>
                   : <span className="text-xs text-[#444] truncate">← {release.mb_projects.title}</span>
               )}
             </div>
@@ -168,7 +168,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
             {/* Countdown */}
             {countdown && (
               <span className={`text-xs px-2 py-0.5 rounded-full ${
-                countdown === 'Today' ? 'text-[#a78bfa] bg-[#a78bfa]/10' :
+                countdown === 'Today' ? 'text-[var(--accent)] bg-[var(--accent-dim)]' :
                 countdown === 'Released' ? 'text-emerald-400 bg-emerald-400/10' :
                 'text-[#555] bg-[#1a1a1a]'
               }`}>
@@ -183,7 +183,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   className="h-full rounded-full transition-all"
                   style={{
                     width: `${pct}%`,
-                    backgroundColor: pct === 100 ? '#34d399' : pct >= 50 ? '#a78bfa' : '#555'
+                    backgroundColor: pct === 100 ? '#34d399' : pct >= 50 ? '#2dd4bf' : '#555'
                   }}
                 />
               </div>
@@ -208,7 +208,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                         type="checkbox"
                         checked={release[item.key]}
                         onChange={() => toggleCheck(release.id, item.key, release[item.key])}
-                        className="accent-[#a78bfa] w-3.5 h-3.5"
+                        className="accent-[#2dd4bf] w-3.5 h-3.5"
                       />
                       <span className={`text-sm transition-colors ${release[item.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
                         {item.label}
@@ -228,7 +228,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                         type="checkbox"
                         checked={release[dsp.key]}
                         onChange={() => toggleCheck(release.id, dsp.key, release[dsp.key])}
-                        className="accent-[#a78bfa] w-3.5 h-3.5"
+                        className="accent-[#2dd4bf] w-3.5 h-3.5"
                       />
                       <span className={`text-sm transition-colors ${release[dsp.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
                         {dsp.label}
@@ -277,7 +277,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+          className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
         >
           <Plus size={16} />
           Add Release
@@ -291,14 +291,14 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#666] mb-1.5">Title <span className="text-[#a78bfa]">*</span></label>
+                <label className="block text-xs text-[#666] mb-1.5">Title <span className="text-[#2dd4bf]">*</span></label>
                 <input
                   type="text"
                   value={form.title}
                   onChange={e => setField('title', e.target.value)}
                   placeholder="e.g. After Dark"
                   autoFocus
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40"
                 />
               </div>
               <div>
@@ -307,7 +307,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   type="date"
                   value={form.release_date}
                   onChange={e => setField('release_date', e.target.value)}
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 [color-scheme:dark]"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#2dd4bf]/40 [color-scheme:dark]"
                 />
               </div>
             </div>
@@ -319,7 +319,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                 <select
                   value={form.project_id}
                   onChange={e => setField('project_id', e.target.value)}
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 appearance-none"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#2dd4bf]/40 appearance-none"
                 >
                   <option value="" className="bg-[#111]">None</option>
                   {projects.map(p => (
@@ -336,7 +336,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   value={form.final_version_id}
                   onChange={e => setField('final_version_id', e.target.value)}
                   disabled={!form.project_id || projectVersions.length === 0}
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#a78bfa]/40 appearance-none disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#2dd4bf]/40 appearance-none disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <option value="" className="bg-[#111]">
                     {form.project_id && projectVersions.length === 0 ? 'No versions yet' : 'Latest / none'}
@@ -358,7 +358,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   value={form.genre}
                   onChange={e => setField('genre', e.target.value)}
                   placeholder="e.g. Afrobeats"
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40"
                 />
               </div>
               <div>
@@ -368,7 +368,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   value={form.label}
                   onChange={e => setField('label', e.target.value)}
                   placeholder="e.g. Independent"
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40"
                 />
               </div>
             </div>
@@ -381,7 +381,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   value={form.isrc}
                   onChange={e => setField('isrc', e.target.value)}
                   placeholder="e.g. USABC1234567"
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40"
                 />
               </div>
               <div>
@@ -391,7 +391,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                   value={form.notes}
                   onChange={e => setField('notes', e.target.value)}
                   placeholder="Any notes..."
-                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40"
+                  className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40"
                 />
               </div>
             </div>
@@ -403,7 +403,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               <button
                 type="submit"
                 disabled={saving || !form.title.trim()}
-                className="flex-1 bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-2.5 transition-colors"
+                className="flex-1 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold rounded-xl py-2.5 transition-colors"
               >
                 {saving ? 'Creating...' : 'Create Release'}
               </button>
@@ -428,7 +428,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <p className="text-[#555] mb-4">No releases planned yet</p>
           <button
             onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 text-[#a78bfa] text-sm hover:text-[#9370f0] transition-colors"
+            className="flex items-center gap-2 text-[#2dd4bf] text-sm hover:text-[#14b8a6] transition-colors"
           >
             <Plus size={14} />
             Add your first release

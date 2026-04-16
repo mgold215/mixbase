@@ -42,3 +42,5 @@ next-env.d.ts
 
 # supabase temp
 supabase/.temp
+.superpowers/
+ios/mixBase/Utilities/Config.swift

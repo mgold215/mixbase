@@ -65,7 +65,7 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
           placeholder="Your name (optional)"
           value={name}
           onChange={e => setName(e.target.value)}
-          className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa]/40"
+          className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40"
         />
       </div>
 
@@ -83,7 +83,7 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
             <Star
               size={20}
               className={`${
-                star <= (hoverRating || rating) ? 'text-[#a78bfa] fill-[#a78bfa]' : 'text-[#333]'
+                star <= (hoverRating || rating) ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[#333]'
               } transition-colors`}
             />
           </button>
@@ -98,7 +98,7 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
         value={comment}
         onChange={e => setComment(e.target.value)}
         rows={3}
-        className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa]/40 resize-none"
+        className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
       />
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -106,7 +106,7 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
       <button
         type="submit"
         disabled={submitting || !comment.trim()}
-        className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-2.5 transition-colors"
+        className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold rounded-xl py-2.5 transition-colors"
       >
         {submitting ? 'Sending...' : 'Send Feedback'}
       </button>

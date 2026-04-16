@@ -51,13 +51,13 @@ export default function ABCompare({ versions }: Props) {
         {/* Version A */}
         <div
           className={`bg-[#111] rounded-xl p-4 border cursor-pointer transition-colors ${
-            activeSlot === 'A' ? 'border-[#a78bfa]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
+            activeSlot === 'A' ? 'border-[#2dd4bf]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
           }`}
           onClick={() => setActiveSlot('A')}
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#a78bfa] bg-[#a78bfa]/10 px-1.5 py-0.5 rounded">A</span>
+              <span className="text-xs font-bold text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded">A</span>
               <select
                 value={versionA}
                 onChange={e => setVersionA(e.target.value)}
@@ -87,7 +87,7 @@ export default function ABCompare({ versions }: Props) {
         {/* Version B */}
         <div
           className={`bg-[#111] rounded-xl p-4 border cursor-pointer transition-colors ${
-            activeSlot === 'B' ? 'border-[#a78bfa]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
+            activeSlot === 'B' ? 'border-[#2dd4bf]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
           }`}
           onClick={() => setActiveSlot('B')}
         >

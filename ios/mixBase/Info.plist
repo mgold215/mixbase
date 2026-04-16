@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Allow audio to play in the background (lock screen, other apps) -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
+	<!-- App transport security — allow HTTPS connections to our APIs -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+
+	<!-- Photo library access for uploading artwork -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>mixBase needs access to your photos to upload artwork for your projects.</string>
+
+	<!-- Microphone access not needed for v1, but future-proofing -->
+
+	<!-- App display name -->
+	<key>CFBundleDisplayName</key>
+	<string>mixBase</string>
+</dict>
+</plist>

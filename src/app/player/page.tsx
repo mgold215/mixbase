@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Sliders, Menu, X,
+  Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -14,22 +14,9 @@ import Nav from '@/components/Nav'
 import { usePlayer } from '@/contexts/PlayerContext'
 
 type LoopMode = 'none' | 'all' | 'one'
-type EQPreset = 'Flat' | 'Bass' | 'Vocal' | 'Air' | 'Lo-Fi'
 type SortKey = 'title' | 'date'
 
-const EQ_PRESETS: Record<EQPreset, [number, number, number]> = {
-  Flat:   [0,  0,  0],
-  Bass:   [7,  1,  0],
-  Vocal:  [-2, 6,  2],
-  Air:    [0, -1,  6],
-  'Lo-Fi':[4, -3, -9],
-}
-
-// MoodMix cassette label colors — pulled from the logo.
-const STRIPE_BLUE   = '#2d3fd1'
-const STRIPE_PINK   = '#ff2e82'
-const STRIPE_YELLOW = '#f7d417'
-const STRIPE_TEAL   = '#16b892'
+const PASTEL_GREEN = '#86efac'
 
 // Map version status → short tag + color
 function statusTag(status: string): { label: string; color: string } {
@@ -42,51 +29,12 @@ function statusTag(status: string): { label: string; color: string } {
   }
 }
 
-// Hub styled after the MoodMix logo cassette: a solid black disc with a
-// 6-point star cutout at the center (revealing the dark interior) plus a
-// thin outer ring highlight. Spins while playing.
-function Reel({ spinning, size = 78 }: { spinning: boolean; size?: number }) {
-  // 6-point star path for the spindle cutout
-  const star = (() => {
-    const pts: string[] = []
-    for (let i = 0; i < 12; i++) {
-      const angle = (i * 30 - 90) * (Math.PI / 180)
-      const r = i % 2 === 0 ? 17 : 7
-      pts.push(`${(Math.cos(angle) * r).toFixed(2)},${(Math.sin(angle) * r).toFixed(2)}`)
-    }
-    return pts.join(' ')
-  })()
-  return (
-    <svg
-      viewBox="-50 -50 100 100"
-      width={size}
-      height={size}
-      style={{
-        animation: spinning ? 'reelSpin 2.4s linear infinite' : 'none',
-        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))',
-      }}
-    >
-      {/* Outer wound tape — concentric brown rings fading inward */}
-      <circle r="48" fill="#2a1608" />
-      <circle r="48" fill="none" stroke="#3a1e0a" strokeWidth="0.8" />
-      {[46, 43, 40, 37, 34, 31].map((r, i) => (
-        <circle key={r} r={r} fill="none" stroke={i % 2 ? '#1a0d05' : '#3a1e0a'} strokeWidth="1" />
-      ))}
-      {/* Inner black hub disc */}
-      <circle r="28" fill="#0a0a0a" />
-      <circle r="28" fill="none" stroke="#1a1a1a" strokeWidth="0.5" />
-      {/* 6-point star spindle cutout */}
-      <polygon points={star} fill="#1a1a1a" stroke="#000" strokeWidth="0.5" strokeLinejoin="miter" />
-      <circle r="3" fill="#000" />
-    </svg>
-  )
-}
 
 export default function PlayerPage() {
   const {
     tracks, loading, currentTrack, isPlaying, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
-    ensureAudioChain, setEQGains, audioRef,
+    ensureAudioChain, audioRef,
   } = usePlayer()
 
   const [filtered, setFiltered] = useState<Track[]>([])
@@ -94,12 +42,8 @@ export default function PlayerPage() {
   const [shuffle, setShuffle] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [search, setSearch] = useState('')
-  const [eqPreset, setEqPreset] = useState<EQPreset>('Flat')
-  const [speed, setSpeed] = useState(1)
-  const [showSettings, setShowSettings] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [scale, setScale] = useState(1)
-  const [cassetteH, setCassetteH] = useState(500)
+  const [copied, setCopied] = useState(false)
 
   // BPM / key analysis
   const [trackBPM, setTrackBPM] = useState<number | null>(null)
@@ -110,7 +54,6 @@ export default function PlayerPage() {
 
   // Refs
   const analysisAbortRef = useRef<AbortController | null>(null)
-  const cassetteRef = useRef<HTMLDivElement>(null)
 
   // current = whatever the shared audio engine is playing right now
   const current = currentTrack
@@ -170,42 +113,6 @@ export default function PlayerPage() {
     })
   }, [current])
 
-  // ── Responsive scaling — fit the 760px cassette within viewport bounds ──────
-  useEffect(() => {
-    const update = () => {
-      const vw = window.innerWidth
-      const vh = window.innerHeight
-      // Sidebar is 340px but only visible on md+ (>=768px)
-      const sidebarW = vw >= 768 ? 340 : 0
-      const isDesktop = vw >= 640
-      // Control bar: ~80px desktop, ~112px mobile (extra progress row)
-      const controlBarH = isDesktop ? 80 : 112
-      const navH = 56
-      const horizontalMargin = isDesktop ? 48 : 24
-      const verticalMargin = 48 // top + bottom padding on the cassette stage
-      const availableW = vw - sidebarW - horizontalMargin
-      const availableH = vh - navH - controlBarH - verticalMargin
-      const natural = cassetteRef.current
-      const naturalH = natural?.offsetHeight ?? cassetteH
-      const scaleW = availableW / 760
-      const scaleH = availableH / naturalH
-      setScale(Math.max(0.25, Math.min(1, scaleW, scaleH)))
-      if (natural) setCassetteH(natural.offsetHeight)
-    }
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current])
-
-  // Speed syncs directly to the shared audio element
-  useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = speed }, [speed, audioRef])
-
-  // EQ preset → gain values via context
-  useEffect(() => {
-    const [bv, mv, tv] = EQ_PRESETS[eqPreset]
-    setEQGains(bv, mv, tv)
-  }, [eqPreset, setEQGains])
 
   // ── Playback (operates on shared context state + filtered list) ───────────
   const goTo = useCallback((idx: number) => {
@@ -290,20 +197,25 @@ export default function PlayerPage() {
       navigator.mediaSession.setPositionState({
         duration,
         position: Math.min(currentTime, duration),
-        playbackRate: speed,
+        playbackRate: 1,
       })
     } catch { /* guard against race where position > duration */ }
-  }, [currentTime, duration, speed])
+  }, [currentTime, duration])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     ctxSeek(parseFloat(e.target.value))
   }
 
   const cycleLoop = () => setLoopMode(m => m === 'none' ? 'all' : m === 'all' ? 'one' : 'none')
-  const cycleSpeed = () => {
-    const speeds = [0.75, 1, 1.25, 1.5, 2]
-    setSpeed(s => speeds[(speeds.indexOf(s) + 1) % speeds.length])
-  }
+
+  const handleShare = useCallback(() => {
+    if (!current?.share_token) return
+    const url = `${window.location.origin}/share/${current.share_token}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }, [current])
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
@@ -314,7 +226,7 @@ export default function PlayerPage() {
     return (
       <>
       <Nav />
-      <div className="fixed top-14 left-0 right-0 bottom-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4">
+      <div className="fixed top-14 left-0 right-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4" style={{ bottom: 'var(--player-bottom, 0px)' }}>
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
         <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
@@ -328,7 +240,7 @@ export default function PlayerPage() {
   return (
     <>
     <Nav />
-    <div className="fixed top-14 left-0 right-0 bottom-0 bg-black flex overflow-hidden select-none">
+    <div className="fixed top-14 left-0 right-0 bg-black flex overflow-hidden select-none" style={{ bottom: 'var(--player-bottom, 0px)' }}>
       {/* No local <audio> — playback runs through the shared PlayerContext element */}
 
       {/* ── BIG album art backdrop (the whole screen) ─────────────────────────── */}
@@ -445,7 +357,7 @@ export default function PlayerPage() {
         </div>
       </aside>
 
-      {/* ── Main stage: the cassette + full-width control bar ─────────────── */}
+      {/* ── Main stage: artwork + full-width control bar ─────────────────── */}
       <main className="relative flex-1 flex flex-col overflow-hidden z-10">
         {/* Mobile hamburger — opens the track-list drawer */}
         <button
@@ -455,193 +367,35 @@ export default function PlayerPage() {
         >
           <Menu size={18} />
         </button>
-        <div className="flex-1 flex items-center justify-center px-3 sm:px-8 py-6 overflow-y-auto">
-        {current && status && (
-          <div
-            className="relative"
-            style={{ width: 760 * scale, height: cassetteH * scale }}
-          >
-            <div
-              ref={cassetteRef}
-              className="relative"
-              style={{
-                width: 760,
-                transform: `scale(${scale})`,
-                transformOrigin: 'top left',
-              }}
-            >
-            {/* Cassette shell — chamfered bottom corners like a real cassette */}
-            <div
-              className="relative overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, #1a1538 0%, #0a0720 60%, #0a0720 100%)',
-                boxShadow: `0 40px 100px rgba(0,0,0,0.8), 0 0 80px rgba(${accent[0]},${accent[1]},${accent[2]},0.22)`,
-                padding: 40,
-                paddingBottom: 24,
-                clipPath: 'polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 34px), calc(100% - 34px) 100%, 34px 100%, 0 calc(100% - 34px), 0 18px)',
-              }}
-            >
-              {/* Corner screws — positioned with the chamfered bottom corners */}
-              {[
-                { top: 12, left: 12 },
-                { top: 12, right: 12 },
-                { bottom: 44, left: 10 },
-                { bottom: 44, right: 10 },
-              ].map((p, i) => (
-                <div key={i} className="absolute w-3.5 h-3.5 rounded-full"
-                  style={{
-                    ...p,
-                    background: 'radial-gradient(circle at 35% 30%, #777, #222 70%, #000)',
-                    boxShadow: 'inset 0 0 0 1px #000, 0 1px 2px rgba(0,0,0,0.6)',
-                  }}>
-                  {/* Phillips slot */}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-[1px] bg-[#111]" />
+        {/* ── Full-bleed artwork area ── */}
+        <div className="flex-1 relative min-h-0">
+          {current && (
+            <>
+              {current.artwork_url ? (
+                <Image src={current.artwork_url} alt={current.title} fill className="object-cover" unoptimized />
+              ) : (
+                <div className="absolute inset-0 bg-[#111] flex items-center justify-center">
+                  <Music size={80} className="text-[#222]" />
+                </div>
+              )}
+              {/* Bottom gradient + track info overlay */}
+              {status && (
+                <div
+                  className="absolute bottom-0 left-0 right-0 px-5 pb-5 pt-20"
+                  style={{ background: `linear-gradient(to top, rgba(${accent[0]},${accent[1]},${accent[2]},0.92) 0%, rgba(${accent[0]},${accent[1]},${accent[2]},0.3) 65%, transparent 100%)` }}
+                >
+                  <h2 className="text-2xl font-bold text-white leading-tight">{current.title}</h2>
+                  <div className="flex flex-wrap items-center gap-x-2 mt-1">
+                    <span className="font-mono text-sm text-white/50">v{String(current.version).replace(/^v/i, '')}</span>
+                    <span className="text-white/20">·</span>
+                    <span className="text-sm font-semibold" style={{ color: status.color }}>{status.label}</span>
+                    {trackKey && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackKey}</span></>}
+                    {trackBPM && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackBPM} BPM</span></>}
                   </div>
                 </div>
-              ))}
-
-              {/* Colored label area */}
-              <div className="overflow-hidden rounded-md">
-                {/* Blue top stripe — brand */}
-                <div style={{ height: 44, background: STRIPE_BLUE }} className="relative flex items-center px-6">
-                  <span className="text-white/80 text-[11px] font-black tracking-[0.32em] lowercase">moodmixformat</span>
-                  <span className="ml-auto text-white text-[12px] font-black tracking-[0.2em] uppercase px-2 py-0.5 rounded bg-white/10">{current.version}</span>
-                </div>
-
-                {/* Pink stripe — track title */}
-                <div style={{ height: 80, background: STRIPE_PINK }} className="relative flex items-center justify-center px-16">
-                  <span
-                    className="text-white font-black tracking-wider uppercase truncate w-full text-center"
-                    style={{
-                      fontSize: current.title.length > 18 ? 26 : current.title.length > 12 ? 34 : 44,
-                      lineHeight: 1,
-                      textShadow: '0 2px 0 rgba(0,0,0,0.25)',
-                    }}>
-                    {current.title}
-                  </span>
-                  <span className="absolute right-4 top-2 text-white text-[11px] font-black tracking-wider">MIX</span>
-                </div>
-
-                {/* Yellow stripe — pill-shaped window with two black hubs touching,
-                    separated by a thin silver divider (matches the MMF logo). */}
-                <div style={{ height: 126, background: STRIPE_YELLOW }} className="relative">
-                  {/* Pill-shaped smoked-glass window — dark interior with slight
-                      translucency, so you can faintly see detail behind it */}
-                  <div
-                    className="absolute left-1/2 -translate-x-1/2 rounded-full overflow-hidden"
-                    style={{
-                      top: 14, bottom: 14, width: 360,
-                      background: 'linear-gradient(180deg, rgba(38,34,44,0.88) 0%, rgba(18,16,22,0.92) 55%, rgba(28,24,32,0.88) 100%)',
-                      backdropFilter: 'blur(4px)',
-                      boxShadow: [
-                        'inset 0 4px 10px rgba(0,0,0,0.85)',
-                        'inset 0 -2px 4px rgba(255,255,255,0.08)',
-                        'inset 0 0 0 1px rgba(0,0,0,0.6)',
-                        'inset 0 0 0 2px rgba(255,255,255,0.08)',
-                        '0 1px 0 rgba(255,255,255,0.55)',
-                      ].join(', '),
-                    }}
-                  >
-                    {/* Two hubs spaced apart with real cassette proportions */}
-                    <div className="absolute inset-0 flex items-center justify-center gap-[88px]">
-                      <Reel spinning={isPlaying} />
-                      <Reel spinning={isPlaying} />
-                    </div>
-                    {/* Thin exposed tape stretched across the top between hubs */}
-                    <div
-                      className="absolute h-[2px] pointer-events-none"
-                      style={{
-                        top: '32%',
-                        left: '22%',
-                        right: '22%',
-                        background: 'linear-gradient(180deg, #6b3e20 0%, #3a2010 60%, #1a0a04 100%)',
-                        boxShadow: '0 1px 0 rgba(255,180,120,0.1), 0 -1px 0 rgba(0,0,0,0.4)',
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Progress bar — a thin exposed-tape strip just under the window */}
-                <div style={{ height: 22, background: STRIPE_YELLOW }} className="relative flex items-center px-10">
-                  <div
-                    className="flex-1 relative h-[6px] rounded-[2px] overflow-hidden"
-                    style={{
-                      background: '#0a0a0a',
-                      boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.95), 0 1px 0 rgba(255,255,255,0.35)',
-                    }}
-                  >
-                    <div
-                      className="absolute inset-y-0 left-0 transition-[width] duration-200"
-                      style={{
-                        width: `${pct}%`,
-                        background: 'linear-gradient(180deg, #6b3e20 0%, #3a2010 50%, #1a0a04 100%)',
-                      }}
-                    />
-                    <div
-                      className="absolute top-0 bottom-0 w-[2px] pointer-events-none"
-                      style={{ left: `${pct}%`, background: accentCss, boxShadow: `0 0 6px ${accentCss}` }}
-                    />
-                    <input
-                      type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                      onChange={seek}
-                      className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                    />
-                  </div>
-                </div>
-
-                {/* Teal (green) stripe — clean decorative band (no text, per request) */}
-                <div style={{ height: 32, background: STRIPE_TEAL }} className="relative">
-                  <div className="absolute inset-0 flex items-center justify-between px-6">
-                    {/* Minimal ornament lines to balance the band */}
-                    <div className="flex gap-1">
-                      {[0, 1, 2, 3].map(i => <div key={i} className="w-3 h-[2px] bg-white/40" />)}
-                    </div>
-                    <div className="flex gap-1">
-                      {[0, 1, 2, 3].map(i => <div key={i} className="w-3 h-[2px] bg-white/40" />)}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Blue bottom stripe — status + BPM/key */}
-                <div style={{ height: 36, background: STRIPE_BLUE }} className="relative flex items-center justify-between px-6">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color, boxShadow: `0 0 6px ${status.color}` }} />
-                    <span className="text-white text-[10px] font-black tracking-[0.22em]">{status.label}</span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    {trackKey && <span className="text-white text-[11px] font-mono font-bold">{trackKey}</span>}
-                    {trackBPM && <span className="text-white text-[11px] font-mono font-bold">{trackBPM} BPM</span>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Metal base — decorative, shows the real cassette hub-drive
-                  holes + capstan/pinch-roller holes along the bottom shell */}
-              <div
-                className="relative rounded-md flex items-center justify-center gap-8 px-6"
-                style={{
-                  height: 56,
-                  background: 'linear-gradient(180deg, #5a5664 0%, #3a3642 45%, #1a161e 100%)',
-                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3)',
-                }}>
-                {/* 5 decorative drive holes, like a real cassette bottom */}
-                {[0, 1, 2, 3, 4].map(i => (
-                  <div key={i}
-                    className="rounded-full"
-                    style={{
-                      width: i === 2 ? 8 : 14,
-                      height: i === 2 ? 8 : 14,
-                      background: 'radial-gradient(circle at 50% 30%, #000 0%, #1a1a1a 70%, #2a2a2a 100%)',
-                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.9), inset 0 -1px 0 rgba(255,255,255,0.08)',
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-            </div>
-          </div>
-        )}
+              )}
+            </>
+          )}
         </div>
 
         {/* ── Full-width native-size control bar ───────────────────────────── */}
@@ -653,14 +407,14 @@ export default function PlayerPage() {
               backdropFilter: 'blur(24px)',
             }}
           >
-            {/* Time + progress (above controls on mobile, hidden on wide) */}
+            {/* ── Mobile: progress row ── */}
             <div className="flex items-center gap-3 mb-2 sm:hidden">
               <span className="text-[11px] text-white/60 font-mono tabular-nums">
                 {formatDuration(Math.floor(currentTime))}
               </span>
               <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
                 <div className="absolute inset-y-0 left-0 rounded-full"
-                  style={{ width: `${pct}%`, background: accentCss }} />
+                  style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
                 <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                   onChange={seek} className="absolute left-0 w-full h-6 -top-2.5 opacity-0 cursor-pointer" />
               </div>
@@ -669,55 +423,85 @@ export default function PlayerPage() {
               </span>
             </div>
 
-            <div className="flex items-center gap-3 sm:gap-6">
-              {/* Left: shuffle + loop */}
-              <div className="flex items-center gap-1 flex-shrink-0">
+            {/* ── Mobile: grid so transport is perfectly centered ── */}
+            <div className="sm:hidden grid grid-cols-[1fr_auto_1fr] items-center">
+              <div className="flex items-center gap-2">
                 <button onClick={() => setShuffle(s => !s)}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
-                  title="Shuffle">
-                  <Shuffle size={20} />
-                </button>
+                  className="p-2 transition-colors"
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  className="p-2 transition-colors"
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
               </div>
-
-              {/* Center: transport + (desktop) inline progress */}
-              <div className="flex-1 flex items-center gap-4 sm:gap-5 min-w-0 justify-center">
-                <button onClick={prev}
-                  className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0"
-                  title="Previous">
+              <div className="flex items-center gap-3">
+                <button onClick={prev} className="p-2 text-white/75 hover:text-white transition-colors" title="Previous">
                   <SkipBack size={26} fill="currentColor" />
                 </button>
                 <button onClick={togglePlay}
-                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0"
-                  style={{
-                    background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.8))`,
-                    boxShadow: `0 0 28px rgba(${accent[0]},${accent[1]},${accent[2]},0.6), inset 0 1px 0 rgba(255,255,255,0.25)`,
-                  }}
+                  className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+                  style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying
-                    ? <Pause size={28} fill="#000" className="text-black" />
-                    : <Play size={28} fill="#000" className="text-black ml-0.5" />}
+                  {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
-                <button onClick={next}
-                  className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0"
-                  title="Next">
+                <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors" title="Next">
                   <SkipForward size={26} fill="currentColor" />
                 </button>
+              </div>
+              <div className="flex items-center justify-end gap-1">
+                {current?.share_token && (
+                  <div className="relative">
+                    <button onClick={handleShare}
+                      className="p-2 transition-colors"
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                      title="Copy share link">
+                      {copied ? <Check size={20} /> : <Share2 size={20} />}
+                    </button>
+                    {copied && (
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
+                        Link copied!
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
 
-                {/* Desktop inline progress bar */}
-                <div className="hidden sm:flex flex-1 items-center gap-3 min-w-0 max-w-[520px]">
-                  <span className="text-[11px] text-white/60 font-mono tabular-nums flex-shrink-0">
-                    {formatDuration(Math.floor(currentTime))}
-                  </span>
+            {/* ── Desktop: full bar with inline progress ── */}
+            <div className="hidden sm:flex items-center gap-6">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button onClick={() => setShuffle(s => !s)}
+                  className="p-2 transition-colors"
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  title="Shuffle"><Shuffle size={20} /></button>
+                <button onClick={cycleLoop}
+                  className="p-2 transition-colors"
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  title={`Loop: ${loopMode}`}>
+                  {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
+                </button>
+              </div>
+              <div className="flex-1 flex items-center gap-5 min-w-0 justify-center">
+                <button onClick={prev} className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0" title="Previous">
+                  <SkipBack size={26} fill="currentColor" />
+                </button>
+                <button onClick={togglePlay}
+                  className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 flex-shrink-0"
+                  style={{ background: PASTEL_GREEN }}
+                  title={isPlaying ? 'Pause' : 'Play'}>
+                  {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
+                </button>
+                <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0" title="Next">
+                  <SkipForward size={26} fill="currentColor" />
+                </button>
+                <div className="flex flex-1 items-center gap-3 min-w-0 max-w-[520px]">
+                  <span className="text-[11px] text-white/60 font-mono tabular-nums flex-shrink-0">{formatDuration(Math.floor(currentTime))}</span>
                   <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
-                    <div className="absolute inset-y-0 left-0 rounded-full"
-                      style={{ width: `${pct}%`, background: accentCss }} />
+                    <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
                     <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                       onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
                   </div>
@@ -726,10 +510,8 @@ export default function PlayerPage() {
                   </span>
                 </div>
               </div>
-
-              {/* Right: volume + settings */}
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <div className="hidden sm:flex items-center gap-2">
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="flex items-center gap-2">
                   <Volume2 size={16} className="text-white/50" />
                   <div className="relative w-24 h-1.5 rounded-full bg-white/10">
                     <div className="absolute left-0 top-0 h-full rounded-full pointer-events-none"
@@ -739,49 +521,28 @@ export default function PlayerPage() {
                       className="absolute inset-0 w-full opacity-0 cursor-pointer h-4 -top-1.5" />
                   </div>
                 </div>
-                <div className="relative">
-                  <button onClick={() => setShowSettings(v => !v)}
-                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                    style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : 'rgba(255,255,255,0.55)' }}
-                    title="Settings">
-                    <Sliders size={20} />
-                  </button>
-                  {showSettings && (
-                    <div className="absolute bottom-12 right-0 rounded-xl border border-white/10 overflow-hidden shadow-2xl z-50 min-w-[220px]"
-                      style={{ background: 'rgba(14,10,28,0.98)', backdropFilter: 'blur(24px)' }}>
-                      <div className="px-3 py-2.5 border-b border-white/5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
-                        <button onClick={cycleSpeed}
-                          className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
-                          {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
-                        </button>
+                {current?.share_token && (
+                  <div className="relative">
+                    <button onClick={handleShare}
+                      className="p-2 transition-colors"
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                      title="Copy share link">
+                      {copied ? <Check size={20} /> : <Share2 size={20} />}
+                    </button>
+                    {copied && (
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
+                        Link copied!
                       </div>
-                      <div className="px-3 py-2.5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">EQ Preset</p>
-                        <div className="flex flex-wrap gap-1">
-                          {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
-                            <button key={p} onClick={() => setEqPreset(p)}
-                              className="text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium"
-                              style={eqPreset === p
-                                ? { color: '#fff', background: accentCss }
-                                : { color: '#888', background: 'rgba(255,255,255,0.06)' }}>
-                              {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
       </main>
 
-      <style>{`
-        @keyframes reelSpin { to { transform: rotate(360deg); } }
-      `}</style>
     </div>
     </>
   )

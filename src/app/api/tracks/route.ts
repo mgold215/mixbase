@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 export type Track = {
   id: string
   project_id: string
+  share_token: string | null
   title: string
   artist: string
   artwork_url: string | null
@@ -13,10 +14,39 @@ export type Track = {
   uploaded_at: number
 }
 
+// Backfill any existing versions that are missing a share_token.
+// Runs once per server process; short-circuits immediately on subsequent calls.
+let _backfillDone = false
+async function ensureShareTokens() {
+  if (_backfillDone) return
+  try {
+    const { data } = await supabaseAdmin
+      .from('mb_versions')
+      .select('id')
+      .is('share_token', null)
+      .limit(200)
+    if (!data?.length) { _backfillDone = true; return }
+    await Promise.all(
+      data.map(v =>
+        supabaseAdmin
+          .from('mb_versions')
+          .update({ share_token: crypto.randomUUID().replace(/-/g, '') })
+          .eq('id', v.id)
+      )
+    )
+    _backfillDone = true
+  } catch {
+    // Non-fatal: tokens will be backfilled on the next request
+  }
+}
+
 export async function GET() {
+  // Ensure all versions have share tokens before returning tracks
+  await ensureShareTokens()
+
   const { data, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
+    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
     .order('version_number', { ascending: false })
 
   if (error) {
@@ -37,6 +67,7 @@ export async function GET() {
     return {
       id: v.id,
       project_id: v.project_id,
+      share_token: v.share_token ?? null,
       // Title is just the project title — the version label lives in its own field.
       title: projectTitle,
       artist: projectTitle,

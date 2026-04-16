@@ -39,7 +39,7 @@ export type Version = {
   private_notes: string | null
   public_notes: string | null
   change_log: string | null
-  share_token: string
+  share_token: string | null
   allow_download: boolean
   created_at: string
 }
@@ -95,7 +95,7 @@ export const STATUS_CONFIG = {
   'WIP':        { label: 'WIP',          color: 'text-yellow-400',  bg: 'bg-yellow-400/10',  border: 'border-yellow-400/30',  step: 1 },
   'Mix/Master': { label: 'Mix / Master', color: 'text-blue-400',    bg: 'bg-blue-400/10',    border: 'border-blue-400/30',    step: 2 },
   'Finished':   { label: 'Finished',     color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30', step: 3 },
-  'Released':   { label: 'Released',     color: 'text-purple-400',  bg: 'bg-purple-400/10',  border: 'border-purple-400/30',  step: 4 },
+  'Released':   { label: 'Released',     color: 'text-teal-400',  bg: 'bg-teal-400/10',  border: 'border-teal-400/30',  step: 4 },
 }
 
 export const STATUSES = ['WIP', 'Mix/Master', 'Finished', 'Released'] as const

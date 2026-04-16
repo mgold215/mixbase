@@ -88,7 +88,7 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
         <div className="flex gap-2">
           <button
             onClick={() => setMode('generate')}
-            className="flex-1 flex items-center justify-center gap-2 py-2 text-xs bg-[#a78bfa]/10 border border-[#a78bfa]/20 text-[#a78bfa] rounded-xl hover:bg-[#a78bfa]/20 transition-colors"
+            className="flex-1 flex items-center justify-center gap-2 py-2 text-xs bg-[#2dd4bf]/10 border border-[#2dd4bf]/20 text-[#2dd4bf] rounded-xl hover:bg-[#2dd4bf]/20 transition-colors"
           >
             <Sparkles size={13} />
             Generate with AI
@@ -111,7 +111,7 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
                 key={m}
                 onClick={() => setModel(m)}
                 className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
-                  model === m ? 'bg-[#a78bfa]/20 text-[#a78bfa]' : 'text-[#555] hover:text-[#888]'
+                  model === m ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
                 }`}
               >
                 {m === 'flux' ? 'Flux 2 Pro' : 'Imagen 4'}
@@ -123,14 +123,14 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
             onChange={e => setPrompt(e.target.value)}
             rows={3}
             placeholder="Describe the artwork..."
-            className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#a78bfa]/40 resize-none"
+            className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
           />
           {error && <p className="text-red-400 text-xs">{error}</p>}
           <div className="flex gap-2">
             <button
               onClick={handleGenerate}
               disabled={generating || !prompt.trim()}
-              className="flex-1 py-2 text-xs bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-colors font-medium"
+              className="flex-1 py-2 text-xs bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] rounded-xl transition-colors font-medium"
             >
               {generating ? (
                 <span className="flex items-center justify-center gap-2">

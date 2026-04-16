@@ -17,13 +17,13 @@ export default function MiniPlayer() {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0d0d0d]/95 backdrop-blur-md border-t border-[#1e1e1e]"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 backdrop-blur-md mb-16 md:mb-0"
+      style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Progress bar — thin line along top edge */}
       <div className="relative h-[2px] bg-[#1a1a1a]">
         <div
-          className="absolute inset-y-0 left-0 bg-[#a78bfa] transition-none"
+          className="absolute inset-y-0 left-0 bg-[#2dd4bf] transition-none"
           style={{ width: `${progress}%` }}
         />
         {/* Scrubber hit area */}
@@ -77,7 +77,7 @@ export default function MiniPlayer() {
           </button>
           <button
             onClick={togglePlay}
-            className="w-9 h-9 rounded-full bg-[#a78bfa] hover:bg-[#9370f0] flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-full bg-[#2dd4bf] hover:bg-[#14b8a6] flex items-center justify-center transition-colors"
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? <Pause size={15} fill="white" className="text-white" /> : <Play size={15} fill="white" className="text-white ml-0.5" />}

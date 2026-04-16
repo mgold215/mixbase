@@ -1,0 +1,531 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		/* App */
+		A100000001 /* mixBaseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000001; };
+		A100000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000002; };
+
+		/* Models */
+		A100000010 /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000010; };
+		A100000011 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000011; };
+		A100000012 /* Release.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000012; };
+		A100000013 /* Feedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000013; };
+		A100000014 /* Activity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000014; };
+		A100000015 /* Collection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000015; };
+
+		/* Services */
+		A100000020 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000020; };
+		A100000021 /* AudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000021; };
+		A100000022 /* ArtworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000022; };
+
+		/* Utilities */
+		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
+
+		/* Views - Home */
+		A100000040 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000040; };
+
+		/* Views - Projects */
+		A100000050 /* ProjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000050; };
+		A100000051 /* ProjectDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000051; };
+		A100000052 /* NewProjectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000052; };
+
+		/* Views - Player */
+		A100000060 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000060; };
+
+		/* Views - Pipeline */
+		A100000070 /* PipelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000070; };
+		A100000071 /* ReleaseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000071; };
+
+		/* Views - Artwork */
+		A100000080 /* ArtworkGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000080; };
+
+		/* Views - Settings */
+		A100000090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000090; };
+
+		/* Views - Components */
+		A1000000A0 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A0; };
+		A1000000A1 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A1; };
+		A1000000A2 /* StatCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A2; };
+
+		/* Assets */
+		A1000000B0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000B0; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		/* Product */
+		C100000001 /* mixBase.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mixBase.app; sourceTree = BUILT_PRODUCTS_DIR; };
+
+		/* App */
+		B100000001 /* mixBaseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = mixBaseApp.swift; sourceTree = "<group>"; };
+		B100000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+
+		/* Models */
+		B100000010 /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
+		B100000011 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
+		B100000012 /* Release.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Release.swift; sourceTree = "<group>"; };
+		B100000013 /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
+		B100000014 /* Activity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity.swift; sourceTree = "<group>"; };
+		B100000015 /* Collection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Collection.swift; sourceTree = "<group>"; };
+
+		/* Services */
+		B100000020 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
+		B100000021 /* AudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioService.swift; sourceTree = "<group>"; };
+		B100000022 /* ArtworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkService.swift; sourceTree = "<group>"; };
+
+		/* Utilities */
+		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+
+		/* Views */
+		B100000040 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		B100000050 /* ProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsView.swift; sourceTree = "<group>"; };
+		B100000051 /* ProjectDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDetailView.swift; sourceTree = "<group>"; };
+		B100000052 /* NewProjectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewProjectView.swift; sourceTree = "<group>"; };
+		B100000060 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		B100000070 /* PipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineView.swift; sourceTree = "<group>"; };
+		B100000071 /* ReleaseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDetailView.swift; sourceTree = "<group>"; };
+		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
+		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B1000000A0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
+		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
+		B1000000A2 /* StatCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCard.swift; sourceTree = "<group>"; };
+
+		/* Assets */
+		B1000000B0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+
+		/* Info.plist */
+		B1000000C0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		/* Root */
+		E100000001 = {
+			isa = PBXGroup;
+			children = (
+				E100000002 /* mixBase */,
+				E100000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+
+		/* Products */
+		E100000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C100000001 /* mixBase.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+
+		/* mixBase source */
+		E100000002 /* mixBase */ = {
+			isa = PBXGroup;
+			children = (
+				E100000010 /* App */,
+				E100000011 /* Models */,
+				E100000012 /* Views */,
+				E100000013 /* Services */,
+				E100000014 /* Utilities */,
+				B1000000B0 /* Assets.xcassets */,
+				B1000000C0 /* Info.plist */,
+			);
+			path = mixBase;
+			sourceTree = "<group>";
+		};
+
+		/* App */
+		E100000010 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B100000001 /* mixBaseApp.swift */,
+				B100000002 /* ContentView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+
+		/* Models */
+		E100000011 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B100000010 /* Project.swift */,
+				B100000011 /* Version.swift */,
+				B100000012 /* Release.swift */,
+				B100000013 /* Feedback.swift */,
+				B100000014 /* Activity.swift */,
+				B100000015 /* Collection.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+
+		/* Views */
+		E100000012 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				E100000020 /* Home */,
+				E100000021 /* Projects */,
+				E100000022 /* Player */,
+				E100000023 /* Pipeline */,
+				E100000024 /* Artwork */,
+				E100000025 /* Settings */,
+				E100000026 /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+
+		E100000020 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				B100000040 /* HomeView.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+
+		E100000021 /* Projects */ = {
+			isa = PBXGroup;
+			children = (
+				B100000050 /* ProjectsView.swift */,
+				B100000051 /* ProjectDetailView.swift */,
+				B100000052 /* NewProjectView.swift */,
+			);
+			path = Projects;
+			sourceTree = "<group>";
+		};
+
+		E100000022 /* Player */ = {
+			isa = PBXGroup;
+			children = (
+				B100000060 /* PlayerView.swift */,
+			);
+			path = Player;
+			sourceTree = "<group>";
+		};
+
+		E100000023 /* Pipeline */ = {
+			isa = PBXGroup;
+			children = (
+				B100000070 /* PipelineView.swift */,
+				B100000071 /* ReleaseDetailView.swift */,
+			);
+			path = Pipeline;
+			sourceTree = "<group>";
+		};
+
+		E100000024 /* Artwork */ = {
+			isa = PBXGroup;
+			children = (
+				B100000080 /* ArtworkGeneratorView.swift */,
+			);
+			path = Artwork;
+			sourceTree = "<group>";
+		};
+
+		E100000025 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				B100000090 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+
+		E100000026 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000A0 /* MiniPlayerView.swift */,
+				B1000000A1 /* StatusBadge.swift */,
+				B1000000A2 /* StatCard.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+
+		/* Services */
+		E100000013 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B100000020 /* SupabaseService.swift */,
+				B100000021 /* AudioService.swift */,
+				B100000022 /* ArtworkService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+
+		/* Utilities */
+		E100000014 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				B100000030 /* Config.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F100000001 /* mixBase */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F100000010 /* Build configuration list for PBXNativeTarget "mixBase" */;
+			buildPhases = (
+				F100000002 /* Sources */,
+				D100000001 /* Frameworks */,
+				F100000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = mixBase;
+			productName = mixBase;
+			productReference = C100000001 /* mixBase.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F100000099 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					F100000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = F100000020 /* Build configuration list for PBXProject "mixBase" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E100000001;
+			productRefGroup = E100000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F100000001 /* mixBase */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F100000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000B0 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F100000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000001 /* mixBaseApp.swift in Sources */,
+				A100000002 /* ContentView.swift in Sources */,
+				A100000010 /* Project.swift in Sources */,
+				A100000011 /* Version.swift in Sources */,
+				A100000012 /* Release.swift in Sources */,
+				A100000013 /* Feedback.swift in Sources */,
+				A100000014 /* Activity.swift in Sources */,
+				A100000015 /* Collection.swift in Sources */,
+				A100000020 /* SupabaseService.swift in Sources */,
+				A100000021 /* AudioService.swift in Sources */,
+				A100000022 /* ArtworkService.swift in Sources */,
+				A100000030 /* Config.swift in Sources */,
+				A100000040 /* HomeView.swift in Sources */,
+				A100000050 /* ProjectsView.swift in Sources */,
+				A100000051 /* ProjectDetailView.swift in Sources */,
+				A100000052 /* NewProjectView.swift in Sources */,
+				A100000060 /* PlayerView.swift in Sources */,
+				A100000070 /* PipelineView.swift in Sources */,
+				A100000071 /* ReleaseDetailView.swift in Sources */,
+				A100000080 /* ArtworkGeneratorView.swift in Sources */,
+				A100000090 /* SettingsView.swift in Sources */,
+				A1000000A0 /* MiniPlayerView.swift in Sources */,
+				A1000000A1 /* StatusBadge.swift in Sources */,
+				A1000000A2 /* StatCard.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		/* Debug - Project */
+		F100000021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+
+		/* Release - Project */
+		F100000022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+
+		/* Debug - Target */
+		F100000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = mixBase/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = mixBase;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+
+		/* Release - Target */
+		F100000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = mixBase/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = mixBase;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		/* Project config list */
+		F100000020 /* Build configuration list for PBXProject "mixBase" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F100000021 /* Debug */,
+				F100000022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+
+		/* Target config list */
+		F100000010 /* Build configuration list for PBXNativeTarget "mixBase" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F100000011 /* Debug */,
+				F100000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = F100000099 /* Project object */;
+}

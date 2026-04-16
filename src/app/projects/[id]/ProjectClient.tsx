@@ -309,24 +309,24 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   type="text"
                   value={projectForm.title}
                   onChange={e => setProjectForm(p => ({ ...p, title: e.target.value }))}
-                  className="w-full bg-[#0f0f0f] border border-[#a78bfa]/30 rounded-xl px-3 py-2 text-lg font-bold text-white focus:outline-none focus:border-[#a78bfa]/60"
+                  className="w-full bg-[#0f0f0f] border border-[#2dd4bf]/30 rounded-xl px-3 py-2 text-lg font-bold text-white focus:outline-none focus:border-[#2dd4bf]/60"
                 />
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10px] text-[#555] mb-1">Genre</label>
-                    <input type="text" value={projectForm.genre} onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))} placeholder="e.g. Techno" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                    <input type="text" value={projectForm.genre} onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))} placeholder="e.g. Techno" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
                   </div>
                   <div>
                     <label className="block text-[10px] text-[#555] mb-1">BPM</label>
-                    <input type="number" value={projectForm.bpm} onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))} placeholder="e.g. 140" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                    <input type="number" value={projectForm.bpm} onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))} placeholder="e.g. 140" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
                   </div>
                   <div>
                     <label className="block text-[10px] text-[#555] mb-1">Key</label>
-                    <input type="text" value={projectForm.key_signature} onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))} placeholder="e.g. Am" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/40" />
+                    <input type="text" value={projectForm.key_signature} onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))} placeholder="e.g. Am" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={saveProject} className="bg-[#a78bfa] hover:bg-[#9370f0] text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
+                  <button onClick={saveProject} className="bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
                   <button onClick={() => setEditingProject(false)} className="text-[#444] hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">Cancel</button>
                 </div>
               </div>
@@ -355,7 +355,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         <div className="flex items-center gap-3 mb-6">
           <button
             onClick={() => setShowUpload(!showUpload)}
-            className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+            className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
           >
             <Upload size={15} />
             Update Track
@@ -365,7 +365,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             <button
               onClick={() => setShowAB(!showAB)}
               className={`flex items-center gap-2 text-sm px-4 py-2 rounded-xl border transition-colors ${
-                showAB ? 'bg-[#a78bfa]/10 border-[#a78bfa]/30 text-[#a78bfa]' : 'border-[#222] text-[#666] hover:text-white hover:border-[#333]'
+                showAB ? 'bg-[#2dd4bf]/10 border-[#2dd4bf]/30 text-[#2dd4bf]' : 'border-[#222] text-[#666] hover:text-[#0a0a0a] hover:border-[#333]'
               }`}
             >
               <ArrowLeftRight size={14} />
@@ -379,7 +379,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
             <div className="space-y-4">
               {!selectedFile ? (
-                <label className="block border-2 border-dashed border-[#222] hover:border-[#a78bfa]/30 active:border-[#a78bfa]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
+                <label className="block border-2 border-dashed border-[#222] hover:border-[#2dd4bf]/30 active:border-[#2dd4bf]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
                   <Upload size={24} className="mx-auto text-[#444] mb-2" />
                   <p className="text-sm text-[#555]">Tap to choose audio file</p>
                   <p className="text-xs text-[#333] mt-1">WAV, AIFF recommended · MP3 at 320kbps+ · Max 2GB</p>
@@ -393,10 +393,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 </label>
               ) : (
                 <div className="flex items-center gap-3 bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3">
-                  <Music size={16} className="text-[#a78bfa] flex-shrink-0" />
+                  <Music size={16} className="text-[#2dd4bf] flex-shrink-0" />
                   <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
                   <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
-                  {detectingMeta && <span className="text-[10px] text-[#a78bfa] animate-pulse flex-shrink-0">detecting BPM & key…</span>}
+                  {detectingMeta && <span className="text-[10px] text-[#2dd4bf] animate-pulse flex-shrink-0">detecting BPM & key…</span>}
                   {!uploading && (
                     <button
                       onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
@@ -411,16 +411,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               {(uploading || uploadStatus) && (
                 <div>
                   <div className="flex justify-between text-xs mb-1.5">
-                    <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#a78bfa]'}>{uploadStatus}</span>
+                    <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#2dd4bf]'}>{uploadStatus}</span>
                     {!uploadStatus.startsWith('Error') && <span className="text-[#555]">{uploadPct}%</span>}
                   </div>
                   {!uploadStatus.startsWith('Error') && (
                     <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#a78bfa]'
-                        }`}
-                        style={{ width: `${uploadPct}%` }}
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ backgroundColor: uploadPct === 100 ? '#34d399' : 'var(--accent)', width: `${uploadPct}%` }}
                       />
                     </div>
                   )}
@@ -430,7 +428,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               <button
                 onClick={handleUploadSubmit}
                 disabled={!selectedFile || uploading}
-                className="w-full bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl py-3 transition-colors"
+                className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold rounded-xl py-3 transition-colors"
               >
                 {uploading ? (uploadStatus.startsWith('Error') ? 'Upload' : uploadStatus) : uploadStatus.startsWith('Error') ? 'Try Again' : 'Upload'}
               </button>
@@ -449,13 +447,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         <div className="mt-10 mb-2">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <CalendarRange size={16} className="text-[#a78bfa]" />
+              <CalendarRange size={16} className="text-[#2dd4bf]" />
               <h2 className="text-sm font-semibold text-white">Release Pipeline</h2>
             </div>
             {release && (
               <Link
                 href="/pipeline"
-                className="flex items-center gap-1 text-xs text-[#555] hover:text-[#a78bfa] transition-colors"
+                className="flex items-center gap-1 text-xs text-[#555] hover:text-[#2dd4bf] transition-colors"
               >
                 View in Pipeline
                 <ExternalLink size={11} />
@@ -472,7 +470,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                     className="h-full rounded-full transition-all"
                     style={{
                       width: `${releaseProgress}%`,
-                      backgroundColor: releaseProgress === 100 ? '#34d399' : releaseProgress >= 50 ? '#a78bfa' : '#555',
+                      backgroundColor: releaseProgress === 100 ? '#34d399' : releaseProgress >= 50 ? '#2dd4bf' : '#555',
                     }}
                   />
                 </div>
@@ -487,7 +485,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       type="checkbox"
                       checked={release[item.key]}
                       onChange={() => toggleReleaseCheck(item.key, release[item.key])}
-                      className="accent-[#a78bfa] w-3.5 h-3.5 flex-shrink-0"
+                      className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
                     />
                     <span className={`text-sm transition-colors ${release[item.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
                       {item.label}
@@ -512,7 +510,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               <button
                 onClick={startRelease}
                 disabled={startingRelease}
-                className="flex items-center gap-2 bg-[#a78bfa] hover:bg-[#9370f0] disabled:opacity-40 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+                className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 text-[#0a0a0a] text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
               >
                 <Plus size={15} />
                 {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
@@ -572,17 +570,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <StatusBadge status={version.status} size="sm" />
-                      <button
-                        onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          copiedToken === version.share_token
-                            ? 'text-emerald-400 bg-emerald-400/10'
-                            : 'text-[#444] hover:text-white hover:bg-[#1e1e1e]'
-                        }`}
-                        title="Copy share link"
-                      >
-                        {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
-                      </button>
+                      {version.share_token && (
+                        <button
+                          onClick={e => { e.stopPropagation(); copyShareLink(version.share_token!) }}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            copiedToken === version.share_token
+                              ? 'text-emerald-400 bg-emerald-400/10'
+                              : 'text-[#444] hover:text-white hover:bg-[#1e1e1e]'
+                          }`}
+                          title="Copy share link"
+                        >
+                          {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
+                        </button>
+                      )}
                       {isExpanded ? <ChevronUp size={14} className="text-[#444]" /> : <ChevronDown size={14} className="text-[#444]" />}
                     </div>
                   </div>
@@ -640,7 +640,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                             onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
                             placeholder="Notes only you can see..."
                             rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
+                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/30 resize-none"
                           />
                         </div>
                         <div>
@@ -655,7 +655,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                             onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
                             placeholder="Notes visible to listeners..."
                             rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#a78bfa]/30 resize-none"
+                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/30 resize-none"
                           />
                         </div>
                       </div>
@@ -672,7 +672,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                                   {f.rating && (
                                     <div className="flex gap-0.5">
                                       {[1,2,3,4,5].map(s => (
-                                        <Star key={s} size={10} className={s <= f.rating! ? 'text-[#a78bfa] fill-[#a78bfa]' : 'text-[#333]'} />
+                                        <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[#333]'} />
                                       ))}
                                     </div>
                                   )}

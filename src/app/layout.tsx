@@ -1,12 +1,36 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Jost } from "next/font/google";
 import "./globals.css";
 import { PlayerProvider } from "@/contexts/PlayerContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import MiniPlayer from "@/components/MiniPlayer";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import PullToRefresh from "@/components/PullToRefresh";
+
+const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
 
 export const metadata: Metadata = {
-  title: "mixBase",
-  description: "Track the evolution of your mixes",
+  title: "mixBASE",
+  description: "Rough-to-release. Version control for music.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "mixBASE",
+  },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#080808",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({
@@ -15,12 +39,16 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
-      <body className="min-h-full bg-[#080808] text-[#f0f0f0] pb-16">
-        <PlayerProvider>
-          <MiniPlayer />
-          {children}
-        </PlayerProvider>
+    <html lang="en" className={`h-full ${jost.variable}`}>
+      <body className="min-h-full" style={{ backgroundColor: "var(--bg-page)", color: "var(--text)" }}>
+        <ThemeProvider>
+          <PlayerProvider>
+            <ServiceWorkerRegistrar />
+            <PullToRefresh />
+            <MiniPlayer />
+            {children}
+          </PlayerProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

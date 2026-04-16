@@ -38,7 +38,7 @@ export default function AddToPipelineButton({ projectId, projectTitle, hasReleas
     <button
       onClick={handleClick}
       disabled={loading}
-      className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-xs font-medium transition-colors bg-[#a78bfa]/10 hover:bg-[#a78bfa]/20 text-[#a78bfa] disabled:opacity-60"
+      className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-xs font-medium transition-colors bg-[#2dd4bf]/10 hover:bg-[#2dd4bf]/20 text-[#2dd4bf] disabled:opacity-60"
     >
       <span>{hasRelease ? 'View in Release Pipeline' : 'Add to Release Pipeline'}</span>
       {loading ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
