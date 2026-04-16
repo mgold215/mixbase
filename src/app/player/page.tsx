@@ -479,12 +479,20 @@ export default function PlayerPage() {
               </div>
               <div className="flex items-center justify-end gap-1">
                 {current?.share_token && (
-                  <button onClick={handleShare}
-                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                    style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
-                    title={copied ? 'Copied!' : 'Copy share link'}>
-                    {copied ? <Check size={20} /> : <Share2 size={20} />}
-                  </button>
+                  <div className="relative">
+                    <button onClick={handleShare}
+                      className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      title="Copy share link">
+                      {copied ? <Check size={20} /> : <Share2 size={20} />}
+                    </button>
+                    {copied && (
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
+                        style={{ background: accentCss, color: '#000' }}>
+                        Link copied!
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div className="relative">
                   <button onClick={() => setShowSettings(v => !v)}
@@ -572,12 +580,20 @@ export default function PlayerPage() {
                   </div>
                 </div>
                 {current?.share_token && (
-                  <button onClick={handleShare}
-                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                    style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
-                    title={copied ? 'Copied!' : 'Copy share link'}>
-                    {copied ? <Check size={20} /> : <Share2 size={20} />}
-                  </button>
+                  <div className="relative">
+                    <button onClick={handleShare}
+                      className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      title="Copy share link">
+                      {copied ? <Check size={20} /> : <Share2 size={20} />}
+                    </button>
+                    {copied && (
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
+                        style={{ background: accentCss, color: '#000' }}>
+                        Link copied!
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div className="relative">
                   <button onClick={() => setShowSettings(v => !v)}
