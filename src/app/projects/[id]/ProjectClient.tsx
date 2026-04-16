@@ -25,6 +25,7 @@ const CHECKLIST_ITEMS = [
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
+const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
 
@@ -58,6 +59,20 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [projectSaved, setProjectSaved] = useState(false)
   const [release, setRelease] = useState<Release | null>(initialRelease)
   const [startingRelease, setStartingRelease] = useState(false)
+
+  // Tab state — persists in URL hash
+  const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.replace('#', '')
+      if (hash === 'artwork' || hash === 'visualizer') return hash
+    }
+    return 'versions'
+  })
+
+  function switchTab(tab: 'versions' | 'artwork' | 'visualizer') {
+    setActiveTab(tab)
+    window.location.hash = tab
+  }
 
   const projectStatus = versions.reduce((best, v) => {
     const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
@@ -350,6 +365,28 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             <StatusPipeline currentStatus={projectStatus} />
           </div>
         </div>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 mb-6 border-b" style={{ borderColor: 'var(--surface-2)' }}>
+          {(['versions', 'artwork', 'visualizer'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => switchTab(tab)}
+              className="px-4 py-2.5 text-sm font-medium capitalize transition-colors relative"
+              style={{
+                color: activeTab === tab ? 'var(--accent)' : 'var(--text-muted)',
+                borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                marginBottom: '-1px',
+              }}
+            >
+              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Versions'}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab content — Versions */}
+        {activeTab === 'versions' && (
+        <div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-3 mb-6">
@@ -701,6 +738,33 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             })
           )}
         </div>
+
+        </div>
+        )} {/* end activeTab === 'versions' */}
+
+        {/* Tab content — Artwork */}
+        {activeTab === 'artwork' && (
+          <div className="max-w-2xl">
+            <ArtworkGenerator
+              projectId={project.id}
+              projectTitle={project.title}
+              genre={project.genre}
+              currentArtwork={artwork}
+              onArtworkUpdated={setArtwork}
+            />
+          </div>
+        )}
+
+        {/* Tab content — Visualizer */}
+        {activeTab === 'visualizer' && (
+          <Visualizer
+            projectId={project.id}
+            projectTitle={project.title}
+            artworkUrl={artwork}
+            onSwitchToArtwork={() => switchTab('artwork')}
+          />
+        )}
+
       </div>
     </div>
   )
