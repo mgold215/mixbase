@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { Download, Film, Sparkles } from 'lucide-react'
 
@@ -28,9 +28,20 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [aiStatus, setAiStatus] = useState<'idle' | 'generating' | 'done' | 'error'>('idle')
   const [aiVideoUrl, setAiVideoUrl] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const cancelledRef = useRef(false)
 
   async function generateFree() {
     if (!artworkUrl) return
+
+    // Guard: MediaRecorder is not available in Safari on iOS
+    if (typeof MediaRecorder === 'undefined' || typeof (canvasRef.current?.captureStream) === 'undefined') {
+      setStatus('error')
+      setErrorMsg('Video recording is not supported in this browser. Try Chrome or Firefox.')
+      return
+    }
+
+    cancelledRef.current = false
+
     setStatus('rendering')
     setProgress(0)
     setVideoUrl(null)
@@ -48,7 +59,12 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     const canvas = canvasRef.current!
     canvas.width = W
     canvas.height = H
-    const ctx = canvas.getContext('2d')!
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      setStatus('error')
+      setErrorMsg('Could not initialize canvas renderer.')
+      return
+    }
 
     // Load artwork image
     const img = new window.Image()
@@ -118,6 +134,11 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
       setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
 
+      if (cancelledRef.current) {
+        recorder.stop()
+        return
+      }
+
       // Yield every 10 frames to keep UI responsive
       if (frame % 10 === 0) await new Promise(r => setTimeout(r, 0))
     }
@@ -125,7 +146,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     recorder.stop()
     const blob = await blobReady
     const url = URL.createObjectURL(blob)
-    setVideoUrl(url)
+    setVideoUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return url
+    })
     setStatus('done')
     setProgress(100)
   }
@@ -179,6 +203,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   }
 
   function resetFormat(f: Format) {
+    cancelledRef.current = true
     setFormat(f)
     setStatus('idle')
     setVideoUrl(null)
@@ -186,6 +211,12 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setAiVideoUrl(null)
     setErrorMsg('')
   }
+
+  useEffect(() => {
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl)
+    }
+  }, [videoUrl])
 
   if (!artworkUrl) {
     return (
