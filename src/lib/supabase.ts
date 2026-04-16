@@ -39,7 +39,7 @@ export type Version = {
   private_notes: string | null
   public_notes: string | null
   change_log: string | null
-  share_token: string
+  share_token: string | null
   allow_download: boolean
   created_at: string
 }

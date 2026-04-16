@@ -572,17 +572,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <StatusBadge status={version.status} size="sm" />
-                      <button
-                        onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          copiedToken === version.share_token
-                            ? 'text-emerald-400 bg-emerald-400/10'
-                            : 'text-[#444] hover:text-white hover:bg-[#1e1e1e]'
-                        }`}
-                        title="Copy share link"
-                      >
-                        {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
-                      </button>
+                      {version.share_token && (
+                        <button
+                          onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            copiedToken === version.share_token
+                              ? 'text-emerald-400 bg-emerald-400/10'
+                              : 'text-[#444] hover:text-white hover:bg-[#1e1e1e]'
+                          }`}
+                          title="Copy share link"
+                        >
+                          {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
+                        </button>
+                      )}
                       {isExpanded ? <ChevronUp size={14} className="text-[#444]" /> : <ChevronDown size={14} className="text-[#444]" />}
                     </div>
                   </div>
