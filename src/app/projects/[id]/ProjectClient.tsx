@@ -574,7 +574,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       <StatusBadge status={version.status} size="sm" />
                       {version.share_token && (
                         <button
-                          onClick={e => { e.stopPropagation(); copyShareLink(version.share_token) }}
+                          onClick={e => { e.stopPropagation(); copyShareLink(version.share_token!) }}
                           className={`p-1.5 rounded-lg transition-colors ${
                             copiedToken === version.share_token
                               ? 'text-emerald-400 bg-emerald-400/10'
