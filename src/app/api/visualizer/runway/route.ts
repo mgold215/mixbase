@@ -13,6 +13,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'imageUrl and format are required' }, { status: 400 })
   }
 
+  if (!imageUrl.startsWith('https://mdefkqaawrusoaojstpq.supabase.co/')) {
+    return NextResponse.json({ error: 'imageUrl must be a Supabase storage URL' }, { status: 400 })
+  }
+
   const motionPrompts: Record<string, string> = {
     canvas:  'Slow cinematic drift, subtle atmospheric shimmer, ambient light play, looping, no text, no faces',
     youtube: 'Cinematic slow pan, ethereal light waves, ambient motion, no text, no faces',
@@ -22,7 +26,7 @@ export async function POST(req: Request) {
   const promptText = motionPrompts[format] ?? motionPrompts.canvas
 
   // Create Runway task
-  const createRes = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
+  const createRes = await fetch('https://api.runwayml.com/v1/image_to_video', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${RUNWAY_API_KEY}`,
@@ -52,14 +56,17 @@ export async function POST(req: Request) {
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 3000))
 
-    const pollRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+    const pollRes = await fetch(`https://api.runwayml.com/v1/tasks/${taskId}`, {
       headers: {
         'Authorization': `Bearer ${RUNWAY_API_KEY}`,
         'X-Runway-Version': '2024-11-06',
       },
     })
 
-    if (!pollRes.ok) continue
+    if (!pollRes.ok) {
+      console.warn(`Runway poll attempt ${i + 1} failed: ${pollRes.status}`)
+      continue
+    }
 
     const pollData = await pollRes.json()
 
