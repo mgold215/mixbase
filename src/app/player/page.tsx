@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Sliders, Menu, X, Share2, Check,
+  Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -14,16 +14,9 @@ import Nav from '@/components/Nav'
 import { usePlayer } from '@/contexts/PlayerContext'
 
 type LoopMode = 'none' | 'all' | 'one'
-type EQPreset = 'Flat' | 'Bass' | 'Vocal' | 'Air' | 'Lo-Fi'
 type SortKey = 'title' | 'date'
 
-const EQ_PRESETS: Record<EQPreset, [number, number, number]> = {
-  Flat:   [0,  0,  0],
-  Bass:   [7,  1,  0],
-  Vocal:  [-2, 6,  2],
-  Air:    [0, -1,  6],
-  'Lo-Fi':[4, -3, -9],
-}
+const PASTEL_GREEN = '#86efac'
 
 // Map version status → short tag + color
 function statusTag(status: string): { label: string; color: string } {
@@ -41,7 +34,7 @@ export default function PlayerPage() {
   const {
     tracks, loading, currentTrack, isPlaying, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
-    ensureAudioChain, setEQGains, audioRef,
+    ensureAudioChain, audioRef,
   } = usePlayer()
 
   const [filtered, setFiltered] = useState<Track[]>([])
@@ -49,9 +42,6 @@ export default function PlayerPage() {
   const [shuffle, setShuffle] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [search, setSearch] = useState('')
-  const [eqPreset, setEqPreset] = useState<EQPreset>('Flat')
-  const [speed, setSpeed] = useState(1)
-  const [showSettings, setShowSettings] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -123,15 +113,6 @@ export default function PlayerPage() {
     })
   }, [current])
 
-
-  // Speed syncs directly to the shared audio element
-  useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = speed }, [speed, audioRef])
-
-  // EQ preset → gain values via context
-  useEffect(() => {
-    const [bv, mv, tv] = EQ_PRESETS[eqPreset]
-    setEQGains(bv, mv, tv)
-  }, [eqPreset, setEQGains])
 
   // ── Playback (operates on shared context state + filtered list) ───────────
   const goTo = useCallback((idx: number) => {
@@ -216,20 +197,16 @@ export default function PlayerPage() {
       navigator.mediaSession.setPositionState({
         duration,
         position: Math.min(currentTime, duration),
-        playbackRate: speed,
+        playbackRate: 1,
       })
     } catch { /* guard against race where position > duration */ }
-  }, [currentTime, duration, speed])
+  }, [currentTime, duration])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     ctxSeek(parseFloat(e.target.value))
   }
 
   const cycleLoop = () => setLoopMode(m => m === 'none' ? 'all' : m === 'all' ? 'one' : 'none')
-  const cycleSpeed = () => {
-    const speeds = [0.75, 1, 1.25, 1.5, 2]
-    setSpeed(s => speeds[(speeds.indexOf(s) + 1) % speeds.length])
-  }
 
   const handleShare = useCallback(() => {
     if (!current?.share_token) return
@@ -437,7 +414,7 @@ export default function PlayerPage() {
               </span>
               <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
                 <div className="absolute inset-y-0 left-0 rounded-full"
-                  style={{ width: `${pct}%`, background: accentCss }} />
+                  style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
                 <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                   onChange={seek} className="absolute left-0 w-full h-6 -top-2.5 opacity-0 cursor-pointer" />
               </div>
@@ -448,14 +425,14 @@ export default function PlayerPage() {
 
             {/* ── Mobile: grid so transport is perfectly centered ── */}
             <div className="sm:hidden grid grid-cols-[1fr_auto_1fr] items-center">
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <button onClick={() => setShuffle(s => !s)}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  className="p-2 transition-colors"
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  className="p-2 transition-colors"
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -465,11 +442,8 @@ export default function PlayerPage() {
                   <SkipBack size={26} fill="currentColor" />
                 </button>
                 <button onClick={togglePlay}
-                  className="w-14 h-14 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
-                  style={{
-                    background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.8))`,
-                    boxShadow: `0 0 28px rgba(${accent[0]},${accent[1]},${accent[2]},0.6), inset 0 1px 0 rgba(255,255,255,0.25)`,
-                  }}
+                  className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+                  style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
@@ -481,61 +455,32 @@ export default function PlayerPage() {
                 {current?.share_token && (
                   <div className="relative">
                     <button onClick={handleShare}
-                      className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      className="p-2 transition-colors"
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: accentCss, color: '#000' }}>
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
                   </div>
                 )}
-                <div className="relative">
-                  <button onClick={() => setShowSettings(v => !v)}
-                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                    style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : 'rgba(255,255,255,0.55)' }}
-                    title="Settings"><Sliders size={20} /></button>
-                  {showSettings && (
-                    <div className="absolute bottom-12 right-0 rounded-xl border border-white/10 overflow-hidden shadow-2xl z-50 min-w-[220px]"
-                      style={{ background: 'rgba(14,10,28,0.98)', backdropFilter: 'blur(24px)' }}>
-                      <div className="px-3 py-2.5 border-b border-white/5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
-                        <button onClick={cycleSpeed} className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
-                          {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
-                        </button>
-                      </div>
-                      <div className="px-3 py-2.5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">EQ Preset</p>
-                        <div className="flex flex-wrap gap-1">
-                          {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
-                            <button key={p} onClick={() => setEqPreset(p)}
-                              className="text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium"
-                              style={eqPreset === p ? { color: '#fff', background: accentCss } : { color: '#888', background: 'rgba(255,255,255,0.06)' }}>
-                              {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
 
             {/* ── Desktop: full bar with inline progress ── */}
             <div className="hidden sm:flex items-center gap-6">
-              <div className="flex items-center gap-1 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <button onClick={() => setShuffle(s => !s)}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  className="p-2 transition-colors"
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
-                  className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  className="p-2 transition-colors"
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -545,11 +490,8 @@ export default function PlayerPage() {
                   <SkipBack size={26} fill="currentColor" />
                 </button>
                 <button onClick={togglePlay}
-                  className="w-16 h-16 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0"
-                  style={{
-                    background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.8))`,
-                    boxShadow: `0 0 28px rgba(${accent[0]},${accent[1]},${accent[2]},0.6), inset 0 1px 0 rgba(255,255,255,0.25)`,
-                  }}
+                  className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 flex-shrink-0"
+                  style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
@@ -559,7 +501,7 @@ export default function PlayerPage() {
                 <div className="flex flex-1 items-center gap-3 min-w-0 max-w-[520px]">
                   <span className="text-[11px] text-white/60 font-mono tabular-nums flex-shrink-0">{formatDuration(Math.floor(currentTime))}</span>
                   <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
-                    <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, background: accentCss }} />
+                    <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
                     <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                       onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
                   </div>
@@ -568,7 +510,7 @@ export default function PlayerPage() {
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-3 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <Volume2 size={16} className="text-white/50" />
                   <div className="relative w-24 h-1.5 rounded-full bg-white/10">
@@ -582,48 +524,19 @@ export default function PlayerPage() {
                 {current?.share_token && (
                   <div className="relative">
                     <button onClick={handleShare}
-                      className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      className="p-2 transition-colors"
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: accentCss, color: '#000' }}>
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
                   </div>
                 )}
-                <div className="relative">
-                  <button onClick={() => setShowSettings(v => !v)}
-                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
-                    style={{ color: (speed !== 1 || eqPreset !== 'Flat') ? accentCss : 'rgba(255,255,255,0.55)' }}
-                    title="Settings"><Sliders size={20} /></button>
-                  {showSettings && (
-                    <div className="absolute bottom-12 right-0 rounded-xl border border-white/10 overflow-hidden shadow-2xl z-50 min-w-[220px]"
-                      style={{ background: 'rgba(14,10,28,0.98)', backdropFilter: 'blur(24px)' }}>
-                      <div className="px-3 py-2.5 border-b border-white/5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">Speed</p>
-                        <button onClick={cycleSpeed} className="text-sm font-mono text-white tabular-nums hover:text-[#a78bfa] transition-colors">
-                          {speed}× <span className="text-[#555] text-xs ml-1">(click to cycle)</span>
-                        </button>
-                      </div>
-                      <div className="px-3 py-2.5">
-                        <p className="text-[10px] text-[#666] uppercase tracking-wider mb-1.5">EQ Preset</p>
-                        <div className="flex flex-wrap gap-1">
-                          {(Object.keys(EQ_PRESETS) as EQPreset[]).map(p => (
-                            <button key={p} onClick={() => setEqPreset(p)}
-                              className="text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium"
-                              style={eqPreset === p ? { color: '#fff', background: accentCss } : { color: '#888', background: 'rgba(255,255,255,0.06)' }}>
-                              {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </div>
