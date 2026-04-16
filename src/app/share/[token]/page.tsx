@@ -28,10 +28,8 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
         </span>
 
-        <div className="w-px h-4 mx-5" style={{ backgroundColor: 'var(--border)' }} />
-
-        {/* Right-side label */}
-        <span className="text-[13px] font-[family-name:var(--font-jost)] tracking-wide">
+        {/* Right-side label — pushed to the far right */}
+        <span className="ml-auto text-[13px] font-[family-name:var(--font-jost)] tracking-wide">
           <span style={{ color: 'var(--accent)' }}>moodmixformat</span>
           {' '}
           <span className="text-white">private</span>
