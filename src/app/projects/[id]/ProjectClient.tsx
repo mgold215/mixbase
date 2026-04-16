@@ -757,7 +757,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         {/* Tab content — Visualizer */}
         {activeTab === 'visualizer' && (
           <Visualizer
-            projectId={project.id}
             projectTitle={project.title}
             artworkUrl={artwork}
             onSwitchToArtwork={() => switchTab('artwork')}

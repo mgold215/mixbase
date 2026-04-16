@@ -14,7 +14,6 @@ const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: numb
 }
 
 type Props = {
-  projectId: string
   projectTitle: string
   artworkUrl: string | null
   onSwitchToArtwork: () => void
@@ -278,7 +277,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
       {/* Error message */}
       {errorMsg && (
-        <p className="text-sm text-red-400">{errorMsg}</p>
+        <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>
       )}
 
       {/* Free video result */}
