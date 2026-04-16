@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, Home, LayoutGrid, PlayCircle, ClipboardList, Sun, Moon } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Sun, Moon } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -26,16 +26,12 @@ export default function Nav() {
 
   // Mobile bottom tab bar items
   const tabs = [
-    { href: '/dashboard', label: 'Home', icon: Home, match: '/dashboard' },
     { href: '/dashboard', label: 'Projects', icon: LayoutGrid, match: '/dashboard' },
     { href: '/player', label: 'Player', icon: PlayCircle, match: '/player' },
     { href: '/pipeline', label: 'Pipeline', icon: ClipboardList, match: '/pipeline' },
   ]
 
-  // Check if a tab is active — "Home" only matches exact /dashboard,
-  // "Projects" also matches /dashboard (they share the route)
   function isTabActive(tab: typeof tabs[number]) {
-    if (tab.label === 'Home') return pathname === '/dashboard'
     return pathname.startsWith(tab.match)
   }
 
