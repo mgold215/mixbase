@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Sliders, Menu, X,
+  Repeat, Repeat1, Search, ListMusic, Sliders, Menu, X, Share2, Check,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -53,6 +53,7 @@ export default function PlayerPage() {
   const [speed, setSpeed] = useState(1)
   const [showSettings, setShowSettings] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   // BPM / key analysis
   const [trackBPM, setTrackBPM] = useState<number | null>(null)
@@ -229,6 +230,15 @@ export default function PlayerPage() {
     const speeds = [0.75, 1, 1.25, 1.5, 2]
     setSpeed(s => speeds[(speeds.indexOf(s) + 1) % speeds.length])
   }
+
+  const handleShare = useCallback(() => {
+    if (!current?.share_token) return
+    const url = `${window.location.origin}/share/${current.share_token}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }, [current])
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
@@ -467,7 +477,15 @@ export default function PlayerPage() {
                   <SkipForward size={26} fill="currentColor" />
                 </button>
               </div>
-              <div className="flex items-center justify-end">
+              <div className="flex items-center justify-end gap-1">
+                {current?.share_token && (
+                  <button onClick={handleShare}
+                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                    style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                    title={copied ? 'Copied!' : 'Copy share link'}>
+                    {copied ? <Check size={20} /> : <Share2 size={20} />}
+                  </button>
+                )}
                 <div className="relative">
                   <button onClick={() => setShowSettings(v => !v)}
                     className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
@@ -553,6 +571,14 @@ export default function PlayerPage() {
                       className="absolute inset-0 w-full opacity-0 cursor-pointer h-4 -top-1.5" />
                   </div>
                 </div>
+                {current?.share_token && (
+                  <button onClick={handleShare}
+                    className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"
+                    style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                    title={copied ? 'Copied!' : 'Copy share link'}>
+                    {copied ? <Check size={20} /> : <Share2 size={20} />}
+                  </button>
+                )}
                 <div className="relative">
                   <button onClick={() => setShowSettings(v => !v)}
                     className="p-2.5 rounded-lg hover:bg-white/5 transition-colors"

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 export type Track = {
   id: string
   project_id: string
+  share_token: string | null
   title: string
   artist: string
   artwork_url: string | null
@@ -16,7 +17,7 @@ export type Track = {
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
+    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
     .order('version_number', { ascending: false })
 
   if (error) {
@@ -37,6 +38,7 @@ export async function GET() {
     return {
       id: v.id,
       project_id: v.project_id,
+      share_token: v.share_token ?? null,
       // Title is just the project title — the version label lives in its own field.
       title: projectTitle,
       artist: projectTitle,
