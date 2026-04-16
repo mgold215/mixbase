@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, type ChangeEvent } from 'react'
+import { useState, useRef, useEffect, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
@@ -61,13 +61,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [startingRelease, setStartingRelease] = useState(false)
 
   // Tab state — persists in URL hash
-  const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash.replace('#', '')
-      if (hash === 'artwork' || hash === 'visualizer') return hash
-    }
-    return 'versions'
-  })
+  const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>('versions')
+
+  useEffect(() => {
+    const hash = window.location.hash.replace('#', '')
+    if (hash === 'artwork' || hash === 'visualizer') setActiveTab(hash as 'artwork' | 'visualizer')
+  }, [])
 
   function switchTab(tab: 'versions' | 'artwork' | 'visualizer') {
     setActiveTab(tab)
