@@ -168,7 +168,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
             {/* Countdown */}
             {countdown && (
               <span className={`text-xs px-2 py-0.5 rounded-full ${
-                countdown === 'Today' ? 'text-[#2dd4bf] bg-[#2dd4bf]/10' :
+                countdown === 'Today' ? 'text-[var(--accent)] bg-[var(--accent-dim)]' :
                 countdown === 'Released' ? 'text-emerald-400 bg-emerald-400/10' :
                 'text-[#555] bg-[#1a1a1a]'
               }`}>

@@ -117,15 +117,15 @@ export default function WaveformPlayer({
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
 
       {/* Progress bar / scrubber */}
-      <div className={`relative w-full ${compact ? 'h-10' : 'h-14'} bg-[#0f0f0f] rounded-lg overflow-hidden mb-2`}>
+      <div className={`relative w-full ${compact ? 'h-10' : 'h-14'} rounded-lg overflow-hidden mb-2`} style={{ backgroundColor: 'var(--input-bg)' }}>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-4 h-4 border-2 border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--accent-dim)', borderTopColor: 'var(--accent)' }} />
           </div>
         )}
         <div
-          className="absolute bottom-0 left-0 h-1 bg-[#2dd4bf] transition-all duration-100"
-          style={{ width: `${pct}%` }}
+          className="absolute bottom-0 left-0 h-1 transition-all duration-100"
+          style={{ backgroundColor: 'var(--accent)', width: `${pct}%` }}
         />
         <input
           type="range"
@@ -143,12 +143,13 @@ export default function WaveformPlayer({
         <button
           onClick={togglePlay}
           disabled={loading}
-          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-[#1e1e1e] hover:bg-[#2dd4bf]/20 border border-[#2a2a2a] hover:border-[#2dd4bf]/30 disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] transition-colors"
+          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
         >
           {isPlaying ? <Pause size={14} /> : <Play size={14} />}
         </button>
 
-        <span className="text-xs text-[#555] tabular-nums flex-shrink-0">
+        <span className="text-xs tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
           {formatDuration(currentTime)} / {formatDuration(duration || null)}
         </span>
 
@@ -159,9 +160,11 @@ export default function WaveformPlayer({
             <button
               key={s}
               onClick={() => changeSpeed(s)}
-              className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
-                speed === s ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#444] hover:text-[#888]'
-              }`}
+              className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
+              style={speed === s
+                ? { backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }
+                : { color: 'var(--text-muted)' }
+              }
             >
               {s}x
             </button>
@@ -172,7 +175,7 @@ export default function WaveformPlayer({
           <a
             href={audioUrl}
             download={filename ?? 'mix.wav'}
-            className="flex items-center gap-1 text-[#444] hover:text-[#888] transition-colors"
+            className="flex items-center gap-1 transition-colors" style={{ color: 'var(--text-muted)' }}
             title="Download"
           >
             <Download size={13} />

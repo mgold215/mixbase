@@ -417,10 +417,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   {!uploadStatus.startsWith('Error') && (
                     <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          uploadPct === 100 ? 'bg-emerald-400' : 'bg-[#2dd4bf]'
-                        }`}
-                        style={{ width: `${uploadPct}%` }}
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ backgroundColor: uploadPct === 100 ? '#34d399' : 'var(--accent)', width: `${uploadPct}%` }}
                       />
                     </div>
                   )}

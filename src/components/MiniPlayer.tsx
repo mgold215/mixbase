@@ -17,8 +17,8 @@ export default function MiniPlayer() {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 bg-[#0d0d0d]/95 backdrop-blur-md border-t border-[#1e1e1e] mb-16 md:mb-0"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 backdrop-blur-md mb-16 md:mb-0"
+      style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Progress bar — thin line along top edge */}
       <div className="relative h-[2px] bg-[#1a1a1a]">
