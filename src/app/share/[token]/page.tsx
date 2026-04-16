@@ -17,10 +17,27 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   return (
     <div className="min-h-screen bg-black flex flex-col">
-      {/* Minimal header */}
-      <header className="relative z-50 flex-shrink-0 border-b border-white/5 px-6 py-4 flex items-center justify-between" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(12px)' }}>
-        <span className="text-sm font-bold tracking-tight" style={{ color: 'rgba(255,255,255,0.5)' }}>mixBASE</span>
-        <span className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>Private share</span>
+      {/* Header — matches site nav style */}
+      <header
+        className="relative z-50 flex-shrink-0 h-12 border-b flex items-center px-5"
+        style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)' }}
+      >
+        {/* Logo — same markup as Nav */}
+        <span className="font-[family-name:var(--font-jost)] flex items-baseline gap-0">
+          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span>
+          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
+        </span>
+
+        <div className="w-px h-4 mx-5" style={{ backgroundColor: 'var(--border)' }} />
+
+        {/* Right-side label */}
+        <span className="text-[13px] font-[family-name:var(--font-jost)] tracking-wide">
+          <span style={{ color: 'var(--accent)' }}>moodmixformat</span>
+          {' '}
+          <span className="text-white">private</span>
+          {' '}
+          <span style={{ color: 'var(--text-muted)' }}>share</span>
+        </span>
       </header>
 
       <ShareClient version={version} />
