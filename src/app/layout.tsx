@@ -6,6 +6,7 @@ import { PlayerProvider } from "@/contexts/PlayerContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import MiniPlayer from "@/components/MiniPlayer";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import PullToRefresh from "@/components/PullToRefresh";
 
 const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
 
@@ -43,6 +44,7 @@ export default function RootLayout({
         <ThemeProvider>
           <PlayerProvider>
             <ServiceWorkerRegistrar />
+            <PullToRefresh />
             <MiniPlayer />
             {children}
           </PlayerProvider>
