@@ -22,7 +22,7 @@ Only surface the loop to the user if: (a) the same failure reproduces 3+ times i
 
 # Deployment
 - Railway production URL (main branch): https://mixbase-production.up.railway.app
-- Railway staging URL (tst branch): https://mixbase-tst.up.railway.app  ← confirm exact subdomain
+- Railway staging URL (tst branch): https://mixbase-staging.up.railway.app
 - Supabase project: mdefkqaawrusoaojstpq (mmf-agents, us-east-1)
 - Supabase URL: https://mdefkqaawrusoaojstpq.supabase.co
 
