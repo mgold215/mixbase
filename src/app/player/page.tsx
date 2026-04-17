@@ -17,16 +17,22 @@ type LoopMode = 'none' | 'all' | 'one'
 type SortKey = 'title' | 'date'
 
 const PASTEL_GREEN = '#86efac'
-const WAVEFORM_BARS = 80
+const WAVEFORM_BARS = 100
 
 function generateWaveform(seed: string, count: number): number[] {
   let h = seed.length > 0
     ? seed.split('').reduce((a, c) => ((a * 31 + c.charCodeAt(0)) | 0), 0x811c9dc5)
     : 0x811c9dc5
-  return Array.from({ length: count }, (_, i) => {
+  const raw = Array.from({ length: count }, (_, i) => {
     h = ((h * 1664525 + 1013904223) >>> 0) ^ (i * 2654435761)
-    const raw = (h >>> 0) / 0xffffffff
-    return 0.12 + Math.pow(raw, 0.55) * 0.88
+    return (h >>> 0) / 0xffffffff
+  })
+  // 3-point smooth so adjacent bars don't spike wildly
+  return raw.map((v, i) => {
+    const p = i > 0 ? raw[i - 1] : v
+    const n = i < raw.length - 1 ? raw[i + 1] : v
+    const s = (p + v * 2 + n) / 4
+    return 0.08 + s * 0.65  // clamp to 8–73%, no bar reaches full height
   })
 }
 
@@ -418,10 +424,10 @@ export default function PlayerPage() {
                   </div>
 
                   {/* Waveform scrubber */}
-                  <div className="px-4 pt-3 pb-3">
+                  <div className="px-4 pt-2 pb-3">
                     <div
-                      className="relative flex items-end gap-[2px] cursor-pointer"
-                      style={{ height: 48 }}
+                      className="relative flex items-center gap-[1px] cursor-pointer"
+                      style={{ height: 36 }}
                       onClick={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect()
                         ctxSeek(((e.clientX - rect.left) / rect.width) * duration)
@@ -433,23 +439,23 @@ export default function PlayerPage() {
                         return (
                           <div
                             key={i}
-                            className="flex-1 rounded-full"
+                            className="flex-1 rounded-[1px]"
                             style={{
                               height: `${h * 100}%`,
                               minWidth: 0,
-                              background: played ? accentCss : 'rgba(255,255,255,0.18)',
-                              boxShadow: played ? `0 0 5px ${accentCss}55` : 'none',
+                              background: played ? accentCss : 'rgba(255,255,255,0.15)',
+                              opacity: played ? 1 : 0.7,
                             }}
                           />
                         )
                       })}
-                      {/* Playhead glow line */}
+                      {/* Playhead — 1px hairline with tight glow */}
                       <div
-                        className="absolute top-0 bottom-0 w-[2px] pointer-events-none rounded-full"
+                        className="absolute top-[15%] bottom-[15%] w-px pointer-events-none"
                         style={{
-                          left: `calc(${pct}% - 1px)`,
-                          background: `linear-gradient(to bottom, transparent 0%, ${accentCss} 25%, ${accentCss} 75%, transparent 100%)`,
-                          boxShadow: `0 0 8px ${accentCss}, 0 0 16px ${accentCss}66`,
+                          left: `${pct}%`,
+                          background: accentCss,
+                          boxShadow: `0 0 6px ${accentCss}aa`,
                         }}
                       />
                       <input
@@ -458,9 +464,9 @@ export default function PlayerPage() {
                         className="absolute inset-0 w-full opacity-0 cursor-pointer"
                       />
                     </div>
-                    <div className="flex justify-between mt-1.5">
-                      <span className="text-[11px] text-white/55 font-mono tabular-nums">{formatDuration(Math.floor(currentTime))}</span>
-                      <span className="text-[11px] text-white/35 font-mono tabular-nums">−{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}</span>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[10px] text-white/40 font-mono tabular-nums">{formatDuration(Math.floor(currentTime))}</span>
+                      <span className="text-[10px] text-white/30 font-mono tabular-nums">−{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}</span>
                     </div>
                   </div>
                 </div>
