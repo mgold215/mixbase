@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check,
+  Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown,
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
@@ -55,6 +56,7 @@ export default function PlayerPage() {
     ensureAudioChain, audioRef,
   } = usePlayer()
 
+  const router = useRouter()
   const [filtered, setFiltered] = useState<Track[]>([])
   const [loopMode, setLoopMode] = useState<LoopMode>('none')
   const [shuffle, setShuffle] = useState(false)
@@ -385,6 +387,14 @@ export default function PlayerPage() {
           title="Open track list"
         >
           <Menu size={18} />
+        </button>
+        {/* Minimize — go back */}
+        <button
+          onClick={() => router.back()}
+          className="absolute top-3 right-3 z-20 p-2 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+          title="Minimize player"
+        >
+          <ChevronDown size={18} />
         </button>
         {/* ── Full-bleed artwork area ── */}
         <div className="flex-1 relative min-h-0">
