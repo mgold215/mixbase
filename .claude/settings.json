@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/moodmixformat/mixbase && npx tsc --noEmit 2>&1 | head -40"
+          },
+          {
+            "type": "command",
+            "command": "cd /Users/moodmixformat/mixbase && grep -rn 'src={.*\\.audio_url' src/ | grep -v 'audioProxyUrl' && echo 'WARNING: raw audio_url used — wrap with audioProxyUrl()' || true"
+          }
+        ]
+      }
+    ]
+  }
+}

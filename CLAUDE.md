@@ -26,21 +26,55 @@ Only surface the loop to the user if: (a) the same failure reproduces 3+ times i
 - Supabase project: mdefkqaawrusoaojstpq (mmf-agents, us-east-1)
 - Supabase URL: https://mdefkqaawrusoaojstpq.supabase.co
 
+## Dev Commands
+```bash
+npm run dev       # Start local dev server (port 3000)
+npm run build     # Production build (run before pushing)
+npm run lint      # ESLint check
+node scripts/test-upload.mjs https://mixbase-staging.up.railway.app  # Upload + audio proxy test
+```
+
+## Required Environment Variables
+| Variable | Required | Purpose |
+|---|---|---|
+| `MIXBASE_PASSWORD` | **Yes** | Single shared app password for login |
+| `SESSION_SECRET` | **Yes** | Cookie validation secret (must be set or app is open to everyone) |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin DB access + bypasses file size limits on uploads |
+| `NEXT_PUBLIC_SUPABASE_URL` | No | Falls back to hardcoded project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Falls back to hardcoded public key |
+| `REPLICATE_API_TOKEN` | Optional | Artwork generation (Flux 2 Pro / Imagen 4 via Replicate) |
+| `RUNWAY_API_KEY` | Optional | Visualizer video generation (Runway Gen-3) |
+| `SUPABASE_MANAGEMENT_TOKEN` | Optional | DB schema init via `/api/db-init` |
+
+**Critical:** If `SESSION_SECRET` is unset, middleware short-circuits and the app is accessible without a password. Both `MIXBASE_PASSWORD` and `SESSION_SECRET` must be set for auth to work.
+
+## Auth Model
+Single shared password (not per-user). `POST /api/auth` checks `MIXBASE_PASSWORD` and sets an `mb-session` cookie containing `SESSION_SECRET`. Middleware validates that cookie on every protected route. Public routes: `/login`, `/share/`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`.
+
+## Application Pages & Features
+- `/dashboard` — Project grid with stats, activity feed
+- `/projects/[id]` — Main working view: versions, upload, A/B compare, notes, release pipeline
+- `/collections` — Group tracks into playlists/EPs/albums
+- `/media` — Artwork gallery across all projects
+- `/pipeline` — Release checklist board for all releases
+- `/player` — Full-screen audio player with waveform
+- `/share/[token]` — Public share page (no auth required) with feedback form
+
+## PWA + iOS Wrapper
+App is a PWA with a service worker (`public/sw.js`). Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. There is also a native iOS app wrapper in `ios/` (Xcode project).
+
 # Architecture: Critical Constraints — READ BEFORE TOUCHING UPLOADS OR AUDIO
 
-## Railway HTTP Proxy Truncation — NEVER upload files through Railway
-Railway's reverse proxy silently truncates HTTP request bodies above ~1-2 MB.
-A 3-minute MP3 (e.g. MOOD) gets cut to ~59 seconds because only the first ~1 MB
-of audio data reaches the server. **This is NOT a code bug — it is Railway infrastructure.**
+## Upload Architecture — two valid paths, both bypassing Railway
 
-**The fix (already implemented, do not revert):**
-- `POST /api/upload-url` — server generates a Supabase signed upload URL (service-role key, no size limit)
-- Browser PUTs the file **directly to Supabase** using the signed URL — Railway is never in the data path
+**Rule: Never route file bytes through Railway.** Railway's proxy truncates request bodies above 10 MB (10,485,760 bytes exactly). This is infrastructure, not a code bug.
+
+**Active path (audio uploads in ProjectClient.tsx) — Signed URL:**
+- `POST /api/upload-url` — server generates a short-lived Supabase signed upload URL
+- Browser PUTs directly to Supabase — Railway is never in the byte path
 - Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUploadSubmit()`
-- DO NOT switch back to routing file uploads through `/api/upload` or any Railway endpoint
 
-## Upload Architecture — server-side TUS proxy
-**Never go back to single-request uploads through Railway.** The permanent architecture:
+**Also available — TUS chunked proxy (for resumable uploads):**
 
 - `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses anon file size limit)
 - `PATCH /api/tus/<uploadId>` — proxies one 8 MB chunk to Supabase (under Railway's 10 MB body wall)
