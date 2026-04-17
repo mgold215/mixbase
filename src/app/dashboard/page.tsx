@@ -60,7 +60,7 @@ export default async function DashboardPage() {
     <div className="min-h-screen bg-[#080808]">
       <Nav />
       <div className="pt-14">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-36 md:pb-10">
 
           {/* Header */}
           <div className="flex items-center justify-between mb-6">

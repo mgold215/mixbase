@@ -299,7 +299,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   return (
     <div className="pt-14">
-      <div className="max-w-4xl mx-auto px-6 py-8">
+      <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
         <Link href="/dashboard" className="flex items-center gap-2 text-[#555] hover:text-white text-sm mb-6 transition-colors w-fit">
           <ArrowLeft size={14} />
           Dashboard

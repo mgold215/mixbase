@@ -268,7 +268,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

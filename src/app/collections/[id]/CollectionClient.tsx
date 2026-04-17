@@ -138,7 +138,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
   )
 
   return (
-    <div className="min-h-screen pb-28" style={{ backgroundColor: 'var(--bg-page)' }}>
+    <div className="min-h-screen pb-36 md:pb-12" style={{ backgroundColor: 'var(--bg-page)' }}>
       <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-16 sm:pt-20">
 
         {/* Header */}

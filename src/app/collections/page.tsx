@@ -29,7 +29,7 @@ export default async function CollectionsPage() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-page)' }}>
       <Nav />
-      <div className="max-w-5xl mx-auto px-5 pt-20 pb-10">
+      <div className="max-w-5xl mx-auto px-5 pt-20 pb-36 md:pb-10">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Collections</h1>
           <NewCollectionButton />
