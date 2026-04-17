@@ -2,23 +2,32 @@ import { supabaseAdmin } from '@/lib/supabase'
 import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
-import { StatusBadge } from '@/components/StatusBadge'
-import { Plus, Music } from 'lucide-react'
-import AddToPipelineButton from '@/components/AddToPipelineButton'
+import { Music, Plus } from 'lucide-react'
 import DashPlayButton from '@/components/DashPlayButton'
+import AddToPipelineButton from '@/components/AddToPipelineButton'
 import ActivityFeed from '@/components/ActivityFeed'
 
 export const dynamic = 'force-dynamic'
 
 type WorkflowStage = 'start' | 'wip' | 'mix_master' | 'finished' | 'in_pipeline' | 'released'
 
-const STAGE_CONFIG: Record<WorkflowStage, { label: string; color: string }> = {
-  start:       { label: 'Start',       color: 'text-[#555] bg-[#1a1a1a]' },
-  wip:         { label: 'Mixing',      color: 'text-yellow-400 bg-yellow-400/10' },
-  mix_master:  { label: 'Mix/Master',  color: 'text-blue-400 bg-blue-400/10' },
-  finished:    { label: 'Finished',    color: 'text-emerald-400 bg-emerald-400/10' },
-  in_pipeline: { label: 'In Pipeline', color: 'text-[#2dd4bf] bg-[#2dd4bf]/10' },
-  released:    { label: 'Released',    color: 'text-teal-300 bg-teal-300/10' },
+const STAGE_LABEL: Record<WorkflowStage, string> = {
+  start:       'NO AUDIO',
+  wip:         'MIXING',
+  mix_master:  'MIX/MASTER',
+  finished:    'FINISHED',
+  in_pipeline: 'IN PIPELINE',
+  released:    'RELEASED',
+}
+
+// amber for active stages, muted for inactive, green for done/released
+const STAGE_COLOR: Record<WorkflowStage, string> = {
+  start:       '#4a3e28',
+  wip:         '#e8961e',
+  mix_master:  '#60a5fa',
+  finished:    '#4ade80',
+  in_pipeline: '#e8961e',
+  released:    '#4ade80',
 }
 
 function getWorkflowStage(
@@ -57,145 +66,302 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080808]">
+    <div className="min-h-screen" style={{ background: 'var(--bg-page)' }}>
       <Nav />
       <div className="pt-14">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-36 md:pb-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-36 md:pb-12">
 
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white">Your Projects</h1>
-              <p className="text-[#555] text-xs sm:text-sm mt-0.5">Track every version from first idea to release</p>
-            </div>
-            <Link
-              href="/projects/new"
-              className="flex items-center gap-1.5 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"
-            >
-              <Plus size={15} />
-              <span className="hidden sm:inline">New Project</span>
-              <span className="sm:hidden">New</span>
-            </Link>
-          </div>
+          {/* ── CATALOG HEADER ── */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'space-between',
+            paddingTop: 'clamp(24px, 4vw, 48px)',
+            paddingBottom: 16,
+            borderBottom: '1px solid var(--border)',
+            gap: 16,
+          }}>
+            <h1 style={{
+              fontFamily: 'var(--font-bebas), sans-serif',
+              fontSize: 'clamp(48px, 7vw, 80px)',
+              lineHeight: 1,
+              color: 'var(--text)',
+              letterSpacing: '0.01em',
+            }}>
+              CATALOG
+            </h1>
 
-          {/* Stats bar — 2×2 on mobile, 4-col on sm+ */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            {[
-              { label: 'Total',    value: stats.total,    color: 'text-white',        accentBorder: 'rgba(255,255,255,0.15)' },
-              { label: 'WIP',      value: stats.wip,      color: 'text-yellow-400',   accentBorder: 'rgba(234,179,8,0.5)' },
-              { label: 'Finished', value: stats.finished, color: 'text-emerald-400',  accentBorder: 'rgba(34,197,94,0.5)' },
-              { label: 'Released', value: stats.released, color: 'text-teal-400',     accentBorder: 'rgba(45,212,191,0.5)' },
-            ].map(stat => (
-              <div
-                key={stat.label}
-                className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3 sm:p-4"
-                style={{ borderLeft: `2px solid ${stat.accentBorder}` }}
-              >
-                <p className={`text-xl sm:text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-                <p className="text-[#555] text-xs mt-0.5">{stat.label}</p>
+            {/* Stats + new button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(16px, 3vw, 32px)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 'clamp(12px, 2vw, 24px)', alignItems: 'baseline' }}>
+                {[
+                  { n: stats.total,    label: 'TRACKS'   },
+                  { n: stats.wip,      label: 'MIXING'   },
+                  { n: stats.finished, label: 'DONE'     },
+                  { n: stats.released, label: 'RELEASED' },
+                ].map(s => (
+                  <div key={s.label} style={{ textAlign: 'right' }}>
+                    <div style={{
+                      fontFamily: 'var(--font-mono), monospace',
+                      fontSize: 'clamp(18px, 2.5vw, 28px)',
+                      fontWeight: 700,
+                      color: s.n > 0 ? 'var(--accent)' : 'var(--text-muted)',
+                      lineHeight: 1,
+                    }}>
+                      {String(s.n).padStart(2, '0')}
+                    </div>
+                    <div style={{
+                      fontFamily: 'var(--font-mono), monospace',
+                      fontSize: 8,
+                      letterSpacing: '0.18em',
+                      color: 'var(--text-muted)',
+                      marginTop: 3,
+                    }}>
+                      {s.label}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+
+              <Link
+                href="/projects/new"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: 'var(--accent)',
+                  color: '#0d0b08',
+                  fontFamily: 'var(--font-bebas), sans-serif',
+                  fontSize: 14,
+                  letterSpacing: '0.15em',
+                  padding: '10px 16px',
+                  textDecoration: 'none',
+                  flexShrink: 0,
+                  transition: 'background 0.15s',
+                }}
+                onMouseOver={e => (e.currentTarget.style.background = 'var(--accent-hover)')}
+                onMouseOut={e => (e.currentTarget.style.background = 'var(--accent)')}
+              >
+                <Plus size={13} strokeWidth={2.5} />
+                <span className="hidden sm:inline">NEW TRACK</span>
+                <span className="sm:hidden">NEW</span>
+              </Link>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 lg:gap-8">
-            {/* Projects grid */}
+          {/* ── MAIN CONTENT ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-0 lg:gap-8 mt-0">
+
+            {/* ── TRACK LIST ── */}
             <div>
               {projects.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-24 text-center">
-                  <div className="w-16 h-16 rounded-2xl bg-[#111] border border-[#1e1e1e] flex items-center justify-center mb-4">
-                    <Music size={24} className="text-[#333]" />
+                /* Empty state */
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '80px 0',
+                  gap: 16,
+                }}>
+                  <Music size={28} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+                  <div style={{
+                    fontFamily: 'var(--font-mono), monospace',
+                    fontSize: 11,
+                    letterSpacing: '0.15em',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                  }}>
+                    No tracks yet
                   </div>
-                  <p className="text-[#555] mb-4">No projects yet</p>
                   <Link
                     href="/projects/new"
-                    className="flex items-center gap-2 text-[#2dd4bf] text-sm hover:text-[#14b8a6] transition-colors"
+                    style={{
+                      fontFamily: 'var(--font-mono), monospace',
+                      fontSize: 10,
+                      letterSpacing: '0.15em',
+                      color: 'var(--accent)',
+                      textDecoration: 'none',
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
                   >
-                    <Plus size={14} />
-                    Create your first project
+                    <Plus size={11} />
+                    Add first track
                   </Link>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                  {projects.map(project => {
-                    const versions: { status: string }[] = project.mb_versions ?? []
-                    const releases: { id: string }[] = project.mb_releases ?? []
-                    const latestVersion = versions[versions.length - 1] as { status: string } | undefined
-                    const latestStatus = latestVersion?.status ?? 'WIP'
-                    const stage = getWorkflowStage(versions, releases)
-                    const stageConf = STAGE_CONFIG[stage]
+                projects.map((project, idx) => {
+                  const versions: { status: string }[] = project.mb_versions ?? []
+                  const releases: { id: string }[] = project.mb_releases ?? []
+                  const stage = getWorkflowStage(versions, releases)
+                  const stageColor = STAGE_COLOR[stage]
+                  const catalogNum = String(idx + 1).padStart(2, '0')
 
-                    return (
-                      <div key={project.id} className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2dd4bf]/20 rounded-2xl overflow-hidden transition-all duration-200 flex flex-col">
-                        <Link href={`/projects/${project.id}`} className="block">
-                          {/* Artwork */}
-                          <div className="relative aspect-square bg-[#0f0f0f]">
-                            {project.artwork_url ? (
-                              <Image
-                                src={project.artwork_url}
-                                alt={project.title}
-                                fill
-                                className="object-cover"
-                              />
-                            ) : (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <Music size={28} className="text-[#222]" />
-                              </div>
-                            )}
-                            {/* Hover gradient overlay */}
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10" />
-                            {/* Status badge */}
-                            <div className="absolute top-2 right-2 z-20">
-                              <StatusBadge status={latestStatus} size="sm" />
-                            </div>
-                            {/* Workflow stage badge */}
-                            <div className="absolute top-2 left-2 z-20">
-                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${stageConf.color}`}>
-                                {stageConf.label}
-                              </span>
-                            </div>
-                          </div>
-                        </Link>
+                  return (
+                    <div
+                      key={project.id}
+                      className="group"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'clamp(10px, 2vw, 20px)',
+                        borderBottom: '1px solid var(--border)',
+                        padding: 'clamp(10px, 1.5vw, 16px) 0',
+                        position: 'relative',
+                        transition: 'background 0.15s',
+                      }}
+                    >
+                      {/* Amber left hover accent */}
+                      <div style={{
+                        position: 'absolute',
+                        left: -16,
+                        top: 0,
+                        bottom: 0,
+                        width: 3,
+                        background: 'var(--accent)',
+                        opacity: 0,
+                        transition: 'opacity 0.15s',
+                      }} className="group-hover:opacity-100" />
 
-                        {/* Info + actions */}
-                        <div className="p-3 flex flex-col gap-2 flex-1">
-                          <Link href={`/projects/${project.id}`} className="block min-w-0">
-                            <h3 className="font-semibold text-white text-sm truncate group-hover:text-[#2dd4bf] transition-colors leading-tight">
-                              {project.title}
-                            </h3>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              {project.genre && (
-                                <span className="text-[11px] text-[#555]">{project.genre}</span>
-                              )}
-                              {project.bpm && (
-                                <span className="text-[11px] text-[#444]">{project.bpm} BPM</span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-[#444] mt-1">
-                              {versions.length} version{versions.length !== 1 ? 's' : ''}
-                            </p>
-                          </Link>
+                      {/* Catalog number */}
+                      <div style={{
+                        fontFamily: 'var(--font-mono), monospace',
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                        flexShrink: 0,
+                        width: 22,
+                        textAlign: 'right',
+                      }}>
+                        {catalogNum}
+                      </div>
 
-                          {/* Bottom actions row */}
-                          <div className="flex items-center gap-2 mt-auto">
-                            <DashPlayButton projectId={project.id} />
-                            <div className="flex-1 min-w-0">
-                              <AddToPipelineButton
-                                projectId={project.id}
-                                projectTitle={project.title}
-                                hasRelease={releases.length > 0}
-                              />
+                      {/* Artwork thumbnail */}
+                      <Link href={`/projects/${project.id}`} style={{ flexShrink: 0 }}>
+                        <div style={{
+                          width: 'clamp(40px, 6vw, 52px)',
+                          height: 'clamp(40px, 6vw, 52px)',
+                          background: 'var(--surface-2)',
+                          overflow: 'hidden',
+                          position: 'relative',
+                          flexShrink: 0,
+                        }}>
+                          {project.artwork_url ? (
+                            <Image
+                              src={project.artwork_url}
+                              alt={project.title}
+                              fill
+                              className="object-cover transition-transform duration-300 group-hover:scale-105"
+                            />
+                          ) : (
+                            <div style={{
+                              width: '100%', height: '100%',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            }}>
+                              <Music size={16} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
                             </div>
-                          </div>
+                          )}
+                        </div>
+                      </Link>
+
+                      {/* Title + meta */}
+                      <Link
+                        href={`/projects/${project.id}`}
+                        style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}
+                      >
+                        <div style={{
+                          fontFamily: 'var(--font-bebas), sans-serif',
+                          fontSize: 'clamp(16px, 2.2vw, 22px)',
+                          color: 'var(--text)',
+                          letterSpacing: '0.02em',
+                          lineHeight: 1.1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          transition: 'color 0.15s',
+                        }} className="group-hover:text-[var(--accent)]">
+                          {project.title.toUpperCase()}
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          gap: 10,
+                          marginTop: 4,
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                        }}>
+                          {project.genre && (
+                            <span style={{
+                              fontFamily: 'var(--font-mono), monospace',
+                              fontSize: 9,
+                              letterSpacing: '0.12em',
+                              color: 'var(--text-muted)',
+                              textTransform: 'uppercase',
+                            }}>
+                              {project.genre}
+                            </span>
+                          )}
+                          {project.bpm && (
+                            <span style={{
+                              fontFamily: 'var(--font-mono), monospace',
+                              fontSize: 9,
+                              letterSpacing: '0.12em',
+                              color: 'var(--text-muted)',
+                            }}>
+                              {project.bpm} BPM
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+
+                      {/* Version count — hide on small mobile */}
+                      <div className="hidden sm:block" style={{
+                        fontFamily: 'var(--font-mono), monospace',
+                        fontSize: 10,
+                        letterSpacing: '0.1em',
+                        color: 'var(--text-muted)',
+                        flexShrink: 0,
+                        width: 28,
+                        textAlign: 'center',
+                      }}>
+                        V{versions.length}
+                      </div>
+
+                      {/* Stage label — hide on small mobile */}
+                      <div className="hidden sm:block" style={{
+                        fontFamily: 'var(--font-mono), monospace',
+                        fontSize: 9,
+                        letterSpacing: '0.14em',
+                        color: stageColor,
+                        flexShrink: 0,
+                        width: 88,
+                        textAlign: 'right',
+                      }}>
+                        {STAGE_LABEL[stage]}
+                      </div>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <DashPlayButton projectId={project.id} />
+                        <div className="hidden sm:block">
+                          <AddToPipelineButton
+                            projectId={project.id}
+                            projectTitle={project.title}
+                            hasRelease={releases.length > 0}
+                          />
                         </div>
                       </div>
-                    )
-                  })}
-                </div>
+                    </div>
+                  )
+                })
               )}
             </div>
 
-            {/* Activity feed — hidden on mobile, visible on lg+ */}
-            <ActivityFeed activity={activity} projects={projects} />
+            {/* Activity feed sidebar */}
+            <div className="hidden lg:block pt-2">
+              <ActivityFeed activity={activity} projects={projects} />
+            </div>
           </div>
         </div>
       </div>

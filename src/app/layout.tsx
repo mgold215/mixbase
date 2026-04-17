@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Jost } from "next/font/google";
+import { Jost, Bebas_Neue, Space_Mono } from "next/font/google";
 import "./globals.css";
 import { PlayerProvider } from "@/contexts/PlayerContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
@@ -9,6 +9,8 @@ import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import PullToRefresh from "@/components/PullToRefresh";
 
 const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
+const bebasNeue = Bebas_Neue({ subsets: ["latin"], weight: "400", variable: "--font-bebas" });
+const spaceMono = Space_Mono({ subsets: ["latin"], weight: ["400", "700"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
   title: "mixBASE",
@@ -26,7 +28,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#080808",
+  themeColor: "#0d0b08",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -39,7 +41,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full ${jost.variable}`}>
+    <html lang="en" className={`h-full ${jost.variable} ${bebasNeue.variable} ${spaceMono.variable}`}>
       <body className="min-h-full" style={{ backgroundColor: "var(--bg-page)", color: "var(--text)" }}>
         <ThemeProvider>
           <PlayerProvider>

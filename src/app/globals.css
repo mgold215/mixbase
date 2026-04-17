@@ -1,33 +1,33 @@
 @import "tailwindcss";
 
-/* Dark theme (default) */
+/* Dark theme (default) — warm black + amber */
 :root,
 [data-theme="dark"] {
-  --bg: #060c0b;
-  --bg-page: #060c0b;
-  --surface: #0f1513;
-  --surface-2: #172120;
-  --surface-3: #1f2c2b;
-  --border: #1f2c2b;
-  --text: #f0f0f0;
-  --text-secondary: #999999;
-  --text-muted: #666666;
-  --accent: #2dd4bf;
-  --accent-dim: rgba(45, 212, 191, 0.12);
-  --accent-hover: #5eead4;
-  --nav-bg: #070e0d;
-  --card-bg: #111111;
-  --input-bg: #161616;
-  --scrollbar: #2a2a2a;
-  --scrollbar-hover: #444444;
-  --badge-wip: #eab308;
-  --badge-mix: #3b82f6;
-  --badge-done: #22c55e;
-  --shadow: rgba(0, 0, 0, 0.5);
+  --bg: #0d0b08;
+  --bg-page: #0d0b08;
+  --surface: #141009;
+  --surface-2: #1e1810;
+  --surface-3: #281f12;
+  --border: #2a2015;
+  --text: #ede4d0;
+  --text-secondary: #9a8868;
+  --text-muted: #6b6050;
+  --accent: #e8961e;
+  --accent-dim: rgba(232, 150, 30, 0.12);
+  --accent-hover: #f0a832;
+  --nav-bg: #0a0806;
+  --card-bg: #141009;
+  --input-bg: #1e1810;
+  --scrollbar: #2a2015;
+  --scrollbar-hover: #3d3020;
+  --badge-wip: #e8961e;
+  --badge-mix: #60a5fa;
+  --badge-done: #4ade80;
+  --shadow: rgba(0, 0, 0, 0.6);
   --player-bottom: 0px;
 }
 
-/* Light theme — sand/offwhite with light blue accent */
+/* Light theme */
 [data-theme="light"] {
   --bg: #f5f0e8;
   --bg-page: #f5f0e8;
@@ -35,18 +35,18 @@
   --surface-2: #ede8df;
   --surface-3: #e0dbd2;
   --border: #d4cfc6;
-  --text: #1a1a1a;
-  --text-secondary: #5a5549;
-  --text-muted: #8a8478;
-  --accent: #3b82f6;
-  --accent-dim: rgba(59, 130, 246, 0.1);
-  --accent-hover: #60a5fa;
+  --text: #1a1208;
+  --text-secondary: #5a5040;
+  --text-muted: #8a7868;
+  --accent: #c4760e;
+  --accent-dim: rgba(196, 118, 14, 0.1);
+  --accent-hover: #e8961e;
   --nav-bg: #ede8df;
   --card-bg: #ffffff;
   --input-bg: #ede8df;
   --scrollbar: #d4cfc6;
   --scrollbar-hover: #b8b3aa;
-  --badge-wip: #ca8a04;
+  --badge-wip: #c4760e;
   --badge-mix: #2563eb;
   --badge-done: #16a34a;
   --shadow: rgba(0, 0, 0, 0.08);
@@ -55,7 +55,7 @@
 body {
   background-color: var(--bg-page);
   color: var(--text);
-  font-family: var(--font-jost), -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  font-family: var(--font-jost), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
@@ -64,7 +64,6 @@ body {
 @media (max-width: 767px) {
   :root { --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
 
-  /* Page wrappers: shrink min-height and add padding so content never hides behind the fixed tab bar */
   .min-h-screen {
     min-height: calc(100dvh - var(--player-bottom));
     padding-bottom: var(--player-bottom);
