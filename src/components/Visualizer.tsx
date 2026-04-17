@@ -139,8 +139,8 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         return
       }
 
-      // Yield every 10 frames to keep UI responsive
-      if (frame % 10 === 0) await new Promise(r => setTimeout(r, 0))
+      // Pace each frame to real-time so MediaRecorder captures correct duration
+      await new Promise(r => setTimeout(r, 1000 / FPS))
     }
 
     recorder.stop()
@@ -274,7 +274,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       </div>
 
       {/* Generate buttons */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-4">
         <button
           onClick={generateFree}
           disabled={status === 'rendering'}
@@ -289,7 +289,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           onClick={generateAI}
           disabled={aiStatus === 'generating'}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50"
-          style={{ backgroundColor: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--surface-2)' }}
+          style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
         >
           <Sparkles size={16} />
           {aiStatus === 'generating' ? 'Generating with AI…' : 'Generate with AI'}
