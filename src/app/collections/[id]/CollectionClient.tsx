@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 
-type Collection = { id: string; title: string; type: string }
+type Collection = { id: string; title: string; type: string; cover_url: string | null }
 type CollectionItem = {
   id: string
   collection_id: string
@@ -30,8 +30,17 @@ export default function CollectionClient({ collection, initialItems, allProjects
   const { playTrack } = usePlayer()
   const [items, setItems] = useState(initialItems)
   const [showPicker, setShowPicker] = useState(false)
+  const [showCoverPicker, setShowCoverPicker] = useState(false)
   const [search, setSearch] = useState('')
+  const [coverSearch, setCoverSearch] = useState('')
   const [adding, setAdding] = useState<string | null>(null)
+  const [coverUrl, setCoverUrl] = useState(collection.cover_url)
+  const [mediaItems, setMediaItems] = useState<Project[]>([])
+  const [loadingMedia, setLoadingMedia] = useState(false)
+
+  // Drag-to-reorder state
+  const dragItem = useRef<number | null>(null)
+  const dragOver = useRef<number | null>(null)
 
   const inCollection = new Set(items.map(i => i.project_id))
   const available = allProjects.filter(
@@ -39,6 +48,29 @@ export default function CollectionClient({ collection, initialItems, allProjects
       (!search.trim() || p.title.toLowerCase().includes(search.toLowerCase()))
   )
 
+  // ── Cover picker ─────────────────────────────────────────────────────────────
+  async function openCoverPicker() {
+    setShowCoverPicker(true)
+    setLoadingMedia(true)
+    const res = await fetch('/api/media')
+    if (res.ok) setMediaItems(await res.json())
+    setLoadingMedia(false)
+  }
+
+  async function setCover(url: string | null) {
+    const res = await fetch(`/api/collections/${collection.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cover_url: url }),
+    })
+    if (res.ok) {
+      setCoverUrl(url)
+      setShowCoverPicker(false)
+      setCoverSearch('')
+    }
+  }
+
+  // ── Add / remove tracks ───────────────────────────────────────────────────────
   async function addProject(projectId: string) {
     setAdding(projectId)
     const res = await fetch(`/api/collections/${collection.id}/items`, {
@@ -60,18 +92,50 @@ export default function CollectionClient({ collection, initialItems, allProjects
   }
 
   async function removeItem(itemId: string) {
-    const res = await fetch(
-      `/api/collections/${collection.id}/items?itemId=${itemId}`,
-      { method: 'DELETE' }
-    )
+    const res = await fetch(`/api/collections/${collection.id}/items?itemId=${itemId}`, { method: 'DELETE' })
     if (res.ok) setItems(prev => prev.filter(i => i.id !== itemId))
   }
 
+  // ── Drag-to-reorder ───────────────────────────────────────────────────────────
+  function onDragStart(idx: number) {
+    dragItem.current = idx
+  }
+
+  function onDragEnter(idx: number) {
+    dragOver.current = idx
+    // Preview reorder while dragging
+    if (dragItem.current === null || dragItem.current === idx) return
+    setItems(prev => {
+      const next = [...prev]
+      const [moved] = next.splice(dragItem.current!, 1)
+      next.splice(idx, 0, moved)
+      dragItem.current = idx
+      return next
+    })
+  }
+
+  async function onDragEnd() {
+    dragItem.current = null
+    dragOver.current = null
+    // Persist new order to API
+    const reordered = items.map((item, i) => ({ id: item.id, position: i }))
+    await fetch(`/api/collections/${collection.id}/items`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: reordered }),
+    })
+  }
+
+  // ── Delete collection ─────────────────────────────────────────────────────────
   async function deleteCollection() {
     if (!confirm(`Delete "${collection.title}"? This can't be undone.`)) return
     await fetch(`/api/collections/${collection.id}`, { method: 'DELETE' })
     router.push('/collections')
   }
+
+  const filteredMedia = mediaItems.filter(m =>
+    !coverSearch.trim() || m.title.toLowerCase().includes(coverSearch.toLowerCase())
+  )
 
   return (
     <div className="min-h-screen pb-28" style={{ backgroundColor: 'var(--bg-page)' }}>
@@ -86,18 +150,41 @@ export default function CollectionClient({ collection, initialItems, allProjects
           >
             <ArrowLeft size={18} />
           </Link>
+
+          {/* Cover art */}
+          <div className="flex-shrink-0 relative group">
+            <div
+              className="w-20 h-20 rounded-xl overflow-hidden cursor-pointer"
+              style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-2)' }}
+              onClick={openCoverPicker}
+            >
+              {coverUrl ? (
+                <Image src={coverUrl} alt="Cover" fill className="object-cover" unoptimized />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-1">
+                  <Music size={22} style={{ color: 'var(--surface-3)' }} />
+                </div>
+              )}
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <ImageIcon size={16} className="text-white" />
+              </div>
+            </div>
+          </div>
+
           <div className="flex-1 min-w-0">
             <span
-              className="inline-block text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full mb-2"
+              className="inline-block text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full mb-1.5"
               style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
             >
               {TYPE_LABEL[collection.type] ?? collection.type}
             </span>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{collection.title}</h1>
+            <h1 className="text-2xl font-bold leading-tight" style={{ color: 'var(--text)' }}>{collection.title}</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
               {items.length} {items.length === 1 ? 'track' : 'tracks'}
             </p>
           </div>
+
           <div className="flex items-center gap-2 flex-shrink-0 mt-1">
             {items.length > 0 && (
               <button
@@ -120,6 +207,80 @@ export default function CollectionClient({ collection, initialItems, allProjects
           </div>
         </div>
 
+        {/* Cover picker panel */}
+        {showCoverPicker && (
+          <div
+            className="mb-5 rounded-xl overflow-hidden"
+            style={{ border: '1px solid var(--surface-2)' }}
+          >
+            <div
+              className="flex items-center gap-2 px-3 py-2.5"
+              style={{ backgroundColor: 'var(--surface)' }}
+            >
+              <Search size={14} style={{ color: 'var(--text-muted)' }} />
+              <input
+                autoFocus
+                type="text"
+                value={coverSearch}
+                onChange={e => setCoverSearch(e.target.value)}
+                placeholder="Search artwork…"
+                className="flex-1 bg-transparent text-sm outline-none"
+                style={{ color: 'var(--text)' }}
+              />
+              {coverUrl && (
+                <button
+                  onClick={() => setCover(null)}
+                  className="text-xs px-2 py-1 rounded-md mr-1 transition-colors"
+                  style={{ color: '#f87171' }}
+                >
+                  Remove cover
+                </button>
+              )}
+              <button
+                onClick={() => { setShowCoverPicker(false); setCoverSearch('') }}
+                className="text-xs px-2 py-1 rounded-md transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Cancel
+              </button>
+            </div>
+            {loadingMedia ? (
+              <div className="px-4 py-6 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
+                Loading…
+              </div>
+            ) : (
+              <div
+                className="grid grid-cols-4 sm:grid-cols-6 gap-1 p-2 max-h-52 overflow-y-auto"
+                style={{ backgroundColor: 'var(--surface)' }}
+              >
+                {filteredMedia.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setCover(m.artwork_url)}
+                    className="relative aspect-square rounded-lg overflow-hidden group transition-transform hover:scale-105"
+                    style={{ backgroundColor: 'var(--surface-2)' }}
+                    title={m.title}
+                  >
+                    {m.artwork_url && (
+                      <Image src={m.artwork_url} alt={m.title} fill className="object-cover" unoptimized />
+                    )}
+                    {coverUrl === m.artwork_url && (
+                      <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'var(--accent)', opacity: 0.7 }}>
+                        <span className="text-white text-lg font-bold">✓</span>
+                      </div>
+                    )}
+                  </button>
+                ))}
+                {filteredMedia.length === 0 && (
+                  <p className="col-span-6 py-4 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
+                    No artwork found.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Track list */}
         <div className="space-y-1 mb-5">
           {items.length === 0 && (
@@ -130,12 +291,24 @@ export default function CollectionClient({ collection, initialItems, allProjects
           {items.map((item, idx) => (
             <div
               key={item.id}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl group transition-colors"
+              draggable
+              onDragStart={() => onDragStart(idx)}
+              onDragEnter={() => onDragEnter(idx)}
+              onDragEnd={onDragEnd}
+              onDragOver={e => e.preventDefault()}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl group transition-colors cursor-default"
               style={{ backgroundColor: 'var(--surface)' }}
             >
+              {/* Drag handle */}
+              <GripVertical
+                size={14}
+                className="flex-shrink-0 cursor-grab active:cursor-grabbing opacity-30 group-hover:opacity-70 transition-opacity"
+                style={{ color: 'var(--text-muted)' }}
+              />
+
               {/* Track number */}
               <span
-                className="w-5 text-right text-xs font-mono flex-shrink-0"
+                className="w-4 text-right text-xs font-mono flex-shrink-0"
                 style={{ color: 'var(--text-muted)' }}
               >
                 {idx + 1}
@@ -147,13 +320,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 style={{ backgroundColor: 'var(--surface-2)' }}
               >
                 {item.mb_projects?.artwork_url ? (
-                  <Image
-                    src={item.mb_projects.artwork_url}
-                    alt=""
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
+                  <Image src={item.mb_projects.artwork_url} alt="" fill className="object-cover" unoptimized />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <Music size={14} style={{ color: 'var(--surface-3)' }} />
@@ -167,9 +334,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                   {item.mb_projects?.title ?? 'Untitled'}
                 </p>
                 {item.mb_projects?.genre && (
-                  <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                    {item.mb_projects.genre}
-                  </p>
+                  <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{item.mb_projects.genre}</p>
                 )}
               </div>
 
@@ -213,7 +378,6 @@ export default function CollectionClient({ collection, initialItems, allProjects
           </button>
         ) : (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-            {/* Search bar */}
             <div
               className="flex items-center gap-2 px-3 py-2.5"
               style={{ backgroundColor: 'var(--surface)' }}
@@ -236,8 +400,6 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 Done
               </button>
             </div>
-
-            {/* Project list */}
             <div className="max-h-64 overflow-y-auto">
               {available.length === 0 ? (
                 <p className="px-4 py-4 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -265,12 +427,10 @@ export default function CollectionClient({ collection, initialItems, allProjects
                       )}
                     </div>
                     <span className="flex-1 text-sm truncate" style={{ color: 'var(--text)' }}>{p.title}</span>
-                    {adding === p.id && (
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Adding…</span>
-                    )}
-                    {adding !== p.id && (
-                      <Plus size={14} style={{ color: 'var(--text-muted)' }} />
-                    )}
+                    {adding === p.id
+                      ? <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Adding…</span>
+                      : <Plus size={14} style={{ color: 'var(--text-muted)' }} />
+                    }
                   </button>
                 ))
               )}

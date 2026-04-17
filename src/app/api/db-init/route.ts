@@ -103,6 +103,33 @@ create index if not exists idx_versions_share_token on mb_versions(share_token);
 update mb_versions
 set share_token = replace(gen_random_uuid()::text, '-', '')
 where share_token is null;
+
+-- Collections tables (idempotent)
+create table if not exists mb_collections (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  type text not null check (type in ('playlist','ep','album')),
+  cover_url text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists mb_collection_items (
+  id uuid primary key default gen_random_uuid(),
+  collection_id uuid references mb_collections(id) on delete cascade,
+  project_id uuid references mb_projects(id) on delete cascade,
+  position integer not null default 0,
+  created_at timestamptz default now()
+);
+
+alter table mb_collections disable row level security;
+alter table mb_collection_items disable row level security;
+
+-- Add cover_url if it was created before this column existed
+alter table mb_collections add column if not exists cover_url text;
+
+create index if not exists idx_collection_items_collection on mb_collection_items(collection_id);
+create index if not exists idx_collection_items_position on mb_collection_items(collection_id, position);
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.
