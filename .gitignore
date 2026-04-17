@@ -45,3 +45,6 @@ next-env.d.ts
 supabase/.temp
 .superpowers/
 ios/mixBase/Utilities/Config.swift
+tests/e2e/.auth.json
+
+test-results/
