@@ -6,18 +6,26 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
   const { id } = await ctx.params
   const body = await request.json()
 
-  // Fetch old version to detect status change
-  const { data: oldVersion } = await supabaseAdmin
-    .from('mb_versions')
-    .select('status, project_id, version_number')
-    .eq('id', id)
-    .single()
-
   // Only allow updating these fields — prevents clients from overwriting arbitrary columns
   const allowed = ['status', 'label', 'private_notes', 'public_notes', 'change_log', 'allow_download'] as const
   const patch: Record<string, unknown> = {}
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
+  }
+
+  // Only pre-fetch the old version when we need to log a status change
+  let oldVersion: { status: string; project_id: string; version_number: number } | null = null
+  if (patch.status) {
+    const { data } = await supabaseAdmin
+      .from('mb_versions')
+      .select('status, project_id, version_number')
+      .eq('id', id)
+      .single()
+    oldVersion = data
   }
 
   const { data, error } = await supabaseAdmin
@@ -30,12 +38,12 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Log status change activity
-  if (body.status && oldVersion && body.status !== oldVersion.status) {
+  if (patch.status && oldVersion && patch.status !== oldVersion.status) {
     await supabaseAdmin.from('mb_activity').insert({
       type: 'status_change',
       project_id: oldVersion.project_id,
       version_id: id,
-      description: `v${oldVersion.version_number} moved from ${oldVersion.status} to ${body.status}`,
+      description: `v${oldVersion.version_number} moved from ${oldVersion.status} to ${patch.status}`,
     })
   }
 

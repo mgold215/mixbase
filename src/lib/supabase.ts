@@ -9,7 +9,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // Server-only admin client — uses service role key if available, falls back to anon
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.warn('[supabase] SUPABASE_SERVICE_ROLE_KEY not set — admin client falling back to anon key. Uploads and admin ops will be restricted.')
+  console.error('[supabase] SUPABASE_SERVICE_ROLE_KEY not set — admin client falling back to anon key. Uploads and size-limited ops WILL FAIL in production.')
 }
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
