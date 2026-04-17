@@ -45,7 +45,7 @@ export default function Nav() {
   return (
     <>
       {/* ── Top nav bar (always visible, links hidden on mobile) ── */}
-      <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)' }}>
+      <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'rgba(7, 14, 13, 0.85)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
         {/* Logo */}
         <Link href="/dashboard" className="mr-6 flex items-baseline gap-0.5 font-[family-name:var(--font-jost)]">
           <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span><span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
@@ -67,10 +67,11 @@ export default function Nav() {
                     ? 'text-white'
                     : 'text-[#555] hover:text-[#999]'
                 }`}
+                style={{ textShadow: active ? '0 0 20px rgba(45, 212, 191, 0.4)' : undefined }}
               >
                 {label}
                 {active && (
-                  <span className="absolute bottom-0 left-0 right-0 h-px bg-[#5eead4]" />
+                  <span className="absolute bottom-0 left-0 right-0 h-px bg-[var(--accent)] opacity-90" />
                 )}
               </Link>
             )
@@ -106,7 +107,7 @@ export default function Nav() {
           pathname.startsWith('/player') ? 'hidden' :
           miniPlayerVisible ? 'bottom-[calc(3.5rem+2px+env(safe-area-inset-bottom))]' : 'bottom-0'
         }`}
-        style={{ paddingBottom: miniPlayerVisible ? 0 : 'env(safe-area-inset-bottom)', backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)' }}
+        style={{ paddingBottom: miniPlayerVisible ? 0 : 'env(safe-area-inset-bottom)', backgroundColor: 'rgba(7, 14, 13, 0.85)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
       >
         <div className="flex items-center justify-around h-16">
           {tabs.map((tab) => {

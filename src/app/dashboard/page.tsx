@@ -81,12 +81,16 @@ export default async function DashboardPage() {
           {/* Stats bar — 2×2 on mobile, 4-col on sm+ */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             {[
-              { label: 'Total', value: stats.total, color: 'text-white' },
-              { label: 'WIP', value: stats.wip, color: 'text-yellow-400' },
-              { label: 'Finished', value: stats.finished, color: 'text-emerald-400' },
-              { label: 'Released', value: stats.released, color: 'text-teal-400' },
+              { label: 'Total',    value: stats.total,    color: 'text-white',        accentBorder: 'rgba(255,255,255,0.15)' },
+              { label: 'WIP',      value: stats.wip,      color: 'text-yellow-400',   accentBorder: 'rgba(234,179,8,0.5)' },
+              { label: 'Finished', value: stats.finished, color: 'text-emerald-400',  accentBorder: 'rgba(34,197,94,0.5)' },
+              { label: 'Released', value: stats.released, color: 'text-teal-400',     accentBorder: 'rgba(45,212,191,0.5)' },
             ].map(stat => (
-              <div key={stat.label} className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3 sm:p-4">
+              <div
+                key={stat.label}
+                className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3 sm:p-4"
+                style={{ borderLeft: `2px solid ${stat.accentBorder}` }}
+              >
                 <p className={`text-xl sm:text-2xl font-bold ${stat.color}`}>{stat.value}</p>
                 <p className="text-[#555] text-xs mt-0.5">{stat.label}</p>
               </div>
@@ -121,7 +125,7 @@ export default async function DashboardPage() {
                     const stageConf = STAGE_CONFIG[stage]
 
                     return (
-                      <div key={project.id} className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2a2a2a] rounded-2xl overflow-hidden transition-colors flex flex-col">
+                      <div key={project.id} className="group bg-[#111] border border-[#1a1a1a] hover:border-[#2dd4bf]/20 rounded-2xl overflow-hidden transition-all duration-200 flex flex-col">
                         <Link href={`/projects/${project.id}`} className="block">
                           {/* Artwork */}
                           <div className="relative aspect-square bg-[#0f0f0f]">
@@ -137,12 +141,14 @@ export default async function DashboardPage() {
                                 <Music size={28} className="text-[#222]" />
                               </div>
                             )}
+                            {/* Hover gradient overlay */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10" />
                             {/* Status badge */}
-                            <div className="absolute top-2 right-2">
+                            <div className="absolute top-2 right-2 z-20">
                               <StatusBadge status={latestStatus} size="sm" />
                             </div>
                             {/* Workflow stage badge */}
-                            <div className="absolute top-2 left-2">
+                            <div className="absolute top-2 left-2 z-20">
                               <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${stageConf.color}`}>
                                 {stageConf.label}
                               </span>
