@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import {
@@ -17,6 +17,18 @@ type LoopMode = 'none' | 'all' | 'one'
 type SortKey = 'title' | 'date'
 
 const PASTEL_GREEN = '#86efac'
+const WAVEFORM_BARS = 80
+
+function generateWaveform(seed: string, count: number): number[] {
+  let h = seed.length > 0
+    ? seed.split('').reduce((a, c) => ((a * 31 + c.charCodeAt(0)) | 0), 0x811c9dc5)
+    : 0x811c9dc5
+  return Array.from({ length: count }, (_, i) => {
+    h = ((h * 1664525 + 1013904223) >>> 0) ^ (i * 2654435761)
+    const raw = (h >>> 0) / 0xffffffff
+    return 0.12 + Math.pow(raw, 0.55) * 0.88
+  })
+}
 
 // Map version status → short tag + color
 function statusTag(status: string): { label: string; color: string } {
@@ -220,6 +232,7 @@ export default function PlayerPage() {
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
   const status = current ? statusTag(current.status) : null
+  const bars = useMemo(() => generateWaveform(current?.project_id ?? '', WAVEFORM_BARS), [current?.project_id])
 
   // ── Empty state ────────────────────────────────────────────────────────────────
   if (!loading && tracks.length === 0) {  // tracks + loading come from PlayerContext
@@ -378,19 +391,77 @@ export default function PlayerPage() {
                   <Music size={80} className="text-[#222]" />
                 </div>
               )}
-              {/* Bottom gradient + track info overlay */}
+              {/* Bottom gradient + track info + waveform overlay */}
               {status && (
                 <div
-                  className="absolute bottom-0 left-0 right-0 px-5 pb-5 pt-20"
-                  style={{ background: `linear-gradient(to top, rgba(${accent[0]},${accent[1]},${accent[2]},0.92) 0%, rgba(${accent[0]},${accent[1]},${accent[2]},0.3) 65%, transparent 100%)` }}
+                  className="absolute bottom-0 left-0 right-0 pt-24"
+                  style={{
+                    background: `linear-gradient(to top,
+                      rgba(0,0,0,0.97) 0%,
+                      rgba(0,0,0,0.72) 18%,
+                      rgba(${accent[0]},${accent[1]},${accent[2]},0.45) 40%,
+                      rgba(${accent[0]},${accent[1]},${accent[2]},0.12) 72%,
+                      transparent 100%
+                    )`,
+                  }}
                 >
-                  <h2 className="text-2xl font-bold text-white leading-tight">{current.title}</h2>
-                  <div className="flex flex-wrap items-center gap-x-2 mt-1">
-                    <span className="font-mono text-sm text-white/50">v{String(current.version).replace(/^v/i, '')}</span>
-                    <span className="text-white/20">·</span>
-                    <span className="text-sm font-semibold" style={{ color: status.color }}>{status.label}</span>
-                    {trackKey && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackKey}</span></>}
-                    {trackBPM && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackBPM} BPM</span></>}
+                  {/* Track info */}
+                  <div className="px-5 pb-2">
+                    <h2 className="text-2xl font-bold text-white leading-tight">{current.title}</h2>
+                    <div className="flex flex-wrap items-center gap-x-2 mt-1">
+                      <span className="font-mono text-sm text-white/50">v{String(current.version).replace(/^v/i, '')}</span>
+                      <span className="text-white/20">·</span>
+                      <span className="text-sm font-semibold" style={{ color: status.color }}>{status.label}</span>
+                      {trackKey && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackKey}</span></>}
+                      {trackBPM && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackBPM} BPM</span></>}
+                    </div>
+                  </div>
+
+                  {/* Waveform scrubber */}
+                  <div className="px-4 pt-3 pb-3">
+                    <div
+                      className="relative flex items-end gap-[2px] cursor-pointer"
+                      style={{ height: 48 }}
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        ctxSeek(((e.clientX - rect.left) / rect.width) * duration)
+                      }}
+                    >
+                      {bars.map((h, i) => {
+                        const barPct = (i + 0.5) / WAVEFORM_BARS
+                        const played = pct > 0 && barPct <= pct / 100
+                        return (
+                          <div
+                            key={i}
+                            className="flex-1 rounded-full"
+                            style={{
+                              height: `${h * 100}%`,
+                              minWidth: 0,
+                              background: played ? accentCss : 'rgba(255,255,255,0.18)',
+                              boxShadow: played ? `0 0 5px ${accentCss}55` : 'none',
+                            }}
+                          />
+                        )
+                      })}
+                      {/* Playhead glow line */}
+                      <div
+                        className="absolute top-0 bottom-0 w-[2px] pointer-events-none rounded-full"
+                        style={{
+                          left: `calc(${pct}% - 1px)`,
+                          background: `linear-gradient(to bottom, transparent 0%, ${accentCss} 25%, ${accentCss} 75%, transparent 100%)`,
+                          boxShadow: `0 0 8px ${accentCss}, 0 0 16px ${accentCss}66`,
+                        }}
+                      />
+                      <input
+                        type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+                        onChange={seek}
+                        className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                      />
+                    </div>
+                    <div className="flex justify-between mt-1.5">
+                      <span className="text-[11px] text-white/55 font-mono tabular-nums">{formatDuration(Math.floor(currentTime))}</span>
+                      <span className="text-[11px] text-white/35 font-mono tabular-nums">−{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -407,22 +478,6 @@ export default function PlayerPage() {
               backdropFilter: 'blur(24px)',
             }}
           >
-            {/* ── Mobile: progress row ── */}
-            <div className="flex items-center gap-3 mb-2 sm:hidden">
-              <span className="text-[11px] text-white/60 font-mono tabular-nums">
-                {formatDuration(Math.floor(currentTime))}
-              </span>
-              <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
-                <div className="absolute inset-y-0 left-0 rounded-full"
-                  style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
-                <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                  onChange={seek} className="absolute left-0 w-full h-6 -top-2.5 opacity-0 cursor-pointer" />
-              </div>
-              <span className="text-[11px] text-white/40 font-mono tabular-nums">
-                −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
-              </span>
-            </div>
-
             {/* ── Mobile: grid so transport is perfectly centered ── */}
             <div className="sm:hidden grid grid-cols-[1fr_auto_1fr] items-center">
               <div className="flex items-center gap-2">
@@ -485,30 +540,19 @@ export default function PlayerPage() {
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
               </div>
-              <div className="flex-1 flex items-center gap-5 min-w-0 justify-center">
-                <button onClick={prev} className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0" title="Previous">
+              <div className="flex-1 flex items-center gap-5 justify-center">
+                <button onClick={prev} className="p-2 text-white/75 hover:text-white transition-colors" title="Previous">
                   <SkipBack size={26} fill="currentColor" />
                 </button>
                 <button onClick={togglePlay}
-                  className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 flex-shrink-0"
+                  className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
                   style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
-                <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors flex-shrink-0" title="Next">
+                <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors" title="Next">
                   <SkipForward size={26} fill="currentColor" />
                 </button>
-                <div className="flex flex-1 items-center gap-3 min-w-0 max-w-[520px]">
-                  <span className="text-[11px] text-white/60 font-mono tabular-nums flex-shrink-0">{formatDuration(Math.floor(currentTime))}</span>
-                  <div className="flex-1 relative h-1.5 rounded-full bg-white/10 overflow-hidden">
-                    <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%`, background: PASTEL_GREEN }} />
-                    <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                      onChange={seek} className="absolute inset-0 w-full opacity-0 cursor-pointer" />
-                  </div>
-                  <span className="text-[11px] text-white/40 font-mono tabular-nums flex-shrink-0">
-                    −{formatDuration(Math.max(0, Math.floor(duration - currentTime)))}
-                  </span>
-                </div>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
                 <div className="flex items-center gap-2">
