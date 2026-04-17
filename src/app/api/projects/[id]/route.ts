@@ -22,14 +22,21 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/projects/[i
   })
 }
 
-// PATCH /api/projects/[id] — update project fields
+// PATCH /api/projects/[id] — update project fields (whitelisted only)
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/projects/[id]'>) {
   const { id } = await ctx.params
   const body = await request.json()
 
+  // Only allow updating these fields — prevents clients from overwriting arbitrary columns
+  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url'] as const
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  for (const key of allowed) {
+    if (key in body) patch[key] = body[key]
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_projects')
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq('id', id)
     .select()
     .single()

@@ -13,9 +13,16 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
     .eq('id', id)
     .single()
 
+  // Only allow updating these fields — prevents clients from overwriting arbitrary columns
+  const allowed = ['status', 'label', 'private_notes', 'public_notes', 'change_log', 'allow_download'] as const
+  const patch: Record<string, unknown> = {}
+  for (const key of allowed) {
+    if (key in body) patch[key] = body[key]
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_versions')
-    .update(body)
+    .update(patch)
     .eq('id', id)
     .select()
     .single()
