@@ -3,19 +3,19 @@
 /* Dark theme (default) */
 :root,
 [data-theme="dark"] {
-  --bg: #080808;
-  --bg-page: #080808;
-  --surface: #111111;
-  --surface-2: #1a1a1a;
-  --surface-3: #222222;
-  --border: #222222;
+  --bg: #060c0b;
+  --bg-page: #060c0b;
+  --surface: #0f1513;
+  --surface-2: #172120;
+  --surface-3: #1f2c2b;
+  --border: #1f2c2b;
   --text: #f0f0f0;
   --text-secondary: #999999;
   --text-muted: #666666;
   --accent: #2dd4bf;
   --accent-dim: rgba(45, 212, 191, 0.12);
   --accent-hover: #5eead4;
-  --nav-bg: #0a0a0a;
+  --nav-bg: #070e0d;
   --card-bg: #111111;
   --input-bg: #161616;
   --scrollbar: #2a2a2a;

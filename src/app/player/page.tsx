@@ -239,7 +239,7 @@ export default function PlayerPage() {
     return (
       <>
       <Nav />
-      <div className="fixed top-14 left-0 right-0 bg-[#0a0819] flex flex-col items-center justify-center gap-4" style={{ bottom: 'var(--player-bottom, 0px)' }}>
+      <div className="fixed top-14 left-0 right-0 bg-[#060c0b] flex flex-col items-center justify-center gap-4" style={{ bottom: 'var(--player-bottom, 0px)' }}>
         <ListMusic size={48} className="text-[#222]" />
         <p className="text-[#555]">No tracks yet.</p>
         <Link href="/dashboard" className="text-sm text-[#a78bfa] hover:text-[#c4b5fd] transition-colors">
@@ -291,7 +291,7 @@ export default function PlayerPage() {
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
         style={{
-          background: 'rgba(8,6,18,0.92)',
+          background: 'rgba(6,12,11,0.92)',
           borderRight: '1px solid rgba(255,255,255,0.06)',
           backdropFilter: 'blur(24px)',
         }}>
@@ -397,8 +397,8 @@ export default function PlayerPage() {
                   className="absolute bottom-0 left-0 right-0 pt-24"
                   style={{
                     background: `linear-gradient(to top,
-                      rgba(0,0,0,0.97) 0%,
-                      rgba(0,0,0,0.72) 18%,
+                      rgba(6,12,11,0.97) 0%,
+                      rgba(6,12,11,0.72) 18%,
                       rgba(${accent[0]},${accent[1]},${accent[2]},0.45) 40%,
                       rgba(${accent[0]},${accent[1]},${accent[2]},0.12) 72%,
                       transparent 100%
@@ -474,7 +474,7 @@ export default function PlayerPage() {
           <div
             className="flex-shrink-0 w-full border-t border-white/10 px-3 sm:px-6 py-3"
             style={{
-              background: 'rgba(8,6,18,0.85)',
+              background: 'rgba(6,12,11,0.85)',
               backdropFilter: 'blur(24px)',
             }}
           >

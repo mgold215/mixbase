@@ -5,6 +5,13 @@ import Image from 'next/image'
 import { Download, Film, Sparkles } from 'lucide-react'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
+type Effect = 'kenburns' | 'breathe' | 'glitch'
+
+const EFFECT_CONFIG: Record<Effect, { label: string; description: string }> = {
+  kenburns: { label: 'Ken Burns', description: 'Zoom & drift' },
+  breathe:  { label: 'Breathe',   description: 'Gentle pulse' },
+  glitch:   { label: 'Glitch',    description: 'Digital noise' },
+}
 
 const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: number; duration: number; description: string }> = {
   canvas:  { label: 'Spotify Canvas', width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
@@ -21,6 +28,7 @@ type Props = {
 
 export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
+  const [effect, setEffect] = useState<Effect>('kenburns')
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
@@ -81,7 +89,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       return
     }
 
-    // Ken Burns params — random direction each render
+    // Pan direction options (shared by kenburns + glitch)
     const directions = [
       { startX: -0.04, startY: -0.04, endX: 0,     endY: 0     },
       { startX: 0.04,  startY: -0.04, endX: 0,     endY: 0     },
@@ -89,8 +97,41 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       { startX: 0,     startY: 0,     endX:  0.04, endY:  0.04 },
     ]
     const dir = directions[Math.floor(Math.random() * directions.length)]
-    const START_SCALE = 1.08
-    const END_SCALE = 1.0
+
+    // Pre-compute per-effect motion functions
+    type MotionFn = (t: number) => { scale: number; panX: number; panY: number }
+    let getMotion: MotionFn
+    const glitchFrames = new Set<number>()
+
+    if (effect === 'breathe') {
+      // Gentle scale pulsing, 2 full breathe cycles over the clip
+      getMotion = (t) => ({
+        scale: 1.01 + 0.06 * (0.5 + 0.5 * Math.sin(t * Math.PI * 4)),
+        panX: 0,
+        panY: 0,
+      })
+    } else if (effect === 'glitch') {
+      // Slow Ken Burns base with occasional digital glitch clusters
+      getMotion = (t) => ({
+        scale: 1.06 - 0.04 * t,
+        panX: (dir.startX + (dir.endX - dir.startX) * t) * W * 0.5,
+        panY: (dir.startY + (dir.endY - dir.startY) * t) * H * 0.5,
+      })
+      // Pre-compute glitch frame clusters (~15% of frames, in bursts)
+      let f = Math.floor(8 + Math.random() * 15)
+      while (f < TOTAL_FRAMES) {
+        const clusterLen = 1 + Math.floor(Math.random() * 3)
+        for (let j = 0; j < clusterLen && f + j < TOTAL_FRAMES; j++) glitchFrames.add(f + j)
+        f += Math.floor(12 + Math.random() * 20)
+      }
+    } else {
+      // Ken Burns: zoom out + random pan
+      getMotion = (t) => ({
+        scale: 1.08 + (1.0 - 1.08) * t,
+        panX: (dir.startX + (dir.endX - dir.startX) * t) * W,
+        panY: (dir.startY + (dir.endY - dir.startY) * t) * H,
+      })
+    }
 
     // Set up MediaRecorder
     const stream = canvas.captureStream(FPS)
@@ -107,29 +148,50 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
     recorder.start()
 
+    // Cover-fit dimensions (constant across frames)
+    const imgAspect = img.width / img.height
+    const canvasAspect = W / H
+    let drawW: number, drawH: number
+    if (imgAspect > canvasAspect) {
+      drawH = H; drawW = H * imgAspect
+    } else {
+      drawW = W; drawH = W / imgAspect
+    }
+
     for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
       const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
-      const scale = START_SCALE + (END_SCALE - START_SCALE) * t
-      const panX = (dir.startX + (dir.endX - dir.startX) * t) * W
-      const panY = (dir.startY + (dir.endY - dir.startY) * t) * H
+      const { scale, panX, panY } = getMotion(t)
 
       ctx.clearRect(0, 0, W, H)
       ctx.save()
       ctx.translate(W / 2 + panX, H / 2 + panY)
       ctx.scale(scale, scale)
 
-      // Cover-fit the image into the canvas
-      const imgAspect = img.width / img.height
-      const canvasAspect = W / H
-      let drawW: number, drawH: number
-      if (imgAspect > canvasAspect) {
-        drawH = H
-        drawW = H * imgAspect
-      } else {
-        drawW = W
-        drawH = W / imgAspect
-      }
       ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
+
+      // Glitch overlay: horizontal slice offsets + chromatic flash
+      if (effect === 'glitch' && glitchFrames.has(frame)) {
+        const numSlices = 2 + Math.floor(Math.random() * 3)
+        for (let s = 0; s < numSlices; s++) {
+          const sliceY  = (Math.random() - 0.5) * drawH
+          const sliceH  = 5 + Math.random() * 18
+          const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
+          const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
+          const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
+          if (srcH > 1) {
+            ctx.drawImage(img, 0, srcY, img.width, srcH,
+              -drawW / 2 + offsetX, sliceY, drawW, sliceH)
+          }
+        }
+        // Chromatic aberration flash
+        ctx.globalAlpha = 0.1 + Math.random() * 0.12
+        ctx.globalCompositeOperation = 'screen'
+        ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
+        ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.globalAlpha = 1
+      }
+
       ctx.restore()
 
       setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
@@ -262,6 +324,27 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               onClick={() => resetFormat(key)}
               className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
               style={format === key
+                ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
+                : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
+              }
+            >
+              <span className="block">{val.label}</span>
+              <span className="block text-[10px] opacity-70">{val.description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Effect selector */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Effect</p>
+        <div className="flex flex-wrap gap-2">
+          {(Object.entries(EFFECT_CONFIG) as [Effect, typeof EFFECT_CONFIG[Effect]][]).map(([key, val]) => (
+            <button
+              key={key}
+              onClick={() => setEffect(key)}
+              className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
+              style={effect === key
                 ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
                 : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
               }
