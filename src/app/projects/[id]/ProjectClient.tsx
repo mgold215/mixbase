@@ -12,6 +12,7 @@ import {
   MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil,
   CalendarRange, ExternalLink
 } from 'lucide-react'
+import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
 
 const CHECKLIST_ITEMS = [
@@ -353,12 +354,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   </button>
                   {projectSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>}
                 </div>
-                <div className="flex items-center gap-3 text-sm text-[#555] mb-4">
+                <div className="flex items-center gap-3 text-sm text-[#555] mb-3">
                   {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
                   {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
                   {(projectForm.key_signature || project.key_signature) && <span>Key of {projectForm.key_signature || project.key_signature}</span>}
                   <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
                 </div>
+                <AddToCollectionButton projectId={project.id} />
               </>
             )}
             <StatusPipeline currentStatus={projectStatus} />

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Sun, Moon } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Sun, Moon } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -20,15 +20,17 @@ export default function Nav() {
   // Desktop top-nav links
   const links = [
     { href: '/dashboard', label: 'Projects' },
+    { href: '/collections', label: 'Collections' },
     { href: '/pipeline', label: 'Pipeline' },
     { href: '/player', label: 'Player' },
   ]
 
   // Mobile bottom tab bar items
   const tabs = [
-    { href: '/dashboard', label: 'Projects', icon: LayoutGrid, match: '/dashboard' },
-    { href: '/player', label: 'Player', icon: PlayCircle, match: '/player' },
-    { href: '/pipeline', label: 'Pipeline', icon: ClipboardList, match: '/pipeline' },
+    { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,   match: '/dashboard' },
+    { href: '/collections', label: 'Collections', icon: Library,      match: '/collections' },
+    { href: '/player',      label: 'Player',      icon: PlayCircle,   match: '/player' },
+    { href: '/pipeline',    label: 'Pipeline',    icon: ClipboardList, match: '/pipeline' },
   ]
 
   function isTabActive(tab: typeof tabs[number]) {
