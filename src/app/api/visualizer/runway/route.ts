@@ -25,6 +25,10 @@ export async function POST(req: Request) {
   }
   const promptText = motionPrompts[format] ?? motionPrompts.canvas
 
+  // gen4_turbo: valid durations are 5 or 10; valid ratios are 1280:720 (landscape) and 720:1280 (portrait)
+  const runwayDuration = (duration && duration >= 8) ? 10 : 5
+  const runwayRatio = format === 'youtube' ? '1280:720' : '720:1280'
+
   // Create Runway task
   const createRes = await fetch('https://api.runwayml.com/v1/image_to_video', {
     method: 'POST',
@@ -34,11 +38,11 @@ export async function POST(req: Request) {
       'X-Runway-Version': '2024-11-06',
     },
     body: JSON.stringify({
-      model: 'gen3a_turbo',
+      model: 'gen4_turbo',
       promptImage: imageUrl,
       promptText,
-      duration: Math.min(duration ?? 6, 10), // Runway max is 10s
-      ratio: format === 'youtube' ? '1280:768' : '768:1280',
+      duration: runwayDuration,
+      ratio: runwayRatio,
     }),
   })
 
