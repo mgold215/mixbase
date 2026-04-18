@@ -67,6 +67,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-page)' }}>
+      <style>{`.catalog-new-btn:hover { background: var(--accent-hover) !important; }`}</style>
       <Nav />
       <div className="pt-14">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-36 md:pb-12">
@@ -125,6 +126,7 @@ export default async function DashboardPage() {
 
               <Link
                 href="/projects/new"
+                className="catalog-new-btn"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -137,10 +139,7 @@ export default async function DashboardPage() {
                   padding: '10px 16px',
                   textDecoration: 'none',
                   flexShrink: 0,
-                  transition: 'background 0.15s',
                 }}
-                onMouseOver={e => (e.currentTarget.style.background = 'var(--accent-hover)')}
-                onMouseOut={e => (e.currentTarget.style.background = 'var(--accent)')}
               >
                 <Plus size={13} strokeWidth={2.5} />
                 <span className="hidden sm:inline">NEW TRACK</span>

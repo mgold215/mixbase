@@ -3,64 +3,22 @@
 import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 
+/* ─── Keyframe animations injected once at module level ─────────────────────
+   fadeUp: elements slide up 12px and fade in from transparent.
+   Used on the logo (immediately) and the card (100ms delay) for a staggered
+   entrance feel on page load.
+   pulseGlow: used on the submit button hover to breathe a teal box-shadow. */
 const STYLES = `
-  @keyframes revealLeft {
-    from { opacity: 0; transform: translateX(-28px); }
-    to   { opacity: 1; transform: translateX(0); }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
-  @keyframes revealRight {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+  @keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0px 0px rgba(45,212,191,0); }
+    50%       { box-shadow: 0 0 18px 4px rgba(45,212,191,0.35); }
   }
-  .login-left  { animation: revealLeft  0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
-  .login-right { animation: revealRight 0.5s ease 0.3s both; }
-
-  .login-input {
-    width: 100%;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid #c8b898;
-    color: #1a1208;
-    font-family: var(--font-jost), sans-serif;
-    font-size: 16px;
-    padding: 10px 0 12px;
-    outline: none;
-    transition: border-color 0.2s;
-    letter-spacing: 0.02em;
-  }
-  .login-input::placeholder { color: #b0a080; }
-  .login-input:focus { border-bottom-color: #c4760e; }
-
-  .login-btn {
-    width: 100%;
-    background: #1a1208;
-    color: #ede4d0;
-    border: none;
-    font-family: var(--font-bebas), sans-serif;
-    font-size: 17px;
-    letter-spacing: 0.2em;
-    padding: 15px;
-    cursor: pointer;
-    transition: background 0.2s, opacity 0.2s;
-  }
-  .login-btn:hover:not(:disabled) { background: #2a1e0e; }
-  .login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  @media (max-width: 639px) {
-    .login-right { display: none !important; }
-    .login-left  { flex: 1 !important; justify-content: center !important; }
-    .login-mobile-form { display: block !important; }
-    .login-mobile-form .login-input {
-      color: #ede4d0;
-      border-bottom-color: #3a2e1a;
-    }
-    .login-mobile-form .login-input::placeholder { color: #6b6050; }
-    .login-mobile-form .login-input:focus { border-bottom-color: #e8961e; }
-    .login-mobile-form .login-btn {
-      background: #e8961e;
-      color: #0d0b08;
-    }
-    .login-mobile-form .login-btn:hover:not(:disabled) { background: #f0a832; }
+  .login-btn:hover:not(:disabled) {
+    animation: pulseGlow 1.4s ease infinite;
   }
 `
 
@@ -74,169 +32,106 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
+
     const res = await fetch('/api/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     })
+
     if (res.ok) {
       router.push('/dashboard')
       router.refresh()
     } else {
-      setError('WRONG PASSWORD')
+      setError('Wrong password. Try again.')
       setLoading(false)
     }
   }
 
-  const formFields = (
-    <>
-      <div style={{ marginBottom: 32 }}>
-        <label style={{
-          display: 'block',
-          fontFamily: 'var(--font-mono), monospace',
-          fontSize: 10,
-          letterSpacing: '0.22em',
-          color: '#9a8060',
-          textTransform: 'uppercase',
-          marginBottom: 10,
-        }}>
-          Password
-        </label>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          placeholder="Enter studio password"
-          autoFocus
-          className="login-input"
-        />
-        {error && (
-          <div style={{
-            fontFamily: 'var(--font-mono), monospace',
-            fontSize: 10,
-            letterSpacing: '0.12em',
-            color: '#c4521e',
-            marginTop: 10,
-          }}>
-            {error}
-          </div>
-        )}
-      </div>
-      <button type="submit" disabled={loading || !password} className="login-btn">
-        {loading ? 'ENTERING...' : 'ENTER STUDIO'}
-      </button>
-    </>
-  )
-
   return (
     <>
+      {/* Inject keyframe CSS — safe in 'use client' components via a style tag */}
       <style>{STYLES}</style>
-      <div style={{ display: 'flex', height: '100dvh', overflow: 'hidden' }}>
 
-        {/* LEFT PANEL — warm black, typographic wordmark */}
+      {/* Outermost container: page background color + relative positioning anchor */}
+      <div
+        className="min-h-screen flex items-center justify-center px-4"
+        style={{ backgroundColor: 'var(--bg-page)', position: 'relative', overflow: 'hidden' }}
+      >
+        {/* Atmospheric background glow — position:absolute so it sits behind all
+            content without affecting flexbox layout. The radial gradient produces
+            a faint teal halo at the center that bleeds into the dark bg. */}
         <div
-          className="login-left"
+          aria-hidden="true"
           style={{
-            flex: '1 1 58%',
-            background: '#0d0b08',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'flex-end',
-            padding: 'clamp(28px, 5vw, 60px)',
-            position: 'relative',
-            overflow: 'hidden',
-          }}
-        >
-          {/* SVG noise grain */}
-          <svg aria-hidden="true" style={{
-            position: 'absolute', inset: 0, width: '100%', height: '100%',
-            opacity: 0.04, pointerEvents: 'none',
-          }}>
-            <filter id="noise-grain">
-              <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="4" stitchTiles="stitch" />
-              <feColorMatrix type="saturate" values="0" />
-            </filter>
-            <rect width="100%" height="100%" filter="url(#noise-grain)" />
-          </svg>
-
-          {/* Amber glow — bottom left */}
-          <div style={{
-            position: 'absolute', bottom: 0, left: 0,
-            width: '55%', height: '35%',
-            background: 'radial-gradient(ellipse at 0% 100%, rgba(232,150,30,0.07) 0%, transparent 70%)',
+            position: 'absolute',
+            inset: 0,
+            background:
+              'radial-gradient(ellipse 70% 50% at 50% 50%, rgba(45,212,191,0.07) 0%, transparent 70%)',
             pointerEvents: 'none',
-          }} />
-
-          {/* Wordmark */}
-          <div style={{ position: 'relative', zIndex: 1 }}>
-            <div style={{
-              fontFamily: 'var(--font-bebas), sans-serif',
-              lineHeight: 0.86,
-              letterSpacing: '-0.01em',
-              fontSize: 'clamp(68px, 11vw, 144px)',
-            }}>
-              <div style={{ color: '#ede4d0' }}>MIX</div>
-              <div style={{ color: '#e8961e' }}>BASE</div>
-            </div>
-
-            <div style={{ width: 36, height: 2, background: '#e8961e', margin: '18px 0' }} />
-
-            <div style={{
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 9,
-              letterSpacing: '0.3em',
-              color: '#6b6050',
-              textTransform: 'uppercase',
-            }}>
-              ROUGH — TO — RELEASE
-            </div>
-          </div>
-
-          {/* Mobile inline form */}
-          <form
-            onSubmit={handleSubmit}
-            className="login-mobile-form"
-            style={{ display: 'none', marginTop: 44, position: 'relative', zIndex: 1 }}
-          >
-            {formFields}
-          </form>
-        </div>
-
-        {/* RIGHT PANEL — warm cream, form */}
-        <div
-          className="login-right"
-          style={{
-            flex: '0 0 clamp(280px, 34%, 400px)',
-            background: '#f2e8d4',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            padding: 'clamp(28px, 5vw, 60px)',
-            borderLeft: '1px solid #dfd0b0',
           }}
-        >
-          <div style={{ marginBottom: 44 }}>
-            <div style={{
-              fontFamily: 'var(--font-bebas), sans-serif',
-              fontSize: 26,
-              letterSpacing: '0.06em',
-              color: '#1a1208',
-              lineHeight: 1,
-              marginBottom: 6,
-            }}>
-              STUDIO ACCESS
-            </div>
-            <div style={{
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10,
-              letterSpacing: '0.15em',
-              color: '#9a8060',
-            }}>
-              Private workspace
-            </div>
+        />
+
+        <div className="w-full max-w-sm" style={{ position: 'relative', zIndex: 1 }}>
+
+          {/* Logo — animates in immediately (no delay) */}
+          <div
+            className="text-center mb-10"
+            style={{ animation: 'fadeUp 0.5s ease both' }}
+          >
+            <h1 className="text-3xl font-bold tracking-[0.04em] font-[family-name:var(--font-jost)]">
+              <span style={{ color: 'var(--text)' }}>mix</span>
+              <span style={{ color: 'var(--accent)' }}>BASE</span>
+            </h1>
+            <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#86efac' }}>ROUGH-TO-RELEASE</p>
+            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Track the evolution of your mixes</p>
           </div>
 
-          <form onSubmit={handleSubmit}>{formFields}</form>
+          {/* Login card — animates in 100ms after the logo (staggered entrance).
+              backdrop-filter blur gives a frosted-glass effect over the bg glow.
+              Background opacity is slightly higher than --surface default so the
+              card reads as a distinct layer without feeling opaque. */}
+          <div
+            className="rounded-2xl p-8"
+            style={{
+              animation: 'fadeUp 0.5s ease 0.1s both',
+              backgroundColor: 'rgba(15,21,19,0.82)',   /* --surface (#0f1513) at 82% opacity */
+              border: '1px solid var(--border)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',         /* Safari support */
+            }}
+          >
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  autoFocus
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+
+              {error && (
+                <p className="text-red-400 text-sm">{error}</p>
+              )}
+
+              {/* Button: login-btn class triggers the pulseGlow keyframe on hover
+                  via the injected <style> block above. All other behaviour unchanged. */}
+              <button
+                type="submit"
+                disabled={loading || !password}
+                className="login-btn w-full font-semibold rounded-xl py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: 'var(--accent)', color: 'var(--bg)' }}
+              >
+                {loading ? 'Entering...' : 'Enter'}
+              </button>
+            </form>
+          </div>
+
         </div>
       </div>
     </>
