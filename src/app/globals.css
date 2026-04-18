@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Dark theme (default) — warm black + amber */
+/* Dark theme (default) — warm black + teal */
 :root,
 [data-theme="dark"] {
   --bg: #0d0b08;
@@ -8,19 +8,19 @@
   --surface: #141009;
   --surface-2: #1e1810;
   --surface-3: #281f12;
-  --border: #2a2015;
+  --border: #1e2820;
   --text: #ede4d0;
   --text-secondary: #9a8868;
   --text-muted: #6b6050;
-  --accent: #e8961e;
-  --accent-dim: rgba(232, 150, 30, 0.12);
-  --accent-hover: #f0a832;
+  --accent: #2dd4bf;
+  --accent-dim: rgba(45, 212, 191, 0.12);
+  --accent-hover: #5eead4;
   --nav-bg: #0a0806;
   --card-bg: #141009;
   --input-bg: #1e1810;
-  --scrollbar: #2a2015;
-  --scrollbar-hover: #3d3020;
-  --badge-wip: #e8961e;
+  --scrollbar: #1e2820;
+  --scrollbar-hover: #2a3830;
+  --badge-wip: #2dd4bf;
   --badge-mix: #60a5fa;
   --badge-done: #4ade80;
   --shadow: rgba(0, 0, 0, 0.6);
@@ -38,15 +38,15 @@
   --text: #1a1208;
   --text-secondary: #5a5040;
   --text-muted: #8a7868;
-  --accent: #c4760e;
-  --accent-dim: rgba(196, 118, 14, 0.1);
-  --accent-hover: #e8961e;
+  --accent: #0d9488;
+  --accent-dim: rgba(13, 148, 136, 0.1);
+  --accent-hover: #14b8a6;
   --nav-bg: #ede8df;
   --card-bg: #ffffff;
   --input-bg: #ede8df;
   --scrollbar: #d4cfc6;
   --scrollbar-hover: #b8b3aa;
-  --badge-wip: #c4760e;
+  --badge-wip: #0d9488;
   --badge-mix: #2563eb;
   --badge-done: #16a34a;
   --shadow: rgba(0, 0, 0, 0.08);

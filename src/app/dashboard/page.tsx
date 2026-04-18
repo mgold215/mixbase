@@ -12,22 +12,30 @@ export const dynamic = 'force-dynamic'
 type WorkflowStage = 'start' | 'wip' | 'mix_master' | 'finished' | 'in_pipeline' | 'released'
 
 const STAGE_LABEL: Record<WorkflowStage, string> = {
-  start:       'NO AUDIO',
-  wip:         'MIXING',
-  mix_master:  'MIX/MASTER',
-  finished:    'FINISHED',
-  in_pipeline: 'IN PIPELINE',
-  released:    'RELEASED',
+  start:       'No audio',
+  wip:         'Mixing',
+  mix_master:  'Mix/Master',
+  finished:    'Finished',
+  in_pipeline: 'In pipeline',
+  released:    'Released',
 }
 
-// amber for active stages, muted for inactive, green for done/released
 const STAGE_COLOR: Record<WorkflowStage, string> = {
-  start:       '#4a3e28',
-  wip:         '#e8961e',
+  start:       '#6b6050',
+  wip:         '#2dd4bf',
   mix_master:  '#60a5fa',
   finished:    '#4ade80',
-  in_pipeline: '#e8961e',
+  in_pipeline: '#2dd4bf',
   released:    '#4ade80',
+}
+
+const STAGE_BG: Record<WorkflowStage, string> = {
+  start:       'transparent',
+  wip:         'rgba(45, 212, 191, 0.1)',
+  mix_master:  'rgba(96, 165, 250, 0.1)',
+  finished:    'rgba(74, 222, 128, 0.1)',
+  in_pipeline: 'rgba(45, 212, 191, 0.1)',
+  released:    'rgba(74, 222, 128, 0.1)',
 }
 
 function getWorkflowStage(
@@ -67,298 +75,229 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-page)' }}>
-      <style>{`.catalog-new-btn:hover { background: var(--accent-hover) !important; }`}</style>
       <Nav />
       <div className="pt-14">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-36 md:pb-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-36 md:pb-12 py-6 sm:py-8">
 
-          {/* ── CATALOG HEADER ── */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            paddingTop: 'clamp(24px, 4vw, 48px)',
-            paddingBottom: 16,
-            borderBottom: '1px solid var(--border)',
-            gap: 16,
-          }}>
-            <h1 style={{
-              fontFamily: 'var(--font-bebas), sans-serif',
-              fontSize: 'clamp(48px, 7vw, 80px)',
-              lineHeight: 1,
-              color: 'var(--text)',
-              letterSpacing: '0.01em',
-            }}>
-              CATALOG
-            </h1>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>Projects</h1>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {stats.total} total
+                {stats.wip > 0 && <> · <span style={{ color: 'var(--accent)' }}>{stats.wip} mixing</span></>}
+                {stats.finished > 0 && <> · {stats.finished} finished</>}
+                {stats.released > 0 && <> · {stats.released} released</>}
+              </p>
+            </div>
+            <Link
+              href="/projects/new"
+              className="flex items-center gap-1.5 text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"
+              style={{ background: 'var(--accent)', color: '#0d0b08' }}
+            >
+              <Plus size={14} strokeWidth={2.5} />
+              <span className="hidden sm:inline">New Project</span>
+              <span className="sm:hidden">New</span>
+            </Link>
+          </div>
 
-            {/* Stats + new button */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(16px, 3vw, 32px)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', gap: 'clamp(12px, 2vw, 24px)', alignItems: 'baseline' }}>
-                {[
-                  { n: stats.total,    label: 'TRACKS'   },
-                  { n: stats.wip,      label: 'MIXING'   },
-                  { n: stats.finished, label: 'DONE'     },
-                  { n: stats.released, label: 'RELEASED' },
-                ].map(s => (
-                  <div key={s.label} style={{ textAlign: 'right' }}>
-                    <div style={{
-                      fontFamily: 'var(--font-mono), monospace',
-                      fontSize: 'clamp(18px, 2.5vw, 28px)',
-                      fontWeight: 700,
-                      color: s.n > 0 ? 'var(--accent)' : 'var(--text-muted)',
-                      lineHeight: 1,
-                    }}>
-                      {String(s.n).padStart(2, '0')}
-                    </div>
-                    <div style={{
-                      fontFamily: 'var(--font-mono), monospace',
-                      fontSize: 8,
-                      letterSpacing: '0.18em',
-                      color: 'var(--text-muted)',
-                      marginTop: 3,
-                    }}>
-                      {s.label}
-                    </div>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-0 lg:gap-8 mt-4">
+
+            {/* Track list */}
+            <div>
+              {/* Column headers — desktop only */}
+              <div
+                className="hidden sm:grid mb-1"
+                style={{
+                  gridTemplateColumns: '44px 1fr 60px 100px 80px',
+                  gap: 12,
+                  paddingBottom: 8,
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                {['', 'Title', 'Version', 'Stage', ''].map((col, i) => (
+                  <div key={i} style={{
+                    fontFamily: 'var(--font-mono), monospace',
+                    fontSize: 9,
+                    letterSpacing: '0.14em',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    textAlign: i === 2 ? 'center' : i >= 3 ? 'right' : 'left',
+                  }}>
+                    {col}
                   </div>
                 ))}
               </div>
 
-              <Link
-                href="/projects/new"
-                className="catalog-new-btn"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  background: 'var(--accent)',
-                  color: '#0d0b08',
-                  fontFamily: 'var(--font-bebas), sans-serif',
-                  fontSize: 14,
-                  letterSpacing: '0.15em',
-                  padding: '10px 16px',
-                  textDecoration: 'none',
-                  flexShrink: 0,
-                }}
-              >
-                <Plus size={13} strokeWidth={2.5} />
-                <span className="hidden sm:inline">NEW TRACK</span>
-                <span className="sm:hidden">NEW</span>
-              </Link>
-            </div>
-          </div>
-
-          {/* ── MAIN CONTENT ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-0 lg:gap-8 mt-0">
-
-            {/* ── TRACK LIST ── */}
-            <div>
               {projects.length === 0 ? (
-                /* Empty state */
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '80px 0',
-                  gap: 16,
-                }}>
-                  <Music size={28} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-                  <div style={{
-                    fontFamily: 'var(--font-mono), monospace',
-                    fontSize: 11,
-                    letterSpacing: '0.15em',
-                    color: 'var(--text-muted)',
-                    textTransform: 'uppercase',
-                  }}>
-                    No tracks yet
-                  </div>
+                <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+                  <Music size={24} style={{ color: 'var(--text-muted)', opacity: 0.35 }} />
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No projects yet</p>
                   <Link
                     href="/projects/new"
-                    style={{
-                      fontFamily: 'var(--font-mono), monospace',
-                      fontSize: 10,
-                      letterSpacing: '0.15em',
-                      color: 'var(--accent)',
-                      textDecoration: 'none',
-                      textTransform: 'uppercase',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
+                    className="flex items-center gap-1.5 text-sm transition-colors"
+                    style={{ color: 'var(--accent)' }}
                   >
-                    <Plus size={11} />
-                    Add first track
+                    <Plus size={13} />
+                    Create your first project
                   </Link>
                 </div>
               ) : (
-                projects.map((project, idx) => {
-                  const versions: { status: string }[] = project.mb_versions ?? []
-                  const releases: { id: string }[] = project.mb_releases ?? []
-                  const stage = getWorkflowStage(versions, releases)
-                  const stageColor = STAGE_COLOR[stage]
-                  const catalogNum = String(idx + 1).padStart(2, '0')
+                <div>
+                  {projects.map(project => {
+                    const versions: { status: string }[] = project.mb_versions ?? []
+                    const releases: { id: string }[] = project.mb_releases ?? []
+                    const stage = getWorkflowStage(versions, releases)
 
-                  return (
-                    <div
-                      key={project.id}
-                      className="group"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'clamp(10px, 2vw, 20px)',
-                        borderBottom: '1px solid var(--border)',
-                        padding: 'clamp(10px, 1.5vw, 16px) 0',
-                        position: 'relative',
-                        transition: 'background 0.15s',
-                      }}
-                    >
-                      {/* Amber left hover accent */}
-                      <div style={{
-                        position: 'absolute',
-                        left: -16,
-                        top: 0,
-                        bottom: 0,
-                        width: 3,
-                        background: 'var(--accent)',
-                        opacity: 0,
-                        transition: 'opacity 0.15s',
-                      }} className="group-hover:opacity-100" />
-
-                      {/* Catalog number */}
-                      <div style={{
-                        fontFamily: 'var(--font-mono), monospace',
-                        fontSize: 11,
-                        color: 'var(--text-muted)',
-                        flexShrink: 0,
-                        width: 22,
-                        textAlign: 'right',
-                      }}>
-                        {catalogNum}
-                      </div>
-
-                      {/* Artwork thumbnail */}
-                      <Link href={`/projects/${project.id}`} style={{ flexShrink: 0 }}>
-                        <div style={{
-                          width: 'clamp(40px, 6vw, 52px)',
-                          height: 'clamp(40px, 6vw, 52px)',
-                          background: 'var(--surface-2)',
-                          overflow: 'hidden',
+                    return (
+                      <div
+                        key={project.id}
+                        className="group flex items-center gap-3 sm:gap-3"
+                        style={{
+                          borderBottom: '1px solid var(--border)',
+                          padding: '10px 0',
                           position: 'relative',
-                          flexShrink: 0,
-                        }}>
-                          {project.artwork_url ? (
-                            <Image
-                              src={project.artwork_url}
-                              alt={project.title}
-                              fill
-                              className="object-cover transition-transform duration-300 group-hover:scale-105"
-                            />
-                          ) : (
-                            <div style={{
-                              width: '100%', height: '100%',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            }}>
-                              <Music size={16} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-                            </div>
-                          )}
-                        </div>
-                      </Link>
-
-                      {/* Title + meta */}
-                      <Link
-                        href={`/projects/${project.id}`}
-                        style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}
+                        }}
                       >
+                        {/* Amber left accent on hover */}
                         <div style={{
-                          fontFamily: 'var(--font-bebas), sans-serif',
-                          fontSize: 'clamp(16px, 2.2vw, 22px)',
-                          color: 'var(--text)',
-                          letterSpacing: '0.02em',
-                          lineHeight: 1.1,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          transition: 'color 0.15s',
-                        }} className="group-hover:text-[var(--accent)]">
-                          {project.title.toUpperCase()}
+                          position: 'absolute',
+                          left: -16,
+                          top: 0,
+                          bottom: 0,
+                          width: 2,
+                          background: 'var(--accent)',
+                          opacity: 0,
+                          transition: 'opacity 0.15s',
+                        }} className="group-hover:opacity-100" />
+
+                        {/* Artwork */}
+                        <Link href={`/projects/${project.id}`} style={{ flexShrink: 0 }}>
+                          <div style={{
+                            width: 44,
+                            height: 44,
+                            background: 'var(--surface-2)',
+                            overflow: 'hidden',
+                            position: 'relative',
+                            borderRadius: 4,
+                          }}>
+                            {project.artwork_url ? (
+                              <Image
+                                src={project.artwork_url}
+                                alt={project.title}
+                                fill
+                                className="object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <Music size={14} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+                              </div>
+                            )}
+                          </div>
+                        </Link>
+
+                        {/* Title + meta */}
+                        <Link
+                          href={`/projects/${project.id}`}
+                          className="flex-1 min-w-0"
+                          style={{ textDecoration: 'none' }}
+                        >
+                          <div
+                            className="text-sm font-medium truncate transition-colors"
+                            style={{ color: 'var(--text)', lineHeight: 1.3 }}
+                          >
+                            {project.title}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {project.genre && (
+                              <span style={{
+                                fontFamily: 'var(--font-mono), monospace',
+                                fontSize: 10,
+                                color: 'var(--text-muted)',
+                              }}>
+                                {project.genre}
+                              </span>
+                            )}
+                            {project.bpm && (
+                              <span style={{
+                                fontFamily: 'var(--font-mono), monospace',
+                                fontSize: 10,
+                                color: 'var(--text-muted)',
+                              }}>
+                                {project.bpm} BPM
+                              </span>
+                            )}
+                          </div>
+                        </Link>
+
+                        {/* Version count */}
+                        <div
+                          className="hidden sm:block"
+                          style={{
+                            fontFamily: 'var(--font-mono), monospace',
+                            fontSize: 11,
+                            color: 'var(--text-muted)',
+                            flexShrink: 0,
+                            width: 60,
+                            textAlign: 'center',
+                          }}
+                        >
+                          {versions.length}v
                         </div>
-                        <div style={{
-                          display: 'flex',
-                          gap: 10,
-                          marginTop: 4,
-                          alignItems: 'center',
-                          flexWrap: 'wrap',
-                        }}>
-                          {project.genre && (
+
+                        {/* Stage pill */}
+                        <div
+                          className="hidden sm:block"
+                          style={{ flexShrink: 0, width: 100, display: 'flex', justifyContent: 'flex-end' }}
+                        >
+                          {stage === 'start' ? (
                             <span style={{
                               fontFamily: 'var(--font-mono), monospace',
-                              fontSize: 9,
-                              letterSpacing: '0.12em',
-                              color: 'var(--text-muted)',
-                              textTransform: 'uppercase',
+                              fontSize: 10,
+                              color: STAGE_COLOR[stage],
+                              opacity: 0.55,
                             }}>
-                              {project.genre}
+                              {STAGE_LABEL[stage]}
                             </span>
-                          )}
-                          {project.bpm && (
+                          ) : (
                             <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
                               fontFamily: 'var(--font-mono), monospace',
-                              fontSize: 9,
-                              letterSpacing: '0.12em',
-                              color: 'var(--text-muted)',
+                              fontSize: 10,
+                              letterSpacing: '0.04em',
+                              color: STAGE_COLOR[stage],
+                              background: STAGE_BG[stage],
+                              border: `1px solid ${STAGE_COLOR[stage]}50`,
+                              borderRadius: 4,
+                              padding: '2px 8px',
+                              whiteSpace: 'nowrap',
                             }}>
-                              {project.bpm} BPM
+                              {STAGE_LABEL[stage]}
                             </span>
                           )}
                         </div>
-                      </Link>
 
-                      {/* Version count — hide on small mobile */}
-                      <div className="hidden sm:block" style={{
-                        fontFamily: 'var(--font-mono), monospace',
-                        fontSize: 10,
-                        letterSpacing: '0.1em',
-                        color: 'var(--text-muted)',
-                        flexShrink: 0,
-                        width: 28,
-                        textAlign: 'center',
-                      }}>
-                        V{versions.length}
-                      </div>
-
-                      {/* Stage label — hide on small mobile */}
-                      <div className="hidden sm:block" style={{
-                        fontFamily: 'var(--font-mono), monospace',
-                        fontSize: 9,
-                        letterSpacing: '0.14em',
-                        color: stageColor,
-                        flexShrink: 0,
-                        width: 88,
-                        textAlign: 'right',
-                      }}>
-                        {STAGE_LABEL[stage]}
-                      </div>
-
-                      {/* Actions */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                        <DashPlayButton projectId={project.id} />
-                        <div className="hidden sm:block">
-                          <AddToPipelineButton
-                            projectId={project.id}
-                            projectTitle={project.title}
-                            hasRelease={releases.length > 0}
-                          />
+                        {/* Actions */}
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <DashPlayButton projectId={project.id} />
+                          <div className="hidden sm:block">
+                            <AddToPipelineButton
+                              projectId={project.id}
+                              projectTitle={project.title}
+                              hasRelease={releases.length > 0}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })
+                    )
+                  })}
+                </div>
               )}
             </div>
 
-            {/* Activity feed sidebar */}
-            <div className="hidden lg:block pt-2">
+            {/* Activity feed */}
+            <div className="hidden lg:block">
               <ActivityFeed activity={activity} projects={projects} />
             </div>
           </div>
