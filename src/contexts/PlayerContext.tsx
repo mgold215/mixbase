@@ -124,6 +124,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
 
+  // ── pageshow — iOS sometimes fires this instead of visibilitychange on unlock
+  useEffect(() => {
+    const onPageShow = () => {
+      const ctx = audioCtxRef.current
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
+      if (playIntentRef.current && audioRef.current?.paused) {
+        audioRef.current.play().catch(() => {})
+      }
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
+  }, [])
+
+  // ── stalled / interrupted recovery — iOS can silently pause audio
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    const onStalled = () => {
+      if (playIntentRef.current && audio.paused) {
+        const ctx = audioCtxRef.current
+        if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
+        audio.play().catch(() => {})
+      }
+    }
+    audio.addEventListener('stalled', onStalled)
+    return () => audio.removeEventListener('stalled', onStalled)
+  }, [])
+
   // ── EQ chain ─────────────────────────────────────────────────────────────────
   const ensureAudioChain = useCallback(() => {
     if (audioCtxRef.current || !audioRef.current) return
@@ -211,8 +239,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
     }
-    set('play',          () => audioRef.current?.play().catch(() => {}))
-    set('pause',         () => audioRef.current?.pause())
+    set('play',          () => { playIntentRef.current = true; audioRef.current?.play().catch(() => {}) })
+    set('pause',         () => { playIntentRef.current = false; audioRef.current?.pause() })
     set('previoustrack', () => prev())
     set('nexttrack',     () => next())
     set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
@@ -246,8 +274,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }}>
       {/* Hidden audio element — persists for the lifetime of the app session.
           Do NOT use display:none — iOS needs the element in the render tree
-          for proper background audio session registration. */}
-      <audio ref={audioRef} style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
+          for proper background audio session registration.
+          playsInline is REQUIRED for iOS background audio in PWAs. */}
+      <audio ref={audioRef} playsInline preload="auto" style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
       {children}
     </PlayerContext.Provider>
   )

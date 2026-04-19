@@ -53,7 +53,7 @@ export default function PlayerPage() {
   const {
     tracks, loading, currentTrack, isPlaying, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
-    ensureAudioChain, audioRef,
+    audioRef,
   } = usePlayer()
 
   const router = useRouter()
@@ -79,9 +79,6 @@ export default function PlayerPage() {
   const current = currentTrack
   // index of current track within the filtered sidebar list (for nav + highlight)
   const currentIdx = filtered.findIndex(t => t.project_id === currentTrack?.project_id)
-
-  // ── Init EQ chain when entering the full player ────────────────────────────
-  useEffect(() => { ensureAudioChain() }, [ensureAudioChain])
 
   // ── Sort + search (uses tracks from context) ──────────────────────────────
   useEffect(() => {
