@@ -7,7 +7,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'RUNWAY_API_KEY not configured' }, { status: 501 })
   }
 
-  const { imageUrl, format, duration } = await req.json()
+  const { imageUrl, format, duration, promptText: customPrompt } = await req.json()
 
   if (!imageUrl || !format) {
     return NextResponse.json({ error: 'imageUrl and format are required' }, { status: 400 })
@@ -17,13 +17,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'imageUrl must be a Supabase storage URL' }, { status: 400 })
   }
 
-  const motionPrompts: Record<string, string> = {
+  // Use custom prompt if provided, otherwise fall back to format defaults
+  const defaultPrompts: Record<string, string> = {
     canvas:  'Slow cinematic drift, subtle atmospheric shimmer, ambient light play, looping, no text, no faces',
     youtube: 'Cinematic slow pan, ethereal light waves, ambient motion, no text, no faces',
     square:  'Gentle pulse, soft light bloom, subtle motion, looping, no text, no faces',
     story:   'Slow vertical drift, dreamy light shimmer, looping, no text, no faces',
   }
-  const promptText = motionPrompts[format] ?? motionPrompts.canvas
+  const promptText = customPrompt?.trim() || defaultPrompts[format] || defaultPrompts.canvas
 
   // gen4_turbo: valid durations are 5 or 10; valid ratios are 1280:720 (landscape) and 720:1280 (portrait)
   const runwayDuration = (duration && duration >= 8) ? 10 : 5

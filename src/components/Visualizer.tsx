@@ -35,6 +35,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [errorMsg, setErrorMsg] = useState('')
   const [aiStatus, setAiStatus] = useState<'idle' | 'generating' | 'done' | 'error'>('idle')
   const [aiVideoUrl, setAiVideoUrl] = useState<string | null>(null)
+  const [aiPrompt, setAiPrompt] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
 
@@ -233,6 +234,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           width: cfg.width,
           height: cfg.height,
           duration: cfg.duration,
+          promptText: aiPrompt.trim() || undefined,
         }),
       })
 
@@ -355,6 +357,20 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
             </button>
           ))}
         </div>
+      </div>
+
+      {/* AI motion prompt */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>AI Motion Prompt</p>
+        <textarea
+          value={aiPrompt}
+          onChange={e => setAiPrompt(e.target.value)}
+          placeholder="e.g. Particles dissolving outward from center, liquid ripple distortion, neon light trails pulsing to a beat"
+          rows={3}
+          className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none resize-none transition-colors"
+          style={{ backgroundColor: 'var(--input-bg, var(--surface))', border: '1px solid var(--border, var(--surface-2))', color: 'var(--text)', }}
+        />
+        <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Leave blank for a default cinematic drift. Be specific — describe motion, not style.</p>
       </div>
 
       {/* Generate buttons */}
