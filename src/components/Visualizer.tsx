@@ -243,8 +243,9 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       }
 
       if (!res.ok) {
+        const errData = await res.json().catch(() => null)
         setAiStatus('error')
-        setErrorMsg('AI generation failed. Try again.')
+        setErrorMsg(errData?.error || 'AI generation failed. Try again.')
         return
       }
 

@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const runwayRatio = format === 'youtube' ? '1280:720' : '720:1280'
 
   // Create Runway task
-  const createRes = await fetch('https://api.runwayml.com/v1/image_to_video', {
+  const createRes = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${RUNWAY_API_KEY}`,
@@ -47,9 +47,18 @@ export async function POST(req: Request) {
   })
 
   if (!createRes.ok) {
-    const err = await createRes.text()
-    console.error('Runway create error:', err)
-    return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
+    const errText = await createRes.text()
+    console.error('Runway create error:', createRes.status, errText)
+    // Surface specific Runway errors to the user
+    try {
+      const errData = JSON.parse(errText)
+      if (errData.error?.includes('credits')) {
+        return NextResponse.json({ error: 'Runway account has no credits remaining. Add credits at dev.runwayml.com.' }, { status: 402 })
+      }
+      return NextResponse.json({ error: errData.error || 'Runway generation failed' }, { status: 502 })
+    } catch {
+      return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
+    }
   }
 
   const task = await createRes.json()
@@ -60,7 +69,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 3000))
 
-    const pollRes = await fetch(`https://api.runwayml.com/v1/tasks/${taskId}`, {
+    const pollRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
       headers: {
         'Authorization': `Bearer ${RUNWAY_API_KEY}`,
         'X-Runway-Version': '2024-11-06',
