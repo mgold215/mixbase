@@ -20,6 +20,9 @@ const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: numb
   story:   { label: 'Story',          width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
 }
 
+type RatioOption = { value: string; label: string }
+type RunwayModel = { id: string; label: string; durations: number[]; ratios: RatioOption[] }
+
 type Props = {
   projectTitle: string
   artworkUrl: string | null
@@ -36,8 +39,44 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [aiStatus, setAiStatus] = useState<'idle' | 'generating' | 'done' | 'error'>('idle')
   const [aiVideoUrl, setAiVideoUrl] = useState<string | null>(null)
   const [aiPrompt, setAiPrompt] = useState('')
+  const [aiModelLabel, setAiModelLabel] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
+
+  // Runway model options (fetched from API so they stay current)
+  const [models, setModels] = useState<RunwayModel[]>([])
+  const [selectedModel, setSelectedModel] = useState('')
+  const [selectedDuration, setSelectedDuration] = useState<number>(5)
+  const [selectedRatio, setSelectedRatio] = useState('')
+
+  // Fetch available models on mount
+  useEffect(() => {
+    fetch('/api/visualizer/runway')
+      .then(r => r.json())
+      .then((data: { models: RunwayModel[] }) => {
+        setModels(data.models)
+        if (data.models.length > 0 && !selectedModel) {
+          const first = data.models[0]
+          setSelectedModel(first.id)
+          setSelectedDuration(first.durations[0])
+          setSelectedRatio(first.ratios[0]?.value ?? '')
+        }
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const currentModel = models.find(m => m.id === selectedModel)
+
+  // When model changes, reset duration and ratio to valid defaults
+  function handleModelChange(modelId: string) {
+    setSelectedModel(modelId)
+    const m = models.find(x => x.id === modelId)
+    if (m) {
+      setSelectedDuration(m.durations[0])
+      setSelectedRatio(m.ratios[0]?.value ?? '')
+    }
+  }
 
   async function generateFree() {
     if (!artworkUrl) return
@@ -221,19 +260,18 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     if (!artworkUrl) return
     setAiStatus('generating')
     setAiVideoUrl(null)
+    setAiModelLabel('')
     setErrorMsg('')
 
-    const cfg = FORMAT_CONFIG[format]
     try {
       const res = await fetch('/api/visualizer/runway', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrl: artworkUrl,
-          format,
-          width: cfg.width,
-          height: cfg.height,
-          duration: cfg.duration,
+          model: selectedModel || undefined,
+          duration: selectedDuration,
+          ratio: selectedRatio || undefined,
           promptText: aiPrompt.trim() || undefined,
         }),
       })
@@ -253,6 +291,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
       const data = await res.json()
       setAiVideoUrl(data.videoUrl)
+      setAiModelLabel(data.model || currentModel?.label || '')
       setAiStatus('done')
     } catch {
       setAiStatus('error')
@@ -301,6 +340,11 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
   const cfg = FORMAT_CONFIG[format]
 
+  // Shared pill button style helper
+  const pill = (active: boolean) => active
+    ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
+    : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
+
   return (
     <div className="max-w-2xl space-y-6">
       {/* Hidden canvas used for frame rendering */}
@@ -317,64 +361,49 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         </div>
       </div>
 
-      {/* Format selector */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Export Format</p>
-        <div className="flex flex-wrap gap-2">
-          {(Object.entries(FORMAT_CONFIG) as [Format, typeof FORMAT_CONFIG[Format]][]).map(([key, val]) => (
-            <button
-              key={key}
-              onClick={() => resetFormat(key)}
-              className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
-              style={format === key
-                ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
-                : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
-              }
-            >
-              <span className="block">{val.label}</span>
-              <span className="block text-[10px] opacity-70">{val.description}</span>
-            </button>
-          ))}
+      {/* ── Free generator controls ──────────────────────────────────────── */}
+      <div className="rounded-2xl p-5 space-y-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+        <div className="flex items-center gap-2">
+          <Film size={16} style={{ color: 'var(--text-muted)' }} />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Free Generator</p>
         </div>
-      </div>
 
-      {/* Effect selector */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Effect</p>
-        <div className="flex flex-wrap gap-2">
-          {(Object.entries(EFFECT_CONFIG) as [Effect, typeof EFFECT_CONFIG[Effect]][]).map(([key, val]) => (
-            <button
-              key={key}
-              onClick={() => setEffect(key)}
-              className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
-              style={effect === key
-                ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
-                : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
-              }
-            >
-              <span className="block">{val.label}</span>
-              <span className="block text-[10px] opacity-70">{val.description}</span>
-            </button>
-          ))}
+        {/* Format selector */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Export Format</p>
+          <div className="flex flex-wrap gap-2">
+            {(Object.entries(FORMAT_CONFIG) as [Format, typeof FORMAT_CONFIG[Format]][]).map(([key, val]) => (
+              <button
+                key={key}
+                onClick={() => resetFormat(key)}
+                className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
+                style={pill(format === key)}
+              >
+                <span className="block">{val.label}</span>
+                <span className="block text-[10px] opacity-70">{val.description}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* AI motion prompt */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>AI Motion Prompt</p>
-        <textarea
-          value={aiPrompt}
-          onChange={e => setAiPrompt(e.target.value)}
-          placeholder="e.g. Particles dissolving outward from center, liquid ripple distortion, neon light trails pulsing to a beat"
-          rows={3}
-          className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none resize-none transition-colors"
-          style={{ backgroundColor: 'var(--input-bg, var(--surface))', border: '1px solid var(--border, var(--surface-2))', color: 'var(--text)', }}
-        />
-        <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Leave blank for a default cinematic drift. Be specific — describe motion, not style.</p>
-      </div>
+        {/* Effect selector */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Effect</p>
+          <div className="flex flex-wrap gap-2">
+            {(Object.entries(EFFECT_CONFIG) as [Effect, typeof EFFECT_CONFIG[Effect]][]).map(([key, val]) => (
+              <button
+                key={key}
+                onClick={() => setEffect(key)}
+                className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
+                style={pill(effect === key)}
+              >
+                <span className="block">{val.label}</span>
+                <span className="block text-[10px] opacity-70">{val.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-      {/* Generate buttons */}
-      <div className="flex flex-wrap gap-4">
         <button
           onClick={generateFree}
           disabled={status === 'rendering'}
@@ -385,6 +414,110 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           {status === 'rendering' ? `Rendering… ${progress}%` : 'Generate Video (Free)'}
         </button>
 
+        {/* Progress bar (free render) */}
+        {status === 'rendering' && (
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--surface-2)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-100"
+              style={{ width: `${progress}%`, backgroundColor: 'var(--accent)' }}
+            />
+          </div>
+        )}
+
+        {/* Free video result */}
+        {status === 'done' && videoUrl && (
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
+            <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+            <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{cfg.label} · {cfg.width}×{cfg.height} · WebM</span>
+              <button
+                onClick={() => download(videoUrl, 'free')}
+                className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+                style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+              >
+                <Download size={14} />
+                Download
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── AI generator controls ────────────────────────────────────────── */}
+      <div className="rounded-2xl p-5 space-y-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} style={{ color: 'var(--text-muted)' }} />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>AI Generator</p>
+          <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)' }}>Runway</span>
+        </div>
+
+        {/* Model selector */}
+        {models.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Model</p>
+            <div className="flex flex-wrap gap-2">
+              {models.map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => handleModelChange(m.id)}
+                  className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
+                  style={pill(selectedModel === m.id)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Duration + Ratio row */}
+        {currentModel && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Duration</p>
+              <div className="flex flex-wrap gap-2">
+                {currentModel.durations.map(d => (
+                  <button
+                    key={d}
+                    onClick={() => setSelectedDuration(d)}
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                    style={pill(selectedDuration === d)}
+                  >
+                    {d}s
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Aspect Ratio</p>
+              <select
+                value={selectedRatio}
+                onChange={e => setSelectedRatio(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none transition-colors"
+                style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)', color: 'var(--text)' }}
+              >
+                {currentModel.ratios.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* AI motion prompt */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Motion Prompt</p>
+          <textarea
+            value={aiPrompt}
+            onChange={e => setAiPrompt(e.target.value)}
+            placeholder="e.g. Particles dissolving outward from center, liquid ripple distortion, neon light trails pulsing to a beat"
+            rows={3}
+            className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none resize-none transition-colors"
+            style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)', color: 'var(--text)' }}
+          />
+          <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Leave blank for a default cinematic drift. Be specific — describe motion, not style.</p>
+        </div>
+
         <button
           onClick={generateAI}
           disabled={aiStatus === 'generating'}
@@ -394,58 +527,30 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           <Sparkles size={16} />
           {aiStatus === 'generating' ? 'Generating with AI…' : 'Generate with AI'}
         </button>
-      </div>
 
-      {/* Progress bar (free render) */}
-      {status === 'rendering' && (
-        <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--surface-2)' }}>
-          <div
-            className="h-full rounded-full transition-all duration-100"
-            style={{ width: `${progress}%`, backgroundColor: 'var(--accent)' }}
-          />
-        </div>
-      )}
+        {/* AI video result */}
+        {aiStatus === 'done' && aiVideoUrl && (
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
+            <p className="text-xs px-3 pt-2" style={{ color: 'var(--text-muted)' }}>AI Generated · {aiModelLabel}</p>
+            <video src={aiVideoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+            <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>
+              <button
+                onClick={() => download(aiVideoUrl, 'ai')}
+                className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+                style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+              >
+                <Download size={14} />
+                Download
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Error message */}
       {errorMsg && (
         <p className="text-sm" style={{ color: '#f87171' }}>{errorMsg}</p>
-      )}
-
-      {/* Free video result */}
-      {status === 'done' && videoUrl && (
-        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-          <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-          <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--surface)' }}>
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{cfg.label} · {cfg.width}×{cfg.height} · WebM</span>
-            <button
-              onClick={() => download(videoUrl, 'free')}
-              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
-            >
-              <Download size={14} />
-              Download
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* AI video result */}
-      {aiStatus === 'done' && aiVideoUrl && (
-        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-          <p className="text-xs px-3 pt-2" style={{ color: 'var(--text-muted)' }}>AI Generated · Runway Gen-3</p>
-          <video src={aiVideoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-          <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--surface)' }}>
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{cfg.label} · AI · Runway Gen-3</span>
-            <button
-              onClick={() => download(aiVideoUrl, 'ai')}
-              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
-            >
-              <Download size={14} />
-              Download
-            </button>
-          </div>
-        </div>
       )}
     </div>
   )
