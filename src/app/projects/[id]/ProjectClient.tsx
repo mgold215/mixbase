@@ -399,7 +399,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
               >
                 <Upload size={15} />
-                Upload Mix
+                Update Mix
               </button>
               {uploadStatus.startsWith('Error') && (
                 <span className="text-xs text-red-400">{uploadStatus}</span>
