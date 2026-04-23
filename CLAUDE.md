@@ -111,3 +111,9 @@ The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies it's store
 ## Supabase Storage Buckets
 - `mf-audio` — audio files, public read
 - `mf-artwork` — artwork images, public read
+
+# Business & Legal
+- **Legal entity:** moodmixformat, LLC (already formed — do not suggest forming an LLC)
+- **EIN:** 39-2854188
+- **App Store branch:** `app-store` — multi-user version for public launch; merges from `main` to stay current
+- **Personal branch:** `tst` → `main` — single-user personal version, shared password auth
