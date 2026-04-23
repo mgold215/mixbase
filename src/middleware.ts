@@ -7,6 +7,8 @@ const PUBLIC_PATHS = [
   '/signup',
   '/privacy',
   '/support',
+  '/terms',
+  '/dmca',
   '/share/',
   '/api/auth',
   '/api/feedback',
