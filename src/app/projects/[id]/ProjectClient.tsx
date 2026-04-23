@@ -9,7 +9,7 @@ import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl,
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, ArrowLeftRight, Trash2, Music, Upload, Pencil,
+  MessageSquare, Star, Trash2, Music, Upload, Pencil,
   CalendarRange, ExternalLink
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
@@ -25,7 +25,6 @@ const CHECKLIST_ITEMS = [
 ]
 
 const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
-const ABCompare = dynamic(() => import('@/components/ABCompare'), { ssr: false })
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
@@ -39,15 +38,11 @@ type Props = {
 export default function ProjectClient({ project, initialVersions, initialRelease }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
-  const [showUpload, setShowUpload] = useState(false)
-  const [showAB, setShowAB] = useState(false)
   const [expandedVersion, setExpandedVersion] = useState<string | null>(versions[0]?.id ?? null)
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [detectingMeta, setDetectingMeta] = useState(false)
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editingProject, setEditingProject] = useState(false)
@@ -111,26 +106,29 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
+  function parseMixLabel(filename: string): string | null {
+    const nameWithoutExt = filename.replace(/\.[^.]+$/, '')
+    const match = nameWithoutExt.match(/mix\s+[\d]+(?:\.[\d]+)*/i)
+    return match ? match[0].toUpperCase().replace(/\s+/, ' ') : null
+  }
+
   async function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setSelectedFile(file); setUploadStatus('')
-    // Auto-detect BPM and key from the selected file
-    setDetectingMeta(true)
-    const result = await analyzeFile(file)
-    if (result) {
-      setProjectForm(p => ({
-        ...p,
-        bpm: result.bpm.toString(),
-        key_signature: result.key,
-      }))
-    }
-    setDetectingMeta(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+
+    // Detect BPM/key in background — don't block the upload
+    analyzeFile(file).then(result => {
+      if (result) {
+        setProjectForm(p => ({ ...p, bpm: result.bpm.toString(), key_signature: result.key }))
+      }
+    })
+
+    await handleUpload(file)
   }
 
-  async function handleUploadSubmit() {
-    if (!selectedFile) return
-    if (selectedFile.size > 2 * 1024 * 1024 * 1024) {
+  async function handleUpload(file: File) {
+    if (file.size > 2 * 1024 * 1024 * 1024) {
       setUploadStatus('Error: File too large (max 2GB)')
       return
     }
@@ -138,20 +136,15 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setUploadPct(0)
     setUploadStatus('Uploading...')
 
-    const ext = selectedFile.name.split('.').pop()
+    const ext = file.name.split('.').pop()
     const filename = `${project.id}/${Date.now()}.${ext}`
 
     const mimeByExt: Record<string, string> = {
       wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
       mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
     }
-    const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
-    const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
-
-    // Direct browser → Supabase upload using a short-lived signed URL.
-    // Railway is completely out of the byte path, so its 10 MB edge-proxy
-    // cap (which was silently truncating files to exactly 10 MiB) is gone.
-    setUploadStatus('Uploading...')
+    const fileExt = (file.name.split('.').pop() ?? '').toLowerCase()
+    const contentType = file.type || mimeByExt[fileExt] || 'application/octet-stream'
 
     const urlRes = await fetch('/api/upload-url', {
       method: 'POST',
@@ -179,7 +172,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       xhr.open('PUT', urlData.signedUrl)
       xhr.setRequestHeader('Content-Type', contentType)
       xhr.setRequestHeader('x-upsert', 'true')
-      xhr.send(selectedFile)
+      xhr.send(file)
     })
 
     if (!putResult.ok) {
@@ -207,7 +200,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
 
     setUploadPct(92)
-    setUploadStatus('Saving version...')
+    setUploadStatus('Saving mix...')
 
     const versionRes = await fetch('/api/versions', {
       method: 'POST',
@@ -215,9 +208,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       body: JSON.stringify({
         project_id: project.id,
         audio_url: audioUrl,
-        audio_filename: selectedFile.name,
+        audio_filename: file.name,
         duration_seconds: duration,
-        file_size_bytes: selectedFile.size,
+        file_size_bytes: file.size,
+        label: parseMixLabel(file.name),
       }),
     })
 
@@ -228,8 +222,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setTimeout(() => {
         setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
         setExpandedVersion(newVersion.id)
-        setShowUpload(false)
-        setSelectedFile(null)
         setUploadPct(0)
         setUploadStatus('')
         setUploading(false)
@@ -239,12 +231,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setUploadPct(0)
       setUploading(false)
     }
-
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function deleteVersion(versionId: string) {
-    if (!confirm('Delete this version? This cannot be undone.')) return
+    if (!confirm('Delete this mix? This cannot be undone.')) return
     const res = await fetch(`/api/versions/${versionId}`, { method: 'DELETE' })
     if (res.ok) setVersions(prev => prev.filter(v => v.id !== versionId))
   }
@@ -358,7 +348,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
                   {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
                   {(projectForm.key_signature || project.key_signature) && <span>Key of {projectForm.key_signature || project.key_signature}</span>}
-                  <span>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+                  <span>{versions.length} mix{versions.length !== 1 ? 'es' : ''}</span>
                 </div>
                 <AddToCollectionButton projectId={project.id} />
               </>
@@ -380,7 +370,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 marginBottom: '-1px',
               }}
             >
-              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Versions'}
+              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Mixes'}
             </button>
           ))}
         </div>
@@ -391,95 +381,39 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
         {/* Action buttons */}
         <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => setShowUpload(!showUpload)}
-            className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-          >
-            <Upload size={15} />
-            Update Track
-          </button>
-
-          {versions.length >= 2 && (
-            <button
-              onClick={() => setShowAB(!showAB)}
-              className={`flex items-center gap-2 text-sm px-4 py-2 rounded-xl border transition-colors ${
-                showAB ? 'bg-[#2dd4bf]/10 border-[#2dd4bf]/30 text-[#2dd4bf]' : 'border-[#222] text-[#666] hover:text-[#0a0a0a] hover:border-[#333]'
-              }`}
-            >
-              <ArrowLeftRight size={14} />
-              A/B Compare
-            </button>
-          )}
-        </div>
-
-        {/* Upload form */}
-        {showUpload && (
-          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
-            <div className="space-y-4">
-              {!selectedFile ? (
-                <label className="block border-2 border-dashed border-[#222] hover:border-[#2dd4bf]/30 active:border-[#2dd4bf]/50 rounded-xl p-6 text-center cursor-pointer transition-colors">
-                  <Upload size={24} className="mx-auto text-[#444] mb-2" />
-                  <p className="text-sm text-[#555]">Tap to choose audio file</p>
-                  <p className="text-xs text-[#333] mt-1">WAV, AIFF recommended · MP3 at 320kbps+ · Max 2GB</p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
-                    className="sr-only"
-                    onChange={handleFileSelect}
-                  />
-                </label>
-              ) : (
-                <div className="flex items-center gap-3 bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3">
-                  <Music size={16} className="text-[#2dd4bf] flex-shrink-0" />
-                  <span className="text-sm text-white truncate flex-1">{selectedFile.name}</span>
-                  <span className="text-xs text-[#555] flex-shrink-0">{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
-                  {detectingMeta && <span className="text-[10px] text-[#2dd4bf] animate-pulse flex-shrink-0">detecting BPM & key…</span>}
-                  {!uploading && (
-                    <button
-                      onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
-                      className="text-[#444] hover:text-red-400 flex-shrink-0 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {(uploading || uploadStatus) && (
-                <div>
-                  <div className="flex justify-between text-xs mb-1.5">
-                    <span className={uploadStatus.startsWith('Error') ? 'text-red-400' : 'text-[#2dd4bf]'}>{uploadStatus}</span>
-                    {!uploadStatus.startsWith('Error') && <span className="text-[#555]">{uploadPct}%</span>}
-                  </div>
-                  {!uploadStatus.startsWith('Error') && (
-                    <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-300"
-                        style={{ backgroundColor: uploadPct === 100 ? '#34d399' : 'var(--accent)', width: `${uploadPct}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <button
-                onClick={handleUploadSubmit}
-                disabled={!selectedFile || uploading}
-                className="w-full bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold rounded-xl py-3 transition-colors"
-              >
-                {uploading ? (uploadStatus.startsWith('Error') ? 'Upload' : uploadStatus) : uploadStatus.startsWith('Error') ? 'Try Again' : 'Upload'}
-              </button>
+          {uploading ? (
+            <div className="flex items-center gap-3 bg-[#111] border border-[#1e1e1e] rounded-xl px-4 py-2.5">
+              <span className="text-xs text-[#888] flex-shrink-0">{uploadStatus}</span>
+              <div className="w-32 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-300"
+                  style={{ backgroundColor: uploadPct === 100 ? '#34d399' : '#2dd4bf', width: `${uploadPct}%` }}
+                />
+              </div>
+              <span className="text-xs text-[#555] flex-shrink-0">{uploadPct}%</span>
             </div>
-          </div>
-        )}
-
-        {/* A/B Compare */}
-        {showAB && versions.length >= 2 && (
-          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6 mb-6">
-            <ABCompare versions={versions} />
-          </div>
-        )}
+          ) : (
+            <>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+              >
+                <Upload size={15} />
+                Upload Mix
+              </button>
+              {uploadStatus.startsWith('Error') && (
+                <span className="text-xs text-red-400">{uploadStatus}</span>
+              )}
+            </>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+            className="sr-only"
+            onChange={handleFileSelect}
+          />
+        </div>
 
         {/* Release Pipeline section */}
         <div className="mt-10 mb-2">
@@ -562,7 +496,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           {versions.length === 0 ? (
             <div className="text-center py-16 text-[#444]">
               <Music size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
-              <p className="text-sm">No versions yet — upload your first mix above</p>
+              <p className="text-sm">No mixes yet — upload your first mix above</p>
             </div>
           ) : (
             versions.map((version, index) => {
@@ -580,13 +514,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                     onClick={() => setExpandedVersion(isExpanded ? null : version.id)}
                   >
                     <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#1a1a1a] flex items-center justify-center">
-                      <span className="text-sm font-bold text-[#888]">v{version.version_number}</span>
+                      <Music size={16} className="text-[#888]" />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-white">
-                          {version.label || `Version ${version.version_number}`}
+                          {version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`}
                         </span>
                         {index === 0 && (
                           <span className="text-[10px] text-[#555] bg-[#1a1a1a] px-1.5 py-0.5 rounded-full">Latest</span>
@@ -729,7 +663,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                           className="flex items-center gap-1.5 text-xs text-[#333] hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={12} />
-                          Delete version
+                          Delete mix
                         </button>
                       </div>
                     </div>
