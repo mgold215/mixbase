@@ -84,8 +84,8 @@ create index if not exists idx_releases_project_id on mb_releases(project_id);
 create index if not exists idx_activity_project_id on mb_activity(project_id);
 create index if not exists idx_activity_created on mb_activity(created_at desc);
 
-alter table mb_projects disable row level security;
-alter table mb_versions disable row level security;
-alter table mb_feedback disable row level security;
-alter table mb_releases disable row level security;
-alter table mb_activity disable row level security;
+alter table mb_projects enable row level security;
+alter table mb_versions enable row level security;
+alter table mb_feedback enable row level security;
+alter table mb_releases enable row level security;
+alter table mb_activity enable row level security;

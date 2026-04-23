@@ -19,9 +19,7 @@ create table if not exists mb_collection_items (
   created_at timestamptz default now()
 );
 
--- Enable public read/write via anon key (same as other tables)
+-- Enable RLS — service-role key (all server-side ops) bypasses RLS entirely.
+-- No anon policies needed or desired.
 alter table mb_collections enable row level security;
 alter table mb_collection_items enable row level security;
-
-create policy "Allow all access to mb_collections" on mb_collections for all using (true) with check (true);
-create policy "Allow all access to mb_collection_items" on mb_collection_items for all using (true) with check (true);

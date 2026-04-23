@@ -15,9 +15,22 @@ create policy "Public read mf-audio" on storage.objects
 create policy "Public read mf-artwork" on storage.objects
   for select using (bucket_id = 'mf-artwork');
 
--- Allow inserts from service role (our server-side uploads)
+-- Allow inserts/updates/deletes only from service role (server-side operations).
+-- Signed upload URLs bypass RLS per Supabase docs, so browser uploads still work.
 create policy "Service role insert mf-audio" on storage.objects
-  for insert with check (bucket_id = 'mf-audio');
+  for insert with check (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
 
 create policy "Service role insert mf-artwork" on storage.objects
-  for insert with check (bucket_id = 'mf-artwork');
+  for insert with check (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
+
+create policy "Service role update mf-audio" on storage.objects
+  for update using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
+
+create policy "Service role update mf-artwork" on storage.objects
+  for update using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
+
+create policy "Service role delete mf-audio" on storage.objects
+  for delete using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
+
+create policy "Service role delete mf-artwork" on storage.objects
+  for delete using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');

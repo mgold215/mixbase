@@ -87,11 +87,11 @@ create index if not exists idx_releases_project_id on mb_releases(project_id);
 create index if not exists idx_activity_project_id on mb_activity(project_id);
 create index if not exists idx_activity_created on mb_activity(created_at desc);
 
-alter table mb_projects disable row level security;
-alter table mb_versions disable row level security;
-alter table mb_feedback disable row level security;
-alter table mb_releases disable row level security;
-alter table mb_activity disable row level security;
+alter table mb_projects enable row level security;
+alter table mb_versions enable row level security;
+alter table mb_feedback enable row level security;
+alter table mb_releases enable row level security;
+alter table mb_activity enable row level security;
 
 -- Ensure share_token column exists (idempotent — safe to re-run)
 alter table mb_versions
@@ -122,8 +122,12 @@ create table if not exists mb_collection_items (
   created_at timestamptz default now()
 );
 
-alter table mb_collections disable row level security;
-alter table mb_collection_items disable row level security;
+-- Drop any leftover permissive policies from earlier schema versions
+drop policy if exists "Allow all access to mb_collections" on mb_collections;
+drop policy if exists "Allow all access to mb_collection_items" on mb_collection_items;
+
+alter table mb_collections enable row level security;
+alter table mb_collection_items enable row level security;
 
 -- Add cover_url if it was created before this column existed
 alter table mb_collections add column if not exists cover_url text;
