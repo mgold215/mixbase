@@ -1,30 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { supabaseAdmin } from '@/lib/supabase'
 
-// POST /api/auth — check password, set session cookie
+const COOKIE_OPTS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict' as const,
+  path: '/',
+}
+
+// POST /api/auth — sign in with email + password
 export async function POST(request: NextRequest) {
-  const { password } = await request.json()
+  const { email, password } = await request.json()
 
-  const correctPassword = process.env.MIXBASE_PASSWORD
-  const sessionSecret = process.env.SESSION_SECRET
-
-  if (!correctPassword || !sessionSecret) {
-    return NextResponse.json({ error: 'Server not configured' }, { status: 500 })
+  if (!email || !password) {
+    return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
   }
 
-  if (password !== correctPassword) {
-    return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
+  const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password })
+
+  if (error || !data.session) {
+    return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
 
-  // Set a session cookie that expires in 30 days
-  const cookieStore = await cookies()
-  cookieStore.set('mb-session', sessionSecret, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 60 * 60 * 24 * 30,
-    path: '/',
+  const response = NextResponse.json({ ok: true })
+  response.cookies.set('sb-access-token', data.session.access_token, {
+    ...COOKIE_OPTS,
+    maxAge: 60 * 60, // 1 hour — refresh token handles long sessions
   })
-
-  return NextResponse.json({ ok: true })
+  response.cookies.set('sb-refresh-token', data.session.refresh_token, {
+    ...COOKIE_OPTS,
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+  })
+  return response
 }

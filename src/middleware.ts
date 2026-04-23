@@ -1,13 +1,25 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase'
 
-// Routes that are always public — no password required
-const PUBLIC_PATHS = ['/login', '/share/', '/api/auth', '/api/feedback', '/api/audio', '/api/audio-url', '/api/health', '/api/db-init', '/api/tus']
+const PUBLIC_PATHS = [
+  '/login',
+  '/signup',
+  '/privacy',
+  '/support',
+  '/share/',
+  '/api/auth',
+  '/api/feedback',
+  '/api/audio',
+  '/api/audio-url',
+  '/api/health',
+  '/api/db-init',
+  '/api/tus',
+]
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Allow public paths and static assets
   if (
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
@@ -16,17 +28,28 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // If SESSION_SECRET is not configured, skip auth (open access)
-  const secret = process.env.SESSION_SECRET
-  if (!secret) return NextResponse.next()
+  const accessToken = request.cookies.get('sb-access-token')?.value
 
-  // Check for valid session cookie
-  const session = request.cookies.get('mb-session')
-  if (!session || session.value !== secret) {
+  if (!accessToken) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  return NextResponse.next()
+  // Validate the token and get the user
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken)
+
+  if (error || !user) {
+    // Token invalid or expired — send to login with cookie cleared
+    const response = NextResponse.redirect(new URL('/login', request.url))
+    response.cookies.delete('sb-access-token')
+    response.cookies.delete('sb-refresh-token')
+    return response
+  }
+
+  // Inject user id so API route handlers can read it without re-validating
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('X-User-Id', user.id)
+
+  return NextResponse.next({ request: { headers: requestHeaders } })
 }
 
 export const config = {

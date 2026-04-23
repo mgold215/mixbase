@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
+// Verify the collection belongs to this user — returns false if not found/unauthorized
+async function ownsCollection(collectionId: string, userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('mb_collections')
+    .select('id')
+    .eq('id', collectionId)
+    .eq('user_id', userId)
+    .single()
+  return !!data
+}
+
 // POST /api/collections/[id]/items — add a project to a collection
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
+export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { id } = await ctx.params
+  if (!await ownsCollection(id, userId)) {
+    return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
+  }
+
   const body = await request.json()
   const { project_id, position } = body
 
-  // project_id is required
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
   }
@@ -20,7 +37,6 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/collect
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Touch the collection's updated_at timestamp
   await supabaseAdmin
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })
@@ -29,11 +45,17 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/collect
   return NextResponse.json(data, { status: 201 })
 }
 
-// DELETE /api/collections/[id]/items?itemId=xxx — remove an item from a collection
-export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
-  const { id } = await ctx.params
-  const itemId = request.nextUrl.searchParams.get('itemId')
+// DELETE /api/collections/[id]/items?itemId=xxx
+export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const { id } = await ctx.params
+  if (!await ownsCollection(id, userId)) {
+    return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
+  }
+
+  const itemId = request.nextUrl.searchParams.get('itemId')
   if (!itemId) {
     return NextResponse.json({ error: 'itemId query param is required' }, { status: 400 })
   }
@@ -42,11 +64,10 @@ export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/colle
     .from('mb_collection_items')
     .delete()
     .eq('id', itemId)
-    .eq('collection_id', id) // scoped to this collection for safety
+    .eq('collection_id', id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Touch the collection's updated_at timestamp
   await supabaseAdmin
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })
@@ -55,10 +76,16 @@ export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/colle
   return NextResponse.json({ ok: true })
 }
 
-// PATCH /api/collections/[id]/items — reorder items by updating positions
-// Body: { items: [{ id: "item-uuid", position: 0 }, { id: "item-uuid", position: 1 }, ...] }
-export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
+// PATCH /api/collections/[id]/items — reorder items
+export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { id } = await ctx.params
+  if (!await ownsCollection(id, userId)) {
+    return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
+  }
+
   const body = await request.json()
   const { items } = body
 
@@ -66,7 +93,6 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
     return NextResponse.json({ error: 'items array is required' }, { status: 400 })
   }
 
-  // Update each item's position — all scoped to this collection
   const updates = items.map((item: { id: string; position: number }) =>
     supabaseAdmin
       .from('mb_collection_items')
@@ -81,7 +107,6 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
     return NextResponse.json({ error: failed.error.message }, { status: 500 })
   }
 
-  // Touch the collection's updated_at timestamp
   await supabaseAdmin
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })

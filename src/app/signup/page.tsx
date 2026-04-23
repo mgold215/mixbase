@@ -13,35 +13,47 @@ const STYLES = `
     0%, 100% { box-shadow: 0 0 0px 0px rgba(45,212,191,0); }
     50%       { box-shadow: 0 0 18px 4px rgba(45,212,191,0.35); }
   }
-  .login-btn:hover:not(:disabled) {
+  .signup-btn:hover:not(:disabled) {
     animation: pulseGlow 1.4s ease infinite;
   }
 `
 
-export default function LoginPage() {
+export default function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    setLoading(true)
     setError('')
 
-    const res = await fetch('/api/auth', {
+    if (password !== confirm) {
+      setError('Passwords do not match')
+      return
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters')
+      return
+    }
+
+    setLoading(true)
+
+    const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     })
 
+    const body = await res.json().catch(() => ({}))
+
     if (res.ok) {
-      router.push('/dashboard')
+      router.push(body.redirect ?? '/dashboard')
       router.refresh()
     } else {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'Sign in failed. Try again.')
+      setError(body.error ?? 'Sign up failed. Try again.')
       setLoading(false)
     }
   }
@@ -69,7 +81,7 @@ export default function LoginPage() {
               <span style={{ color: 'var(--accent)' }}>BASE</span>
             </h1>
             <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#86efac' }}>ROUGH-TO-RELEASE</p>
-            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Track the evolution of your mixes</p>
+            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Start tracking your music today</p>
           </div>
 
           <div
@@ -103,6 +115,19 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  required
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Confirm password</label>
+                <input
+                  type="password"
+                  value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
                   placeholder="••••••••"
                   required
                   className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
@@ -114,18 +139,25 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                disabled={loading || !email || !password}
-                className="login-btn w-full font-semibold rounded-xl py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={loading || !email || !password || !confirm}
+                className="signup-btn w-full font-semibold rounded-xl py-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--bg)' }}
               >
-                {loading ? 'Signing in…' : 'Sign in'}
+                {loading ? 'Creating account…' : 'Create account'}
               </button>
             </form>
 
             <p className="text-center text-sm mt-6" style={{ color: 'var(--text-muted)' }}>
-              {"Don't have an account? "}
-              <Link href="/signup" style={{ color: 'var(--accent)' }} className="hover:underline">
-                Create one
+              Already have an account?{' '}
+              <Link href="/login" style={{ color: 'var(--accent)' }} className="hover:underline">
+                Sign in
+              </Link>
+            </p>
+
+            <p className="text-center text-xs mt-4" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+              By creating an account you agree to our{' '}
+              <Link href="/privacy" style={{ color: 'var(--accent)' }} className="hover:underline">
+                Privacy Policy
               </Link>
             </p>
           </div>
