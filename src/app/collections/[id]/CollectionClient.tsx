@@ -97,19 +97,24 @@ export default function CollectionClient({ collection, initialItems, allProjects
   }
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
-  function onDragStart(idx: number) {
+  function onDragStart(e: React.DragEvent, idx: number) {
+    // Only allow drag to start from the grip handle
+    if (!(e.target as HTMLElement).closest('[data-drag-handle]')) {
+      e.preventDefault()
+      return
+    }
     dragItem.current = idx
   }
 
   function onDragEnter(idx: number) {
     dragOver.current = idx
-    // Preview reorder while dragging
     if (dragItem.current === null || dragItem.current === idx) return
+    const from = dragItem.current
+    dragItem.current = idx  // Update ref before setItems so the updater is pure
     setItems(prev => {
       const next = [...prev]
-      const [moved] = next.splice(dragItem.current!, 1)
+      const [moved] = next.splice(from, 1)
       next.splice(idx, 0, moved)
-      dragItem.current = idx
       return next
     })
   }
@@ -292,15 +297,16 @@ export default function CollectionClient({ collection, initialItems, allProjects
             <div
               key={item.id}
               draggable
-              onDragStart={() => onDragStart(idx)}
+              onDragStart={e => onDragStart(e, idx)}
               onDragEnter={() => onDragEnter(idx)}
               onDragEnd={onDragEnd}
               onDragOver={e => e.preventDefault()}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl group transition-colors cursor-default"
               style={{ backgroundColor: 'var(--surface)' }}
             >
-              {/* Drag handle */}
+              {/* Drag handle — drag only initiates from here */}
               <GripVertical
+                data-drag-handle
                 size={14}
                 className="flex-shrink-0 cursor-grab active:cursor-grabbing opacity-30 group-hover:opacity-70 transition-opacity"
                 style={{ color: 'var(--text-muted)' }}
@@ -338,8 +344,9 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 )}
               </div>
 
-              {/* Hover actions */}
+              {/* Hover actions — draggable={false} prevents the row's drag from swallowing clicks */}
               <button
+                draggable={false}
                 onClick={() => playTrack(item.project_id)}
                 className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
                 style={{ color: 'var(--accent)' }}
@@ -348,6 +355,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 <Play size={14} fill="currentColor" />
               </button>
               <Link
+                draggable={false}
                 href={`/projects/${item.project_id}`}
                 className="opacity-0 group-hover:opacity-100 px-2 py-1 rounded-lg text-xs font-medium transition-all"
                 style={{ color: 'var(--text-muted)', backgroundColor: 'var(--surface-2)' }}
@@ -355,6 +363,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 Open
               </Link>
               <button
+                draggable={false}
                 onClick={() => removeItem(item.id)}
                 className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
                 style={{ color: 'var(--text-muted)' }}
