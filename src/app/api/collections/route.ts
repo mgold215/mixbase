@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // GET /api/collections — list all collections, newest-updated first
 export async function GET() {
-  const { data, error } = await supabaseAdmin
+  const supabase = await createClient()
+  const { data, error } = await supabase
     .from('mb_collections')
     .select('*')
     .order('updated_at', { ascending: false })
@@ -14,6 +15,10 @@ export async function GET() {
 
 // POST /api/collections — create a new collection
 export async function POST(request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const body = await request.json()
   const { title, type } = body
 
@@ -31,9 +36,9 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_collections')
-    .insert({ title: title.trim(), type })
+    .insert({ title: title.trim(), type, user_id: user.id })
     .select()
     .single()
 

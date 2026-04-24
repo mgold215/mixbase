@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // GET /api/media — list all artwork images across all projects
 export async function GET() {
-  const { data, error } = await supabaseAdmin
+  const supabase = await createClient()
+  const { data, error } = await supabase
     .from('mb_projects')
     .select('id, title, artwork_url')
     .not('artwork_url', 'is', null)

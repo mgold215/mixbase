@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -75,6 +75,7 @@ async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Bu
 
 // POST /api/generate-artwork
 export async function POST(request: NextRequest) {
+  const supabase = await createClient()
   const { project_id, prompt, model = 'flux', title = '' } = await request.json()
 
   if (!prompt?.trim()) {
@@ -137,7 +138,7 @@ export async function POST(request: NextRequest) {
   const stamped = await stampArtwork(imageBuffer, title || prompt.split(',')[0].trim())
 
   const filename = `${project_id}/ai-${Date.now()}.jpg`
-  const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+  const { data: uploadData, error: uploadError } = await supabase.storage
     .from('mf-artwork')
     .upload(filename, stamped, { contentType: 'image/jpeg', upsert: false })
 
@@ -146,11 +147,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ artwork_url: outputUrl })
   }
 
-  const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
+  const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
   if (project_id) {
-    await supabaseAdmin
+    await supabase
       .from('mb_projects')
       .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
       .eq('id', project_id)

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // PATCH /api/versions/[id] — update a version (status, notes, etc.)
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const body = await request.json()
 
@@ -20,7 +21,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
   // Only pre-fetch the old version when we need to log a status change
   let oldVersion: { status: string; project_id: string; version_number: number } | null = null
   if (patch.status) {
-    const { data } = await supabaseAdmin
+    const { data } = await supabase
       .from('mb_versions')
       .select('status, project_id, version_number')
       .eq('id', id)
@@ -28,7 +29,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
     oldVersion = data
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_versions')
     .update(patch)
     .eq('id', id)
@@ -39,7 +40,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
 
   // Log status change activity
   if (patch.status && oldVersion && patch.status !== oldVersion.status) {
-    await supabaseAdmin.from('mb_activity').insert({
+    await supabase.from('mb_activity').insert({
       type: 'status_change',
       project_id: oldVersion.project_id,
       version_id: id,
@@ -52,9 +53,10 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/versio
 
 // GET /api/versions/[id] — get one version with its feedback
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_versions')
     .select('*, mb_feedback(*)')
     .eq('id', id)
@@ -66,8 +68,9 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/versions/[i
 
 // DELETE /api/versions/[id]
 export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/versions/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
-  const { error } = await supabaseAdmin.from('mb_versions').delete().eq('id', id)
+  const { error } = await supabase.from('mb_versions').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // POST /api/collections/[id]/items — add a project to a collection
 export async function POST(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const body = await request.json()
   const { project_id, position } = body
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/collect
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_collection_items')
     .insert({ collection_id: id, project_id, position: position ?? 0 })
     .select()
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/collect
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Touch the collection's updated_at timestamp
-  await supabaseAdmin
+  await supabase
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/collect
 
 // DELETE /api/collections/[id]/items?itemId=xxx — remove an item from a collection
 export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const itemId = request.nextUrl.searchParams.get('itemId')
 
@@ -38,7 +40,7 @@ export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/colle
     return NextResponse.json({ error: 'itemId query param is required' }, { status: 400 })
   }
 
-  const { error } = await supabaseAdmin
+  const { error } = await supabase
     .from('mb_collection_items')
     .delete()
     .eq('id', itemId)
@@ -47,7 +49,7 @@ export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/colle
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Touch the collection's updated_at timestamp
-  await supabaseAdmin
+  await supabase
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -58,6 +60,7 @@ export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/colle
 // PATCH /api/collections/[id]/items — reorder items by updating positions
 // Body: { items: [{ id: "item-uuid", position: 0 }, { id: "item-uuid", position: 1 }, ...] }
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collections/[id]/items'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const body = await request.json()
   const { items } = body
@@ -68,7 +71,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
 
   // Update each item's position — all scoped to this collection
   const updates = items.map((item: { id: string; position: number }) =>
-    supabaseAdmin
+    supabase
       .from('mb_collection_items')
       .update({ position: item.position })
       .eq('id', item.id)
@@ -82,7 +85,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
   }
 
   // Touch the collection's updated_at timestamp
-  await supabaseAdmin
+  await supabase
     .from('mb_collections')
     .update({ updated_at: new Date().toISOString() })
     .eq('id', id)

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // GET /api/collections/[id] — get one collection with its items (joined to projects)
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/collections/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
 
   // Fetch the collection itself
-  const collectionRes = await supabaseAdmin
+  const collectionRes = await supabase
     .from('mb_collections')
     .select('*')
     .eq('id', id)
@@ -17,7 +18,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/collections
   }
 
   // Fetch items joined with project data, ordered by position
-  const itemsRes = await supabaseAdmin
+  const itemsRes = await supabase
     .from('mb_collection_items')
     .select('*, mb_projects(title, artwork_url, genre)')
     .eq('collection_id', id)
@@ -31,6 +32,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/collections
 
 // PATCH /api/collections/[id] — update title and/or cover_url
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collections/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const body = await request.json()
   const updates: Record<string, string> = {}
@@ -41,7 +43,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_collections')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -54,9 +56,10 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/collec
 
 // DELETE /api/collections/[id] — delete a collection (cascade deletes its items)
 export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/collections/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
 
-  const { error } = await supabaseAdmin
+  const { error } = await supabase
     .from('mb_collections')
     .delete()
     .eq('id', id)

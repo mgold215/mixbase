@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 // GET /api/projects — list all projects
 export async function GET() {
-  const { data, error } = await supabaseAdmin
+  const supabase = await createClient()
+  const { data, error } = await supabase
     .from('mb_projects')
     .select('*')
     .order('updated_at', { ascending: false })
@@ -14,6 +15,10 @@ export async function GET() {
 
 // POST /api/projects — create a new project
 export async function POST(request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const body = await request.json()
   const { title, genre, bpm, key_signature } = body
 
@@ -21,19 +26,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Title is required' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_projects')
-    .insert({ title: title.trim(), genre, bpm, key_signature })
+    .insert({ title: title.trim(), genre, bpm, key_signature, user_id: user.id })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Log activity
-  await supabaseAdmin.from('mb_activity').insert({
+  await supabase.from('mb_activity').insert({
     type: 'project_created',
     project_id: data.id,
     description: `Project "${data.title}" created`,
+    user_id: user.id,
   })
 
   return NextResponse.json(data, { status: 201 })
