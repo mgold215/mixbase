@@ -4,9 +4,6 @@ import { createClient } from '@supabase/supabase-js'
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
 export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU'
 
-// Browser client — uses anon key
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-
 // Server-only admin client — uses service role key if available, falls back to anon
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('[supabase] SUPABASE_SERVICE_ROLE_KEY not set — admin client falling back to anon key. Uploads and size-limited ops WILL FAIL in production.')
@@ -27,6 +24,7 @@ export type Project = {
   key_signature: string | null
   created_at: string
   updated_at: string
+  user_id: string
 }
 
 export type Version = {
@@ -59,6 +57,7 @@ export type Feedback = {
 
 export type Release = {
   id: string
+  user_id: string
   title: string
   release_date: string | null
   project_id: string | null
@@ -86,6 +85,7 @@ export type Release = {
 
 export type Activity = {
   id: string
+  user_id: string
   type: string
   project_id: string | null
   version_id: string | null
