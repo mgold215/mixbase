@@ -115,5 +115,7 @@ The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies it's store
 # Business & Legal
 - **Legal entity:** moodmixformat, LLC (already formed — do not suggest forming an LLC)
 - **EIN:** 39-2854188
+- **Domain:** mixbase.app (registered — wire CNAME → mixbase-production.up.railway.app in DNS, then add custom domain in Railway dashboard)
 - **App Store branch:** `app-store` — multi-user version for public launch; merges from `main` to stay current
 - **Personal branch:** `tst` → `main` — single-user personal version, shared password auth
+- **Emails needed:** privacy@, support@, dmca@, legal@, review@ at mixbase.app — set up via Google Workspace or similar before App Store submission
