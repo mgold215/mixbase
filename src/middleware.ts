@@ -1,32 +1,61 @@
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
 
-// Routes that are always public — no password required
-const PUBLIC_PATHS = ['/login', '/share/', '/api/auth', '/api/feedback', '/api/audio', '/api/audio-url', '/api/health', '/api/db-init', '/api/tus']
+const PUBLIC_PATHS = [
+  '/login',
+  '/signup',
+  '/auth/callback',
+  '/share/',
+  '/api/feedback',
+  '/api/audio',
+  '/api/audio-url',
+  '/api/health',
+  '/api/db-init',
+  '/api/tus',
+]
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Allow public paths and static assets
   if (
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
-    pathname.startsWith('/favicon')
+    pathname.startsWith('/favicon') ||
+    pathname.match(/\.(svg|png|jpg|jpeg|gif|webp|ico)$/)
   ) {
     return NextResponse.next()
   }
 
-  // If SESSION_SECRET is not configured, skip auth (open access)
-  const secret = process.env.SESSION_SECRET
-  if (!secret) return NextResponse.next()
+  let supabaseResponse = NextResponse.next({ request })
 
-  // Check for valid session cookie
-  const session = request.cookies.get('mb-session')
-  if (!session || session.value !== secret) {
-    return NextResponse.redirect(new URL('/login', request.url))
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co',
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU',
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          supabaseResponse = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return NextResponse.redirect(url)
   }
 
-  return NextResponse.next()
+  return supabaseResponse
 }
 
 export const config = {
