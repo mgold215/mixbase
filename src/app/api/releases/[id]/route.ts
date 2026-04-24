@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/releases/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
   const body = await request.json()
 
@@ -16,7 +17,7 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/releas
     if (key in body) patch[key] = body[key]
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('mb_releases')
     .update(patch)
     .eq('id', id)
@@ -28,8 +29,9 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/releas
 }
 
 export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/releases/[id]'>) {
+  const supabase = await createClient()
   const { id } = await ctx.params
-  const { error } = await supabaseAdmin.from('mb_releases').delete().eq('id', id)
+  const { error } = await supabase.from('mb_releases').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

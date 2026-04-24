@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 export type Track = {
   id: string
@@ -17,10 +17,10 @@ export type Track = {
 // Backfill any existing versions that are missing a share_token.
 // Runs once per server process; short-circuits immediately on subsequent calls.
 let _backfillDone = false
-async function ensureShareTokens() {
+async function ensureShareTokens(supabase: Awaited<ReturnType<typeof createClient>>) {
   if (_backfillDone) return
   try {
-    const { data } = await supabaseAdmin
+    const { data } = await supabase
       .from('mb_versions')
       .select('id')
       .is('share_token', null)
@@ -28,7 +28,7 @@ async function ensureShareTokens() {
     if (!data?.length) { _backfillDone = true; return }
     await Promise.all(
       data.map(v =>
-        supabaseAdmin
+        supabase
           .from('mb_versions')
           .update({ share_token: crypto.randomUUID().replace(/-/g, '') })
           .eq('id', v.id)
@@ -41,10 +41,12 @@ async function ensureShareTokens() {
 }
 
 export async function GET() {
-  // Ensure all versions have share tokens before returning tracks
-  await ensureShareTokens()
+  const supabase = await createClient()
 
-  const { data, error } = await supabaseAdmin
+  // Ensure all versions have share tokens before returning tracks
+  await ensureShareTokens(supabase)
+
+  const { data, error } = await supabase
     .from('mb_versions')
     .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
     .order('version_number', { ascending: false })
