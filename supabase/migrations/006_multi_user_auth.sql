@@ -188,13 +188,17 @@ create policy "users_own_curator_submissions" on mb_curator_submissions
   );
 
 -- 7. First-user trigger: auto-create profile and migrate existing data
+-- NOTE: SET search_path = public is REQUIRED for Supabase Auth triggers.
+-- GoTrue (the auth service) runs in a different schema context, so without
+-- an explicit search_path the function can't find public tables and fails
+-- with "Database error saving new user".
 create or replace function handle_new_user()
 returns trigger as $$
 declare
   user_count int;
 begin
   -- Create profile for every new user
-  insert into profiles (id, display_name, avatar_url, is_owner)
+  insert into public.profiles (id, display_name, avatar_url, is_owner)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', new.email),
@@ -203,24 +207,24 @@ begin
   );
 
   -- Check if this is the first user
-  select count(*) into user_count from profiles;
+  select count(*) into user_count from public.profiles;
 
   if user_count = 1 then
     -- Mark as owner
-    update profiles set is_owner = true where id = new.id;
+    update public.profiles set is_owner = true where id = new.id;
 
     -- Migrate all existing data to this user
-    update mb_projects set user_id = new.id where user_id is null;
-    update mb_releases set user_id = new.id where user_id is null;
-    update mb_collections set user_id = new.id where user_id is null;
-    update mb_activity set user_id = new.id where user_id is null;
-    update mb_favorites set user_id = new.id where user_id is null;
-    update mb_spotify_auth set user_id = new.id where user_id is null;
+    update public.mb_projects set user_id = new.id where user_id is null;
+    update public.mb_releases set user_id = new.id where user_id is null;
+    update public.mb_collections set user_id = new.id where user_id is null;
+    update public.mb_activity set user_id = new.id where user_id is null;
+    update public.mb_favorites set user_id = new.id where user_id is null;
+    update public.mb_spotify_auth set user_id = new.id where user_id is null;
   end if;
 
   return new;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 -- Drop trigger if it exists (idempotent)
 drop trigger if exists on_auth_user_created on auth.users;
