@@ -134,6 +134,27 @@ alter table mb_collections add column if not exists cover_url text;
 
 create index if not exists idx_collection_items_collection on mb_collection_items(collection_id);
 create index if not exists idx_collection_items_position on mb_collection_items(collection_id, position);
+
+-- Storage: restrict inserts/updates/deletes to service role only (idempotent)
+drop policy if exists "Service role insert mf-audio" on storage.objects;
+drop policy if exists "Service role insert mf-artwork" on storage.objects;
+drop policy if exists "Service role update mf-audio" on storage.objects;
+drop policy if exists "Service role update mf-artwork" on storage.objects;
+drop policy if exists "Service role delete mf-audio" on storage.objects;
+drop policy if exists "Service role delete mf-artwork" on storage.objects;
+
+create policy "Service role insert mf-audio" on storage.objects
+  for insert with check (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
+create policy "Service role insert mf-artwork" on storage.objects
+  for insert with check (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
+create policy "Service role update mf-audio" on storage.objects
+  for update using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
+create policy "Service role update mf-artwork" on storage.objects
+  for update using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
+create policy "Service role delete mf-audio" on storage.objects
+  for delete using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
+create policy "Service role delete mf-artwork" on storage.objects
+  for delete using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.
