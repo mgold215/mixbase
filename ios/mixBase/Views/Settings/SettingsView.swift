@@ -1,98 +1,76 @@
 import SwiftUI
 
 // MARK: - SettingsView
-// Simple settings screen with sections for:
-// 1. Authentication (change app password)
-// 2. API Keys (Supabase, Replicate, Anthropic)
-// 3. About (app version, branding)
+// Account screen showing user info, legal links, and account deletion.
 
 struct SettingsView: View {
 
-    // Fields for editing passwords and API keys
-    // These are local state — in a real app you'd persist to Keychain
-    @State private var appPassword = ""
-    @State private var supabaseKey = ""
-    @State private var replicateKey = ""
-    @State private var anthropicKey = ""
+    @EnvironmentObject var authService: AuthService
 
-    // Feedback state
-    @State private var showSavedAlert = false
+    // Account deletion flow
+    @State private var showDeleteConfirm = false
+    @State private var deleteText = ""
+    @State private var isDeleting = false
+    @State private var deleteError: String? = nil
 
     var body: some View {
         ZStack {
-            // Dark background
             Color(hex: "#080808")
                 .ignoresSafeArea()
 
             Form {
-                // MARK: - Authentication Section
+                // MARK: - Account Section
                 Section {
-                    SecureField("New app password", text: $appPassword)
-                        .foregroundColor(Color(hex: "#f0f0f0"))
-                        .textContentType(.password)
-
-                    // Save button for the password
-                    Button("Update Password") {
-                        // In a real app, this would update Keychain or Config
-                        showSavedAlert = true
+                    HStack {
+                        Text("Email")
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                        Spacer()
+                        Text(authService.userEmail ?? "—")
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
                     }
-                    .foregroundColor(Color(hex: "#2dd4bf"))
-                    .disabled(appPassword.isEmpty)
                 } header: {
-                    Text("Authentication")
+                    Text("Account")
                         .foregroundColor(Color(hex: "#2dd4bf"))
-                } footer: {
-                    Text("This password is used for the app login gate.")
-                        .foregroundColor(.gray)
                 }
 
-                // MARK: - API Keys Section
+                // MARK: - Legal Section
                 Section {
-                    // Supabase anon key
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Supabase Key")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        SecureField("Supabase anon key", text: $supabaseKey)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                            .textContentType(.none)
-                            .autocorrectionDisabled()
+                    Link(destination: URL(string: "https://mixbase.app/privacy")!) {
+                        HStack {
+                            Text("Privacy Policy")
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .foregroundColor(.gray)
+                                .font(.caption)
+                        }
                     }
 
-                    // Replicate API key
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Replicate Key")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        SecureField("Replicate API key", text: $replicateKey)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                            .textContentType(.none)
-                            .autocorrectionDisabled()
+                    Link(destination: URL(string: "https://mixbase.app/terms")!) {
+                        HStack {
+                            Text("Terms of Service")
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .foregroundColor(.gray)
+                                .font(.caption)
+                        }
                     }
 
-                    // Anthropic API key
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Anthropic Key")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        SecureField("Anthropic API key", text: $anthropicKey)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                            .textContentType(.none)
-                            .autocorrectionDisabled()
+                    Link(destination: URL(string: "https://mixbase.app/support")!) {
+                        HStack {
+                            Text("Support")
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .foregroundColor(.gray)
+                                .font(.caption)
+                        }
                     }
-
-                    // Save button for API keys
-                    Button("Save Keys") {
-                        // In a real app, this would update Keychain
-                        showSavedAlert = true
-                    }
-                    .foregroundColor(Color(hex: "#2dd4bf"))
                 } header: {
-                    Text("API Keys")
+                    Text("Legal")
                         .foregroundColor(Color(hex: "#2dd4bf"))
-                } footer: {
-                    Text("Keys are stored locally on this device.")
-                        .foregroundColor(.gray)
                 }
 
                 // MARK: - About Section
@@ -113,29 +91,123 @@ struct SettingsView: View {
                         Text("1.0.0")
                             .foregroundColor(.gray)
                     }
-
-                    HStack {
-                        Text("Platform")
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                        Spacer()
-                        Text("iOS 17+")
-                            .foregroundColor(.gray)
-                    }
                 } header: {
                     Text("About")
                         .foregroundColor(Color(hex: "#2dd4bf"))
                 }
+
+                // MARK: - Sign Out
+                Section {
+                    Button("Sign Out") {
+                        authService.signOut()
+                    }
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+
+                // MARK: - Delete Account
+                Section {
+                    if !showDeleteConfirm {
+                        Button("Delete Account") {
+                            showDeleteConfirm = true
+                        }
+                        .foregroundColor(.red)
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("This will permanently delete your account and all your data. This cannot be undone.")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+
+                            Text("Type DELETE to confirm:")
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+
+                            TextField("DELETE", text: $deleteText)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.characters)
+
+                            if let error = deleteError {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+
+                            HStack {
+                                Button("Permanently Delete") {
+                                    Task { await performDelete() }
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(deleteText == "DELETE" ? Color.red : Color.gray)
+                                .cornerRadius(8)
+                                .disabled(deleteText != "DELETE" || isDeleting)
+
+                                Button("Cancel") {
+                                    showDeleteConfirm = false
+                                    deleteText = ""
+                                    deleteError = nil
+                                }
+                                .foregroundColor(.gray)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Danger Zone")
+                        .foregroundColor(.red)
+                } footer: {
+                    Text("Deleting your account removes all projects, mixes, collections, and releases.")
+                        .foregroundColor(.gray)
+                }
             }
-            .scrollContentBackground(.hidden) // Hide default white form background
+            .scrollContentBackground(.hidden)
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        // Show a confirmation alert when settings are saved
-        .alert("Saved", isPresented: $showSavedAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Your settings have been updated.")
+    }
+
+    // MARK: - Delete account via Supabase
+    private func performDelete() async {
+        guard deleteText == "DELETE" else { return }
+        isDeleting = true
+        deleteError = nil
+
+        guard let token = KeychainService.load(forKey: "access_token"),
+              let userId = authService.userId else {
+            deleteError = "Not authenticated"
+            isDeleting = false
+            return
+        }
+
+        // Call the web API to delete account and all data
+        guard let url = URL(string: "https://mixbase.app/api/auth/delete-account") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Pass the access token as a cookie so middleware can validate and inject X-User-Id
+        request.setValue("sb-access-token=\(token)", forHTTPHeaderField: "Cookie")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                deleteError = "Unexpected response"
+                isDeleting = false
+                return
+            }
+
+            if http.statusCode == 200 {
+                // Success — sign out locally
+                authService.signOut()
+            } else {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                deleteError = (json?["error"] as? String) ?? "Failed to delete account"
+                isDeleting = false
+            }
+        } catch {
+            deleteError = "Network error. Try again."
+            isDeleting = false
         }
     }
 }
