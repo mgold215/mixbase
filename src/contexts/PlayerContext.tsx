@@ -186,6 +186,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!audio) return
     const track = tracks.find(t => t.project_id === projectId)
     if (!track) return
+    // Set metadata immediately so iOS registers the media session before play starts
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title,
+        artist: track.artist ?? '',
+        artwork: track.artwork_url
+          ? [{ src: track.artwork_url, sizes: '512x512', type: 'image/jpeg' }]
+          : [],
+      })
+    }
     if (currentProjectId !== projectId) {
       audio.src = audioProxyUrl(track.audio_url)
       setCurrentProjectId(projectId)
@@ -234,21 +244,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (prevTrack) playTrack(prevTrack.project_id)
   }, [tracks, currentProjectId, playTrack])
 
+  // Stable handlers (play/pause/seek) — registered once, never torn down on track changes
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
     }
-    set('play',          () => { playIntentRef.current = true; audioRef.current?.play().catch(() => {}) })
-    set('pause',         () => { playIntentRef.current = false; audioRef.current?.pause() })
+    set('play',         () => { playIntentRef.current = true;  navigator.mediaSession.playbackState = 'playing'; audioRef.current?.play().catch(() => {}) })
+    set('pause',        () => { playIntentRef.current = false; navigator.mediaSession.playbackState = 'paused';  audioRef.current?.pause() })
+    set('seekto',       (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
+    set('seekbackward', (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
+    set('seekforward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
+    return () => {
+      ;(['play','pause','seekto','seekbackward','seekforward'] as MediaSessionAction[])
+        .forEach(a => set(a, null))
+    }
+  }, []) // empty deps — handlers use refs, never stale
+
+  // Dynamic handlers (prev/next) — reinstalled when track list or position changes
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
     set('previoustrack', () => prev())
     set('nexttrack',     () => next())
-    set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
-    set('seekbackward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
-    set('seekforward',   (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
     return () => {
-      ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
-        .forEach(a => set(a, null))
+      ;(['previoustrack', 'nexttrack'] as MediaSessionAction[]).forEach(a => set(a, null))
     }
   }, [prev, next])
 

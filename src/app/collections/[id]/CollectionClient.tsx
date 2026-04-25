@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useLayoutEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -38,9 +38,13 @@ export default function CollectionClient({ collection, initialItems, allProjects
   const [mediaItems, setMediaItems] = useState<Project[]>([])
   const [loadingMedia, setLoadingMedia] = useState(false)
 
-  // Drag-to-reorder state
-  const dragItem = useRef<number | null>(null)
-  const dragOver = useRef<number | null>(null)
+  // Pointer-based drag-to-reorder (works on desktop + mobile)
+  const pointerDrag = useRef<{ fromIdx: number } | null>(null)
+  const awaitingCommit = useRef(false)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Reset commit flag after every items re-render so DOM positions are fresh
+  useLayoutEffect(() => { awaitingCommit.current = false }, [items])
 
   const inCollection = new Set(items.map(i => i.project_id))
   const available = allProjects.filter(
@@ -96,33 +100,44 @@ export default function CollectionClient({ collection, initialItems, allProjects
     if (res.ok) setItems(prev => prev.filter(i => i.id !== itemId))
   }
 
-  // ── Drag-to-reorder ───────────────────────────────────────────────────────────
-  function onDragStart(e: React.DragEvent, idx: number) {
-    // Only allow drag to start from the grip handle
-    if (!(e.target as HTMLElement).closest('[data-drag-handle]')) {
-      e.preventDefault()
-      return
+  // ── Pointer drag-to-reorder (mouse + touch) ──────────────────────────────────
+  function getItemIdxAtY(clientY: number): number {
+    const container = listRef.current
+    if (!container) return -1
+    const children = Array.from(container.children) as HTMLElement[]
+    for (let i = 0; i < children.length; i++) {
+      const r = children[i].getBoundingClientRect()
+      if (clientY < r.top + r.height / 2) return i
     }
-    dragItem.current = idx
+    return children.length - 1
   }
 
-  function onDragEnter(idx: number) {
-    dragOver.current = idx
-    if (dragItem.current === null || dragItem.current === idx) return
-    const from = dragItem.current
-    dragItem.current = idx  // Update ref before setItems so the updater is pure
+  function onGripPointerDown(e: React.PointerEvent, idx: number) {
+    e.preventDefault()
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+    pointerDrag.current = { fromIdx: idx }
+  }
+
+  function onGripPointerMove(e: React.PointerEvent) {
+    if (awaitingCommit.current) return
+    const drag = pointerDrag.current
+    if (!drag) return
+    const targetIdx = getItemIdxAtY(e.clientY)
+    if (targetIdx < 0 || targetIdx === drag.fromIdx) return
+    const from = drag.fromIdx
+    drag.fromIdx = targetIdx
+    awaitingCommit.current = true
     setItems(prev => {
       const next = [...prev]
       const [moved] = next.splice(from, 1)
-      next.splice(idx, 0, moved)
+      next.splice(targetIdx, 0, moved)
       return next
     })
   }
 
-  async function onDragEnd() {
-    dragItem.current = null
-    dragOver.current = null
-    // Persist new order to API
+  async function onGripPointerUp() {
+    if (!pointerDrag.current) return
+    pointerDrag.current = null
     const reordered = items.map((item, i) => ({ id: item.id, position: i }))
     await fetch(`/api/collections/${collection.id}/items`, {
       method: 'PATCH',
@@ -287,7 +302,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
         )}
 
         {/* Track list */}
-        <div className="space-y-1 mb-5">
+        <div ref={listRef} className="space-y-1 mb-5">
           {items.length === 0 && (
             <p className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
               No tracks yet — add some below.
@@ -296,20 +311,18 @@ export default function CollectionClient({ collection, initialItems, allProjects
           {items.map((item, idx) => (
             <div
               key={item.id}
-              draggable
-              onDragStart={e => onDragStart(e, idx)}
-              onDragEnter={() => onDragEnter(idx)}
-              onDragEnd={onDragEnd}
-              onDragOver={e => e.preventDefault()}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl group transition-colors cursor-default"
               style={{ backgroundColor: 'var(--surface)' }}
             >
-              {/* Drag handle — drag only initiates from here */}
+              {/* Drag handle — pointer events work on desktop and mobile */}
               <GripVertical
-                data-drag-handle
                 size={14}
-                className="flex-shrink-0 cursor-grab active:cursor-grabbing opacity-30 group-hover:opacity-70 transition-opacity"
-                style={{ color: 'var(--text-muted)' }}
+                className="flex-shrink-0 cursor-grab active:cursor-grabbing opacity-30 group-hover:opacity-70 transition-opacity select-none"
+                style={{ color: 'var(--text-muted)', touchAction: 'none' }}
+                onPointerDown={e => onGripPointerDown(e, idx)}
+                onPointerMove={onGripPointerMove}
+                onPointerUp={onGripPointerUp}
+                onPointerCancel={() => { pointerDrag.current = null }}
               />
 
               {/* Track number */}
