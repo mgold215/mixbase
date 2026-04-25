@@ -15,6 +15,19 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   if (error || !version) notFound()
 
+  // Get the artist name from the project owner's profile
+  let artistName = 'mixBASE'
+  if (version.mb_projects?.user_id) {
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('artist_name, display_name')
+      .eq('id', version.mb_projects.user_id)
+      .single()
+    if (profile) {
+      artistName = profile.artist_name || profile.display_name || 'mixBASE'
+    }
+  }
+
   return (
     <div className="min-h-screen bg-black flex flex-col">
       {/* Header — matches site nav style */}
@@ -30,7 +43,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
         {/* Right-side label — pushed to the far right */}
         <span className="ml-auto text-[13px] font-[family-name:var(--font-jost)] tracking-wide">
-          <span style={{ color: 'var(--accent)' }}>moodmixformat</span>
+          <span style={{ color: 'var(--accent)' }}>{artistName}</span>
           {' '}
           <span className="text-white">private</span>
           {' '}

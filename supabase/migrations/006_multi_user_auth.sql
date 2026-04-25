@@ -8,6 +8,7 @@
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
+  artist_name text,
   avatar_url text,
   is_owner boolean default false,
   created_at timestamptz default now()
@@ -199,10 +200,11 @@ declare
   user_count int;
 begin
   -- Create profile for every new user
-  insert into public.profiles (id, display_name, avatar_url, is_owner)
+  insert into public.profiles (id, display_name, artist_name, avatar_url, is_owner)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', new.email),
+    new.raw_user_meta_data->>'artist_name',
     new.raw_user_meta_data->>'avatar_url',
     false
   );

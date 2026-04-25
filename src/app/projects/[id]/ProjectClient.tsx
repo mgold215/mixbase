@@ -347,7 +347,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 <div className="flex items-center gap-3 text-sm text-[#555] mb-3">
                   {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
                   {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
-                  {(projectForm.key_signature || project.key_signature) && <span>Key of {projectForm.key_signature || project.key_signature}</span>}
+                  {(projectForm.key_signature || project.key_signature) && <span>{projectForm.key_signature || project.key_signature}</span>}
                   <span>{versions.length} mix{versions.length !== 1 ? 'es' : ''}</span>
                 </div>
                 <AddToCollectionButton projectId={project.id} />

@@ -88,12 +88,12 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
         <div className="flex gap-2">
           <button
             onClick={() => setMode('generate')}
-            className="flex-1 flex items-center justify-center gap-2 py-2 text-xs bg-[#2dd4bf]/10 border border-[#2dd4bf]/20 text-[#2dd4bf] rounded-xl hover:bg-[#2dd4bf]/20 transition-colors"
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] transition-colors"
           >
             <Sparkles size={13} />
             Generate with AI
           </button>
-          <label className="flex-1 flex items-center justify-center gap-2 py-2 text-xs bg-[#1a1a1a] border border-[#222] text-[#888] rounded-xl hover:bg-[#222] transition-colors cursor-pointer">
+          <label className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#333] text-white rounded-xl hover:bg-[#2a2a2a] transition-colors cursor-pointer">
             <Upload size={13} />
             Upload
             <input type="file" accept="image/*" onChange={handleUpload} className="hidden" />

@@ -15,6 +15,7 @@ export default function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [artistName, setArtistName] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -30,7 +31,7 @@ export default function SignupPage() {
       email,
       password,
       options: {
-        data: { full_name: displayName },
+        data: { full_name: displayName, artist_name: artistName || undefined },
         emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     })
@@ -151,6 +152,17 @@ export default function SignupPage() {
                   onChange={e => setDisplayName(e.target.value)}
                   placeholder="Your name"
                   autoFocus
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Artist / Producer Name</label>
+                <input
+                  type="text"
+                  value={artistName}
+                  onChange={e => setArtistName(e.target.value)}
+                  placeholder="Your stage name"
                   className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
                   style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
                 />
