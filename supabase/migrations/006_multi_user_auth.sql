@@ -89,9 +89,10 @@ create policy "users_own_versions" on mb_versions
     project_id in (select id from mb_projects where user_id = auth.uid())
   );
 
--- mb_versions: public read via share token (for /share/[token] pages)
-create policy "public_share_read" on mb_versions
-  for select using (share_token is not null);
+-- NOTE: No public_share_read policy needed. The /share/[token] page uses
+-- supabaseAdmin (service-role key) which bypasses RLS entirely. A broad
+-- "share_token is not null" policy would leak ALL versions to any
+-- authenticated user since every version has a share_token.
 
 -- mb_releases: owner access only
 create policy "users_own_releases" on mb_releases
