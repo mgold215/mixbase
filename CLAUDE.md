@@ -46,71 +46,12 @@ node scripts/test-upload.mjs https://mixbase-staging.up.railway.app  # Upload + 
 | `RUNWAY_API_KEY` | Optional | Visualizer video generation (Runway Gen-3) |
 | `SUPABASE_MANAGEMENT_TOKEN` | Optional | DB schema init via `/api/db-init` |
 
-**Critical:** If `SESSION_SECRET` is unset, middleware short-circuits and the app is accessible without a password. Both `MIXBASE_PASSWORD` and `SESSION_SECRET` must be set for auth to work.
-
-## Auth Model
-Single shared password (not per-user). `POST /api/auth` checks `MIXBASE_PASSWORD` and sets an `mb-session` cookie containing `SESSION_SECRET`. Middleware validates that cookie on every protected route. Public routes: `/login`, `/share/`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`.
-
-## Application Pages & Features
-- `/dashboard` — Project grid with stats, activity feed
-- `/projects/[id]` — Main working view: versions, upload, A/B compare, notes, release pipeline
-- `/collections` — Group tracks into playlists/EPs/albums
-- `/media` — Artwork gallery across all projects
-- `/pipeline` — Release checklist board for all releases
-- `/player` — Full-screen audio player with waveform
-- `/share/[token]` — Public share page (no auth required) with feedback form
-
-## PWA + iOS Wrapper
-App is a PWA with a service worker (`public/sw.js`). Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. There is also a native iOS app wrapper in `ios/` (Xcode project).
-
-# Architecture: Critical Constraints — READ BEFORE TOUCHING UPLOADS OR AUDIO
-
-## Upload Architecture — two valid paths, both bypassing Railway
-
-**Rule: Never route file bytes through Railway.** Railway's proxy truncates request bodies above 10 MB (10,485,760 bytes exactly). This is infrastructure, not a code bug.
-
-**Active path (audio uploads in ProjectClient.tsx) — Signed URL:**
-- `POST /api/upload-url` — server generates a short-lived Supabase signed upload URL
-- Browser PUTs directly to Supabase — Railway is never in the byte path
-- Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUploadSubmit()`
-
-**Also available — TUS chunked proxy (for resumable uploads):**
-
-- `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses anon file size limit)
-- `PATCH /api/tus/<uploadId>` — proxies one 8 MB chunk to Supabase (under Railway's 10 MB body wall)
-- `HEAD /api/tus/<uploadId>` — checks resume offset
-- Client uses `tus-js-client` with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
-- Each chunk: browser → Railway (8 MB, allowed) → Next.js proxy → Supabase (service-role key, no size limit)
-- Files of any size work. Uploads are resumable on failure.
-- Middleware: `/api/tus` is in PUBLIC_PATHS
-
-**Root causes documented:**
-- Railway truncates HTTP request bodies at exactly 10 MB (10,485,760 bytes). Confirmed by 3 uploads in storage all showing exactly 10 MB.
-- Supabase free tier enforces ~50 MB per-file limit for anon-key uploads. Confirmed by TUS 413 on session creation.
-- Service-role key on server bypasses the 50 MB limit.
-- 8 MB chunks bypass the Railway 10 MB wall.
-
-## Audio Range Requests — always use audioProxyUrl()
-Supabase public audio URLs do not reliably return `Accept-Ranges` headers.
-Without Range support the browser cannot determine audio duration or seek.
-
-**The fix (already implemented, do not revert):**
-- `src/app/api/audio/[...path]/route.ts` — proxy that forwards Range headers to Supabase and returns proper 206 responses
-- `audioProxyUrl(supabaseUrl)` in `src/lib/supabase.ts` converts any Supabase mf-audio URL to `/api/audio/...`
-- Every `<audio>` element or `WaveformPlayer` in the app MUST use `audioProxyUrl(version.audio_url)`, not the raw URL
-- Already applied in: `ProjectClient.tsx`, `ShareClient.tsx`, `player/page.tsx`
-- Middleware public path `/api/audio` is already whitelisted — do not remove it
-
 ## Testing
 Run after every deploy that touches upload or audio playback:
 ```
 SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixbase-production.up.railway.app
 ```
-The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies it's stored at full size in Supabase, and tests the audio proxy Range requests. All tests must pass before telling the user a fix is done.
-
-## Supabase Storage Buckets
-- `mf-audio` — audio files, public read
-- `mf-artwork` — artwork images, public read
+The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies full size in Supabase, and tests audio proxy Range requests. All tests must pass before telling the user a fix is done.
 
 # Business & Legal
 - **Legal entity:** moodmixformat, LLC (already formed — do not suggest forming an LLC)
