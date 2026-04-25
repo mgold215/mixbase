@@ -1,4 +1,5 @@
-import { supabaseAdmin, formatDuration, formatFileSize, STATUS_CONFIG, STATUSES } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'
+import { getUserId } from '@/lib/auth'
 import { notFound } from 'next/navigation'
 import Nav from '@/components/Nav'
 import ProjectClient from './ProjectClient'
@@ -7,9 +8,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const userId = await getUserId()
 
   const [projectRes, versionsRes, releaseRes] = await Promise.all([
-    supabaseAdmin.from('mb_projects').select('*').eq('id', id).single(),
+    supabaseAdmin.from('mb_projects').select('*').eq('id', id).eq('user_id', userId).single(),
     supabaseAdmin
       .from('mb_versions')
       .select('*, mb_feedback(*)')

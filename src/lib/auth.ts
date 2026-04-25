@@ -1,4 +1,6 @@
 import { cookies } from 'next/headers'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { supabaseAdmin } from './supabase'
 
 // Reads the Supabase access token from the request cookie store and validates it.
@@ -12,4 +14,13 @@ export async function getServerSession(): Promise<{ userId: string; accessToken:
   if (error || !user) return null
 
   return { userId: user.id, accessToken }
+}
+
+// Fast user ID lookup — reads X-User-Id header injected by middleware.
+// No extra Supabase call. Redirects to /login if missing (shouldn't happen on protected routes).
+export async function getUserId(): Promise<string> {
+  const hdrs = await headers()
+  const userId = hdrs.get('X-User-Id')
+  if (!userId) redirect('/login')
+  return userId
 }

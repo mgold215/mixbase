@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase'
+import { getUserId } from '@/lib/auth'
 import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
@@ -51,19 +52,26 @@ function getWorkflowStage(
 }
 
 export default async function DashboardPage() {
-  const [projectsRes, activityRes] = await Promise.all([
-    supabaseAdmin
-      .from('mb_projects')
-      .select('*, mb_versions(id, status, created_at), mb_releases(id)')
-      .order('updated_at', { ascending: false }),
-    supabaseAdmin
-      .from('mb_activity')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20),
-  ])
+  const userId = await getUserId()
+
+  const projectsRes = await supabaseAdmin
+    .from('mb_projects')
+    .select('*, mb_versions(id, status, created_at), mb_releases(id)')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
 
   const projects = projectsRes.data ?? []
+  const projectIds = projects.map(p => p.id)
+
+  const activityRes = projectIds.length > 0
+    ? await supabaseAdmin
+        .from('mb_activity')
+        .select('*')
+        .in('project_id', projectIds)
+        .order('created_at', { ascending: false })
+        .limit(20)
+    : { data: [] }
+
   const activity = activityRes.data ?? []
 
   const stats = {
