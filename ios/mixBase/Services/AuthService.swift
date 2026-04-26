@@ -15,6 +15,8 @@ class AuthService: ObservableObject {
     @Published var userEmail: String? = nil
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
+    @Published var subscriptionTier: String = "free"
+    @Published var subscriptionUsage: [String: Int] = [:]
 
     private let supabaseURL = Config.supabaseURL
     private let supabaseAnonKey = Config.supabaseAnonKey
@@ -218,5 +220,28 @@ class AuthService: ObservableObject {
         self.userId = uid
         self.userEmail = email
         self.isAuthenticated = true
+        Task { await self.fetchSubscription() }
+    }
+
+    // MARK: - Fetch subscription info
+    func fetchSubscription() async {
+        guard let token = KeychainService.load(forKey: "access_token"),
+              let url = URL(string: "https://mixbase.app/api/subscription") else { return }
+
+        var request = URLRequest(url: url)
+        request.setValue("sb-access-token=\(token)", forHTTPHeaderField: "Cookie")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let tier = json?["tier"] as? String ?? "free"
+            let usage = json?["usage"] as? [String: Int] ?? [:]
+            await MainActor.run {
+                self.subscriptionTier = tier
+                self.subscriptionUsage = usage
+            }
+        } catch {
+            // Non-fatal — tier defaults to "free"
+        }
     }
 }
