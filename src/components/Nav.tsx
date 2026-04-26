@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -80,6 +80,16 @@ export default function Nav() {
 
         {/* Spacer on mobile to push logout to right */}
         <div className="flex-1 md:hidden" />
+
+        {/* Profile */}
+        <Link
+          href="/profile"
+          className="p-1.5 rounded-md transition-colors mr-1"
+          style={{ color: pathname === '/profile' ? 'var(--accent)' : 'var(--text-muted)' }}
+          title="Account"
+        >
+          <UserCircle size={14} strokeWidth={1.5} />
+        </Link>
 
         {/* Theme toggle */}
         <button

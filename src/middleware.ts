@@ -1,11 +1,16 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase'
 
 const PUBLIC_PATHS = [
   '/login',
   '/signup',
-  '/auth/callback',
+  '/privacy',
+  '/support',
+  '/terms',
+  '/dmca',
   '/share/',
+  '/api/auth',
   '/api/feedback',
   '/api/audio',
   '/api/audio-url',
@@ -20,42 +25,33 @@ export async function middleware(request: NextRequest) {
   if (
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
-    pathname.startsWith('/favicon') ||
-    pathname.match(/\.(svg|png|jpg|jpeg|gif|webp|ico)$/)
+    pathname.startsWith('/favicon')
   ) {
     return NextResponse.next()
   }
 
-  let supabaseResponse = NextResponse.next({ request })
+  const accessToken = request.cookies.get('sb-access-token')?.value
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU',
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/login'
-    return NextResponse.redirect(url)
+  if (!accessToken) {
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  return supabaseResponse
+  // Validate the token and get the user
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken)
+
+  if (error || !user) {
+    // Token invalid or expired — send to login with cookie cleared
+    const response = NextResponse.redirect(new URL('/login', request.url))
+    response.cookies.delete('sb-access-token')
+    response.cookies.delete('sb-refresh-token')
+    return response
+  }
+
+  // Inject user id so API route handlers can read it without re-validating
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('X-User-Id', user.id)
+
+  return NextResponse.next({ request: { headers: requestHeaders } })
 }
 
 export const config = {

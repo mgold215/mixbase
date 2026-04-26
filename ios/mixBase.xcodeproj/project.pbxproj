@@ -23,6 +23,8 @@
 		A100000020 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000020; };
 		A100000021 /* AudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000021; };
 		A100000022 /* ArtworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000022; };
+		A100000023 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000023; };
+		A100000024 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000024; };
 
 		/* Utilities */
 		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
@@ -47,6 +49,10 @@
 
 		/* Views - Settings */
 		A100000090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000090; };
+
+		/* Views - Auth */
+		A1000000B1 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000B1; };
+		A1000000B2 /* SignUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000B2; };
 
 		/* Views - Components */
 		A1000000A0 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A0; };
@@ -77,6 +83,8 @@
 		B100000020 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		B100000021 /* AudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioService.swift; sourceTree = "<group>"; };
 		B100000022 /* ArtworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkService.swift; sourceTree = "<group>"; };
+		B100000023 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
+		B100000024 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
@@ -94,6 +102,8 @@
 		B1000000A0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		B1000000A2 /* StatCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCard.swift; sourceTree = "<group>"; };
+		B1000000B1 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		B1000000B2 /* SignUpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignUpView.swift; sourceTree = "<group>"; };
 
 		/* Assets */
 		B1000000B0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -179,6 +189,7 @@
 		E100000012 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				E100000027 /* Auth */,
 				E100000020 /* Home */,
 				E100000021 /* Projects */,
 				E100000022 /* Player */,
@@ -188,6 +199,16 @@
 				E100000026 /* Components */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+
+		E100000027 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000B1 /* LoginView.swift */,
+				B1000000B2 /* SignUpView.swift */,
+			);
+			path = Auth;
 			sourceTree = "<group>";
 		};
 
@@ -266,6 +287,8 @@
 				B100000020 /* SupabaseService.swift */,
 				B100000021 /* AudioService.swift */,
 				B100000022 /* ArtworkService.swift */,
+				B100000023 /* AuthService.swift */,
+				B100000024 /* KeychainService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -373,6 +396,10 @@
 				A1000000A0 /* MiniPlayerView.swift in Sources */,
 				A1000000A1 /* StatusBadge.swift in Sources */,
 				A1000000A2 /* StatCard.swift in Sources */,
+				A100000023 /* AuthService.swift in Sources */,
+				A100000024 /* KeychainService.swift in Sources */,
+				A1000000B1 /* LoginView.swift in Sources */,
+				A1000000B2 /* SignUpView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -447,7 +474,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = AP8UC39D4D;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mixBase/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = mixBase;
@@ -460,7 +487,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -478,7 +505,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = AP8UC39D4D;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mixBase/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = mixBase;
@@ -491,7 +518,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

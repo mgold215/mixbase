@@ -87,11 +87,11 @@ create index if not exists idx_releases_project_id on mb_releases(project_id);
 create index if not exists idx_activity_project_id on mb_activity(project_id);
 create index if not exists idx_activity_created on mb_activity(created_at desc);
 
-alter table mb_projects enable row level security;
-alter table mb_versions enable row level security;
-alter table mb_feedback enable row level security;
-alter table mb_releases enable row level security;
-alter table mb_activity enable row level security;
+alter table mb_projects disable row level security;
+alter table mb_versions disable row level security;
+alter table mb_feedback disable row level security;
+alter table mb_releases disable row level security;
+alter table mb_activity disable row level security;
 
 -- Ensure share_token column exists (idempotent — safe to re-run)
 alter table mb_versions
@@ -122,12 +122,8 @@ create table if not exists mb_collection_items (
   created_at timestamptz default now()
 );
 
--- Drop any leftover permissive policies from earlier schema versions
-drop policy if exists "Allow all access to mb_collections" on mb_collections;
-drop policy if exists "Allow all access to mb_collection_items" on mb_collection_items;
-
-alter table mb_collections enable row level security;
-alter table mb_collection_items enable row level security;
+alter table mb_collections disable row level security;
+alter table mb_collection_items disable row level security;
 
 -- Add cover_url if it was created before this column existed
 alter table mb_collections add column if not exists cover_url text;
@@ -135,26 +131,64 @@ alter table mb_collections add column if not exists cover_url text;
 create index if not exists idx_collection_items_collection on mb_collection_items(collection_id);
 create index if not exists idx_collection_items_position on mb_collection_items(collection_id, position);
 
--- Storage: restrict inserts/updates/deletes to service role only (idempotent)
-drop policy if exists "Service role insert mf-audio" on storage.objects;
-drop policy if exists "Service role insert mf-artwork" on storage.objects;
-drop policy if exists "Service role update mf-audio" on storage.objects;
-drop policy if exists "Service role update mf-artwork" on storage.objects;
-drop policy if exists "Service role delete mf-audio" on storage.objects;
-drop policy if exists "Service role delete mf-artwork" on storage.objects;
+-- Migration 005: multi-user support
+alter table mb_projects    add column if not exists user_id uuid references auth.users(id);
+alter table mb_releases    add column if not exists user_id uuid references auth.users(id);
+alter table mb_collections add column if not exists user_id uuid references auth.users(id);
 
-create policy "Service role insert mf-audio" on storage.objects
-  for insert with check (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
-create policy "Service role insert mf-artwork" on storage.objects
-  for insert with check (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
-create policy "Service role update mf-audio" on storage.objects
-  for update using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
-create policy "Service role update mf-artwork" on storage.objects
-  for update using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
-create policy "Service role delete mf-audio" on storage.objects
-  for delete using (bucket_id = 'mf-audio' AND auth.role() = 'service_role');
-create policy "Service role delete mf-artwork" on storage.objects
-  for delete using (bucket_id = 'mf-artwork' AND auth.role() = 'service_role');
+create index if not exists idx_projects_user_id    on mb_projects(user_id);
+create index if not exists idx_releases_user_id    on mb_releases(user_id);
+create index if not exists idx_collections_user_id on mb_collections(user_id);
+
+alter table mb_projects        enable row level security;
+alter table mb_versions        enable row level security;
+alter table mb_releases        enable row level security;
+alter table mb_collections     enable row level security;
+alter table mb_collection_items enable row level security;
+alter table mb_feedback        enable row level security;
+alter table mb_activity        enable row level security;
+
+drop policy if exists "users_own_projects"         on mb_projects;
+drop policy if exists "users_own_versions"         on mb_versions;
+drop policy if exists "users_own_releases"         on mb_releases;
+drop policy if exists "users_own_collections"      on mb_collections;
+drop policy if exists "users_own_collection_items" on mb_collection_items;
+drop policy if exists "public_feedback_insert"     on mb_feedback;
+drop policy if exists "users_read_feedback"        on mb_feedback;
+drop policy if exists "users_own_activity"         on mb_activity;
+
+create policy "users_own_projects" on mb_projects
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "users_own_versions" on mb_versions
+  using (project_id in (select id from mb_projects where user_id = auth.uid()))
+  with check (project_id in (select id from mb_projects where user_id = auth.uid()));
+
+create policy "users_own_releases" on mb_releases
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "users_own_collections" on mb_collections
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "users_own_collection_items" on mb_collection_items
+  using (collection_id in (select id from mb_collections where user_id = auth.uid()))
+  with check (collection_id in (select id from mb_collections where user_id = auth.uid()));
+
+create policy "public_feedback_insert" on mb_feedback
+  for insert with check (true);
+
+create policy "users_read_feedback" on mb_feedback
+  for select using (
+    version_id in (
+      select v.id from mb_versions v
+      join mb_projects p on v.project_id = p.id
+      where p.user_id = auth.uid()
+    )
+  );
+
+create policy "users_own_activity" on mb_activity
+  using (project_id in (select id from mb_projects where user_id = auth.uid()))
+  with check (project_id in (select id from mb_projects where user_id = auth.uid()));
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.

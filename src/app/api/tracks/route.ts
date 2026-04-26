@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { NextRequest, NextResponse } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase'
 
 export type Track = {
   id: string
@@ -14,21 +14,20 @@ export type Track = {
   uploaded_at: number
 }
 
-// Backfill any existing versions that are missing a share_token.
-// Runs once per server process; short-circuits immediately on subsequent calls.
 let _backfillDone = false
-async function ensureShareTokens(supabase: Awaited<ReturnType<typeof createClient>>) {
+async function ensureShareTokens(userId: string) {
   if (_backfillDone) return
   try {
-    const { data } = await supabase
+    const { data } = await supabaseAdmin
       .from('mb_versions')
-      .select('id')
+      .select('id, mb_projects!inner(user_id)')
       .is('share_token', null)
+      .eq('mb_projects.user_id', userId)
       .limit(200)
     if (!data?.length) { _backfillDone = true; return }
     await Promise.all(
       data.map(v =>
-        supabase
+        supabaseAdmin
           .from('mb_versions')
           .update({ share_token: crypto.randomUUID().replace(/-/g, '') })
           .eq('id', v.id)
@@ -36,26 +35,24 @@ async function ensureShareTokens(supabase: Awaited<ReturnType<typeof createClien
     )
     _backfillDone = true
   } catch {
-    // Non-fatal: tokens will be backfilled on the next request
+    // Non-fatal
   }
 }
 
-export async function GET() {
-  const supabase = await createClient()
+export async function GET(request: NextRequest) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Ensure all versions have share tokens before returning tracks
-  await ensureShareTokens(supabase)
+  await ensureShareTokens(userId)
 
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects(title, artwork_url)')
+    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, user_id)')
+    .eq('mb_projects.user_id', userId)
     .order('version_number', { ascending: false })
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Keep only the highest version_number per project (latest version per track).
   const seen = new Set<string>()
   const latest = (data ?? []).filter((v) => {
     if (seen.has(v.project_id)) return false
@@ -65,15 +62,14 @@ export async function GET() {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const projectTitle: string = project?.title ?? 'Unknown'
+    const projectTitle: string = (project as { title?: string })?.title ?? 'Unknown'
     return {
       id: v.id,
       project_id: v.project_id,
       share_token: v.share_token ?? null,
-      // Title is just the project title — the version label lives in its own field.
       title: projectTitle,
       artist: projectTitle,
-      artwork_url: project?.artwork_url ?? null,
+      artwork_url: (project as { artwork_url?: string | null })?.artwork_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',
       version: v.label || `v${v.version_number}`,

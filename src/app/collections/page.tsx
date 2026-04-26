@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase'
+import { getUserId } from '@/lib/auth'
 import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
@@ -19,9 +20,12 @@ type CollectionRow = {
 }
 
 export default async function CollectionsPage() {
+  const userId = await getUserId()
+
   const { data } = await supabaseAdmin
     .from('mb_collections')
     .select('id, title, type, cover_url, updated_at, mb_collection_items(position, mb_projects(artwork_url))')
+    .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
   const collections = (data ?? []) as unknown as CollectionRow[]

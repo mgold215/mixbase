@@ -16,6 +16,21 @@ class SupabaseService {
     // The anon key used to authenticate API requests
     private let supabaseKey: String
 
+    // The authenticated user's JWT access token (set by AuthService after sign-in)
+    private var accessToken: String? = nil
+
+    // The authenticated user's ID (set by AuthService after sign-in)
+    private(set) var currentUserId: String? = nil
+
+    // Called by AuthService whenever the session changes
+    func setAccessToken(_ token: String?) {
+        self.accessToken = token
+    }
+
+    func setUserId(_ uid: String?) {
+        self.currentUserId = uid
+    }
+
     // A JSON decoder configured to handle Supabase's date and key formats
     private let decoder: JSONDecoder
 
@@ -92,7 +107,9 @@ class SupabaseService {
 
         // Required headers for Supabase REST API
         request.setValue(supabaseKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(supabaseKey)", forHTTPHeaderField: "Authorization")
+        // Use the user's JWT when available so RLS policies apply; fall back to anon key
+        let bearerToken = accessToken ?? supabaseKey
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // For POST/PATCH, tell Supabase to return the created/updated row
@@ -413,7 +430,8 @@ class SupabaseService {
 
         // Storage API still needs the same auth headers
         request.setValue(supabaseKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(supabaseKey)", forHTTPHeaderField: "Authorization")
+        let bearerToken = accessToken ?? supabaseKey
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
 
         // Guess content type from file extension
         let contentType = guessContentType(for: filename)
