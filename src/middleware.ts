@@ -2,38 +2,49 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
-const PUBLIC_PATHS = [
+const PUBLIC_EXACT_PATHS = [
   '/login',
   '/signup',
   '/privacy',
   '/support',
   '/terms',
   '/dmca',
-  '/share/',
   '/auth/callback',
   '/api/auth',
+  '/api/auth/signup',
+  '/api/auth/logout',
   '/api/feedback',
-  '/api/audio',
-  '/api/audio-url',
   '/api/health',
-  '/api/db-init',
-  '/api/tus',
+  '/api/stripe/webhook',
+]
+
+const PUBLIC_PREFIX_PATHS = [
+  '/share/',
+  '/api/audio/',
 ]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const dbInitToken = process.env.DB_INIT_TOKEN
+  const authHeader = request.headers.get('authorization')
+  const bearerToken = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]
 
   if (
-    PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
+    PUBLIC_EXACT_PATHS.some(p => pathname === p) ||
+    PUBLIC_PREFIX_PATHS.some(p => pathname.startsWith(p)) ||
+    (pathname === '/api/db-init' && !!dbInitToken && bearerToken === dbInitToken) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
   ) {
     return NextResponse.next()
   }
 
-  const accessToken = request.cookies.get('sb-access-token')?.value
+  const accessToken = request.cookies.get('sb-access-token')?.value ?? bearerToken
 
   if (!accessToken) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -42,7 +53,9 @@ export async function middleware(request: NextRequest) {
 
   if (error || !user) {
     // Token invalid or expired — send to login with cookie cleared
-    const response = NextResponse.redirect(new URL('/login', request.url))
+    const response = pathname.startsWith('/api/')
+      ? NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      : NextResponse.redirect(new URL('/login', request.url))
     response.cookies.delete('sb-access-token')
     response.cookies.delete('sb-refresh-token')
     return response

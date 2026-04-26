@@ -1,12 +1,20 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { LogOut, Trash2, ArrowLeft, ExternalLink, Check } from 'lucide-react'
 import Link from 'next/link'
 
 export default function ProfilePage() {
+  return (
+    <Suspense fallback={null}>
+      <ProfilePageInner />
+    </Suspense>
+  )
+}
+
+function ProfilePageInner() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [artistName, setArtistName] = useState('')
