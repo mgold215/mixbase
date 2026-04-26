@@ -88,7 +88,7 @@ function UpgradeContent() {
       })
       const data = await res.json()
       if (data.url) {
-        window.location.href = data.url
+        window.location.assign(data.url)
       } else {
         setError(data.error ?? 'Failed to start checkout')
       }
@@ -105,7 +105,7 @@ function UpgradeContent() {
       const res = await fetch('/api/stripe/portal', { method: 'POST' })
       const data = await res.json()
       if (data.url) {
-        window.location.href = data.url
+        window.location.assign(data.url)
       } else {
         setError(data.error ?? 'Failed to open billing portal')
       }

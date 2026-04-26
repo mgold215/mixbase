@@ -200,7 +200,7 @@ function ProfilePageInner() {
                     onClick={async () => {
                       const res = await fetch('/api/stripe/portal', { method: 'POST' })
                       const data = await res.json()
-                      if (data.url) window.location.href = data.url
+                      if (data.url) window.location.assign(data.url)
                     }}
                     className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
                     style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
