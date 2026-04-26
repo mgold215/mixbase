@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { LogOut, Trash2, ArrowLeft, ExternalLink, Check } from 'lucide-react'
 import Link from 'next/link'
@@ -14,6 +14,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [sub, setSub] = useState<{ tier: string; price: string; hasStripeSubscription: boolean } | null>(null)
   const [showDelete, setShowDelete] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -28,16 +29,20 @@ export default function ProfilePage() {
   const [pwError, setPwError] = useState('')
   const [pwSuccess, setPwSuccess] = useState(false)
 
+  const searchParams = useSearchParams()
+  const justSubscribed = searchParams.get('subscribed') === '1'
+
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.json())
-      .then(data => {
-        setEmail(data.email ?? '')
-        setArtistName(data.artist_name ?? '')
-        setSavedArtistName(data.artist_name ?? '')
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    Promise.all([
+      fetch('/api/auth/me').then(r => r.json()),
+      fetch('/api/subscription').then(r => r.json()),
+    ]).then(([meData, subData]) => {
+      setEmail(meData.email ?? '')
+      setArtistName(meData.artist_name ?? '')
+      setSavedArtistName(meData.artist_name ?? '')
+      setSub(subData)
+      setLoading(false)
+    }).catch(() => setLoading(false))
   }, [])
 
   async function handleSaveProfile() {
@@ -131,6 +136,13 @@ export default function ProfilePage() {
         ) : (
           <div className="space-y-6">
 
+            {/* Subscribed success banner */}
+            {justSubscribed && (
+              <div className="rounded-xl px-5 py-3 text-sm font-medium" style={{ backgroundColor: '#4ade8022', border: '1px solid #4ade8055', color: '#4ade80' }}>
+                You&apos;re now subscribed. Welcome to Pro!
+              </div>
+            )}
+
             {/* Account section */}
             <div>
               <h2 className="text-xs uppercase tracking-[0.14em] mb-3 font-semibold" style={{ color: 'var(--accent)' }}>Account</h2>
@@ -160,6 +172,42 @@ export default function ProfilePage() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* Plan section */}
+            <div>
+              <h2 className="text-xs uppercase tracking-[0.14em] mb-3 font-semibold" style={{ color: 'var(--accent)' }}>Plan</h2>
+              <div className="rounded-xl p-5 flex items-center justify-between" style={sectionStyle}>
+                <div>
+                  <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text)' }}>
+                    {sub?.tier ?? 'Free'}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    {sub?.price ?? '$0/mo'}
+                  </p>
+                </div>
+                {sub?.hasStripeSubscription ? (
+                  <button
+                    onClick={async () => {
+                      const res = await fetch('/api/stripe/portal', { method: 'POST' })
+                      const data = await res.json()
+                      if (data.url) window.location.href = data.url
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+                    style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                  >
+                    Manage
+                  </button>
+                ) : (
+                  <Link
+                    href="/upgrade"
+                    className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+                    style={{ backgroundColor: 'var(--accent)', color: '#0d0b08' }}
+                  >
+                    Upgrade
+                  </Link>
+                )}
               </div>
             </div>
 
