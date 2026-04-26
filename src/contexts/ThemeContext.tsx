@@ -19,15 +19,11 @@ export function useTheme() {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("dark");
-
-  // Load saved theme on mount
-  useEffect(() => {
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "dark";
     const saved = localStorage.getItem("mixbase-theme") as Theme | null;
-    if (saved === "light" || saved === "dark") {
-      setTheme(saved);
-    }
-  }, []);
+    return saved === "light" || saved === "dark" ? saved : "dark";
+  });
 
   // Apply theme class to <html> and save to localStorage
   useEffect(() => {
