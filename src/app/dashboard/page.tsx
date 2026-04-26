@@ -109,20 +109,20 @@ export default async function DashboardPage() {
               <div
                 className="hidden sm:grid mb-1"
                 style={{
-                  gridTemplateColumns: '44px 1fr 60px 100px 80px',
+                  gridTemplateColumns: '44px 1fr 100px 80px',
                   gap: 12,
                   paddingBottom: 8,
                   borderBottom: '1px solid var(--border)',
                 }}
               >
-                {['', 'Title', 'Version', 'Stage', ''].map((col, i) => (
+                {['', 'Title', 'Stage', ''].map((col, i) => (
                   <div key={i} style={{
                     fontFamily: 'var(--font-mono), monospace',
                     fontSize: 9,
                     letterSpacing: '0.14em',
                     color: 'var(--text-muted)',
                     textTransform: 'uppercase',
-                    textAlign: i === 2 ? 'center' : i >= 3 ? 'right' : 'left',
+                    textAlign: i >= 2 ? 'right' : 'left',
                   }}>
                     {col}
                   </div>
@@ -229,21 +229,6 @@ export default async function DashboardPage() {
                             )}
                           </div>
                         </Link>
-
-                        {/* Version count */}
-                        <div
-                          className="hidden sm:block"
-                          style={{
-                            fontFamily: 'var(--font-mono), monospace',
-                            fontSize: 11,
-                            color: 'var(--text-muted)',
-                            flexShrink: 0,
-                            width: 60,
-                            textAlign: 'center',
-                          }}
-                        >
-                          {versions.length}v
-                        </div>
 
                         {/* Stage pill */}
                         <div
