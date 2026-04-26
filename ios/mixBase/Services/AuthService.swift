@@ -104,6 +104,44 @@ class AuthService: ObservableObject {
         }
     }
 
+    // MARK: - Sign In with Apple
+    // Exchanges the Apple identity token with Supabase for a session.
+    func signInWithApple(idToken: String, nonce: String) async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        guard let url = URL(string: "\(supabaseURL)/auth/v1/token?grant_type=id_token") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "provider": "apple",
+            "id_token": idToken,
+            "nonce": nonce,
+        ])
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return }
+
+            if http.statusCode == 200 {
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let email = (json?["user"] as? [String: Any])?["email"] as? String ?? ""
+                applySession(json: json, email: email)
+            } else {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                errorMessage = (json?["error_description"] as? String)
+                    ?? (json?["msg"] as? String)
+                    ?? "Apple Sign In failed"
+            }
+        } catch {
+            errorMessage = "Network error. Check your connection."
+        }
+    }
+
     // MARK: - Sign Out
     func signOut() {
         KeychainService.clearAll()

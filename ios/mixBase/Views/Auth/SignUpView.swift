@@ -1,7 +1,10 @@
 import SwiftUI
+import AuthenticationServices
+import CryptoKit
 
 // MARK: - SignUpView
 // Presented as a sheet from LoginView. Creates a new account and signs in immediately.
+// Also offers Sign in with Apple.
 
 struct SignUpView: View {
 
@@ -52,6 +55,22 @@ struct SignUpView: View {
 
                 // Form card
                 VStack(spacing: 14) {
+
+                    // Sign in with Apple
+                    AppleSignUpButton(authService: authService)
+                        .frame(height: 44)
+                        .cornerRadius(10)
+
+                    // Divider
+                    HStack(spacing: 8) {
+                        Rectangle().fill(Color(hex: "#2a2420")).frame(height: 1)
+                        Text("or")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "#6b6050"))
+                        Rectangle().fill(Color(hex: "#2a2420")).frame(height: 1)
+                    }
+                    .padding(.vertical, 4)
+
                     fieldGroup(label: "Email") {
                         TextField("you@example.com", text: $email)
                             .keyboardType(.emailAddress)
@@ -145,6 +164,92 @@ struct SignUpView: View {
                 .cornerRadius(10)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#2a2420"), lineWidth: 1))
                 .foregroundColor(Color(hex: "#ede4d0"))
+        }
+    }
+}
+
+// MARK: - Apple Sign Up Button (UIViewRepresentable)
+// Uses ASAuthorizationAppleIDButton with .signUp type for the signup screen.
+struct AppleSignUpButton: UIViewRepresentable {
+    let authService: AuthService
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(authService: authService)
+    }
+
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .signUp, style: .white)
+        button.addTarget(context.coordinator, action: #selector(Coordinator.handleAppleSignIn), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+
+    class Coordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+        let authService: AuthService
+        var currentNonce: String?
+
+        init(authService: AuthService) {
+            self.authService = authService
+        }
+
+        @objc func handleAppleSignIn() {
+            let nonce = randomNonceString()
+            currentNonce = nonce
+
+            let provider = ASAuthorizationAppleIDProvider()
+            let request = provider.createRequest()
+            request.requestedScopes = [.email, .fullName]
+            request.nonce = sha256(nonce)
+
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = self
+            controller.presentationContextProvider = self
+            controller.performRequests()
+        }
+
+        func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let identityToken = credential.identityToken,
+                  let tokenString = String(data: identityToken, encoding: .utf8),
+                  let nonce = currentNonce else {
+                return
+            }
+
+            Task {
+                await authService.signInWithApple(idToken: tokenString, nonce: nonce)
+            }
+        }
+
+        func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+            if (error as? ASAuthorizationError)?.code != .canceled {
+                Task { @MainActor in
+                    authService.errorMessage = "Apple Sign In failed. Please try again."
+                }
+            }
+        }
+
+        func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = scene.windows.first else {
+                return UIWindow()
+            }
+            return window
+        }
+
+        private func randomNonceString(length: Int = 32) -> String {
+            precondition(length > 0)
+            var randomBytes = [UInt8](repeating: 0, count: length)
+            let errorCode = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+            if errorCode != errSecSuccess { fatalError("Unable to generate nonce.") }
+            let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+            return String(randomBytes.map { charset[Int($0) % charset.count] })
+        }
+
+        private func sha256(_ input: String) -> String {
+            let inputData = Data(input.utf8)
+            let hashed = SHA256.hash(data: inputData)
+            return hashed.compactMap { String(format: "%02x", $0) }.joined()
         }
     }
 }
