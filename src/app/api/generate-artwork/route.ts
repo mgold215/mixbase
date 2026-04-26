@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase'
+import { verifyProjectOwner } from '@/lib/ownership'
+import { checkAndIncrementUsage } from '@/lib/tier'
 import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -31,7 +33,13 @@ async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Bu
   const { width = 1024, height = 1024 } = await img.metadata()
 
   const label = 'moodmixformat'
-  const titleText = title.toUpperCase()
+  const titleText = title.toUpperCase().replace(/[<>&'"]/g, (char) => ({
+    '<': '&lt;',
+    '>': '&gt;',
+    '&': '&amp;',
+    "'": '&apos;',
+    '"': '&quot;',
+  }[char] ?? char))
 
   const fontSize = Math.round(width * 0.055)
   const smallSize = Math.round(width * 0.032)
@@ -75,11 +83,33 @@ async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Bu
 
 // POST /api/generate-artwork
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
   const { project_id, prompt, model = 'flux', title = '' } = await request.json()
 
+  if (!project_id) {
+    return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+  }
+  if (!await verifyProjectOwner(project_id, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
+  }
+
+  // Tier gate: Pro required, 25 generations/month limit
+  const access = await checkAndIncrementUsage(userId, 'artwork')
+  if (!access.allowed) {
+    return NextResponse.json(
+      {
+        error: access.limit === 0
+          ? 'AI artwork generation requires a Pro subscription. Upgrade at mixbase.app/upgrade'
+          : `Monthly limit reached (${access.used}/${access.limit}). Resets next month.`,
+        upgrade_url: '/upgrade',
+      },
+      { status: 402 }
+    )
   }
 
   const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
@@ -138,7 +168,7 @@ export async function POST(request: NextRequest) {
   const stamped = await stampArtwork(imageBuffer, title || prompt.split(',')[0].trim())
 
   const filename = `${project_id}/ai-${Date.now()}.jpg`
-  const { data: uploadData, error: uploadError } = await supabase.storage
+  const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
     .from('mf-artwork')
     .upload(filename, stamped, { contentType: 'image/jpeg', upsert: false })
 
@@ -147,15 +177,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ artwork_url: outputUrl })
   }
 
-  const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
+  const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
-  if (project_id) {
-    await supabase
-      .from('mb_projects')
-      .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
-      .eq('id', project_id)
-  }
+  await supabaseAdmin
+    .from('mb_projects')
+    .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
+    .eq('id', project_id)
+    .eq('user_id', userId)
 
   return NextResponse.json({ artwork_url: artworkUrl })
 }
