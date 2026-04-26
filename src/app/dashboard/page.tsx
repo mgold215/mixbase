@@ -117,7 +117,7 @@ export default async function DashboardPage() {
               <div
                 className="hidden sm:grid mb-1"
                 style={{
-                  gridTemplateColumns: '44px 1fr 100px 80px',
+                  gridTemplateColumns: '44px 1fr 100px 70px',
                   gap: 12,
                   paddingBottom: 8,
                   borderBottom: '1px solid var(--border)',
@@ -162,7 +162,9 @@ export default async function DashboardPage() {
                         key={project.id}
                         className="group flex items-center gap-3 sm:grid"
                         style={{
-                          gridTemplateColumns: '44px 1fr 100px 80px',
+                          gridTemplateColumns: '44px 1fr 100px 70px',
+                          gap: 12,
+                          alignItems: 'center',
                           borderBottom: '1px solid var(--border)',
                           padding: '10px 0',
                           position: 'relative',
