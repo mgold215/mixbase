@@ -160,8 +160,9 @@ export default async function DashboardPage() {
                     return (
                       <div
                         key={project.id}
-                        className="group flex items-center gap-3 sm:gap-3"
+                        className="group flex items-center gap-3 sm:grid"
                         style={{
+                          gridTemplateColumns: '44px 1fr 100px 80px',
                           borderBottom: '1px solid var(--border)',
                           padding: '10px 0',
                           position: 'relative',
@@ -240,8 +241,8 @@ export default async function DashboardPage() {
 
                         {/* Stage pill */}
                         <div
-                          className="hidden sm:block"
-                          style={{ flexShrink: 0, width: 100, display: 'flex', justifyContent: 'flex-end' }}
+                          className="hidden sm:flex"
+                          style={{ justifyContent: 'flex-end', alignItems: 'center' }}
                         >
                           {stage === 'start' ? (
                             <span style={{

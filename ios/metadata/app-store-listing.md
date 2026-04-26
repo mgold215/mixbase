@@ -36,7 +36,7 @@ The mix version tracker for music producers. Upload, compare, and manage your mi
 
 ## App Review Demo Account
 Email: review@mixbase.app
-Password: MixBase2026Review
+Password: (see ~/.env.secrets — MIXBASE_REVIEW_PASSWORD)
 
 ## App Review Notes
 mixBase is a music production tool for managing mix versions and releases. The demo account above has 3 sample projects pre-loaded. The app requires an internet connection to function (data is stored in Supabase). Audio upload requires .wav or .mp3 files. AI artwork generation requires an active Replicate API key (not included in demo).

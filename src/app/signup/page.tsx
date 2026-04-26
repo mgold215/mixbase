@@ -19,6 +19,7 @@ const STYLES = `
 `
 
 export default function SignupPage() {
+  const [artistName, setArtistName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -44,7 +45,7 @@ export default function SignupPage() {
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, artist_name: artistName.trim() || undefined }),
     })
 
     const body = await res.json().catch(() => ({}))
@@ -96,13 +97,25 @@ export default function SignupPage() {
           >
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
+                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Artist / Producer name</label>
+                <input
+                  type="text"
+                  value={artistName}
+                  onChange={e => setArtistName(e.target.value)}
+                  placeholder="Your artist or producer name"
+                  autoFocus
+                  className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Email</label>
                 <input
                   type="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  autoFocus
                   required
                   className="w-full rounded-xl px-4 py-3 focus:outline-none transition-colors"
                   style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}

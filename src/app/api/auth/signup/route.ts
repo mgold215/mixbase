@@ -10,7 +10,7 @@ const COOKIE_OPTS = {
 
 // POST /api/auth/signup — create a new account and sign in immediately
 export async function POST(request: NextRequest) {
-  const { email, password } = await request.json()
+  const { email, password, artist_name } = await request.json()
 
   if (!email || !password) {
     return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
@@ -31,6 +31,14 @@ export async function POST(request: NextRequest) {
       ? 'An account with that email already exists'
       : error.message
     return NextResponse.json({ error: msg }, { status: 400 })
+  }
+
+  // Save artist name to profiles if provided
+  if (artist_name && data.user) {
+    await supabaseAdmin
+      .from('profiles')
+      .update({ artist_name })
+      .eq('id', data.user.id)
   }
 
   // Sign in immediately so we can issue session cookies
