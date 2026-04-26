@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Secret scanning — catch leaked credentials before they reach GitHub
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "SECRET DETECTED — commit blocked."
+    echo "Remove the secret from your staged files and try again."
+    echo "If this is a false positive, run: git commit --no-verify"
+    exit 1
+  fi
+else
+  echo "WARNING: gitleaks not installed — skipping secret scan (brew install gitleaks)"
+fi

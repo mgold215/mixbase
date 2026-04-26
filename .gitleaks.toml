@@ -1,0 +1,35 @@
+# Gitleaks configuration for mixBase
+
+[allowlist]
+description = "Global allowlist"
+# Supabase anon key is public by design (embedded in frontend)
+regexTarget = "match"
+regexes = ['''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIi''']
+paths = ['''ios/.*\.xcodeproj/.*''', '''ios/.*\.xcworkspace/.*''']
+
+# Custom rule: catch plaintext passwords in docs/config/metadata files
+[[rules]]
+id = "plaintext-password"
+description = "Plaintext password in file"
+regex = '''(?i)password[\s]*[:=]\s*["\']?[A-Za-z0-9!@#$%^&*()_+]{8,}'''
+tags = ["password"]
+
+  [rules.allowlist]
+  # Don't flag code that handles password variables (e.g. form inputs, env references)
+  regexTarget = "match"
+  regexes = [
+    '''password.*\$\{''',
+    '''password.*process\.env''',
+    '''password.*\.env\.secrets''',
+    '''password.*placeholder''',
+    '''password.*useState''',
+    '''password.*\.length''',
+    '''type="password"''',
+    '''type=.password''',
+  ]
+  paths = [
+    '''.*\.ts$''',
+    '''.*\.tsx$''',
+    '''.*\.swift$''',
+    '''.*\.js$''',
+  ]
