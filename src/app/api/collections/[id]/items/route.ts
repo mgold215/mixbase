@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { verifyProjectOwner } from '@/lib/ownership'
 
 // Verify the collection belongs to this user — returns false if not found/unauthorized
 async function ownsCollection(collectionId: string, userId: string): Promise<boolean> {
@@ -27,6 +28,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+  }
+  if (!await verifyProjectOwner(project_id, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
   const { data, error } = await supabaseAdmin

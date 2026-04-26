@@ -19,9 +19,15 @@ import { createClient } from '@supabase/supabase-js'
 const BASE = process.argv[2] ?? 'http://localhost:3000'
 const SUPABASE_URL = 'https://mdefkqaawrusoaojstpq.supabase.co'
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+const MIXBASE_EMAIL = process.env.MIXBASE_EMAIL
+const MIXBASE_PASSWORD = process.env.MIXBASE_PASSWORD
 
 if (!SERVICE_KEY) {
   console.error('❌ SUPABASE_SERVICE_ROLE_KEY env var required to verify storage')
+  process.exit(1)
+}
+if (!MIXBASE_EMAIL || !MIXBASE_PASSWORD) {
+  console.error('❌ MIXBASE_EMAIL and MIXBASE_PASSWORD env vars required for authenticated upload test')
   process.exit(1)
 }
 
@@ -61,12 +67,64 @@ function makeTestAudio(bytes = 20 * 1024 * 1024) {
   return buf
 }
 
+function cookieHeaderFrom(headers) {
+  const getSetCookie = headers.getSetCookie?.()
+  const values = getSetCookie?.length
+    ? getSetCookie
+    : (headers.get('set-cookie') ?? '').split(/,(?=\s*sb-[^=]+=)/).filter(Boolean)
+
+  return values.map(v => v.split(';')[0]).join('; ')
+}
+
+async function login() {
+  const res = await fetch(`${BASE}/api/auth`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: MIXBASE_EMAIL, password: MIXBASE_PASSWORD }), // gitleaks:allow
+  })
+
+  if (!res.ok) {
+    fail('Authenticated app session', `HTTP ${res.status}: ${await res.text()}`)
+    return null
+  }
+
+  const cookie = cookieHeaderFrom(res.headers)
+  if (!cookie) {
+    fail('Authenticated app session', 'missing Set-Cookie header')
+    return null
+  }
+
+  ok('Authenticated app session')
+  return cookie
+}
+
+async function createProject(cookie) {
+  const res = await fetch(`${BASE}/api/projects`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+    },
+    body: JSON.stringify({ title: `Upload Test ${Date.now()}`, genre: 'Test' }),
+  })
+
+  if (!res.ok) {
+    fail('Temporary project created', `HTTP ${res.status}: ${await res.text()}`)
+    return null
+  }
+
+  const project = await res.json()
+  ok('Temporary project created', project.id)
+  return project
+}
+
 // ─── Test 1: TUS session creation ────────────────────────────────────────────
 
-async function testTusCreate(filename, fileSize) {
+async function testTusCreate(filename, fileSize, cookie) {
   const res = await fetch(`${BASE}/api/tus`, {
     method: 'POST',
     headers: {
+      Cookie: cookie,
       'Tus-Resumable': '1.0.0',
       'Upload-Length': String(fileSize),
       'Upload-Metadata': [
@@ -94,7 +152,7 @@ async function testTusCreate(filename, fileSize) {
 
 // ─── Test 2: TUS chunk upload ─────────────────────────────────────────────────
 
-async function testTusChunks(location, fileBuffer) {
+async function testTusChunks(location, fileBuffer, cookie) {
   const chunkSize = 8 * 1024 * 1024
   let offset = 0
   let chunkIdx = 0
@@ -104,6 +162,7 @@ async function testTusChunks(location, fileBuffer) {
     const res = await fetch(`${BASE}${location}`, {
       method: 'PATCH',
       headers: {
+        Cookie: cookie,
         'Tus-Resumable': '1.0.0',
         'Content-Type': 'application/offset+octet-stream',
         'Upload-Offset': String(offset),
@@ -185,25 +244,45 @@ async function cleanup(filename) {
   console.log(`  🗑  Cleaned up test file: ${filename}`)
 }
 
+async function deleteProject(projectId, cookie) {
+  if (!projectId) return
+
+  const res = await fetch(`${BASE}/api/projects/${projectId}`, {
+    method: 'DELETE',
+    headers: { Cookie: cookie },
+  })
+
+  if (res.ok) ok('Temporary project deleted')
+  else fail('Temporary project deleted', `HTTP ${res.status}: ${await res.text()}`)
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log(`\n🎵 mixBase upload + playback tests → ${BASE}\n`)
 
-  const filename = `test/${Date.now()}.wav`
+  const cookie = await login()
+  if (!cookie) process.exit(1)
+
+  const project = await createProject(cookie)
+  if (!project) process.exit(1)
+
+  const filename = `${project.id}/${Date.now()}.wav`
   const fileSize = 20 * 1024 * 1024 // 20 MB — large enough to require multiple 8 MB chunks
   const fileBuffer = makeTestAudio(fileSize)
 
   console.log('── Upload pipeline ──────────────────────────────────────────')
-  const location = await testTusCreate(filename, fileSize)
+  const location = await testTusCreate(filename, fileSize, cookie)
   if (!location) {
     console.log('\nCannot continue without a TUS session.')
+    await deleteProject(project.id, cookie)
     process.exit(1)
   }
 
-  const chunksOk = await testTusChunks(location, fileBuffer)
+  const chunksOk = await testTusChunks(location, fileBuffer, cookie)
   if (!chunksOk) {
     console.log('\nChunk upload failed — skipping storage verification.')
+    await deleteProject(project.id, cookie)
     process.exit(1)
   }
 
@@ -215,6 +294,7 @@ async function main() {
 
   console.log('\n── Cleanup ──────────────────────────────────────────────────')
   await cleanup(filename)
+  await deleteProject(project.id, cookie)
 
   console.log(`\n${'─'.repeat(60)}`)
   console.log(`Results: ${passed} passed, ${failed} failed`)

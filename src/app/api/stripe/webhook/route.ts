@@ -10,7 +10,9 @@ import {
   SubscriptionTier,
 } from '@/lib/tier'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? 'sk_test_placeholder')
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : null
 
 // Map a Stripe price ID to our tier name.
 function tierFromPriceId(priceId: string): SubscriptionTier {
@@ -23,11 +25,13 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text()
   const sig = req.headers.get('stripe-signature')
 
+  if (!stripe) return NextResponse.json({ error: 'Stripe not configured' }, { status: 503 })
   if (!sig) return NextResponse.json({ error: 'Missing stripe-signature' }, { status: 400 })
+  if (!process.env.STRIPE_WEBHOOK_SECRET) return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 503 })
 
   let event: Stripe.Event
   try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET!)
+    event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET)
   } catch {
     return NextResponse.json({ error: 'Webhook signature verification failed' }, { status: 400 })
   }
@@ -76,7 +80,8 @@ export async function POST(req: NextRequest) {
       if (!userId) break
 
       await setSubscriptionTier(userId, 'free', 'stripe', {
-        stripe_subscription_id: undefined,
+        stripe_subscription_id: null,
+        subscription_expires_at: null,
       })
       break
     }

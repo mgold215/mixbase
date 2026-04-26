@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyProjectOwner } from '@/lib/ownership'
 
 // Disable body parsing — we stream the body straight through to Supabase
 export const maxDuration = 300
@@ -11,11 +12,58 @@ function serviceKey() {
   return key
 }
 
+function parseUploadMetadata(value: string | null): Record<string, string> {
+  if (!value) return {}
+
+  return Object.fromEntries(
+    value.split(',').map((pair) => {
+      const [key, encoded = ''] = pair.trim().split(/\s+/, 2)
+      let decoded = ''
+      try {
+        decoded = Buffer.from(encoded, 'base64').toString('utf8')
+      } catch {
+        decoded = ''
+      }
+      return [key, decoded]
+    }).filter(([key]) => key)
+  )
+}
+
+async function validateTusUploadRequest(req: NextRequest, userId: string): Promise<NextResponse | null> {
+  const metadata = parseUploadMetadata(req.headers.get('upload-metadata'))
+  const bucketName = metadata.bucketName ?? metadata.bucket
+  const objectName = metadata.objectName ?? metadata.filename ?? metadata.name
+  const contentType = metadata.contentType ?? req.headers.get('content-type') ?? ''
+
+  if (bucketName !== 'mf-audio') {
+    return NextResponse.json({ error: 'TUS uploads are only allowed for mf-audio' }, { status: 400 })
+  }
+  if (!objectName || !objectName.includes('/')) {
+    return NextResponse.json({ error: 'objectName metadata must be scoped to a project path' }, { status: 400 })
+  }
+  if (contentType && !contentType.startsWith('audio/')) {
+    return NextResponse.json({ error: 'TUS uploads must be audio files' }, { status: 400 })
+  }
+
+  const projectId = objectName.split('/')[0]
+  if (!await verifyProjectOwner(projectId, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+
+  return null
+}
+
 // POST — create a new TUS upload session at Supabase using the service-role key.
 // The service-role key bypasses Supabase's anon per-file size limit.
 // We return a /api/tus/<uploadId> Location so subsequent PATCHes go through this proxy
 // (each PATCH is one chunk ≤ 8 MB, well under Railway's 10 MB request body wall).
 export async function POST(req: NextRequest) {
+  const userId = req.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const validationError = await validateTusUploadRequest(req, userId)
+  if (validationError) return validationError
+
   const forwardHeaders: Record<string, string> = {
     Authorization: `Bearer ${serviceKey()}`,
     'Tus-Resumable': req.headers.get('tus-resumable') ?? '1.0.0',

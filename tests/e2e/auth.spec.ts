@@ -19,6 +19,6 @@ test.describe('Authentication', () => {
     // This test uses the stored auth from global-setup
     await page.goto('/dashboard')
     await expect(page).toHaveURL(/\/dashboard/)
-    await expect(page.getByText('Your Projects')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
   })
 })

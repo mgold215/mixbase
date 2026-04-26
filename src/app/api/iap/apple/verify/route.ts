@@ -62,6 +62,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Unknown productId: ${productId}` }, { status: 400 })
   }
 
+  if (!process.env.APPLE_IAP_KEY_ID || !process.env.APPLE_IAP_ISSUER_ID || !process.env.APPLE_APP_BUNDLE_ID || !process.env.APPLE_IAP_PRIVATE_KEY) {
+    return NextResponse.json({ error: 'Apple IAP not configured' }, { status: 503 })
+  }
+
   // Verify with Apple App Store Server API
   const jwt = generateAppleJWT()
   const appleRes = await fetch(

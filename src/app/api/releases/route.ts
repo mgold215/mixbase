@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { verifyProjectOwner, verifyVersionOwner } from '@/lib/ownership'
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
@@ -23,6 +24,16 @@ export async function POST(request: NextRequest) {
   const { title, release_date, project_id, genre, label, isrc, notes, final_version_id } = body
 
   if (!title?.trim()) return NextResponse.json({ error: 'Title is required' }, { status: 400 })
+  if (project_id && !await verifyProjectOwner(project_id, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+  const version = final_version_id ? await verifyVersionOwner(final_version_id, userId) : null
+  if (final_version_id && !version) {
+    return NextResponse.json({ error: 'Version not found' }, { status: 404 })
+  }
+  if (project_id && version && version.project_id !== project_id) {
+    return NextResponse.json({ error: 'final_version_id must belong to project_id' }, { status: 400 })
+  }
 
   const { data, error } = await supabaseAdmin
     .from('mb_releases')
@@ -34,6 +45,7 @@ export async function POST(request: NextRequest) {
 
   await supabaseAdmin.from('mb_activity').insert({
     type: 'release_created',
+    user_id: userId,
     project_id: project_id ?? null,
     release_id: data.id,
     description: `Release "${data.title}" added to pipeline`,

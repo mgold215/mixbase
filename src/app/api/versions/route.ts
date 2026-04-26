@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
 
   await supabaseAdmin.from('mb_activity').insert({
     type: 'version_upload',
+    user_id: userId,
     project_id,
     version_id: data.id,
     description: `Version ${nextVersion} uploaded${label ? ` — "${label}"` : ''}`,

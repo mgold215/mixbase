@@ -1,17 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Dashboard', () => {
-  test('renders stats bar and project grid', async ({ page }) => {
+  test('renders project list header and create action', async ({ page }) => {
     await page.goto('/dashboard')
-    await expect(page.getByText('Your Projects')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
-    // Stats bar has four cards — scope to the grid container to avoid matching
-    // WIP/Finished badges on project cards (which appear many times in the page)
-    const statsGrid = page.locator('.grid-cols-2').first()
-    await expect(statsGrid.getByText('Total')).toBeVisible()
-    await expect(statsGrid.getByText('WIP')).toBeVisible()
-    await expect(statsGrid.getByText('Finished')).toBeVisible()
-    await expect(statsGrid.getByText('Released')).toBeVisible()
+    await expect(page.getByText(/\d+ total/)).toBeVisible()
+    await expect(page.getByRole('link', { name: /new/i })).toBeVisible()
   })
 
   test('nav shows all five sections on desktop', async ({ page }) => {

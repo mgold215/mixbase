@@ -189,7 +189,7 @@ class ArtworkService: ObservableObject {
         let (imageData, _) = try await URLSession.shared.data(from: url)
 
         // Upload to Supabase Storage (mf-artwork bucket)
-        let filename = "\(projectId.uuidString)-\(Int(Date().timeIntervalSince1970)).png"
+        let filename = "\(projectId.uuidString)/\(Int(Date().timeIntervalSince1970)).png"
         let publicUrl = try await SupabaseService.shared.uploadArtwork(data: imageData, filename: filename)
 
         // Update the project's artwork_url
