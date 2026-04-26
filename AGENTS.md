@@ -45,8 +45,8 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 - `/share/[token]` — Public share page (no auth required) with feedback form
 
 # Auth Model
-Single shared password (not per-user). `POST /api/auth` checks `MIXBASE_PASSWORD` and sets an `mb-session` cookie containing `SESSION_SECRET`. Middleware validates that cookie on every protected route.
+Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005).
 
-Public routes (no auth required): `/login`, `/share/`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`
+Public routes (no auth required): `/login`, `/signup`, `/privacy`, `/support`, `/terms`, `/dmca`, `/share/`, `/api/auth`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`
 
-**Critical:** If `SESSION_SECRET` is unset, middleware short-circuits and the app is open to everyone. Both `MIXBASE_PASSWORD` and `SESSION_SECRET` must be set for auth to work.
+**Critical:** `SUPABASE_SERVICE_ROLE_KEY` must be set for auth validation and storage operations.
