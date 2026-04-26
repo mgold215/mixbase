@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkAndIncrementUsage } from '@/lib/tier'
 
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
 const RUNWAY_BASE = 'https://api.dev.runwayml.com/v1'
@@ -41,8 +42,25 @@ export async function GET() {
 
 // POST /api/visualizer/runway — generate a video
 export async function POST(req: NextRequest) {
+  const userId = req.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
   if (!RUNWAY_API_KEY) {
     return NextResponse.json({ error: 'RUNWAY_API_KEY not configured' }, { status: 501 })
+  }
+
+  // Tier gate: Studio required, 10 videos/month limit
+  const access = await checkAndIncrementUsage(userId, 'video')
+  if (!access.allowed) {
+    return NextResponse.json(
+      {
+        error: access.limit === 0
+          ? 'Visualizer video generation requires a Studio subscription. Upgrade at mixbase.app/upgrade'
+          : `Monthly limit reached (${access.used}/${access.limit}). Resets next month.`,
+        upgrade_url: '/upgrade',
+      },
+      { status: 402 }
+    )
   }
 
   const { imageUrl, promptText: customPrompt, model: requestedModel, duration, ratio } = await req.json()
