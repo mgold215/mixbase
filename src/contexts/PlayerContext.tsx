@@ -48,10 +48,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // fires, so we can't rely on audio.paused to know if we should restore playback.
   const playIntentRef = useRef(false)
 
-  // Load tracks once on mount
+  // Load tracks once on mount — skip if unauthenticated (no cookie)
   useEffect(() => {
+    if (!document.cookie.includes('sb-access-token')) { setLoading(false); return }
     fetch('/api/tracks')
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false) })
       .catch(() => setLoading(false))
   }, [])
