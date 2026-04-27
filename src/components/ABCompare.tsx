@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import WaveformPlayer from './WaveformPlayer'
 import { StatusBadge } from './StatusBadge'
-import { type Version } from '@/lib/supabase'
+import { formatDuration, type Version } from '@/lib/supabase'
 import { ArrowLeftRight } from 'lucide-react'
 
 type Props = {

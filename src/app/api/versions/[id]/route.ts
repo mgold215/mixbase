@@ -59,7 +59,6 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (patch.status && patch.status !== versionCheck.status) {
     await supabaseAdmin.from('mb_activity').insert({
       type: 'status_change',
-      user_id: userId,
       project_id: versionCheck.project_id,
       version_id: id,
       description: `v${versionCheck.version_number} moved from ${versionCheck.status} to ${patch.status}`,

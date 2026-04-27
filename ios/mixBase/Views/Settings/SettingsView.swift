@@ -34,35 +34,6 @@ struct SettingsView: View {
                         .foregroundColor(Color(hex: "#2dd4bf"))
                 }
 
-                // MARK: - Subscription Section
-                Section {
-                    NavigationLink(destination: UpgradeView().environmentObject(authService)) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Plan")
-                                    .foregroundColor(Color(hex: "#f0f0f0"))
-                                Text(authService.subscriptionTier.capitalized)
-                                    .font(.caption)
-                                    .foregroundColor(authService.subscriptionTier == "free" ? .gray : Color(hex: "#2dd4bf"))
-                            }
-                            Spacer()
-                            if authService.subscriptionTier == "free" {
-                                Text("Upgrade")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(Color(hex: "#2dd4bf"))
-                                    .foregroundColor(Color(hex: "#080808"))
-                                    .cornerRadius(20)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Subscription")
-                        .foregroundColor(Color(hex: "#2dd4bf"))
-                }
-
                 // MARK: - Legal Section
                 Section {
                     Link(destination: URL(string: "https://mixbase.app/privacy")!) {

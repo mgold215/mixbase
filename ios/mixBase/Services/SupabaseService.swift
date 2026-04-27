@@ -156,7 +156,6 @@ class SupabaseService {
         var fields: [String: Any] = [
             "title": title
         ]
-        if let userId = currentUserId { fields["user_id"] = userId }
         if let genre = genre { fields["genre"] = genre }
         if let bpm = bpm { fields["bpm"] = bpm }
 
@@ -275,7 +274,6 @@ class SupabaseService {
             "dsp_youtube": false,
             "dsp_amazon": false
         ]
-        if let userId = currentUserId { fields["user_id"] = userId }
         if let projectId = projectId { fields["project_id"] = projectId.uuidString }
         if let releaseDate = releaseDate {
             // Format as "yyyy-MM-dd" since the column is a date, not a timestamp
@@ -320,8 +318,7 @@ class SupabaseService {
 
     /// Create a new collection (playlist, EP, or album)
     func createCollection(title: String, type: String) async throws -> Collection {
-        var fields: [String: Any] = ["title": title, "type": type]
-        if let userId = currentUserId { fields["user_id"] = userId }
+        let fields: [String: Any] = ["title": title, "type": type]
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_collections", method: "POST", body: body)
         let (data, response) = try await URLSession.shared.data(for: request)

@@ -17,7 +17,7 @@ test.describe('Audio Player', () => {
     // Expand the first version (it should be expanded by default)
     // The waveform player is a range input (seek bar) once audio loads
     // Look for the versions tab content
-    await expect(page.getByText('Update Mix')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Update Track')).toBeVisible({ timeout: 15_000 })
   })
 
   test('player page renders without error', async ({ page }) => {

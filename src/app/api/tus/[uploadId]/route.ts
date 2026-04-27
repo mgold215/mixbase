@@ -16,9 +16,6 @@ type Ctx = { params: Promise<{ uploadId: string }> }
 // tus-js-client sends chunks of chunkSize (8 MB), each as a separate PATCH request.
 // Railway allows each 8 MB request through; stitching happens at Supabase.
 export async function PATCH(req: NextRequest, ctx: Ctx) {
-  const userId = req.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const { uploadId } = await ctx.params
   const url = `${SUPABASE_TUS_BASE}/${uploadId}`
 
@@ -47,9 +44,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
 // HEAD — check resume offset (used by tus-js-client on retry/resume)
 export async function HEAD(req: NextRequest, ctx: Ctx) {
-  const userId = req.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const { uploadId } = await ctx.params
   const url = `${SUPABASE_TUS_BASE}/${uploadId}`
 

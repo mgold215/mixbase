@@ -25,7 +25,6 @@
 		A100000022 /* ArtworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000022; };
 		A100000023 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000023; };
 		A100000024 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000024; };
-		A1000000C1 /* StoreKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000C1; };
 
 		/* Utilities */
 		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
@@ -50,7 +49,6 @@
 
 		/* Views - Settings */
 		A100000090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000090; };
-		A1000000C2 /* UpgradeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000C2; };
 
 		/* Views - Auth */
 		A1000000B1 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000B1; };
@@ -87,7 +85,6 @@
 		B100000022 /* ArtworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkService.swift; sourceTree = "<group>"; };
 		B100000023 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		B100000024 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
-		B1000000C1 /* StoreKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitService.swift; sourceTree = "<group>"; };
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
@@ -102,7 +99,6 @@
 		B100000071 /* ReleaseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDetailView.swift; sourceTree = "<group>"; };
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		B1000000C2 /* UpgradeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpgradeView.swift; sourceTree = "<group>"; };
 		B1000000A0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		B1000000A2 /* StatCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCard.swift; sourceTree = "<group>"; };
@@ -268,7 +264,6 @@
 			isa = PBXGroup;
 			children = (
 				B100000090 /* SettingsView.swift */,
-				B1000000C2 /* UpgradeView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -294,7 +289,6 @@
 				B100000022 /* ArtworkService.swift */,
 				B100000023 /* AuthService.swift */,
 				B100000024 /* KeychainService.swift */,
-				B1000000C1 /* StoreKitService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -399,13 +393,11 @@
 				A100000071 /* ReleaseDetailView.swift in Sources */,
 				A100000080 /* ArtworkGeneratorView.swift in Sources */,
 				A100000090 /* SettingsView.swift in Sources */,
-				A1000000C2 /* UpgradeView.swift in Sources */,
 				A1000000A0 /* MiniPlayerView.swift in Sources */,
 				A1000000A1 /* StatusBadge.swift in Sources */,
 				A1000000A2 /* StatCard.swift in Sources */,
 				A100000023 /* AuthService.swift in Sources */,
 				A100000024 /* KeychainService.swift in Sources */,
-				A1000000C1 /* StoreKitService.swift in Sources */,
 				A1000000B1 /* LoginView.swift in Sources */,
 				A1000000B2 /* SignUpView.swift in Sources */,
 			);

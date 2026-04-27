@@ -25,15 +25,13 @@ export async function POST(request: NextRequest) {
   // Fetch the version to get the project_id for the activity log
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
-    .select('project_id, version_number, mb_projects(user_id)')
+    .select('project_id, version_number')
     .eq('id', version_id)
     .single()
 
   if (version) {
-    const project = Array.isArray(version.mb_projects) ? version.mb_projects[0] : version.mb_projects
     await supabaseAdmin.from('mb_activity').insert({
       type: 'feedback_received',
-      user_id: project?.user_id ?? null,
       project_id: version.project_id,
       version_id,
       description: `Feedback from ${reviewer_name || 'Anonymous'} on v${version.version_number}`,

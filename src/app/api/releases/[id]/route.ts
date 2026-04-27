@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { verifyProjectOwner, verifyVersionOwner } from '@/lib/ownership'
 
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -17,17 +16,6 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
-  }
-
-  if ('project_id' in patch && patch.project_id && !await verifyProjectOwner(String(patch.project_id), userId)) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-  }
-  const version = patch.final_version_id ? await verifyVersionOwner(String(patch.final_version_id), userId) : null
-  if (patch.final_version_id && !version) {
-    return NextResponse.json({ error: 'Version not found' }, { status: 404 })
-  }
-  if (patch.project_id && version && version.project_id !== patch.project_id) {
-    return NextResponse.json({ error: 'final_version_id must belong to project_id' }, { status: 400 })
   }
 
   const { data, error } = await supabaseAdmin

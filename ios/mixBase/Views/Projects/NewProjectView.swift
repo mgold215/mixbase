@@ -205,7 +205,7 @@ struct NewProjectView: View {
                     uploadProgress = "Uploading audio..."
                     let audioData = try Data(contentsOf: fileURL)
                     let ext = fileURL.pathExtension.lowercased()
-                    let filename = "\(project.id.uuidString)/\(Int(Date().timeIntervalSince1970))-v1.\(ext)"
+                    let filename = "\(project.id.uuidString)-v1.\(ext)"
 
                     let audioPublicUrl = try await SupabaseService.shared.uploadAudio(
                         data: audioData,

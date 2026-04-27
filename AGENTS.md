@@ -17,7 +17,7 @@ Railway's proxy truncates request bodies above 10 MB (10,485,760 bytes exactly).
 - `PATCH /api/tus/<uploadId>` — proxies one 8 MB chunk to Supabase (under Railway's 10 MB wall)
 - `HEAD /api/tus/<uploadId>` — checks resume offset
 - Client uses `tus-js-client` with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
-- `/api/tus` requires an authenticated user and project-scoped upload metadata
+- `/api/tus` is in PUBLIC_PATHS in middleware
 
 ## Audio — Always Use audioProxyUrl()
 Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so browsers can't seek or determine duration.
@@ -47,6 +47,6 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 # Auth Model
 Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005).
 
-Public routes (no auth required): `/login`, `/signup`, `/privacy`, `/support`, `/terms`, `/dmca`, `/share/`, `/api/auth`, `/api/auth/signup`, `/api/auth/logout`, `/api/audio`, `/api/health`, `/api/feedback`
+Public routes (no auth required): `/login`, `/signup`, `/privacy`, `/support`, `/terms`, `/dmca`, `/share/`, `/api/auth`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`
 
 **Critical:** `SUPABASE_SERVICE_ROLE_KEY` must be set for auth validation and storage operations.

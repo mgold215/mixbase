@@ -100,7 +100,7 @@ export default function NewProjectPage() {
     const urlRes = await fetch('/api/upload-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, contentType, project_id: project.id }),
+      body: JSON.stringify({ filename, contentType }),
     })
     const urlData = await urlRes.json()
     if (!urlRes.ok) {

@@ -452,7 +452,7 @@ struct ProjectDetailView: View {
             }
 
             // Upload to Supabase Storage
-            let filename = "\(projectId.uuidString)/\(Int(Date().timeIntervalSince1970)).jpg"
+            let filename = "\(projectId.uuidString)-\(Int(Date().timeIntervalSince1970)).jpg"
             let publicUrl = try await SupabaseService.shared.uploadArtwork(data: data, filename: filename)
 
             // Update the project's artwork URL

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
 // The full schema SQL — same as supabase/migrations/001_initial.sql + 002_remaining_tables.sql
@@ -191,21 +191,10 @@ create policy "users_own_activity" on mb_activity
   with check (project_id in (select id from mb_projects where user_id = auth.uid()));
 `
 
-function isAuthorizedDbInit(request: NextRequest): boolean {
-  const expectedToken = process.env.DB_INIT_TOKEN
-  const authHeader = request.headers.get('authorization')
-  const bearerToken = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]
-  return !!expectedToken && bearerToken === expectedToken
-}
-
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.
-// Requires DB_INIT_TOKEN for route access and SUPABASE_MANAGEMENT_TOKEN for SQL execution.
+// Requires SUPABASE_MANAGEMENT_TOKEN env var (create one at supabase.com/dashboard/account/tokens).
 // Also auto-creates storage buckets using the service role key.
-export async function GET(request: NextRequest) {
-  if (!isAuthorizedDbInit(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
+export async function GET() {
   const results: { step: string; status: string; detail?: string }[] = []
 
   // ── Step 1: Run SQL migrations via Management API ──────────────────────────

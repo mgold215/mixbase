@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { execSync } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 

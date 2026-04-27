@@ -39,7 +39,7 @@ Only surface the loop to the user if: (a) the same failure reproduces 3+ times i
 npm run dev       # Start local dev server (port 3000)
 npm run build     # Production build (run before pushing)
 npm run lint      # ESLint check
-MIXBASE_EMAIL=<email> MIXBASE_PASSWORD=<password> SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixbase-staging.up.railway.app  # Upload + audio proxy test
+node scripts/test-upload.mjs https://mixbase-staging.up.railway.app  # Upload + audio proxy test
 ```
 
 ## Required Environment Variables
@@ -50,13 +50,12 @@ MIXBASE_EMAIL=<email> MIXBASE_PASSWORD=<password> SUPABASE_SERVICE_ROLE_KEY=<key
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Falls back to hardcoded public key |
 | `REPLICATE_API_TOKEN` | Optional | Artwork generation (Flux 2 Pro / Imagen 4 via Replicate) |
 | `RUNWAY_API_KEY` | Optional | Visualizer video generation (Runway Gen-3) |
-| `DB_INIT_TOKEN` | Optional | Bearer token required to access `/api/db-init` |
-| `SUPABASE_MANAGEMENT_TOKEN` | Optional | Supabase Management API token used by `/api/db-init` after route access is authorized |
+| `SUPABASE_MANAGEMENT_TOKEN` | Optional | DB schema init via `/api/db-init` |
 
 **Critical:** `SUPABASE_SERVICE_ROLE_KEY` is required for server-side auth validation and storage operations.
 
 ## Auth Model
-Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005). Public routes: `/login`, `/signup`, `/share/`, `/api/audio`, `/api/health`, `/api/feedback`, `/api/auth`, `/api/auth/signup`, `/api/auth/logout`.
+Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005). Public routes: `/login`, `/signup`, `/share/`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`.
 
 ## Application Pages & Features
 - `/dashboard` — Project grid with stats, activity feed
@@ -89,7 +88,7 @@ App is a PWA with a service worker (`public/sw.js`). Do not remove `ServiceWorke
 - Client uses `tus-js-client` with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
 - Each chunk: browser → Railway (8 MB, allowed) → Next.js proxy → Supabase (service-role key, no size limit)
 - Files of any size work. Uploads are resumable on failure.
-- Middleware: `/api/tus` requires an authenticated user and project-scoped upload metadata
+- Middleware: `/api/tus` is in PUBLIC_PATHS
 
 **Root causes documented:**
 - Railway truncates HTTP request bodies at exactly 10 MB (10,485,760 bytes). Confirmed by 3 uploads in storage all showing exactly 10 MB.
@@ -111,7 +110,7 @@ Without Range support the browser cannot determine audio duration or seek.
 ## Testing
 Run after every deploy that touches upload or audio playback:
 ```
-MIXBASE_EMAIL=<email> MIXBASE_PASSWORD=<password> SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixbase-production.up.railway.app
+SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/test-upload.mjs https://mixbase-production.up.railway.app
 ```
 The script uploads a 20 MB synthetic WAV in 8 MB TUS chunks, verifies it's stored at full size in Supabase, and tests the audio proxy Range requests. All tests must pass before telling the user a fix is done.
 
