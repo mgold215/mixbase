@@ -35,6 +35,18 @@ Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so br
 ## PWA + iOS Wrapper
 Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. There is a native iOS app wrapper in `ios/` (Xcode project).
 
+# Operations Runbooks
+
+## Railway domains return 403 host_not_allowed
+Symptom: `mixbase-production.up.railway.app` and/or `mixbase-staging.up.railway.app` return `HTTP 403` with header `x-deny-reason: host_not_allowed`. This is Railway's edge router rejecting the request because no service matches the hostname — i.e. the public domain was disabled or removed in the Railway dashboard. App code is irrelevant; do **not** start editing `proxy.ts`/`middleware.ts`.
+
+Fix:
+1. Ask the user for a Railway API token (https://railway.com/account/tokens) if it is not already in env. Do not commit it.
+2. Run `RAILWAY_TOKEN=<token> railway link` (pick the mixbase project) then `railway domain --service mixbase-production` and `railway domain --service mixbase-staging` to regenerate the public `*.up.railway.app` domains.
+3. Verify with `curl -sI https://mixbase-production.up.railway.app/` — expect `HTTP/2 200`, not 403.
+
+Sandbox egress: the Anthropic web sandbox blocks `backboard.railway.com` / `backboard.railway.app` (Railway's GraphQL API) by default. `.claude/settings.json` adds them to `sandbox.network.allowedDomains`, but **the change only takes effect on the next session start**. If you hit "Host not in allowlist" mid-session, ask the user to (a) restart the Claude Code session, or (b) run the same `railway` commands locally with the token.
+
 # Application Pages & Features
 - `/dashboard` — Project grid with stats, activity feed
 - `/projects/[id]` — Main working view: versions, upload, A/B compare, notes, release pipeline
