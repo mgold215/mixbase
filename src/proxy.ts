@@ -9,10 +9,12 @@ const PUBLIC_EXACT_PATHS = [
   '/support',
   '/terms',
   '/dmca',
+  '/share',
   '/auth/callback',
   '/api/auth',
   '/api/auth/signup',
   '/api/auth/logout',
+  '/api/audio',
   '/api/feedback',
   '/api/health',
   '/api/stripe/webhook',
@@ -48,13 +50,25 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Validate the token and get the user
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken)
+  let userId = ''
+  try {
+    // Validate the token and get the user
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken)
 
-  if (error || !user) {
-    // Token invalid or expired — send to login with cookie cleared
+    if (error || !user) {
+      // Token invalid or expired — send to login with cookie cleared
+      const response = pathname.startsWith('/api/')
+        ? NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        : NextResponse.redirect(new URL('/login', request.url))
+      response.cookies.delete('sb-access-token')
+      response.cookies.delete('sb-refresh-token')
+      return response
+    }
+    userId = user.id
+  } catch (error) {
+    console.error('[proxy] auth validation failed', error)
     const response = pathname.startsWith('/api/')
-      ? NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      ? NextResponse.json({ error: 'Auth service unavailable' }, { status: 503 })
       : NextResponse.redirect(new URL('/login', request.url))
     response.cookies.delete('sb-access-token')
     response.cookies.delete('sb-refresh-token')
@@ -63,7 +77,7 @@ export async function proxy(request: NextRequest) {
 
   // Inject user id so API route handlers can read it without re-validating
   const requestHeaders = new Headers(request.headers)
-  requestHeaders.set('X-User-Id', user.id)
+  requestHeaders.set('X-User-Id', userId)
 
   return NextResponse.next({ request: { headers: requestHeaders } })
 }
