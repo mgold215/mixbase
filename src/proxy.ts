@@ -23,7 +23,7 @@ const PUBLIC_PREFIX_PATHS = [
   '/api/audio/',
 ]
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const dbInitToken = process.env.DB_INIT_TOKEN
   const authHeader = request.headers.get('authorization')
