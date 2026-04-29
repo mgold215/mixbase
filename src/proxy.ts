@@ -11,7 +11,8 @@ const PUBLIC_PATHS = [
   '/dmca',
   '/share/',
   '/auth/callback',
-  '/api/auth',
+  '/api/auth/signup',
+  '/api/auth/logout',
   '/api/feedback',
   '/api/audio',
   '/api/audio-url',
@@ -23,7 +24,9 @@ const PUBLIC_PATHS = [
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // /api/auth (login endpoint) needs exact match — /api/auth/me etc. must be protected
   if (
+    pathname === '/api/auth' ||
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
