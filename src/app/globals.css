@@ -60,9 +60,20 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Player bottom clearance — clears mobile tab bar (h-16) + safe area */
+/* Bottom bar heights */
+:root {
+  --tab-bar-height: 4rem;
+  --mini-player-height: calc(3.5rem + 2px);
+  /* mini player sits above the tab bar on mobile; 0 on desktop (no tab bar) */
+  --mini-player-bottom: 0px;
+  --player-bottom: 0px;
+}
+
 @media (max-width: 767px) {
-  :root { --player-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
+  :root {
+    --mini-player-bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom, 0px));
+    --player-bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom, 0px));
+  }
 
   .min-h-screen {
     min-height: calc(100dvh - var(--player-bottom));
