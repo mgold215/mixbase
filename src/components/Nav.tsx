@@ -113,10 +113,8 @@ export default function Nav() {
 
       {/* ── Bottom tab bar (mobile only, below md breakpoint, hidden on full player) ── */}
       <nav
-        className={`fixed left-0 right-0 z-50 border-t md:hidden ${
-          miniPlayerVisible ? 'bottom-[calc(3.5rem+2px+env(safe-area-inset-bottom))]' : 'bottom-0'
-        }`}
-        style={{ paddingBottom: miniPlayerVisible ? 0 : 'env(safe-area-inset-bottom)', backgroundColor: 'color-mix(in srgb, var(--nav-bg) 90%, transparent)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+        className="fixed bottom-0 left-0 right-0 z-50 border-t md:hidden"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)', backgroundColor: 'color-mix(in srgb, var(--nav-bg) 90%, transparent)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
       >
         <div className="flex items-center justify-around h-16">
           {tabs.map((tab) => {
