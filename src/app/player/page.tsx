@@ -17,6 +17,7 @@ import { usePlayer } from '@/contexts/PlayerContext'
 type LoopMode = 'none' | 'all' | 'one'
 type SortKey = 'title' | 'date'
 
+const PASTEL_GREEN = '#86efac'
 const WAVEFORM_BARS = 100
 
 function generateWaveform(seed: string, count: number): number[] {
@@ -495,11 +496,11 @@ export default function PlayerPage() {
               <div className="flex items-center gap-2">
                 <button onClick={() => setShuffle(s => !s)}
                   className="p-2 transition-colors"
-                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
                   className="p-2 transition-colors"
-                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -510,7 +511,7 @@ export default function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: accentCss }}
+                  style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
@@ -523,13 +524,13 @@ export default function PlayerPage() {
                   <div className="relative">
                     <button onClick={handleShare}
                       className="p-2 transition-colors"
-                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: accentCss, color: '#000' }}>
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
@@ -543,11 +544,11 @@ export default function PlayerPage() {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button onClick={() => setShuffle(s => !s)}
                   className="p-2 transition-colors"
-                  style={{ color: shuffle ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
                   className="p-2 transition-colors"
-                  style={{ color: loopMode !== 'none' ? accentCss : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -558,7 +559,7 @@ export default function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: accentCss }}
+                  style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
@@ -581,13 +582,13 @@ export default function PlayerPage() {
                   <div className="relative">
                     <button onClick={handleShare}
                       className="p-2 transition-colors"
-                      style={{ color: copied ? accentCss : 'rgba(255,255,255,0.55)' }}
+                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: accentCss, color: '#000' }}>
+                        style={{ background: PASTEL_GREEN, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
