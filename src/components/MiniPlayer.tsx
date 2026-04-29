@@ -30,9 +30,9 @@ export default function MiniPlayer() {
       style={{ bottom: 'var(--mini-player-bottom)', backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', animation: 'miniPlayerSlideUp 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both' }}
     >
       {/* Progress bar — thin line along top edge */}
-      <div className="relative h-[2px] bg-[#1a1a1a]">
+      <div className="relative h-[2px] bg-[var(--surface-2)]">
         <div
-          className="absolute inset-y-0 left-0 bg-[#2dd4bf] transition-none"
+          className="absolute inset-y-0 left-0 bg-[var(--accent)] transition-none"
           style={{ width: `${progress}%` }}
         />
         {/* Scrubber hit area */}

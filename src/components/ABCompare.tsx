@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import WaveformPlayer from './WaveformPlayer'
 import { StatusBadge } from './StatusBadge'
-import { formatDuration, type Version } from '@/lib/supabase'
+import { type Version } from '@/lib/supabase'
 import { ArrowLeftRight } from 'lucide-react'
 
 type Props = {
@@ -37,10 +37,11 @@ export default function ABCompare({ versions }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <h3 className="text-sm font-medium text-[#888]">A/B Compare</h3>
+        <h3 className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>A/B Compare</h3>
         <button
           onClick={swapVersions}
-          className="flex items-center gap-1.5 text-xs text-[#555] hover:text-[#888] transition-colors"
+          className="flex items-center gap-1.5 text-xs transition-colors"
+          style={{ color: 'var(--text-muted)' }}
         >
           <ArrowLeftRight size={13} />
           Swap
@@ -50,9 +51,11 @@ export default function ABCompare({ versions }: Props) {
       <div className="grid grid-cols-2 gap-4">
         {/* Version A */}
         <div
-          className={`bg-[#111] rounded-xl p-4 border cursor-pointer transition-colors ${
-            activeSlot === 'A' ? 'border-[#2dd4bf]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
-          }`}
+          className="rounded-xl p-4 cursor-pointer transition-colors"
+          style={{
+            backgroundColor: 'var(--surface)',
+            border: `1px solid ${activeSlot === 'A' ? 'rgba(45,212,191,0.4)' : 'var(--border)'}`,
+          }}
           onClick={() => setActiveSlot('A')}
         >
           <div className="flex items-center justify-between mb-3">
@@ -62,10 +65,11 @@ export default function ABCompare({ versions }: Props) {
                 value={versionA}
                 onChange={e => setVersionA(e.target.value)}
                 onClick={e => e.stopPropagation()}
-                className="bg-transparent text-sm text-white focus:outline-none"
+                className="bg-transparent text-sm focus:outline-none"
+                style={{ color: 'var(--text)' }}
               >
                 {versions.map(v => (
-                  <option key={v.id} value={v.id} className="bg-[#111]">
+                  <option key={v.id} value={v.id} style={{ backgroundColor: 'var(--surface)' }}>
                     v{v.version_number}{v.label ? ` — ${v.label}` : ''}
                   </option>
                 ))}
@@ -86,9 +90,11 @@ export default function ABCompare({ versions }: Props) {
 
         {/* Version B */}
         <div
-          className={`bg-[#111] rounded-xl p-4 border cursor-pointer transition-colors ${
-            activeSlot === 'B' ? 'border-[#2dd4bf]/40' : 'border-[#1e1e1e] hover:border-[#2a2a2a]'
-          }`}
+          className="rounded-xl p-4 cursor-pointer transition-colors"
+          style={{
+            backgroundColor: 'var(--surface)',
+            border: `1px solid ${activeSlot === 'B' ? 'rgba(45,212,191,0.4)' : 'var(--border)'}`,
+          }}
           onClick={() => setActiveSlot('B')}
         >
           <div className="flex items-center justify-between mb-3">
@@ -98,10 +104,11 @@ export default function ABCompare({ versions }: Props) {
                 value={versionB}
                 onChange={e => setVersionB(e.target.value)}
                 onClick={e => e.stopPropagation()}
-                className="bg-transparent text-sm text-white focus:outline-none"
+                className="bg-transparent text-sm focus:outline-none"
+                style={{ color: 'var(--text)' }}
               >
                 {versions.map(v => (
-                  <option key={v.id} value={v.id} className="bg-[#111]">
+                  <option key={v.id} value={v.id} style={{ backgroundColor: 'var(--surface)' }}>
                     v{v.version_number}{v.label ? ` — ${v.label}` : ''}
                   </option>
                 ))}
@@ -121,7 +128,7 @@ export default function ABCompare({ versions }: Props) {
         </div>
       </div>
 
-      <p className="text-[10px] text-[#444]">
+      <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
         Click a panel to set it as active. Switching panels keeps the playback position in sync.
       </p>
     </div>

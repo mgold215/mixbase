@@ -292,7 +292,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
-        <Link href="/dashboard" className="flex items-center gap-2 text-[#555] hover:text-white text-sm mb-6 transition-colors w-fit">
+        <Link href="/dashboard" className="flex items-center gap-2 text-[var(--text-muted)] hover:text-[var(--text)] text-sm mb-6 transition-colors w-fit">
           <ArrowLeft size={14} />
           Dashboard
         </Link>
@@ -316,37 +316,37 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   type="text"
                   value={projectForm.title}
                   onChange={e => setProjectForm(p => ({ ...p, title: e.target.value }))}
-                  className="w-full bg-[#0f0f0f] border border-[#2dd4bf]/30 rounded-xl px-3 py-2 text-lg font-bold text-white focus:outline-none focus:border-[#2dd4bf]/60"
+                  className="w-full bg-[var(--input-bg)] border border-[#2dd4bf]/30 rounded-xl px-3 py-2 text-lg font-bold text-[var(--text)] focus:outline-none focus:border-[#2dd4bf]/60"
                 />
                 <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <label className="block text-[10px] text-[#555] mb-1">Genre</label>
-                    <input type="text" value={projectForm.genre} onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))} placeholder="e.g. Techno" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
+                    <label className="block text-[10px] text-[var(--text-muted)] mb-1">Genre</label>
+                    <input type="text" value={projectForm.genre} onChange={e => setProjectForm(p => ({ ...p, genre: e.target.value }))} placeholder="e.g. Techno" className="w-full bg-[var(--input-bg)] rounded-lg px-2 py-1.5 text-xs text-[var(--text)] focus:outline-none" style={{ border: '1px solid var(--border)' }} />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-[#555] mb-1">BPM</label>
-                    <input type="number" value={projectForm.bpm} onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))} placeholder="e.g. 140" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
+                    <label className="block text-[10px] text-[var(--text-muted)] mb-1">BPM</label>
+                    <input type="number" value={projectForm.bpm} onChange={e => setProjectForm(p => ({ ...p, bpm: e.target.value }))} placeholder="e.g. 140" className="w-full bg-[var(--input-bg)] rounded-lg px-2 py-1.5 text-xs text-[var(--text)] focus:outline-none" style={{ border: '1px solid var(--border)' }} />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-[#555] mb-1">Key</label>
-                    <input type="text" value={projectForm.key_signature} onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))} placeholder="e.g. Am" className="w-full bg-[#0f0f0f] border border-[#222] rounded-lg px-2 py-1.5 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/40" />
+                    <label className="block text-[10px] text-[var(--text-muted)] mb-1">Key</label>
+                    <input type="text" value={projectForm.key_signature} onChange={e => setProjectForm(p => ({ ...p, key_signature: e.target.value }))} placeholder="e.g. Am" className="w-full bg-[var(--input-bg)] rounded-lg px-2 py-1.5 text-xs text-[var(--text)] focus:outline-none" style={{ border: '1px solid var(--border)' }} />
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={saveProject} className="bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors">Save</button>
-                  <button onClick={() => setEditingProject(false)} className="text-[#444] hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">Cancel</button>
+                  <button onClick={() => setEditingProject(false)} className="text-[var(--text-muted)] hover:text-[var(--text)] text-xs px-3 py-1.5 rounded-lg transition-colors">Cancel</button>
                 </div>
               </div>
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-1">
-                  <h1 className="text-2xl font-bold text-white">{projectForm.title || project.title}</h1>
-                  <button onClick={() => setEditingProject(true)} className="text-[#333] hover:text-[#666] transition-colors" title="Edit project details">
+                  <h1 className="text-2xl font-bold text-[var(--text)]">{projectForm.title || project.title}</h1>
+                  <button onClick={() => setEditingProject(true)} className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors" title="Edit project details">
                     <Pencil size={13} />
                   </button>
                   {projectSaved && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>}
                 </div>
-                <div className="flex items-center gap-3 text-sm text-[#555] mb-3">
+                <div className="flex items-center gap-3 text-sm text-[var(--text-muted)] mb-3">
                   {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
                   {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
                   {(projectForm.key_signature || project.key_signature) && <span>{projectForm.key_signature || project.key_signature}</span>}
@@ -384,15 +384,15 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         {/* Action buttons */}
         <div className="flex items-center gap-3 mb-6">
           {uploading ? (
-            <div className="flex items-center gap-3 bg-[#111] border border-[#1e1e1e] rounded-xl px-4 py-2.5">
-              <span className="text-xs text-[#888] flex-shrink-0">{uploadStatus}</span>
-              <div className="w-32 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+            <div className="flex items-center gap-3 rounded-xl px-4 py-2.5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <span className="text-xs text-[var(--text-secondary)] flex-shrink-0">{uploadStatus}</span>
+              <div className="w-32 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-300"
                   style={{ backgroundColor: uploadPct === 100 ? '#34d399' : '#2dd4bf', width: `${uploadPct}%` }}
                 />
               </div>
-              <span className="text-xs text-[#555] flex-shrink-0">{uploadPct}%</span>
+              <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{uploadPct}%</span>
             </div>
           ) : (
             <>
@@ -422,7 +422,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <CalendarRange size={16} className="text-[#2dd4bf]" />
-              <h2 className="text-sm font-semibold text-white">Release Pipeline</h2>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Release Pipeline</h2>
             </div>
             {release && (
               <Link
@@ -436,10 +436,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           </div>
 
           {release ? (
-            <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-5">
+            <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
               {/* Progress bar */}
               <div className="flex items-center gap-3 mb-5">
-                <div className="flex-1 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                <div className="flex-1 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all"
                     style={{
@@ -448,7 +448,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                     }}
                   />
                 </div>
-                <span className="text-xs text-[#444] flex-shrink-0">{releaseProgress}%</span>
+                <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{releaseProgress}%</span>
               </div>
 
               {/* Checklist */}
@@ -461,7 +461,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       onChange={() => toggleReleaseCheck(item.key, release[item.key])}
                       className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
                     />
-                    <span className={`text-sm transition-colors ${release[item.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
+                    <span className={`text-sm transition-colors ${release[item.key] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
                       {item.label}
                     </span>
                   </label>
@@ -469,17 +469,17 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               </div>
 
               {release.release_date && (
-                <p className="text-xs text-[#444] mt-4">
+                <p className="text-xs text-[var(--text-muted)] mt-4">
                   Target date: {new Date(release.release_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                 </p>
               )}
             </div>
           ) : (
-            <div className="bg-[#111] border border-[#1a1a1a] rounded-2xl p-6 flex flex-col items-center text-center gap-4">
-              <CalendarRange size={28} className="text-[#2a2a2a]" />
+            <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <CalendarRange size={28} className="text-[var(--text-muted)]" />
               <div>
-                <p className="text-sm text-[#666]">Ready to plan your release?</p>
-                <p className="text-xs text-[#444] mt-1">Track mixing, mastering, artwork, and DSP distribution from one place.</p>
+                <p className="text-sm text-[var(--text-secondary)]">Ready to plan your release?</p>
+                <p className="text-xs text-[var(--text-muted)] mt-1">Track mixing, mastering, artwork, and DSP distribution from one place.</p>
               </div>
               <button
                 onClick={startRelease}
@@ -496,7 +496,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         {/* Version list */}
         <div className="space-y-3">
           {versions.length === 0 ? (
-            <div className="text-center py-16 text-[#444]">
+            <div className="text-center py-16 text-[var(--text-muted)]">
               <Music size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
               <p className="text-sm">No mixes yet — upload your first mix above</p>
             </div>
@@ -510,25 +510,25 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 : null
 
               return (
-                <div key={version.id} className="bg-[#111] border border-[#1a1a1a] rounded-2xl overflow-hidden">
+                <div key={version.id} className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
                   <div
-                    className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[#141414] transition-colors"
+                    className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
                     onClick={() => setExpandedVersion(isExpanded ? null : version.id)}
                   >
-                    <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#1a1a1a] flex items-center justify-center">
-                      <Music size={16} className="text-[#888]" />
+                    <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
+                      <Music size={16} className="text-[var(--text-secondary)]" />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-white">
+                        <span className="text-sm font-medium text-[var(--text)]">
                           {version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`}
                         </span>
                         {index === 0 && (
-                          <span className="text-[10px] text-[#555] bg-[#1a1a1a] px-1.5 py-0.5 rounded-full">Latest</span>
+                          <span className="text-[10px] text-[var(--text-muted)] bg-[var(--surface-2)] px-1.5 py-0.5 rounded-full">Latest</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5 text-xs text-[#444]">
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--text-muted)]">
                         <span>{new Date(version.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                         {version.duration_seconds && <span>{formatDuration(version.duration_seconds)}</span>}
                         {version.file_size_bytes && <span>{formatFileSize(version.file_size_bytes)}</span>}
@@ -550,19 +550,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                           className={`p-1.5 rounded-lg transition-colors ${
                             copiedToken === version.share_token
                               ? 'text-emerald-400 bg-emerald-400/10'
-                              : 'text-[#444] hover:text-white hover:bg-[#1e1e1e]'
+                              : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)]'
                           }`}
                           title="Copy share link"
                         >
                           {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
                         </button>
                       )}
-                      {isExpanded ? <ChevronUp size={14} className="text-[#444]" /> : <ChevronDown size={14} className="text-[#444]" />}
+                      {isExpanded ? <ChevronUp size={14} className="text-[var(--text-muted)]" /> : <ChevronDown size={14} className="text-[var(--text-muted)]" />}
                     </div>
                   </div>
 
                   {isExpanded && (
-                    <div className="px-4 pb-5 pt-1 border-t border-[#1a1a1a] space-y-5">
+                    <div className="px-4 pb-5 pt-1 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
                       <WaveformPlayer
                         audioUrl={audioProxyUrl(version.audio_url)}
                         allowDownload={version.allow_download}
@@ -570,15 +570,15 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       />
 
                       {version.change_log && (
-                        <div className="bg-[#0f0f0f] rounded-xl p-3">
-                          <p className="text-xs text-[#555] mb-1">What changed</p>
-                          <p className="text-sm text-[#888]">{version.change_log}</p>
+                        <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+                          <p className="text-xs text-[var(--text-muted)] mb-1">What changed</p>
+                          <p className="text-sm text-[var(--text-secondary)]">{version.change_log}</p>
                         </div>
                       )}
 
                       {/* Status changer */}
                       <div>
-                        <p className="text-xs text-[#555] mb-2">Status</p>
+                        <p className="text-xs text-[var(--text-muted)] mb-2">Status</p>
                         <div className="flex gap-2 flex-wrap">
                           {STATUSES.map(s => {
                             const conf = STATUS_CONFIG[s]
@@ -590,7 +590,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                                 className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
                                   isActive
                                     ? `${conf.color} ${conf.bg} ${conf.border}`
-                                    : 'text-[#444] border-[#222] hover:border-[#333] hover:text-[#888]'
+                                    : 'text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-secondary)]'
                                 }`}
                               >
                                 {conf.label}
@@ -604,7 +604,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs text-[#555]">Private notes</label>
+                            <label className="block text-xs text-[var(--text-muted)]">Private notes</label>
                             {savedNoteKey === `${version.id}-private_notes` && (
                               <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
                             )}
@@ -614,12 +614,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                             onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
                             placeholder="Notes only you can see..."
                             rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/30 resize-none"
+                            className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
+                            style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
                           />
                         </div>
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs text-[#555]">Public notes (share page)</label>
+                            <label className="block text-xs text-[var(--text-muted)]">Public notes (share page)</label>
                             {savedNoteKey === `${version.id}-public_notes` && (
                               <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
                             )}
@@ -629,7 +630,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                             onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
                             placeholder="Notes visible to listeners..."
                             rows={3}
-                            className="w-full bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-3 py-2 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#2dd4bf]/30 resize-none"
+                            className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
+                            style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
                           />
                         </div>
                       </div>
@@ -637,22 +639,22 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       {/* Feedback */}
                       {feedback.length > 0 && (
                         <div>
-                          <p className="text-xs text-[#555] mb-2">Listener Feedback</p>
+                          <p className="text-xs text-[var(--text-muted)] mb-2">Listener Feedback</p>
                           <div className="space-y-2">
                             {feedback.map(f => (
-                              <div key={f.id} className="bg-[#0f0f0f] rounded-xl p-3">
+                              <div key={f.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
                                 <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs font-medium text-[#888]">{f.reviewer_name}</span>
+                                  <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
                                   {f.rating && (
                                     <div className="flex gap-0.5">
                                       {[1,2,3,4,5].map(s => (
-                                        <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[#333]'} />
+                                        <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
                                       ))}
                                     </div>
                                   )}
                                 </div>
-                                <p className="text-xs text-[#666]">{f.comment}</p>
-                                <p className="text-[10px] text-[#333] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
+                                <p className="text-xs text-[var(--text-secondary)]">{f.comment}</p>
+                                <p className="text-[10px] text-[var(--text-muted)] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
                               </div>
                             ))}
                           </div>
@@ -662,7 +664,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       <div className="flex justify-end">
                         <button
                           onClick={() => deleteVersion(version.id)}
-                          className="flex items-center gap-1.5 text-xs text-[#333] hover:text-red-400 transition-colors"
+                          className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={12} />
                           Delete mix
