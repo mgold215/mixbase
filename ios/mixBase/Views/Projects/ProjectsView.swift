@@ -78,18 +78,19 @@ struct ProjectsView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showNewProject) {
-                NewProjectView(onCreated: {
-                    Task { await loadProjects() }
-                })
-            }
-            .sheet(isPresented: $showNewCollection) {
-                NewCollectionSheet(projects: projects) { collection in
-                    collections.insert(collection, at: 0)
-                }
-            }
             .task {
                 await loadAll()
+            }
+        }
+        // Sheets must be on NavigationStack (not inner ZStack) for reliable iPad presentation
+        .sheet(isPresented: $showNewProject) {
+            NewProjectView(onCreated: {
+                Task { await loadProjects() }
+            })
+        }
+        .sheet(isPresented: $showNewCollection) {
+            NewCollectionSheet(projects: projects) { collection in
+                collections.insert(collection, at: 0)
             }
         }
     }
