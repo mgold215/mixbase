@@ -238,6 +238,24 @@ export default async function DashboardPage() {
                                 {project.bpm} BPM
                               </span>
                             )}
+                            {/* Stage badge — mobile only; desktop uses the column */}
+                            {stage !== 'start' && (
+                              <span className="sm:hidden" style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                fontFamily: 'var(--font-mono), monospace',
+                                fontSize: 9,
+                                letterSpacing: '0.04em',
+                                color: STAGE_COLOR[stage],
+                                background: STAGE_BG[stage],
+                                border: `1px solid ${STAGE_COLOR[stage]}50`,
+                                borderRadius: 4,
+                                padding: '1px 6px',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                {STAGE_LABEL[stage]}
+                              </span>
+                            )}
                           </div>
                         </Link>
 

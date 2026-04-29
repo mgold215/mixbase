@@ -44,8 +44,7 @@ export async function PATCH(request: NextRequest) {
 
   const { error } = await supabaseAdmin
     .from('profiles')
-    .update(updates)
-    .eq('id', userId)
+    .upsert({ id: userId, ...updates }, { onConflict: 'id' })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

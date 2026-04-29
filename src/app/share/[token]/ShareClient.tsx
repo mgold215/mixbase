@@ -126,7 +126,7 @@ export default function ShareClient({ version }: Props) {
           <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight">{title}</h1>
           <p className="text-sm text-white/40 mt-1.5">
             {version.label || `Version ${version.version_number}`}
-            {version.status && version.status !== 'WIP' && (
+            {version.status && (
               <span className="ml-2 text-white/25">· {version.status}</span>
             )}
           </p>

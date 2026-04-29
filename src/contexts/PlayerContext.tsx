@@ -30,7 +30,9 @@ const PlayerContext = createContext<PlayerCtx | null>(null)
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() =>
+    typeof document !== 'undefined' && document.cookie.includes('sb-authed')
+  )
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -50,7 +52,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Load tracks once on mount — skip if unauthenticated (no cookie)
   useEffect(() => {
-    if (!document.cookie.includes('sb-access-token')) { setLoading(false); return }
+    if (!document.cookie.includes('sb-authed')) return
     fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false) })
