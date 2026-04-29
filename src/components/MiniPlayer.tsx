@@ -7,6 +7,13 @@ import { Play, Pause, SkipBack, SkipForward, Maximize2, Music } from 'lucide-rea
 import { usePlayer } from '@/contexts/PlayerContext'
 import { formatDuration } from '@/lib/supabase'
 
+const MINIPLAYER_STYLES = `
+  @keyframes miniPlayerSlideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+`
+
 export default function MiniPlayer() {
   const { currentTrack, isPlaying, currentTime, duration, togglePlay, seek, next, prev } = usePlayer()
   const pathname = usePathname()
@@ -17,8 +24,10 @@ export default function MiniPlayer() {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
+    <>
+    <style>{MINIPLAYER_STYLES}</style>
     <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 backdrop-blur-md mb-16 md:mb-0"
-      style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+      style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', paddingBottom: 'env(safe-area-inset-bottom)', animation: 'miniPlayerSlideUp 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both' }}
     >
       {/* Progress bar — thin line along top edge */}
       <div className="relative h-[2px] bg-[#1a1a1a]">
@@ -101,5 +110,6 @@ export default function MiniPlayer() {
         </Link>
       </div>
     </div>
+    </>
   )
 }

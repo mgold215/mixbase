@@ -81,7 +81,7 @@ export default function LoginPage() {
               <span style={{ color: 'var(--text)' }}>mix</span>
               <span style={{ color: 'var(--accent)' }}>BASE</span>
             </h1>
-            <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#86efac' }}>ROUGH-TO-RELEASE</p>
+            <p className="text-xs uppercase tracking-[0.2em] mt-1" style={{ color: '#4ade80' }}>ROUGH-TO-RELEASE</p>
             <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Track the evolution of your mixes</p>
           </div>
 
