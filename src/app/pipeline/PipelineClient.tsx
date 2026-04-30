@@ -19,24 +19,26 @@ const CHECKLIST_ITEMS = [
   { key: 'mixing_done', label: 'Mixing done' },
   { key: 'mastering_done', label: 'Mastering done' },
   { key: 'artwork_ready', label: 'Artwork ready' },
-  { key: 'dsp_submitted', label: 'DSP submitted' },
+  { key: 'press_release_done', label: 'Pre-save link live' },
+  { key: 'dsp_submitted', label: 'DistroKid submitted' },
   { key: 'social_posts_done', label: 'Social posts scheduled' },
-  { key: 'press_release_done', label: 'Press release done' },
 ] as const
 
-const DSP_PLATFORMS = [
-  { key: 'dsp_spotify', label: 'Spotify' },
-  { key: 'dsp_apple_music', label: 'Apple Music' },
-  { key: 'dsp_tidal', label: 'Tidal' },
-  { key: 'dsp_bandcamp', label: 'Bandcamp' },
-  { key: 'dsp_soundcloud', label: 'SoundCloud' },
-  { key: 'dsp_youtube', label: 'YouTube' },
-  { key: 'dsp_amazon', label: 'Amazon Music' },
+// Post-launch campaign steps — reuses dsp_* DB columns, no migration needed
+const POST_LAUNCH_ITEMS = [
+  { key: 'dsp_spotify',     label: 'Brazil Showcase launched', hint: '$100 · launch day' },
+  { key: 'dsp_apple_music', label: 'US Showcase launched',     hint: '$100 · launch day' },
+  { key: 'dsp_youtube',     label: 'Canvas uploaded to Spotify', hint: '+15% saves' },
+  { key: 'dsp_tidal',       label: 'Save rate ≥6%? Add Marquee', hint: '$100 · check T+48h' },
+  { key: 'dsp_soundcloud',  label: 'Curator emails sent',      hint: 'email-agents' },
+  { key: 'dsp_amazon',      label: 'Meta ad live',             hint: 'Hypeddit · evergreen' },
+  { key: 'dsp_bandcamp',    label: 'Release Radar fired?',     hint: 'check T+7' },
 ] as const
 
 function completionPercent(release: Release): number {
-  const checks = CHECKLIST_ITEMS.filter(c => release[c.key]).length
-  return Math.round((checks / CHECKLIST_ITEMS.length) * 100)
+  const allItems = [...CHECKLIST_ITEMS, ...POST_LAUNCH_ITEMS]
+  const checks = allItems.filter(c => release[c.key as keyof Release]).length
+  return Math.round((checks / allItems.length) * 100)
 }
 
 function daysUntil(dateStr: string | null): string | null {
@@ -198,19 +200,19 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         {isExpanded && (
           <div className="px-4 pb-5 pt-2 border-t border-[#1a1a1a] space-y-5">
             <div className="grid grid-cols-2 gap-6">
-              {/* Checklist */}
+              {/* Pre-Launch checklist */}
               <div>
-                <p className="text-xs text-[#555] mb-3 uppercase tracking-wider">Checklist</p>
+                <p className="text-xs text-[#555] mb-3 uppercase tracking-wider">Pre-Launch</p>
                 <div className="space-y-2">
                   {CHECKLIST_ITEMS.map(item => (
                     <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
                       <input
                         type="checkbox"
-                        checked={release[item.key]}
-                        onChange={() => toggleCheck(release.id, item.key, release[item.key])}
-                        className="accent-[#2dd4bf] w-3.5 h-3.5"
+                        checked={!!release[item.key as keyof Release]}
+                        onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
+                        className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
                       />
-                      <span className={`text-sm transition-colors ${release[item.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
+                      <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
                         {item.label}
                       </span>
                     </label>
@@ -218,20 +220,23 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                 </div>
               </div>
 
-              {/* DSP Platforms */}
+              {/* Post-Launch campaign */}
               <div>
-                <p className="text-xs text-[#555] mb-3 uppercase tracking-wider">Distribution</p>
+                <p className="text-xs text-[#555] mb-3 uppercase tracking-wider">Launch Campaign</p>
                 <div className="space-y-2">
-                  {DSP_PLATFORMS.map(dsp => (
-                    <label key={dsp.key} className="flex items-center gap-2.5 cursor-pointer group">
+                  {POST_LAUNCH_ITEMS.map(item => (
+                    <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
                       <input
                         type="checkbox"
-                        checked={release[dsp.key]}
-                        onChange={() => toggleCheck(release.id, dsp.key, release[dsp.key])}
-                        className="accent-[#2dd4bf] w-3.5 h-3.5"
+                        checked={!!release[item.key as keyof Release]}
+                        onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
+                        className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
                       />
-                      <span className={`text-sm transition-colors ${release[dsp.key] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
-                        {dsp.label}
+                      <span className="flex flex-col min-w-0">
+                        <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[#555] line-through' : 'text-[#888] group-hover:text-white'}`}>
+                          {item.label}
+                        </span>
+                        <span className="text-[10px] text-[#3a3a3a] leading-tight">{item.hint}</span>
                       </span>
                     </label>
                   ))}
@@ -273,7 +278,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Release Pipeline</h1>
-          <p className="text-[#555] text-sm mt-0.5">Plan and track your upcoming releases</p>
+          <p className="text-[#555] text-sm mt-0.5">Track every step — from mix to campaign</p>
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
