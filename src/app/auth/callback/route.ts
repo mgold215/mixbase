@@ -6,7 +6,16 @@ import { createServerClient } from '@supabase/ssr'
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl
   const code = searchParams.get('code')
+  const oauthError = searchParams.get('error')
   const next = searchParams.get('next') ?? '/dashboard'
+
+  // OAuth provider returned an error (e.g. user denied access)
+  if (oauthError) {
+    const desc = searchParams.get('error_description') ?? oauthError
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(desc)}`
+    )
+  }
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`)
@@ -24,10 +33,12 @@ export async function GET(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          // Let SSR set its own cookies (they won't interfere)
-          cookiesToSet.forEach(({ name, value, options }) =>
+          // Update request cookies so the client can read them within this handler,
+          // and set them on the response so the browser stores them.
+          cookiesToSet.forEach(({ name, value, options }) => {
+            request.cookies.set(name, value)
             response.cookies.set(name, value, options)
-          )
+          })
         },
       },
     }
@@ -36,14 +47,17 @@ export async function GET(request: NextRequest) {
   const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
   if (error || !data.session) {
-    return NextResponse.redirect(`${origin}/login?error=auth_failed`)
+    const msg = error?.message ?? 'auth_failed'
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(msg)}`
+    )
   }
 
   // Set the custom cookies that our middleware checks
   const cookieOpts = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict' as const,
+    sameSite: 'lax' as const,
     path: '/',
   }
 

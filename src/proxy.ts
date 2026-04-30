@@ -52,7 +52,7 @@ export async function proxy(request: NextRequest) {
         const requestHeaders = new Headers(request.headers)
         requestHeaders.set('X-User-Id', refreshed.session.user.id)
         const refreshedResponse = NextResponse.next({ request: { headers: requestHeaders } })
-        const cookieOpts = { httpOnly: true as const, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' as const, path: '/' }
+        const cookieOpts = { httpOnly: true as const, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, path: '/' }
         refreshedResponse.cookies.set('sb-access-token', refreshed.session.access_token, { ...cookieOpts, maxAge: 60 * 60 })
         refreshedResponse.cookies.set('sb-refresh-token', refreshed.session.refresh_token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 30 })
         refreshedResponse.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
