@@ -107,7 +107,7 @@ export default function MediaClient({ projects, collections }: Props) {
           {/* Assignment panel — shows when image is selected */}
           {selected && (
             <div
-              className="w-56 flex-shrink-0 rounded-xl overflow-hidden h-fit sticky top-20"
+              className="w-56 flex-shrink-0 rounded-xl overflow-hidden h-fit sticky top-14"
               style={{ border: '1px solid var(--surface-2)', backgroundColor: 'var(--surface)' }}
             >
               {/* Preview */}

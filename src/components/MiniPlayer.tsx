@@ -26,13 +26,13 @@ export default function MiniPlayer() {
   return (
     <>
     <style>{MINIPLAYER_STYLES}</style>
-    <div className="fixed bottom-0 md:bottom-0 left-0 right-0 z-40 backdrop-blur-md mb-16 md:mb-0"
-      style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', paddingBottom: 'env(safe-area-inset-bottom)', animation: 'miniPlayerSlideUp 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both' }}
+    <div className="fixed left-0 right-0 z-40 backdrop-blur-md"
+      style={{ bottom: 'var(--mini-player-bottom)', backgroundColor: 'color-mix(in srgb, var(--nav-bg) 95%, transparent)', borderTop: '1px solid var(--surface-2)', animation: 'miniPlayerSlideUp 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both' }}
     >
       {/* Progress bar — thin line along top edge */}
-      <div className="relative h-[2px] bg-[#1a1a1a]">
+      <div className="relative h-[2px] bg-[var(--surface-2)]">
         <div
-          className="absolute inset-y-0 left-0 bg-[#2dd4bf] transition-none"
+          className="absolute inset-y-0 left-0 bg-[var(--accent)] transition-none"
           style={{ width: `${progress}%` }}
         />
         {/* Scrubber hit area */}
