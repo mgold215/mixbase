@@ -12,6 +12,8 @@ export type Track = {
   status: string
   version: string
   uploaded_at: number
+  key_signature: string | null
+  bpm: number | null
 }
 
 let _backfillDone = false
@@ -47,7 +49,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, user_id)')
+    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, key_signature, bpm, user_id)')
     .eq('mb_projects.user_id', userId)
     .order('version_number', { ascending: false })
 
@@ -62,18 +64,21 @@ export async function GET(request: NextRequest) {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const projectTitle: string = (project as { title?: string })?.title ?? 'Unknown'
+    const p = project as { title?: string; artwork_url?: string | null; key_signature?: string | null; bpm?: number | null }
+    const projectTitle: string = p?.title ?? 'Unknown'
     return {
       id: v.id,
       project_id: v.project_id,
       share_token: v.share_token ?? null,
       title: projectTitle,
       artist: projectTitle,
-      artwork_url: (project as { artwork_url?: string | null })?.artwork_url ?? null,
+      artwork_url: p?.artwork_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',
       version: v.label || `v${v.version_number}`,
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
+      key_signature: p?.key_signature ?? null,
+      bpm: p?.bpm ?? null,
     }
   })
 
