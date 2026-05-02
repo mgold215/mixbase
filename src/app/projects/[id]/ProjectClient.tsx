@@ -119,10 +119,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     if (!file) return
     if (fileInputRef.current) fileInputRef.current.value = ''
 
-    // Detect BPM/key in background — don't block the upload
+    // Detect BPM/key in background — only fill in fields the user hasn't set manually
     analyzeFile(file).then(result => {
       if (result) {
-        setProjectForm(p => ({ ...p, bpm: result.bpm.toString(), key_signature: result.key }))
+        setProjectForm(p => ({
+          ...p,
+          bpm: p.bpm || result.bpm.toString(),
+          key_signature: p.key_signature || result.key,
+        }))
       }
     })
 
