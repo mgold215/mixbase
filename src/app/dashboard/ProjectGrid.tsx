@@ -243,7 +243,7 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <DashPlayButton projectId={project.id} />
+                {stage !== 'start' && <DashPlayButton projectId={project.id} />}
                 <div className="hidden sm:block">
                   <AddToPipelineButton
                     projectId={project.id}

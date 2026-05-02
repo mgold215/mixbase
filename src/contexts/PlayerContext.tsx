@@ -30,9 +30,7 @@ const PlayerContext = createContext<PlayerCtx | null>(null)
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([])
-  const [loading, setLoading] = useState(() =>
-    typeof document !== 'undefined' && document.cookie.includes('sb-authed')
-  )
+  const [loading, setLoading] = useState(true)
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -50,9 +48,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // fires, so we can't rely on audio.paused to know if we should restore playback.
   const playIntentRef = useRef(false)
 
-  // Load tracks once on mount — skip if unauthenticated (no cookie)
+  // Load tracks once on mount
   useEffect(() => {
-    if (!document.cookie.includes('sb-authed')) return
     fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false) })
@@ -87,18 +84,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // ── Media Session API ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!('mediaSession' in navigator) || !currentTrack) return
+    const artwork = currentTrack.artwork_url
+      ? [
+          { src: currentTrack.artwork_url, sizes: '96x96' },
+          { src: currentTrack.artwork_url, sizes: '128x128' },
+          { src: currentTrack.artwork_url, sizes: '256x256' },
+          { src: currentTrack.artwork_url, sizes: '512x512' },
+        ]
+      : []
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.title,
-      artist: currentTrack.artist,
-      artwork: currentTrack.artwork_url
-        ? [{ src: currentTrack.artwork_url, sizes: '512x512', type: 'image/jpeg' }]
-        : [],
+      artist: currentTrack.artist !== currentTrack.title ? currentTrack.artist : 'mixBase',
+      artwork,
     })
-  }, [currentTrack])
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [currentTrack, isPlaying])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
-    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    // Update playbackState independently so it stays accurate even without a track change
+    if (navigator.mediaSession.metadata) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    }
   }, [isPlaying])
 
   useEffect(() => {
