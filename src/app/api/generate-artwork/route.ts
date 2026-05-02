@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -151,10 +152,13 @@ export async function POST(request: NextRequest) {
   const artworkUrl = urlData.publicUrl
 
   if (project_id) {
-    await supabase
+    const { error: dbError } = await supabaseAdmin
       .from('mb_projects')
       .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
       .eq('id', project_id)
+    if (dbError) {
+      console.error('[generate-artwork] DB update error:', dbError.message)
+    }
   }
 
   return NextResponse.json({ artwork_url: artworkUrl })
