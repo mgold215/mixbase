@@ -118,16 +118,23 @@ export default function PlayerPage() {
   }, [current])
 
   // ── BPM / key analysis ─────────────────────────────────────────────────────
+  // Manual project values take priority — only auto-detect what isn't set
   useEffect(() => {
     if (!current) return
     analysisAbortRef.current?.abort()
     const abort = new AbortController()
     analysisAbortRef.current = abort
-    setTrackBPM(null); setTrackKey(null)
-    analyzeAudioUrl(audioProxyUrl(current.audio_url)).then(result => {
-      if (abort.signal.aborted) return
-      if (result) { setTrackBPM(result.bpm); setTrackKey(result.key) }
-    })
+    setTrackKey(current.key_signature ?? null)
+    setTrackBPM(current.bpm ?? null)
+    if (!current.key_signature || !current.bpm) {
+      analyzeAudioUrl(audioProxyUrl(current.audio_url)).then(result => {
+        if (abort.signal.aborted) return
+        if (result) {
+          if (!current.key_signature) setTrackKey(result.key)
+          if (!current.bpm) setTrackBPM(result.bpm)
+        }
+      })
+    }
   }, [current])
 
 
