@@ -4,6 +4,23 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, us
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 
+// Set Media Session metadata synchronously — must be called before audio.play() so iOS
+// registers it in the user-gesture context. React effects fire after re-render (too late).
+function applyMediaSession(title: string, artworkUrl: string | null, playing: boolean) {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  const artwork = artworkUrl
+    ? [
+        { src: artworkUrl, sizes: '96x96',  type: 'image/jpeg' },
+        { src: artworkUrl, sizes: '256x256', type: 'image/jpeg' },
+        { src: artworkUrl, sizes: '512x512', type: 'image/jpeg' },
+      ]
+    : []
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'mixBase', artwork })
+    navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
+  } catch { /* ignore */ }
+}
+
 type PlayerCtx = {
   tracks: Track[]
   loading: boolean
@@ -136,32 +153,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return null
   }, [currentProjectId, customMeta, currentUrl, tracks])
 
-  // ── Media Session API ────────────────────────────────────────────────────────
+  // ── Media Session API — fallback effect ─────────────────────────────────────
+  // applyMediaSession() is called synchronously before audio.play() for iOS
+  // (iOS reads metadata at play() time, before this effect fires). This effect
+  // handles track changes that happen without a direct play() call (e.g. autoplay).
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !currentTrack) return
-    const artwork = currentTrack.artwork_url
-      ? [
-          { src: currentTrack.artwork_url, sizes: '96x96' },
-          { src: currentTrack.artwork_url, sizes: '128x128' },
-          { src: currentTrack.artwork_url, sizes: '256x256' },
-          { src: currentTrack.artwork_url, sizes: '512x512' },
-        ]
-      : []
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: currentTrack.title,
-      artist: currentTrack.artist !== currentTrack.title ? currentTrack.artist : 'mixBase',
-      artwork,
-    })
-    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    if (!currentTrack) return
+    applyMediaSession(currentTrack.title, currentTrack.artwork_url, isPlaying)
   }, [currentTrack, isPlaying])
-
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return
-    // Update playbackState independently so it stays accurate even without a track change
-    if (navigator.mediaSession.metadata) {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
-    }
-  }, [isPlaying])
 
   useEffect(() => {
     if (!('mediaSession' in navigator) || duration <= 0) return
@@ -260,6 +259,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentTime(0)
       setDuration(0)
     }
+    applyMediaSession(track.title, track.artwork_url, true)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
@@ -277,6 +277,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentUrl(url)
     setCurrentProjectId(null)
     setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
+    applyMediaSession(title, artworkUrl ?? null, true)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
@@ -292,8 +293,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current
     if (!audio || !currentTrack) return
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    if (isPlaying) { playIntentRef.current = false; audio.pause() }
-    else { playIntentRef.current = true; audio.play().catch(() => {}) }
+    if (isPlaying) {
+      playIntentRef.current = false
+      audio.pause()
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+    } else {
+      if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true)
+      playIntentRef.current = true
+      audio.play().catch(() => {})
+    }
   }, [isPlaying, currentTrack])
 
   const seek = useCallback((time: number) => {

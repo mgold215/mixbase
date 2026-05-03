@@ -32,8 +32,6 @@ export default function WaveformPlayer({
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [speed, setSpeed] = useState(1)
-  const speeds = [0.5, 0.75, 1, 1.25, 1.5]
 
   useEffect(() => {
     const audio = audioRef.current
@@ -116,11 +114,6 @@ export default function WaveformPlayer({
     setCurrentTime(Number(e.target.value))
   }
 
-  function changeSpeed(s: number) {
-    setSpeed(s)
-    if (audioRef.current) audioRef.current.playbackRate = s
-  }
-
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === ' ') { e.preventDefault(); togglePlay() }
     if (e.key === 'ArrowRight' && audioRef.current) audioRef.current.currentTime += 5
@@ -171,22 +164,6 @@ export default function WaveformPlayer({
         </span>
 
         <div className="flex-1" />
-
-        <div className="flex items-center gap-0.5">
-          {speeds.map(s => (
-            <button
-              key={s}
-              onClick={() => changeSpeed(s)}
-              className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
-              style={speed === s
-                ? { backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }
-                : { color: 'var(--text-muted)' }
-              }
-            >
-              {s}x
-            </button>
-          ))}
-        </div>
 
         {allowDownload && (
           <a
