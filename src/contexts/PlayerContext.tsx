@@ -55,12 +55,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // fires, so we can't rely on audio.paused to know if we should restore playback.
   const playIntentRef = useRef(false)
 
-  // Load tracks once on mount
+  // Load tracks once on mount — retry once after 3 s on failure
   useEffect(() => {
-    fetch('/api/tracks')
+    const load = () => fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false) })
-      .catch(() => setLoading(false))
+    load().catch(() => setTimeout(() => load().catch(() => setLoading(false)), 3000))
   }, [])
 
   // Wire up audio event listeners
