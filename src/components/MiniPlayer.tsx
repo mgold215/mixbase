@@ -70,7 +70,7 @@ export default function MiniPlayer() {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-white truncate leading-tight">{currentTrack.title}</p>
           <p className="text-[11px] text-[#555] truncate leading-tight">
-            {currentTrack.version} · {formatDuration(Math.floor(currentTime))}
+            {currentTrack.version ? `${currentTrack.version} · ` : ''}{formatDuration(Math.floor(currentTime))}
             {duration > 0 && ` / ${formatDuration(Math.floor(duration))}`}
           </p>
         </div>

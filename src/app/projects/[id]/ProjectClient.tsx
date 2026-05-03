@@ -11,7 +11,7 @@ import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, Trash2, Music, Upload, Pencil,
-  CalendarRange, ExternalLink
+  CalendarRange, ExternalLink, Play, Pause, Download
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -25,7 +25,6 @@ const CHECKLIST_ITEMS = [
   { key: 'press_release_done' as const,label: 'Press release done' },
 ]
 
-const WaveformPlayer = dynamic(() => import('@/components/WaveformPlayer'), { ssr: false })
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
@@ -56,9 +55,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [projectSaved, setProjectSaved] = useState(false)
   const [release, setRelease] = useState<Release | null>(initialRelease)
   const [startingRelease, setStartingRelease] = useState(false)
-  const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
 
-  const { pause, isPlaying: contextPlaying } = usePlayer()
+  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay } = usePlayer()
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
@@ -511,6 +509,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           ) : (
             versions.map((version, index) => {
               const isExpanded = expandedVersion === version.id
+              const vUrl = audioProxyUrl(version.audio_url)
+              const isActive = currentUrl === vUrl
+              const vPct = isActive && duration > 0 ? (currentTime / duration) * 100 : 0
+              const displayDuration = isActive ? duration : (version.duration_seconds ?? 0)
               const feedback = version.mb_feedback ?? []
               const ratedFeedback = feedback.filter(f => f.rating)
               const avgRating = ratedFeedback.length > 0
@@ -571,13 +573,58 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
                   {isExpanded && (
                     <div className="px-4 pb-5 pt-1 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
-                      <WaveformPlayer
-                        audioUrl={audioProxyUrl(version.audio_url)}
-                        allowDownload={version.allow_download}
-                        filename={version.audio_filename ?? undefined}
-                        onPlay={() => { pause(); setActiveVersionId(version.id) }}
-                        stopWhenTrue={contextPlaying || (activeVersionId !== null && activeVersionId !== version.id)}
-                      />
+                      {/* Per-version player — routes through shared PlayerContext audio element */}
+                      <div className="w-full">
+                        <div
+                          className="relative w-full h-10 rounded-lg overflow-hidden mb-2"
+                          style={{ backgroundColor: 'var(--input-bg)' }}
+                        >
+                          <div
+                            className="absolute bottom-0 left-0 h-1 transition-all duration-100"
+                            style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
+                          />
+                          <input
+                            type="range"
+                            min={0}
+                            max={displayDuration || 1}
+                            step={0.1}
+                            value={isActive ? currentTime : 0}
+                            onChange={(e) => {
+                              if (isActive) seek(Number(e.target.value))
+                              else playUrl(vUrl, projectForm.title || project.title, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+                            }}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              if (isActive) togglePlay()
+                              else playUrl(vUrl, projectForm.title || project.title, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+                            }}
+                            className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+                            style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+                          >
+                            {isActive && isPlaying ? <Pause size={14} /> : <Play size={14} />}
+                          </button>
+                          <span className="text-xs tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
+                          </span>
+                          <div className="flex-1" />
+                          {version.allow_download && (
+                            <a
+                              href={vUrl}
+                              download={version.audio_filename ?? 'mix.wav'}
+                              className="flex items-center gap-1 transition-colors"
+                              style={{ color: 'var(--text-muted)' }}
+                              title="Download"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <Download size={13} />
+                            </a>
+                          )}
+                        </div>
+                      </div>
 
                       {version.change_log && (
                         <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
