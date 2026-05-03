@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, type ReactNode, type RefObject } from 'react'
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 
@@ -12,9 +12,12 @@ type PlayerCtx = {
   currentTime: number
   duration: number
   volume: number
+  currentUrl: string | null
   /** The persistent <audio> element — share with the full player for seamless handoff */
   audioRef: RefObject<HTMLAudioElement | null>
   playTrack: (projectId: string) => void
+  /** Play any URL through the shared audio element (shows in mini player) */
+  playUrl: (url: string, title: string, artist?: string, artworkUrl?: string, versionLabel?: string) => void
   pause: () => void
   togglePlay: () => void
   seek: (time: number) => void
@@ -37,6 +40,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [duration, setDuration] = useState(0)
   const [volume, setVolumeState] = useState(0.85)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [customMeta, setCustomMeta] = useState<{
+    title: string; artist: string; artwork_url: string | null; versionLabel: string
+  } | null>(null)
 
   // EQ chain — created lazily on first interaction with the full player
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -79,7 +86,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const currentTrack = tracks.find(t => t.project_id === currentProjectId) ?? null
+  const currentTrack = useMemo<Track | null>(() => {
+    if (currentProjectId) return tracks.find(t => t.project_id === currentProjectId) ?? null
+    if (customMeta && currentUrl) return {
+      id: '__custom__',
+      project_id: '__custom__',
+      share_token: null,
+      title: customMeta.title,
+      artist: customMeta.artist,
+      artwork_url: customMeta.artwork_url,
+      audio_url: currentUrl,
+      status: 'WIP',
+      version: customMeta.versionLabel,
+      uploaded_at: 0,
+      key_signature: null,
+      bpm: null,
+    }
+    return null
+  }, [currentProjectId, customMeta, currentUrl, tracks])
 
   // ── Media Session API ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -197,8 +221,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const track = tracks.find(t => t.project_id === projectId)
     if (!track) return
     if (currentProjectId !== projectId) {
-      audio.src = audioProxyUrl(track.audio_url)
+      const url = audioProxyUrl(track.audio_url)
+      audio.src = url
       setCurrentProjectId(projectId)
+      setCurrentUrl(url)
+      setCustomMeta(null)
       setCurrentTime(0)
       setDuration(0)
     }
@@ -207,6 +234,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
     audio.play().catch(() => {})
   }, [tracks, currentProjectId, volume])
+
+  const playUrl = useCallback((url: string, title: string, artist = 'mixBASE', artworkUrl?: string, versionLabel = '') => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (currentUrl !== url || currentProjectId !== null) {
+      audio.src = url
+      setCurrentTime(0)
+      setDuration(0)
+    }
+    setCurrentUrl(url)
+    setCurrentProjectId(null)
+    setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
+    audio.volume = volume
+    playIntentRef.current = true
+    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
+    audio.play().catch(() => {})
+  }, [currentUrl, currentProjectId, volume])
 
   const pause = useCallback(() => {
     playIntentRef.current = false
@@ -271,8 +315,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       currentTime,
       duration,
       volume,
+      currentUrl,
       audioRef,
       playTrack,
+      playUrl,
       pause,
       togglePlay,
       seek,
