@@ -1,7 +1,7 @@
 // Service Worker for mixBase PWA
 // Caches app shell for offline support, always fetches fresh data from network
 
-const CACHE_NAME = 'mixbase-v1';
+const CACHE_NAME = 'mixbase-v2';
 
 // App shell files to cache for offline
 const APP_SHELL = [

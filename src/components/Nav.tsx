@@ -31,7 +31,7 @@ export default function Nav() {
     { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,    match: '/dashboard' },
     { href: '/collections', label: 'Collections', icon: Library,       match: '/collections' },
     { href: '/media',       label: 'Media',       icon: Images,        match: '/media' },
-    { href: '/player',      label: 'Player',      icon: PlayCircle,    match: '/player' },
+    { href: currentTrack ? `/player?track=${currentTrack.project_id}` : '/player', label: 'Player', icon: PlayCircle, match: '/player' },
     { href: '/pipeline',    label: 'Pipeline',    icon: ClipboardList, match: '/pipeline' },
   ]
 
