@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, type ChangeEvent } from 'react'
+import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
@@ -55,6 +56,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [projectSaved, setProjectSaved] = useState(false)
   const [release, setRelease] = useState<Release | null>(initialRelease)
   const [startingRelease, setStartingRelease] = useState(false)
+  const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
+
+  const { pause, isPlaying: contextPlaying } = usePlayer()
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
@@ -571,6 +575,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                         audioUrl={audioProxyUrl(version.audio_url)}
                         allowDownload={version.allow_download}
                         filename={version.audio_filename ?? undefined}
+                        onPlay={() => { pause(); setActiveVersionId(version.id) }}
+                        stopWhenTrue={contextPlaying || (activeVersionId !== null && activeVersionId !== version.id)}
                       />
 
                       {version.change_log && (

@@ -11,6 +11,10 @@ type Props = {
   syncPosition?: number
   onTimeUpdate?: (time: number) => void
   compact?: boolean
+  /** Called just before this player starts playing — use to pause other players */
+  onPlay?: () => void
+  /** When this flips to true the player is paused immediately */
+  stopWhenTrue?: boolean
 }
 
 export default function WaveformPlayer({
@@ -20,6 +24,8 @@ export default function WaveformPlayer({
   syncPosition,
   onTimeUpdate,
   compact = false,
+  onPlay,
+  stopWhenTrue = false,
 }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -35,14 +41,17 @@ export default function WaveformPlayer({
     const onLoaded = () => { setDuration(audio.duration || 0); setLoading(false) }
     const onTime = () => { setCurrentTime(audio.currentTime); onTimeUpdate?.(audio.currentTime) }
     const onEnded = () => setIsPlaying(false)
+    const onPause = () => setIsPlaying(false)
     audio.addEventListener('loadedmetadata', onLoaded)
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('ended', onEnded)
+    audio.addEventListener('pause', onPause)
     if (audio.readyState >= 1) onLoaded()
     return () => {
       audio.removeEventListener('loadedmetadata', onLoaded)
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('pause', onPause)
     }
   }, [audioUrl, onTimeUpdate])
 
@@ -53,12 +62,20 @@ export default function WaveformPlayer({
     }
   }, [syncPosition, duration])
 
+  // Pause immediately when an external player takes over
+  useEffect(() => {
+    if (stopWhenTrue && isPlaying) {
+      audioRef.current?.pause()
+      // isPlaying will be updated by the 'pause' event listener
+    }
+  }, [stopWhenTrue, isPlaying])
+
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
     if (isPlaying) { audio.pause(); setIsPlaying(false) }
-    else { audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
-  }, [isPlaying])
+    else { onPlay?.(); audio.play().then(() => setIsPlaying(true)).catch(() => {}) }
+  }, [isPlaying, onPlay])
 
   // ── Media Session API ────────────────────────────────────────────────────────
   useEffect(() => {
