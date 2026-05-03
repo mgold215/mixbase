@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { Play, Pause, Music, MessageSquare, ChevronDown } from 'lucide-react'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
+import { applyMediaSession } from '@/lib/media-session'
 import FeedbackForm from '@/components/FeedbackForm'
 import type { Version } from '@/lib/supabase'
 
@@ -61,9 +62,14 @@ export default function ShareClient({ version }: Props) {
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
-    if (isPlaying) audio.pause()
-    else audio.play().catch(() => {})
-  }, [isPlaying])
+    if (isPlaying) {
+      audio.pause()
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+    } else {
+      applyMediaSession(title, artworkUrl, true)
+      audio.play().catch(() => {})
+    }
+  }, [isPlaying, title, artworkUrl])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current
@@ -78,6 +84,8 @@ export default function ShareClient({ version }: Props) {
       <audio
         ref={audioRef}
         src={audioUrl}
+        playsInline
+        preload="auto"
         style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
       />
 
