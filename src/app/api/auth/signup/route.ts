@@ -52,15 +52,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, redirect: '/login' })
   }
 
+  const expiresAt = signInData.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
   const response = NextResponse.json({ ok: true })
-  response.cookies.set('sb-access-token', signInData.session.access_token, {
-    ...COOKIE_OPTS,
-    maxAge: 60 * 60,
-  })
-  response.cookies.set('sb-refresh-token', signInData.session.refresh_token, {
-    ...COOKIE_OPTS,
-    maxAge: 60 * 60 * 24 * 30,
-  })
+  response.cookies.set('sb-access-token', signInData.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
+  response.cookies.set('sb-refresh-token', signInData.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
   return response
 }
