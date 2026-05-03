@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import MiniPlayer from "@/components/MiniPlayer";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import PullToRefresh from "@/components/PullToRefresh";
+import SessionRefresher from "@/components/SessionRefresher";
 
 const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
 const bebasNeue = Bebas_Neue({ subsets: ["latin"], weight: "400", variable: "--font-bebas" });
@@ -46,6 +47,7 @@ export default function RootLayout({
         <ThemeProvider>
           <PlayerProvider>
             <ServiceWorkerRegistrar />
+            <SessionRefresher />
             <PullToRefresh />
             <MiniPlayer />
             {children}
