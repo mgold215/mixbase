@@ -51,7 +51,7 @@ function statusTag(status: string): { label: string; color: string } {
 
 export default function PlayerPage() {
   const {
-    tracks, loading, currentTrack, isPlaying, currentTime, duration,
+    tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
     audioRef,
   } = usePlayer()
@@ -247,16 +247,31 @@ export default function PlayerPage() {
   const bars = useMemo(() => generateWaveform(current?.project_id ?? '', WAVEFORM_BARS), [current?.project_id])
 
   // ── Empty state ────────────────────────────────────────────────────────────────
-  if (!loading && tracks.length === 0) {  // tracks + loading come from PlayerContext
+  if (!loading && tracks.length === 0) {
     return (
       <>
       <Nav />
       <div className="fixed top-14 left-0 right-0 flex flex-col items-center justify-center gap-4" style={{ bottom: 'var(--player-bottom, 0px)', backgroundColor: 'var(--bg-page)' }}>
         <ListMusic size={48} className="text-[var(--text-muted)]" />
-        <p className="text-[var(--text-muted)]">No tracks yet.</p>
-        <Link href="/dashboard" className="text-sm text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors">
-          Go upload some mixes →
-        </Link>
+        {loadError ? (
+          <>
+            <p className="text-[var(--text-muted)]">Couldn&apos;t load tracks.</p>
+            <button
+              onClick={reloadTracks}
+              className="text-sm px-4 py-2 rounded-lg transition-colors"
+              style={{ backgroundColor: 'var(--surface-2)', color: 'var(--accent)', border: '1px solid var(--border)' }}
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-[var(--text-muted)]">No tracks yet.</p>
+            <Link href="/dashboard" className="text-sm text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors">
+              Go upload some mixes →
+            </Link>
+          </>
+        )}
       </div>
       </>
     )

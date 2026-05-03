@@ -20,12 +20,14 @@ export default function DashPlayButton({ projectId }: { projectId: string }) {
 
   return (
     <button
+      type="button"
       onClick={handleClick}
-      className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+      className={`flex-shrink-0 rounded-full flex items-center justify-center transition-colors ${
         isActive
           ? 'bg-[#2dd4bf] hover:bg-[#14b8a6]'
           : 'bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a]'
       }`}
+      style={{ width: 44, height: 44 }}
       aria-label={isActive && isPlaying ? 'Pause' : 'Play'}
     >
       {isActive && isPlaying

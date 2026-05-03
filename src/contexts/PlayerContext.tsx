@@ -7,6 +7,8 @@ import { audioProxyUrl } from '@/lib/supabase'
 type PlayerCtx = {
   tracks: Track[]
   loading: boolean
+  /** True when all fetch attempts failed — tracks is empty due to error, not genuinely no tracks */
+  loadError: boolean
   currentTrack: Track | null
   isPlaying: boolean
   currentTime: number
@@ -24,6 +26,8 @@ type PlayerCtx = {
   setVolume: (v: number) => void
   next: () => void
   prev: () => void
+  /** Re-fetch the track list (e.g. after a failed initial load) */
+  reloadTracks: () => void
   /** Lazily initialises the Web Audio EQ chain on the shared <audio> element (call once on first interaction) */
   ensureAudioChain: () => void
   setEQGains: (bass: number, mid: number, treble: number) => void
@@ -34,6 +38,7 @@ const PlayerContext = createContext<PlayerCtx | null>(null)
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -59,8 +64,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const load = () => fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+      .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false) })
+    load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
+  }, [])
+
+  // When the app becomes visible after being hidden and the last load errored, retry.
+  // This covers the iOS PWA case where the app wakes up before the network is ready.
+  useEffect(() => {
+    if (!loadError) return
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      setLoading(true)
+      setLoadError(false)
+      fetch('/api/tracks')
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+        .then((d: Track[]) => { setTracks(d); setLoading(false) })
+        .catch(() => { setLoading(false); setLoadError(true) })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [loadError])
+
+  const reloadTracks = useCallback(() => {
+    setLoading(true)
+    setLoadError(false)
+    const load = () => fetch('/api/tracks')
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false) })
-    load().catch(() => setTimeout(() => load().catch(() => setLoading(false)), 3000))
+    load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
   }, [])
 
   // Wire up audio event listeners
@@ -310,6 +341,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     <PlayerContext.Provider value={{
       tracks,
       loading,
+      loadError,
       currentTrack,
       isPlaying,
       currentTime,
@@ -325,6 +357,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       next,
       prev,
+      reloadTracks,
       ensureAudioChain,
       setEQGains,
     }}>
