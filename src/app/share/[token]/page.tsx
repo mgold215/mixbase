@@ -1,21 +1,17 @@
+import type { Metadata } from 'next'
 import { supabaseAdmin } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
 import ShareClient from './ShareClient'
 
 export const dynamic = 'force-dynamic'
 
-export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = await params
-
-  const { data: version, error } = await supabaseAdmin
+async function getShareData(token: string) {
+  const { data: version } = await supabaseAdmin
     .from('mb_versions')
     .select('*, mb_projects(*)')
     .eq('share_token', token)
     .single()
-
-  if (error || !version) notFound()
-
-  // Get the artist name from the project owner's profile
+  if (!version) return null
   let artistName = 'mixBASE'
   if (version.mb_projects?.user_id) {
     const { data: profile } = await supabaseAdmin
@@ -23,10 +19,34 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
       .select('artist_name, display_name')
       .eq('id', version.mb_projects.user_id)
       .single()
-    if (profile) {
-      artistName = profile.artist_name || profile.display_name || 'mixBASE'
-    }
+    if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
   }
+  return { version, artistName }
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
+  const { token } = await params
+  const data = await getShareData(token)
+  if (!data) return { title: 'mixBASE' }
+  const { version, artistName } = data
+  const projectTitle = (version.mb_projects as { title?: string } | null)?.title ?? 'Untitled'
+  const artworkUrl = (version.mb_projects as { artwork_url?: string } | null)?.artwork_url
+  return {
+    title: `${projectTitle} — ${artistName} | mixBASE`,
+    description: `Listen to ${projectTitle} by ${artistName} on mixBASE`,
+    openGraph: {
+      title: `${projectTitle} — ${artistName}`,
+      description: `Listen to ${projectTitle} by ${artistName} on mixBASE`,
+      ...(artworkUrl ? { images: [artworkUrl] } : {}),
+    },
+  }
+}
+
+export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params
+  const data = await getShareData(token)
+  if (!data) notFound()
+  const { version, artistName } = data
 
   return (
     <div className="min-h-screen bg-black flex flex-col">
