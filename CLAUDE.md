@@ -3,6 +3,7 @@
 # Automation First — READ FIRST
 - **Never tell the user "you'll need to do this manually."** If a task can be done in a browser, use Chrome DevTools / Playwright MCP to do it. This includes service dashboards, account setup, DNS config, App Store Connect, etc.
 - **Never say you can't do something** without first attempting it with the tools available.
+- **USE THE CLI BEFORE ATTEMPTING TO USE CHROME PLUGINS**
 
 # Git Workflow — READ FIRST
 - **Default branch:** `main` (production). **Development branch:** `tst` (staging).
