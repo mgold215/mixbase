@@ -98,12 +98,9 @@ export default function CollectionClient({ collection, initialItems, allProjects
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
   function onDragStart(e: React.DragEvent, idx: number) {
-    // Only allow drag to start from the grip handle
-    if (!(e.target as HTMLElement).closest('[data-drag-handle]')) {
-      e.preventDefault()
-      return
-    }
     dragItem.current = idx
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', '')
   }
 
   function onDragEnter(idx: number) {
