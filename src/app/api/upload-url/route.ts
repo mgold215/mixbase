@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { uploadLimiter } from '@/lib/rate-limit'
 
 // POST /api/upload-url
 // Returns a short-lived Supabase signed upload URL so the client can PUT the file
 // directly to Supabase Storage — completely bypassing Railway's HTTP proxy and its
 // request body limits, which were causing long audio files to be silently truncated.
 export async function POST(req: NextRequest) {
+  const userId = req.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const limit = uploadLimiter.check(userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many upload requests. Try again later.' }, { status: 429 })
+  }
+
   const { filename, contentType } = await req.json()
   if (!filename) return NextResponse.json({ error: 'filename required' }, { status: 400 })
 

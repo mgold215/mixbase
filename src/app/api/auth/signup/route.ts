@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { signupLimiter, ipKey } from '@/lib/rate-limit'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -10,6 +11,11 @@ const COOKIE_OPTS = {
 
 // POST /api/auth/signup — create a new account and sign in immediately
 export async function POST(request: NextRequest) {
+  const limit = signupLimiter.check(ipKey(request))
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many signup attempts. Try again later.' }, { status: 429 })
+  }
+
   const { email, password, artist_name } = await request.json()
 
   if (!email || !password) {

@@ -11,6 +11,12 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params
+
+  // Block path-traversal attempts — reject any segment containing '..' or null bytes
+  if (path.some(segment => segment.includes('..') || segment.includes('\0'))) {
+    return new NextResponse(null, { status: 400 })
+  }
+
   const supabaseUrl = `${SUPABASE_URL}/storage/v1/object/public/mf-audio/${path.join('/')}`
 
   const range = req.headers.get('range')

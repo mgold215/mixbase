@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { feedbackLimiter, ipKey } from '@/lib/rate-limit'
 
 // POST /api/feedback — submit feedback for a shared version (public route)
 export async function POST(request: NextRequest) {
+  const limit = feedbackLimiter.check(ipKey(request))
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+  }
+
   const { version_id, reviewer_name, rating, comment } = await request.json()
 
   if (!version_id || !comment?.trim()) {

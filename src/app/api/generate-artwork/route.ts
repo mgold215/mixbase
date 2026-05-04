@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage } from '@/lib/tier'
+import { artworkLimiter } from '@/lib/rate-limit'
 import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -79,6 +80,12 @@ async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Bu
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  // Rate limit: 10/hour per user (defence-in-depth alongside the monthly tier gate)
+  const limit = artworkLimiter.check(userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429 })
+  }
 
   const supabase = await createClient()
   const { project_id, prompt, model = 'flux', title = '' } = await request.json()
