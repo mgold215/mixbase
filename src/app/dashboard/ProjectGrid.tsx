@@ -58,37 +58,29 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
 
   return (
     <div>
-      {/* Filter tabs — only show when there are multiple distinct stages */}
+      {/* Filter chips — only show when there are multiple distinct stages */}
       {showFilters && (
-        <div
-          className="flex gap-0 mb-5 overflow-x-auto"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
+        <div className="flex gap-1 mb-5 overflow-x-auto flex-wrap">
           <button
             onClick={() => setActiveFilter('all')}
             style={{
               fontFamily: 'var(--font-mono), monospace',
-              fontSize: 11,
-              letterSpacing: '0.04em',
+              fontSize: 10,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
               color: activeFilter === 'all' ? 'var(--text)' : 'var(--text-muted)',
-              background: 'transparent',
+              background: activeFilter === 'all' ? 'rgba(255,255,255,0.07)' : 'transparent',
               border: 'none',
-              borderBottom: activeFilter === 'all' ? '2px solid var(--text)' : '2px solid transparent',
-              marginBottom: -1,
-              padding: '6px 14px 8px',
+              borderRadius: 999,
+              padding: '4px 12px',
               cursor: 'pointer',
-              transition: 'color 0.15s, border-color 0.15s',
+              transition: 'all 0.15s',
               whiteSpace: 'nowrap',
               flexShrink: 0,
             }}
           >
             All
-            <span style={{
-              marginLeft: 6,
-              fontSize: 9,
-              opacity: activeFilter === 'all' ? 0.5 : 0.35,
-              fontVariantNumeric: 'tabular-nums',
-            }}>{projects.length}</span>
+            <span style={{ marginLeft: 5, opacity: 0.45, fontSize: 9 }}>{projects.length}</span>
           </button>
 
           {FILTER_ORDER.filter(s => availableStages.has(s)).map(stage => {
@@ -101,27 +93,22 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
                 onClick={() => setActiveFilter(stage)}
                 style={{
                   fontFamily: 'var(--font-mono), monospace',
-                  fontSize: 11,
-                  letterSpacing: '0.04em',
+                  fontSize: 10,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
                   color: isActive ? color : 'var(--text-muted)',
-                  background: 'transparent',
+                  background: isActive ? `${color}18` : 'transparent',
                   border: 'none',
-                  borderBottom: isActive ? `2px solid ${color}` : '2px solid transparent',
-                  marginBottom: -1,
-                  padding: '6px 14px 8px',
+                  borderRadius: 999,
+                  padding: '4px 12px',
                   cursor: 'pointer',
-                  transition: 'color 0.15s, border-color 0.15s',
+                  transition: 'all 0.15s',
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                 }}
               >
                 {STAGE_LABEL[stage]}
-                <span style={{
-                  marginLeft: 6,
-                  fontSize: 9,
-                  opacity: isActive ? 0.6 : 0.35,
-                  fontVariantNumeric: 'tabular-nums',
-                }}>{count}</span>
+                <span style={{ marginLeft: 5, opacity: isActive ? 0.55 : 0.4, fontSize: 9 }}>{count}</span>
               </button>
             )
           })}
