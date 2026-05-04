@@ -4,13 +4,18 @@ export function applyMediaSession(title: string, artworkUrl: string | null, play
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
   const artwork = artworkUrl
     ? [
-        { src: artworkUrl, sizes: '96x96',   type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '256x256',  type: 'image/jpeg' },
-        { src: artworkUrl, sizes: '512x512',  type: 'image/jpeg' },
+        { src: artworkUrl, sizes: '96x96' },
+        { src: artworkUrl, sizes: '256x256' },
+        { src: artworkUrl, sizes: '512x512' },
       ]
     : []
   try {
-    navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'mixBase', artwork })
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'mixBase',
+      artist: 'mixBase',
+      album: 'mixBase',
+      artwork,
+    })
     navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
   } catch { /* ignore */ }
 }
