@@ -107,6 +107,9 @@ class AudioService: ObservableObject {
         player?.play()
         isPlaying = true
 
+        // Push metadata to Control Center / Bluetooth AVRCP immediately
+        updateNowPlayingInfo()
+
         // Set up a periodic observer that fires ~2 times per second
         // to update the currentTime property (which drives the seek bar UI)
         addTimeObserver()
@@ -120,7 +123,7 @@ class AudioService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Observe the player item's duration once it's loaded
+        // Observe the player item's duration once it's loaded — update Now Playing when we have it
         playerItem.publisher(for: \.duration)
             .compactMap { duration -> Double? in
                 // Convert CMTime to seconds; ignore if not a valid number
@@ -128,19 +131,25 @@ class AudioService: ObservableObject {
                 return seconds.isNaN ? nil : seconds
             }
             .receive(on: DispatchQueue.main)
-            .assign(to: &$duration)
+            .sink { [weak self] seconds in
+                self?.duration = seconds
+                self?.updateNowPlayingInfo()
+            }
+            .store(in: &cancellables)
     }
 
     /// Pause playback
     func pause() {
         player?.pause()
         isPlaying = false
+        updateNowPlayingInfo()
     }
 
     /// Resume playback from where it was paused
     func resume() {
         player?.play()
         isPlaying = true
+        updateNowPlayingInfo()
     }
 
     /// Toggle between playing and paused
@@ -189,28 +198,43 @@ class AudioService: ObservableObject {
         }
     }
 
-    // MARK: - Lock Screen / Control Center Info
+    // MARK: - Lock Screen / Control Center / Bluetooth AVRCP
 
-    /// Set the track info that appears on the lock screen and Control Center
-    /// (title, artist, duration, playback position)
-    func setupNowPlayingInfo(project: Project, version: Version) {
+    /// Refresh MPNowPlayingInfoCenter with current track metadata.
+    /// Called on play, pause, resume, and when duration loads.
+    private func updateNowPlayingInfo() {
         var info = [String: Any]()
 
-        // Track title: show project name + version label (or number)
-        let versionLabel = version.label ?? "v\(version.versionNumber)"
-        info[MPMediaItemPropertyTitle] = "\(project.title) - \(versionLabel)"
-
-        // Artist name (using "mixBase" as a placeholder)
+        info[MPMediaItemPropertyTitle] = currentTrackName ?? "mixBase"
         info[MPMediaItemPropertyArtist] = "mixBase"
+        info[MPMediaItemPropertyAlbumTitle] = "mixBase"
 
-        // Duration and current position
-        info[MPMediaItemPropertyPlaybackDuration] = duration
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-
-        // Playback rate (1.0 = normal speed when playing, 0.0 when paused)
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+
+        // Fetch artwork asynchronously and slot it in when ready
+        if let urlString = currentArtworkUrl, let url = URL(string: urlString) {
+            fetchArtwork(from: url)
+        }
+    }
+
+    /// Download the artwork image and add it to the active Now Playing info
+    private func fetchArtwork(from url: URL) {
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                guard self != nil else { return }
+                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+            }
+        }.resume()
     }
 
     /// Register handlers for the lock screen play/pause/skip buttons
@@ -260,6 +284,11 @@ class AudioService: ObservableObject {
             let seconds = CMTimeGetSeconds(time)
             if !seconds.isNaN {
                 self?.currentTime = seconds
+                // Keep Now Playing position current so Tesla / Control Center scrubber is accurate
+                var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = seconds
+                nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
             }
         }
     }

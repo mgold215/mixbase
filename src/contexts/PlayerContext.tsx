@@ -61,6 +61,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // fires, so we can't rely on audio.paused to know if we should restore playback.
   const playIntentRef = useRef(false)
 
+  // Stable ref to the most recent media session metadata so onPlay (a [] effect) can
+  // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
+  // set before play() resolves.
+  const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null } | null>(null)
+
   // Load tracks once on mount — retry once after 3 s on failure
   useEffect(() => {
     const load = () => fetch('/api/tracks')
@@ -103,7 +108,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
     const onPlay = () => {
       setIsPlaying(true)
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
+      // Re-apply full metadata after iOS activates the audio session — iOS sometimes
+      // ignores metadata set before play() resolves, so we push it again on the play event.
+      if (mediaMetaRef.current) {
+        applyMediaSession(mediaMetaRef.current.title, mediaMetaRef.current.artworkUrl, true)
+      } else if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing'
+      }
     }
     const onPause = () => {
       setIsPlaying(false)
@@ -240,6 +251,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentTime(0)
       setDuration(0)
     }
+    mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url }
     applyMediaSession(track.title, track.artwork_url, true)
     audio.volume = volume
     playIntentRef.current = true
@@ -258,6 +270,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentUrl(url)
     setCurrentProjectId(null)
     setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
+    mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null }
     applyMediaSession(title, artworkUrl ?? null, true)
     audio.volume = volume
     playIntentRef.current = true
