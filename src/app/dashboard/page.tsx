@@ -45,13 +45,6 @@ export default async function DashboardPage() {
 
   const activity = activityRes.data ?? []
 
-  const stats = {
-    total: projects.length,
-    wip: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'WIP')).length,
-    finished: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Finished')).length,
-    released: projects.filter(p => p.mb_versions?.some((v: { status: string }) => v.status === 'Released')).length,
-  }
-
   // Pre-compute stage for each project so the client component doesn't need mb_versions
   const projectRows = projects.map(p => {
     type V = { id: string; status: string; created_at: string; audio_url: string | null; version_number: number }
@@ -79,15 +72,7 @@ export default async function DashboardPage() {
 
           {/* Header */}
           <div className="flex items-center justify-between mb-2">
-            <div>
-              <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>Projects</h1>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                {stats.total} total
-                {stats.wip > 0 && <> · <span style={{ color: 'var(--accent)' }}>{stats.wip} WIP</span></>}
-                {stats.finished > 0 && <> · {stats.finished} finished</>}
-                {stats.released > 0 && <> · {stats.released} released</>}
-              </p>
-            </div>
+            <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>Projects</h1>
             <Link
               href="/projects/new"
               className="flex items-center gap-1.5 text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"

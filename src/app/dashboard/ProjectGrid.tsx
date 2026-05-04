@@ -58,52 +58,70 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
 
   return (
     <div>
-      {/* Filter pills — only show when there are multiple distinct stages */}
+      {/* Filter tabs — only show when there are multiple distinct stages */}
       {showFilters && (
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div
+          className="flex gap-0 mb-5 overflow-x-auto"
+          style={{ borderBottom: '1px solid var(--border)' }}
+        >
           <button
             onClick={() => setActiveFilter('all')}
             style={{
               fontFamily: 'var(--font-mono), monospace',
-              fontSize: 10,
+              fontSize: 11,
               letterSpacing: '0.04em',
               color: activeFilter === 'all' ? 'var(--text)' : 'var(--text-muted)',
-              background: activeFilter === 'all' ? 'var(--surface-2)' : 'transparent',
-              border: `1px solid ${activeFilter === 'all' ? 'var(--border)' : 'var(--border)'}`,
-              borderRadius: 4,
-              padding: '3px 10px',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: activeFilter === 'all' ? '2px solid var(--text)' : '2px solid transparent',
+              marginBottom: -1,
+              padding: '6px 14px 8px',
               cursor: 'pointer',
-              transition: 'all 0.15s',
+              transition: 'color 0.15s, border-color 0.15s',
               whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}
           >
             All
-            <span style={{ opacity: 0.5, marginLeft: 4 }}>{projects.length}</span>
+            <span style={{
+              marginLeft: 6,
+              fontSize: 9,
+              opacity: activeFilter === 'all' ? 0.5 : 0.35,
+              fontVariantNumeric: 'tabular-nums',
+            }}>{projects.length}</span>
           </button>
 
           {FILTER_ORDER.filter(s => availableStages.has(s)).map(stage => {
             const isActive = activeFilter === stage
             const count = projects.filter(p => p.stage === stage).length
+            const color = STAGE_COLOR[stage]
             return (
               <button
                 key={stage}
                 onClick={() => setActiveFilter(stage)}
                 style={{
                   fontFamily: 'var(--font-mono), monospace',
-                  fontSize: 10,
+                  fontSize: 11,
                   letterSpacing: '0.04em',
-                  color: isActive ? STAGE_COLOR[stage] : 'var(--text-muted)',
-                  background: isActive ? STAGE_BG[stage] : 'transparent',
-                  border: `1px solid ${isActive ? STAGE_COLOR[stage] + '66' : 'var(--border)'}`,
-                  borderRadius: 4,
-                  padding: '3px 10px',
+                  color: isActive ? color : 'var(--text-muted)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: isActive ? `2px solid ${color}` : '2px solid transparent',
+                  marginBottom: -1,
+                  padding: '6px 14px 8px',
                   cursor: 'pointer',
-                  transition: 'all 0.15s',
+                  transition: 'color 0.15s, border-color 0.15s',
                   whiteSpace: 'nowrap',
+                  flexShrink: 0,
                 }}
               >
                 {STAGE_LABEL[stage]}
-                <span style={{ opacity: 0.5, marginLeft: 4 }}>{count}</span>
+                <span style={{
+                  marginLeft: 6,
+                  fontSize: 9,
+                  opacity: isActive ? 0.6 : 0.35,
+                  fontVariantNumeric: 'tabular-nums',
+                }}>{count}</span>
               </button>
             )
           })}
