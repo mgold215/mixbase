@@ -3,18 +3,39 @@
 import type { MouseEvent } from 'react'
 import { Play, Pause } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { audioProxyUrl } from '@/lib/supabase'
 
-export default function DashPlayButton({ projectId }: { projectId: string }) {
-  const { playTrack, pause, currentTrack, isPlaying } = usePlayer()
-  const isActive = currentTrack?.project_id === projectId
+type Props = {
+  projectId: string
+  audioUrl: string | null
+  title: string
+  artworkUrl: string | null
+}
+
+export default function DashPlayButton({ projectId, audioUrl, title, artworkUrl }: Props) {
+  const { playTrack, playUrl, pause, currentTrack, currentUrl, isPlaying, tracks } = usePlayer()
+
+  const proxyUrl = audioUrl ? audioProxyUrl(audioUrl) : null
+
+  // Active when playing via playTrack (project ID match) OR via playUrl (URL match)
+  const isActive =
+    currentTrack?.project_id === projectId ||
+    (proxyUrl !== null && currentUrl === proxyUrl)
 
   function handleClick(e: MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
+    if (!proxyUrl) return
     if (isActive && isPlaying) {
       pause()
-    } else {
+      return
+    }
+    // Use playTrack when tracks are loaded (better integration: next/prev, player page highlight)
+    // Fall back to playUrl when tracks haven't loaded yet — button always works
+    if (tracks.length > 0) {
       playTrack(projectId)
+    } else {
+      playUrl(proxyUrl, title, 'mixBase', artworkUrl ?? undefined)
     }
   }
 

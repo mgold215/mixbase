@@ -46,6 +46,7 @@ export type ProjectRow = {
   bpm: number | null
   stage: WorkflowStage
   hasRelease: boolean
+  audioUrl: string | null
 }
 
 export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
@@ -243,7 +244,14 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                {stage !== 'start' && <DashPlayButton projectId={project.id} />}
+                {stage !== 'start' && (
+                  <DashPlayButton
+                    projectId={project.id}
+                    audioUrl={project.audioUrl}
+                    title={project.title}
+                    artworkUrl={project.artwork_url}
+                  />
+                )}
                 <div className="hidden sm:block">
                   <AddToPipelineButton
                     projectId={project.id}

@@ -27,7 +27,7 @@ export default async function DashboardPage() {
 
   const projectsRes = await supabaseAdmin
     .from('mb_projects')
-    .select('*, mb_versions(id, status, created_at), mb_releases(id)')
+    .select('*, mb_versions(id, status, created_at, audio_url, version_number), mb_releases(id)')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
@@ -53,15 +53,23 @@ export default async function DashboardPage() {
   }
 
   // Pre-compute stage for each project so the client component doesn't need mb_versions
-  const projectRows = projects.map(p => ({
-    id: p.id,
-    title: p.title,
-    artwork_url: p.artwork_url,
-    genre: p.genre,
-    bpm: p.bpm,
-    stage: getWorkflowStage(p.mb_versions ?? [], p.mb_releases ?? []) as WorkflowStage,
-    hasRelease: (p.mb_releases ?? []).length > 0,
-  }))
+  const projectRows = projects.map(p => {
+    type V = { id: string; status: string; created_at: string; audio_url: string | null; version_number: number }
+    const versions: V[] = p.mb_versions ?? []
+    const latestAudio = [...versions]
+      .filter(v => v.audio_url)
+      .sort((a, b) => b.version_number - a.version_number)[0]
+    return {
+      id: p.id,
+      title: p.title,
+      artwork_url: p.artwork_url ?? null,
+      genre: p.genre,
+      bpm: p.bpm,
+      stage: getWorkflowStage(versions, p.mb_releases ?? []) as WorkflowStage,
+      hasRelease: (p.mb_releases ?? []).length > 0,
+      audioUrl: latestAudio?.audio_url ?? null,
+    }
+  })
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-page)' }}>
