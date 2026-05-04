@@ -16,17 +16,26 @@ export async function POST(req: NextRequest) {
   }
 
   const { filename, contentType } = await req.json()
-  if (!filename) return NextResponse.json({ error: 'filename required' }, { status: 400 })
+  if (!filename || typeof filename !== 'string') {
+    return NextResponse.json({ error: 'filename required' }, { status: 400 })
+  }
+
+  // Sanitize: reject path traversal and null bytes; strip leading slashes
+  const normalized = filename.replace(/\\/g, '/')
+  if (normalized.split('/').some(seg => seg === '..' || seg === '.' || seg.includes('\0'))) {
+    return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
+  }
+  const safeFilename = normalized.replace(/^\/+/, '')
 
   const { data, error } = await supabaseAdmin.storage
     .from('mf-audio')
-    .createSignedUploadUrl(filename, { upsert: true })
+    .createSignedUploadUrl(safeFilename, { upsert: true })
 
   if (error || !data) {
     return NextResponse.json({ error: error?.message ?? 'Failed to create signed URL' }, { status: 500 })
   }
 
-  const { data: pub } = supabaseAdmin.storage.from('mf-audio').getPublicUrl(filename)
+  const { data: pub } = supabaseAdmin.storage.from('mf-audio').getPublicUrl(safeFilename)
 
   return NextResponse.json({
     signedUrl: data.signedUrl,

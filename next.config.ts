@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const securityHeaders = [
   // Prevent the app being embedded in iframes — stops clickjacking
@@ -49,4 +50,15 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG ?? 'moodmixformat',
+  project: process.env.SENTRY_PROJECT ?? 'mixbase',
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  // Upload source maps during CI builds only — keeps local builds fast
+  silent: !process.env.CI,
+
+  // Route Sentry requests through /monitoring to avoid ad-blockers
+  tunnelRoute: '/monitoring',
+
+});
