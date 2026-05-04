@@ -101,8 +101,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!audio) return
     const onTimeUpdate = () => setCurrentTime(audio.currentTime)
     const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
-    const onPlay = () => setIsPlaying(true)
-    const onPause = () => setIsPlaying(false)
+    const onPlay = () => {
+      setIsPlaying(true)
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
+    }
+    const onPause = () => {
+      setIsPlaying(false)
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+    }
     const onEnded = () => { playIntentRef.current = false; setIsPlaying(false) }
     audio.addEventListener('timeupdate', onTimeUpdate)
     audio.addEventListener('durationchange', onDurationChange)
@@ -136,15 +142,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     return null
   }, [currentProjectId, customMeta, currentUrl, tracks])
-
-  // ── Media Session API — fallback effect ─────────────────────────────────────
-  // applyMediaSession() is called synchronously before audio.play() for iOS
-  // (iOS reads metadata at play() time, before this effect fires). This effect
-  // handles track changes that happen without a direct play() call (e.g. autoplay).
-  useEffect(() => {
-    if (!currentTrack) return
-    applyMediaSession(currentTrack.title, currentTrack.artwork_url, isPlaying)
-  }, [currentTrack, isPlaying])
 
   useEffect(() => {
     if (!('mediaSession' in navigator) || duration <= 0) return
@@ -280,7 +277,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (isPlaying) {
       playIntentRef.current = false
       audio.pause()
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     } else {
       if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true)
       playIntentRef.current = true
