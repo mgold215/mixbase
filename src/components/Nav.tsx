@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle } from 'lucide-react'
@@ -11,6 +12,14 @@ export default function Nav() {
   const router = useRouter()
   const { currentTrack } = usePlayer()
   const { theme, toggleTheme } = useTheme()
+  const [artistName, setArtistName] = useState('')
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.artist_name) setArtistName(d.artist_name) })
+      .catch(() => {})
+  }, [])
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -45,7 +54,15 @@ export default function Nav() {
   return (
     <>
       {/* ── Top nav bar (always visible, links hidden on mobile) ── */}
-      <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 90%, transparent)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
+      <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 90%, transparent)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', position: 'relative' }}>
+        {artistName && (
+          <span
+            className="absolute left-1/2 -translate-x-1/2 font-[family-name:var(--font-jost)] text-[13px] font-semibold tracking-[0.08em] uppercase pointer-events-none"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            {artistName}
+          </span>
+        )}
         {/* Logo */}
         <Link href="/dashboard" className="mr-6 flex items-baseline gap-0.5 font-[family-name:var(--font-jost)]">
           <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span><span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
