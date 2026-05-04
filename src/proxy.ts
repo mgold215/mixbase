@@ -22,6 +22,7 @@ const PUBLIC_PATHS = [
   '/api/health',
   '/api/db-init',
   '/api/tus',
+  '/api/stripe/webhook', // Stripe posts without user cookies; signature-verified internally
 ]
 
 const COOKIE_OPTS = {

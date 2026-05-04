@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { checkAndIncrementUsage } from '@/lib/tier'
 import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -76,11 +77,23 @@ async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Bu
 
 // POST /api/generate-artwork
 export async function POST(request: NextRequest) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
   const supabase = await createClient()
   const { project_id, prompt, model = 'flux', title = '' } = await request.json()
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
+  }
+
+  // Gate: check monthly artwork limit before hitting Replicate
+  const gate = await checkAndIncrementUsage(userId, 'artwork')
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },
+      { status: 403 }
+    )
   }
 
   const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
