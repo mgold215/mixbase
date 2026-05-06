@@ -36,7 +36,6 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     })
     const data = await res.json()
     if (res.ok && data.artwork_url) {
-      setPreviewUrl(data.artwork_url)
       onArtworkUpdated(data.artwork_url)
     } else {
       setError(data.error ?? 'Finalize failed. Try again.')
