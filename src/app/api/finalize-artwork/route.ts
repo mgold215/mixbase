@@ -150,17 +150,21 @@ async function buildFinalized(
   const cy = Math.round(params.textCenterY * height)
 
   // Typography sizing — tuned to match reference image
-  const artistSize = Math.round(width * 0.030)
-  const ruleW      = Math.round(width * 0.28)
-  const ruleH      = Math.max(1, Math.round(width * 0.0015))
-  const ruleGap    = Math.round(width * 0.018)
-  const titleSize  = Math.round(width * 0.064)
-  const totalH     = artistSize + ruleGap + ruleH + ruleGap + titleSize
+  const artistSize          = Math.round(width * 0.030)
+  const artistLetterSpacing = Math.round(artistSize * 0.22)
+  const titleSize           = Math.round(width * 0.064)
+  const titleLetterSpacing  = Math.round(titleSize  * 0.06)
+  const ruleH               = Math.max(1, Math.round(width * 0.0015))
+  // Rule width matches artist name text width (chars × avg glyph width + tracking)
+  const ruleW               = Math.round(artist.length * (artistSize * 0.62 + artistLetterSpacing))
+  const gapAbove            = Math.round(width * 0.014)  // artist → rule
+  const gapBelow            = Math.round(width * 0.006)  // rule → title (tight)
+  const totalH              = artistSize + gapAbove + ruleH + gapBelow + titleSize
 
   // Vertical positions
   const artistY = Math.round(cy - totalH / 2 + artistSize)
-  const ruleY   = Math.round(artistY + ruleGap)
-  const titleY  = Math.round(ruleY + ruleH + ruleGap + titleSize)
+  const ruleY   = Math.round(artistY + gapAbove)
+  const titleY  = Math.round(ruleY + ruleH + gapBelow + titleSize)
 
   // Feathered dark gradient band behind text
   const overlayH  = Math.round(totalH * 4.5)
@@ -186,8 +190,6 @@ async function buildFinalized(
 
   // Text SVG — real Futura Bold embedded as @font-face data URI (works in librsvg/Sharp)
   const ruleX = Math.round(cx - ruleW / 2)
-  const artistLetterSpacing = Math.round(artistSize * 0.22)
-  const titleLetterSpacing  = Math.round(titleSize  * 0.06)
 
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
