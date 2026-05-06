@@ -17,8 +17,9 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
   const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(currentArtwork ?? null)
   const [error, setError] = useState('')
+
+  const previewUrl = currentArtwork ?? null
 
   async function handleGenerate() {
     setGenerating(true)
@@ -32,7 +33,6 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
 
     const data = await res.json()
     if (res.ok && data.artwork_url) {
-      setPreviewUrl(data.artwork_url)
       onArtworkUpdated(data.artwork_url)
       setMode('idle')
     } else {
@@ -59,10 +59,13 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ artwork_url: data.url }),
       })
-      setPreviewUrl(data.url)
       onArtworkUpdated(data.url)
       setMode('idle')
+    } else {
+      setError(data.error ?? 'Upload failed. Try again.')
     }
+    // Reset the file input so re-uploading the same filename still triggers onChange
+    e.target.value = ''
   }
 
   return (
