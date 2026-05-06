@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type ChangeEvent } from 'react'
-import { Sparkles, Upload, X } from 'lucide-react'
+import { Sparkles, Upload, X, Wand2 } from 'lucide-react'
 import Image from 'next/image'
 
 type Props = {
@@ -19,6 +19,31 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
   const [generating, setGenerating] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(currentArtwork ?? null)
   const [error, setError] = useState('')
+  const [finalizing, setFinalizing] = useState(false)
+
+  async function handleFinalize() {
+    if (!previewUrl) return
+    setFinalizing(true)
+    setError('')
+    const res = await fetch('/api/finalize-artwork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        artwork_url: previewUrl,
+        title: projectTitle,
+        artist: 'moodmixformat',
+      }),
+    })
+    const data = await res.json()
+    if (res.ok && data.artwork_url) {
+      setPreviewUrl(data.artwork_url)
+      onArtworkUpdated(data.artwork_url)
+    } else {
+      setError(data.error ?? 'Finalize failed. Try again.')
+    }
+    setFinalizing(false)
+  }
 
   async function handleGenerate() {
     setGenerating(true)
@@ -101,6 +126,27 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
         </div>
       )}
 
+
+      {/* Finalize button */}
+      {mode === 'idle' && previewUrl && (
+        <button
+          onClick={handleFinalize}
+          disabled={finalizing}
+          className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#0f0f0f] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2dd4bf]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {finalizing ? (
+            <>
+              <span className="w-3 h-3 border border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
+              Finalizing...
+            </>
+          ) : (
+            <>
+              <Wand2 size={13} />
+              Finalize Artwork
+            </>
+          )}
+        </button>
+      )}
       {/* Generate mode */}
       {mode === 'generate' && (
         <div className="space-y-2">
