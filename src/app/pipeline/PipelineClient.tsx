@@ -117,15 +117,37 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     }
   }
 
+  async function updateReleaseDate(releaseId: string, value: string) {
+    const next = value || null
+    setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, release_date: next } : r))
+    await fetch(`/api/releases/${releaseId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ release_date: next }),
+    })
+  }
+
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release?')) return
     await fetch(`/api/releases/${id}`, { method: 'DELETE' })
     setReleases(prev => prev.filter(r => r.id !== id))
   }
 
-  // Separate upcoming vs past
-  const upcoming = releases.filter(r => !r.release_date || new Date(r.release_date) >= new Date())
-  const past = releases.filter(r => r.release_date && new Date(r.release_date) < new Date())
+  // Separate upcoming vs past, then order each group chronologically.
+  // Upcoming: nearest first, undated releases at the end.
+  // Past: most recent first, so the latest release sits at the top.
+  const todayMs = new Date().setHours(0, 0, 0, 0)
+  const upcoming = releases
+    .filter(r => !r.release_date || new Date(r.release_date).getTime() >= todayMs)
+    .sort((a, b) => {
+      if (!a.release_date && !b.release_date) return 0
+      if (!a.release_date) return 1
+      if (!b.release_date) return -1
+      return new Date(a.release_date).getTime() - new Date(b.release_date).getTime()
+    })
+  const past = releases
+    .filter(r => r.release_date && new Date(r.release_date).getTime() < todayMs)
+    .sort((a, b) => new Date(b.release_date!).getTime() - new Date(a.release_date!).getTime())
 
   function ReleaseCard({ release }: { release: ReleaseWithProject }) {
     const isExpanded = expandedId === release.id
@@ -199,6 +221,21 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         {/* Expanded */}
         {isExpanded && (
           <div className="px-4 pb-5 pt-2 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
+            {/* Release date — editable inline so undated releases can be scheduled later */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Release Date</label>
+              <input
+                type="date"
+                value={release.release_date ?? ''}
+                onChange={e => updateReleaseDate(release.id, e.target.value)}
+                className="rounded-xl px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+              />
+              {!release.release_date && (
+                <span className="text-xs text-[var(--text-muted)]">Set a date to organize this release</span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-6">
               {/* Pre-Launch checklist */}
               <div>
