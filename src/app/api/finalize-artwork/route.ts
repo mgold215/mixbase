@@ -2,18 +2,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 export const maxDuration = 60
 
+// Load real Futura Bold at startup (extracted from macOS system TTC, licensed per-device)
+const FUTURA_BOLD = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf')).toString('base64')
+
 // ── Claude Vision: analyze image for text placement AND filter params ────────
 interface VisionParams {
-  textCenterY: number      // 0–1 relative to image height
-  overlayOpacity: number   // 0–0.55
-  contrast: number         // 1.0–1.25
-  saturation: number       // 0.85–1.35
-  brightness: number       // 0.88–1.10
+  textCenterY: number     // 0–1 relative to image height
+  overlayOpacity: number  // 0–0.55
+  contrast: number        // 0.90–1.25
+  saturation: number      // 0.75–1.35
+  brightness: number      // 0.85–1.10
   sharpen: boolean
-  vignette: number         // 0–0.6
+  vignette: number        // 0–0.6
 }
 
 async function analyzeImage(imageUrl: string): Promise<VisionParams> {
@@ -53,10 +58,10 @@ async function analyzeImage(imageUrl: string): Promise<VisionParams> {
    - textCenterY: 0.10–0.30 for a top zone, 0.72–0.90 for a bottom zone
    - overlayOpacity: 0.0 (image already dark/clear) → 0.50 (busy or bright background)
 
-2. IMAGE GRADING — suggest a subtle professional color grade to make the image feel polished and finished, like it went through a high-end editing pass. Be tasteful and restrained:
-   - contrast: 1.00–1.22 (boost contrast for flat/hazy images, leave near 1.0 if already punchy)
-   - saturation: 0.88–1.30 (desaturate moody/muted looks, boost vivid/colorful images slightly)
-   - brightness: 0.90–1.08 (darken overexposed images, lift underexposed ones)
+2. IMAGE GRADING — suggest a subtle professional color grade to make the image feel polished and finished. Be tasteful and restrained:
+   - contrast: 1.00–1.22 (boost for flat/hazy images, leave near 1.0 if already punchy)
+   - saturation: 0.88–1.30 (desaturate moody looks, boost vivid images slightly)
+   - brightness: 0.90–1.08 (darken overexposed, lift underexposed)
    - sharpen: true if the image looks soft or rendered; false if already crisp
    - vignette: 0.0–0.55 (dark corner vignette strength; higher for busy/bright compositions)
 
@@ -73,7 +78,6 @@ Reply with ONLY a JSON object, no markdown, no explanation:
     const raw = (data.content?.[0]?.text ?? '').trim()
       .replace(/^```json?\s*/i, '').replace(/\s*```$/i, '')
     const p = JSON.parse(raw)
-
     return {
       textCenterY:    Math.min(0.90, Math.max(0.10, Number(p.textCenterY)    || defaults.textCenterY)),
       overlayOpacity: Math.min(0.55, Math.max(0.00, Number(p.overlayOpacity) || defaults.overlayOpacity)),
@@ -97,20 +101,13 @@ async function filterImage(
   const { width = 1024, height = 1024 } = await sharp(imageBuffer).metadata()
 
   let pipeline = sharp(imageBuffer)
-    // Brightness + saturation via modulate
-    .modulate({
-      brightness: params.brightness,
-      saturation: params.saturation,
-    })
-    // Contrast via linear: output = input * a + b, where b = -(128*(a-1)) normalises midpoint
+    .modulate({ brightness: params.brightness, saturation: params.saturation })
     .linear(params.contrast, -(128 * (params.contrast - 1)))
 
-  // Sharpening pass
   if (params.sharpen) {
     pipeline = pipeline.sharpen({ sigma: 0.8 })
   }
 
-  // Vignette: radial gradient from corners, composited as a multiply/over layer
   if (params.vignette > 0.01) {
     const vop = params.vignette.toFixed(3)
     const vignetteSvg = Buffer.from(
@@ -135,14 +132,14 @@ async function filterImage(
   return pipeline.toBuffer()
 }
 
-// ── Composite artist + title text onto image ─────────────────────────────────
+// ── Composite artist + title in real Futura Bold onto filtered image ─────────
 async function buildFinalized(
   imageBuffer: Buffer,
   title: string,
   artist: string,
   params: VisionParams
 ): Promise<Buffer> {
-  // Step 1: apply image grading
+  // Step 1: apply professional image grading
   const gradedBuffer = await filterImage(imageBuffer, params)
 
   // Step 2: composite text overlay onto graded image
@@ -152,17 +149,21 @@ async function buildFinalized(
   const cx = Math.round(width * 0.5)
   const cy = Math.round(params.textCenterY * height)
 
-  // Typography — proportions tuned to match reference image
-  const artistSize = Math.round(width * 0.031)
+  // Typography sizing — tuned to match reference image
+  const artistSize = Math.round(width * 0.030)
+  const ruleW      = Math.round(width * 0.28)
+  const ruleH      = Math.max(1, Math.round(width * 0.0015))
+  const ruleGap    = Math.round(width * 0.018)
   const titleSize  = Math.round(width * 0.064)
-  const lineGap    = Math.round(width * 0.014)
-  const totalH     = artistSize + lineGap + titleSize
+  const totalH     = artistSize + ruleGap + ruleH + ruleGap + titleSize
 
+  // Vertical positions
   const artistY = Math.round(cy - totalH / 2 + artistSize)
-  const titleY  = Math.round(artistY + lineGap + titleSize)
+  const ruleY   = Math.round(artistY + ruleGap)
+  const titleY  = Math.round(ruleY + ruleH + ruleGap + titleSize)
 
-  // Feathered dark gradient band for readability
-  const overlayH  = Math.round(totalH * 4)
+  // Feathered dark gradient band behind text
+  const overlayH  = Math.round(totalH * 4.5)
   const overlayY  = Math.max(0, Math.round(cy - overlayH / 2))
   const overlayHc = Math.min(overlayH, height - overlayY)
   const op = params.overlayOpacity.toFixed(2)
@@ -183,20 +184,30 @@ async function buildFinalized(
       )
     : null
 
-  // Text layers — Futura font stack
-  const artistLetterSpacing = Math.round(artistSize * 0.20)
-  const titleLetterSpacing  = Math.round(titleSize  * 0.05)
+  // Text SVG — real Futura Bold embedded as @font-face data URI (works in librsvg/Sharp)
+  const ruleX = Math.round(cx - ruleW / 2)
+  const artistLetterSpacing = Math.round(artistSize * 0.22)
+  const titleLetterSpacing  = Math.round(titleSize  * 0.06)
 
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
+        <style>
+          @font-face {
+            font-family: 'Futura';
+            font-weight: bold;
+            src: url('data:font/truetype;base64,${FUTURA_BOLD}') format('truetype');
+          }
+        </style>
         <filter id="sh">
           <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000" flood-opacity="0.8"/>
         </filter>
       </defs>
+
+      <!-- Artist name: Futura Bold, small, wide tracking -->
       <text
         x="${cx}" y="${artistY}"
-        font-family="'Futura','Century Gothic','Trebuchet MS','Gill Sans',sans-serif"
+        font-family="Futura"
         font-size="${artistSize}"
         font-weight="bold"
         fill="white"
@@ -205,9 +216,20 @@ async function buildFinalized(
         letter-spacing="${artistLetterSpacing}"
         filter="url(#sh)"
       >${artist.toLowerCase()}</text>
+
+      <!-- Horizontal rule between artist and title -->
+      <rect
+        x="${ruleX}" y="${ruleY}"
+        width="${ruleW}" height="${ruleH}"
+        fill="white"
+        fill-opacity="0.75"
+        filter="url(#sh)"
+      />
+
+      <!-- Track title: Futura Bold, large, ALL CAPS -->
       <text
         x="${cx}" y="${titleY}"
-        font-family="'Futura','Century Gothic','Trebuchet MS','Gill Sans',sans-serif"
+        font-family="Futura"
         font-size="${titleSize}"
         font-weight="bold"
         fill="white"
@@ -225,7 +247,7 @@ async function buildFinalized(
   return img.composite(layers).jpeg({ quality: 94 }).toBuffer()
 }
 
-// ── POST /api/finalize-artwork ───────────────────────────────────────────────
+// ── POST /api/finalize-artwork ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -247,7 +269,7 @@ export async function POST(request: NextRequest) {
   const params = await analyzeImage(artwork_url)
   console.log('[finalize-artwork] Vision params:', JSON.stringify(params))
 
-  // 3. Apply filtering + render text overlay
+  // 3. Apply professional filtering + render Futura Bold text overlay
   const finalBuffer = await buildFinalized(imageBuffer, title, artist || 'moodmixformat', params)
 
   // 4. Upload to Supabase
