@@ -198,7 +198,7 @@ async function buildFinalized(
         x="${cx}" y="${artistY}"
         font-family="'Futura','Century Gothic','Trebuchet MS','Gill Sans',sans-serif"
         font-size="${artistSize}"
-        font-weight="500"
+        font-weight="bold"
         fill="white"
         fill-opacity="0.90"
         text-anchor="middle"
