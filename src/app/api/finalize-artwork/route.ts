@@ -4,8 +4,8 @@ import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import pkg from 'opentype.js'
-const { parse: parseFont } = pkg as any
+// @ts-expect-error opentype.js ships no type declarations
+import { parse as parseFont } from 'opentype.js'
 
 export const maxDuration = 60
 
