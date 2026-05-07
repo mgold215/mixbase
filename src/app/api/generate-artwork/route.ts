@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage } from '@/lib/tier'
 import { artworkLimiter } from '@/lib/rate-limit'
-import sharp from 'sharp'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
 export const maxDuration = 120
@@ -29,53 +28,6 @@ async function pollPrediction(predictionUrl: string, token: string): Promise<str
   return null
 }
 
-async function stampArtwork(imageBuffer: ArrayBuffer, title: string): Promise<Buffer> {
-  const img = sharp(Buffer.from(imageBuffer))
-  const { width = 1024, height = 1024 } = await img.metadata()
-
-  const label = 'moodmixformat'
-  const titleText = title.toUpperCase()
-
-  const fontSize = Math.round(width * 0.055)
-  const smallSize = Math.round(width * 0.032)
-  const pad = Math.round(width * 0.045)
-
-  // SVG overlay: title top-left, label bottom-left
-  const svg = `
-    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="shadow">
-          <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.7"/>
-        </filter>
-      </defs>
-      <text
-        x="${pad}" y="${pad + fontSize}"
-        font-family="'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif"
-        font-size="${fontSize}"
-        font-weight="bold"
-        fill="white"
-        filter="url(#shadow)"
-        letter-spacing="2"
-      >${titleText}</text>
-      <text
-        x="${pad}" y="${height - pad}"
-        font-family="'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif"
-        font-size="${smallSize}"
-        font-weight="bold"
-        fill="white"
-        fill-opacity="0.85"
-        filter="url(#shadow)"
-        letter-spacing="1"
-      >${label}</text>
-    </svg>
-  `
-
-  return img
-    .composite([{ input: Buffer.from(svg), blend: 'over' }])
-    .jpeg({ quality: 92 })
-    .toBuffer()
-}
-
 // POST /api/generate-artwork
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
@@ -88,7 +40,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { project_id, prompt, model = 'flux', title = '' } = await request.json()
+  const { project_id, prompt, model = 'flux' } = await request.json()
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
@@ -148,20 +100,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `No image returned (status: ${prediction.status ?? 'unknown'})` }, { status: 500 })
   }
 
-  // Download generated image
+  // Download generated image — save raw bytes, no stamping. Replicate's
+  // pixels are exactly what the user paid for; any text overlay belongs in
+  // /api/finalize-artwork, not here. Preserving raw bytes also means Finalize
+  // never has to deal with text already burned into the source.
   const imageRes = await fetch(outputUrl)
   if (!imageRes.ok) {
     return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })
   }
-  const imageBuffer = await imageRes.arrayBuffer()
+  const imageBytes = Buffer.from(await imageRes.arrayBuffer())
+  const contentType = imageRes.headers.get('content-type') ?? 'image/jpeg'
+  const extension = contentType.includes('webp') ? 'webp'
+    : contentType.includes('png') ? 'png'
+    : 'jpg'
 
-  // Stamp with title + moodmixformat branding
-  const stamped = await stampArtwork(imageBuffer, title || prompt.split(',')[0].trim())
-
-  const filename = `${project_id}/ai-${Date.now()}.jpg`
+  const filename = `${project_id}/ai-${Date.now()}.${extension}`
   const { data: uploadData, error: uploadError } = await supabase.storage
     .from('mf-artwork')
-    .upload(filename, stamped, { contentType: 'image/jpeg', upsert: false })
+    .upload(filename, imageBytes, { contentType, upsert: false })
 
   if (uploadError) {
     console.error('[generate-artwork] Supabase upload error:', uploadError.message)
