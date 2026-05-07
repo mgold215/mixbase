@@ -9,10 +9,16 @@ type Props = {
   projectTitle: string
   genre?: string | null
   currentArtwork?: string | null
+  currentFinalized?: string | null
   onArtworkUpdated: (url: string) => void
+  onFinalizedUpdated: (url: string | null) => void
 }
 
-export default function ArtworkGenerator({ projectId, projectTitle, genre, currentArtwork, onArtworkUpdated }: Props) {
+export default function ArtworkGenerator({
+  projectId, projectTitle, genre,
+  currentArtwork, currentFinalized,
+  onArtworkUpdated, onFinalizedUpdated,
+}: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
   const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
@@ -20,10 +26,15 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
 
-  const previewUrl = currentArtwork ?? null
+  // Source artwork (Generate / Upload result) — what the renderer reads.
+  const sourceUrl = currentArtwork ?? null
+  // Preview prefers the finalized render when present so the user sees the
+  // exported version. If they Generate or Upload again the parent clears
+  // currentFinalized and we fall back to the new source.
+  const previewUrl = currentFinalized ?? sourceUrl
 
   async function handleFinalize() {
-    if (!previewUrl) return
+    if (!sourceUrl) return
     setFinalizing(true)
     setError('')
     const res = await fetch('/api/finalize-artwork', {
@@ -31,14 +42,12 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: projectId,
-        artwork_url: previewUrl,
-        title: projectTitle,
         artist: 'moodmixformat',
       }),
     })
     const data = await res.json()
-    if (res.ok && data.artwork_url) {
-      onArtworkUpdated(data.artwork_url)
+    if (res.ok && data.finalized_artwork_url) {
+      onFinalizedUpdated(data.finalized_artwork_url)
     } else {
       setError(data.error ?? 'Finalize failed. Try again.')
     }
@@ -58,6 +67,8 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     const data = await res.json()
     if (res.ok && data.artwork_url) {
       onArtworkUpdated(data.artwork_url)
+      // Server cleared finalized_artwork_url; mirror that in client state.
+      onFinalizedUpdated(null)
       setMode('idle')
     } else {
       setError(data.error ?? 'Generation failed. Try again.')
@@ -77,13 +88,14 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
     const data = await res.json()
     if (res.ok && data.url) {
-      // Persist artwork URL to DB
+      // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
       await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ artwork_url: data.url }),
       })
       onArtworkUpdated(data.url)
+      onFinalizedUpdated(null)
       setMode('idle')
     } else {
       setError(data.error ?? 'Upload failed. Try again.')

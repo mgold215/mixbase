@@ -39,6 +39,10 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     if (key in body) patch[key] = body[key]
   }
 
+  // Replacing the source artwork invalidates any prior finalized render —
+  // null it out so the next Finalize starts from the new source.
+  if ('artwork_url' in body) patch.finalized_artwork_url = null
+
   const { data, error } = await supabaseAdmin
     .from('mb_projects')
     .update(patch)

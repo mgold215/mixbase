@@ -172,9 +172,15 @@ export async function POST(request: NextRequest) {
   const artworkUrl = urlData.publicUrl
 
   if (project_id) {
+    // New source artwork — drop any prior finalized render so the next Finalize
+    // pass starts from this fresh source instead of stacking onto stale output.
     const { error: dbError } = await supabaseAdmin
       .from('mb_projects')
-      .update({ artwork_url: artworkUrl, updated_at: new Date().toISOString() })
+      .update({
+        artwork_url: artworkUrl,
+        finalized_artwork_url: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', project_id)
     if (dbError) {
       console.error('[generate-artwork] DB update error:', dbError.message)

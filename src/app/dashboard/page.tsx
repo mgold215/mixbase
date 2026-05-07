@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
 import Link from 'next/link'
 import Nav from '@/components/Nav'
@@ -55,7 +55,7 @@ export default async function DashboardPage() {
     return {
       id: p.id,
       title: p.title,
-      artwork_url: p.artwork_url ?? null,
+      artwork_url: displayArtworkUrl(p),
       genre: p.genre,
       bpm: p.bpm,
       stage: getWorkflowStage(versions, p.mb_releases ?? []) as WorkflowStage,

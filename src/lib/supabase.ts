@@ -19,12 +19,23 @@ export type Project = {
   id: string
   title: string
   artwork_url: string | null
+  finalized_artwork_url: string | null
   genre: string | null
   bpm: number | null
   key_signature: string | null
   created_at: string
   updated_at: string
   user_id: string
+}
+
+// Listings, tiles, share pages, etc. should show the finalized render (with
+// artist/title overlay) when present, falling back to the raw source. Project
+// page reads both fields directly to drive its preview + Finalize button.
+export function displayArtworkUrl(p: {
+  artwork_url?: string | null
+  finalized_artwork_url?: string | null
+}): string | null {
+  return p.finalized_artwork_url ?? p.artwork_url ?? null
 }
 
 export type Version = {

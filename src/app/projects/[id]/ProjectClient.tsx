@@ -38,6 +38,7 @@ type Props = {
 export default function ProjectClient({ project, initialVersions, initialRelease }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
+  const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
   const [expandedVersion, setExpandedVersion] = useState<string | null>(versions[0]?.id ?? null)
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -311,7 +312,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               projectTitle={project.title}
               genre={project.genre}
               currentArtwork={artwork}
+              currentFinalized={finalizedArtwork}
               onArtworkUpdated={setArtwork}
+              onFinalizedUpdated={setFinalizedArtwork}
             />
           </div>
 
@@ -746,7 +749,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               projectTitle={project.title}
               genre={project.genre}
               currentArtwork={artwork}
+              currentFinalized={finalizedArtwork}
               onArtworkUpdated={setArtwork}
+              onFinalizedUpdated={setFinalizedArtwork}
             />
           </div>
         )}

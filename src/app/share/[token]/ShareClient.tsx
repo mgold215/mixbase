@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react'
 import Image from 'next/image'
 import { Play, Pause, Music, MessageSquare, ChevronDown } from 'lucide-react'
-import { audioProxyUrl, formatDuration } from '@/lib/supabase'
+import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import FeedbackForm from '@/components/FeedbackForm'
@@ -24,7 +24,7 @@ export default function ShareClient({ version }: Props) {
   const [showFeedback, setShowFeedback] = useState(false)
 
   const project = version.mb_projects
-  const artworkUrl: string | null = project?.artwork_url ?? null
+  const artworkUrl: string | null = displayArtworkUrl(project ?? {})
   const title: string = project?.title ?? 'Untitled'
   const audioUrl = audioProxyUrl(version.audio_url)
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`

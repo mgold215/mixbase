@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -16,7 +16,10 @@ type CollectionRow = {
   type: string
   cover_url: string | null
   updated_at: string
-  mb_collection_items: { position: number; mb_projects: { artwork_url: string | null } | null }[]
+  mb_collection_items: {
+    position: number
+    mb_projects: { artwork_url: string | null; finalized_artwork_url: string | null } | null
+  }[]
 }
 
 export default async function CollectionsPage() {
@@ -24,7 +27,7 @@ export default async function CollectionsPage() {
 
   const { data } = await supabaseAdmin
     .from('mb_collections')
-    .select('id, title, type, cover_url, updated_at, mb_collection_items(position, mb_projects(artwork_url))')
+    .select('id, title, type, cover_url, updated_at, mb_collection_items(position, mb_projects(artwork_url, finalized_artwork_url))')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
@@ -49,7 +52,7 @@ export default async function CollectionsPage() {
             {collections.map(c => {
               const artworks = [...c.mb_collection_items]
                 .sort((a, b) => a.position - b.position)
-                .map(i => i.mb_projects?.artwork_url)
+                .map(i => (i.mb_projects ? displayArtworkUrl(i.mb_projects) : null))
                 .filter((u): u is string => !!u)
                 .slice(0, 4)
 

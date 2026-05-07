@@ -4,9 +4,11 @@ import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
-import type { Release } from '@/lib/supabase'
+import { displayArtworkUrl, type Release } from '@/lib/supabase'
 
-type ReleaseWithProject = Release & { mb_projects: { title: string; artwork_url: string | null } | null }
+type ReleaseWithProject = Release & {
+  mb_projects: { title: string; artwork_url: string | null; finalized_artwork_url: string | null } | null
+}
 type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string }
 
 type Props = {
@@ -94,7 +96,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
       })
       const data = await res.json()
       if (res.ok) {
-        setReleases(prev => [{ ...data, mb_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null } : null }, ...prev])
+        setReleases(prev => [{ ...data, mb_projects: projects.find(p => p.id === data.project_id) ? { title: projects.find(p => p.id === data.project_id)!.title, artwork_url: null, finalized_artwork_url: null } : null }, ...prev])
         setShowForm(false)
         setForm({ title: '', release_date: '', project_id: '', final_version_id: '', genre: '', label: '', isrc: '', notes: '' })
       } else {
@@ -163,8 +165,8 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         >
           {/* Artwork / icon */}
           <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-[var(--surface-2)] flex-shrink-0">
-            {release.mb_projects?.artwork_url ? (
-              <Image src={release.mb_projects.artwork_url} alt={release.title} fill className="object-cover" />
+            {displayArtworkUrl(release.mb_projects ?? {}) ? (
+              <Image src={displayArtworkUrl(release.mb_projects ?? {})!} alt={release.title} fill className="object-cover" />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)] text-lg">♪</div>
             )}

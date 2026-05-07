@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
 import ShareClient from './ShareClient'
 
@@ -30,7 +30,9 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   if (!data) return { title: 'mixBASE' }
   const { version, artistName } = data
   const projectTitle = (version.mb_projects as { title?: string } | null)?.title ?? 'Untitled'
-  const artworkUrl = (version.mb_projects as { artwork_url?: string } | null)?.artwork_url
+  const artworkUrl = displayArtworkUrl(
+    (version.mb_projects ?? {}) as { artwork_url?: string | null; finalized_artwork_url?: string | null }
+  )
   return {
     title: `${projectTitle} — ${artistName} | mixBASE`,
     description: `Listen to ${projectTitle} by ${artistName} on mixBASE`,

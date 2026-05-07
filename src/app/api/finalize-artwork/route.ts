@@ -194,10 +194,11 @@ async function buildFinalized(
   const cx = Math.round(width * 0.5)
   const cy = Math.round(params.textCenterY * height)
 
-  // Typography
-  const artistSize = Math.round(width * 0.023)
+  // Typography — sized as a fraction of cover width so it scales for any output.
+  // Album-cover overlays usually run 3–4% of width for the title; keep below that.
+  const artistSize = Math.round(width * 0.018)
   const artistLS   = Math.round(artistSize * 0.22)
-  const titleSize  = Math.round(width * 0.048)
+  const titleSize  = Math.round(width * 0.038)
   const titleLS    = Math.round(titleSize  * 0.06)
   const ruleH      = Math.max(1, Math.round(width * 0.0015))
   const gapAbove   = Math.round(width * 0.014)
@@ -258,31 +259,53 @@ async function buildFinalized(
 }
 
 // ── POST /api/finalize-artwork ──────────────────────────────────────────────
+// Always renders against the immutable source (mb_projects.artwork_url) and
+// writes the rendered output to mb_projects.finalized_artwork_url. The client
+// only needs to send { project_id } — passing artwork_url from the browser
+// would let stale finalized URLs feed back into the renderer.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { project_id, artwork_url, title, artist } = await request.json()
-  if (!artwork_url || !title) {
-    return NextResponse.json({ error: 'artwork_url and title are required' }, { status: 400 })
+  const { project_id, artist } = await request.json()
+  if (!project_id) {
+    return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+  }
+
+  // 1. Load source from project record — server is source of truth
+  const { data: project, error: projectError } = await supabaseAdmin
+    .from('mb_projects')
+    .select('artwork_url, title')
+    .eq('id', project_id)
+    .eq('user_id', userId)
+    .single()
+
+  if (projectError || !project) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+  if (!project.artwork_url) {
+    return NextResponse.json({ error: 'Generate or upload artwork before finalizing' }, { status: 400 })
+  }
+  if (!project.title) {
+    return NextResponse.json({ error: 'Project title is required to finalize' }, { status: 400 })
   }
 
   const supabase = await createClient()
 
-  // 1. Download source artwork
-  const imageRes = await fetch(artwork_url)
+  // 2. Download source artwork
+  const imageRes = await fetch(project.artwork_url)
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
-  // 2. Claude Vision: placement + color grade params
+  // 3. Claude Vision: placement + color grade params
   console.log('[finalize-artwork] Analyzing image...')
-  const params = await analyzeImage(artwork_url)
+  const params = await analyzeImage(project.artwork_url)
   console.log('[finalize-artwork] params:', JSON.stringify(params))
 
-  // 3. Filter + render text
-  const finalBuffer = await buildFinalized(imageBuffer, title, artist || 'moodmixformat', params)
+  // 4. Filter + render text
+  const finalBuffer = await buildFinalized(imageBuffer, project.title, artist || 'moodmixformat', params)
 
-  // 4. Upload
+  // 5. Upload rendered output
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
   const { data: uploadData, error: uploadError } = await supabase.storage
     .from('mf-artwork')
@@ -296,13 +319,11 @@ export async function POST(request: NextRequest) {
   const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const finalUrl = urlData.publicUrl
 
-  // 5. Update project record
-  if (project_id) {
-    await supabaseAdmin
-      .from('mb_projects')
-      .update({ artwork_url: finalUrl, updated_at: new Date().toISOString() })
-      .eq('id', project_id)
-  }
+  // 6. Persist finalized URL — leaves artwork_url (the source) untouched
+  await supabaseAdmin
+    .from('mb_projects')
+    .update({ finalized_artwork_url: finalUrl, updated_at: new Date().toISOString() })
+    .eq('id', project_id)
 
-  return NextResponse.json({ artwork_url: finalUrl, params })
+  return NextResponse.json({ finalized_artwork_url: finalUrl, params })
 }
