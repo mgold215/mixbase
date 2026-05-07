@@ -29,6 +29,13 @@ const securityHeaders = [
 ]
 
 const nextConfig: NextConfig = {
+  // Bundle Futura Bold .ttf into the finalize-artwork route's deploy.
+  // Next's tracer doesn't follow dynamic readFileSync(process.cwd()...), so without
+  // this the font goes missing on Railway and the route throws at module load.
+  outputFileTracingIncludes: {
+    '/api/finalize-artwork': ['./src/fonts/**/*.ttf'],
+  },
+
   // Apply security headers to every response
   async headers() {
     return [

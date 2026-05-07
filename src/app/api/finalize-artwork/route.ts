@@ -4,15 +4,17 @@ import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-// @ts-expect-error opentype.js ships no type declarations
 import { parse as parseFont } from 'opentype.js'
 
+export const runtime = 'nodejs'
 export const maxDuration = 60
 
-// Load real Futura Bold at startup — parsed by opentype.js for glyph-path rendering
-// This converts text to SVG <path> elements directly, no font rendering engine needed
+// Load real Futura Bold at startup — parsed by opentype.js for glyph-path rendering.
+// Slice the underlying ArrayBuffer to the file's exact byte range — Node's Buffer
+// pool can otherwise hand opentype.js trailing bytes that aren't part of the font.
 const FONT_BUF = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf'))
-const FONT = parseFont(FONT_BUF.buffer)
+const FONT_AB  = FONT_BUF.buffer.slice(FONT_BUF.byteOffset, FONT_BUF.byteOffset + FONT_BUF.byteLength)
+const FONT = parseFont(FONT_AB)
 
 // ── Convert text → SVG path data via opentype.js ─────────────────────────────
 // Returns the combined SVG path markup and total text width
@@ -30,10 +32,10 @@ function textToSvgPaths(
 
   // Measure total width for centering
   let totalW = 0
-  for (let i = 0; i < glyphs.length; i++) {
-    totalW += glyphs[i].advanceWidth * scale
+  glyphs.forEach((g, i) => {
+    totalW += (g.advanceWidth ?? 0) * scale
     if (i < glyphs.length - 1) totalW += letterSpacing
-  }
+  })
 
   let x = cx - totalW / 2
   const parts: string[] = []
@@ -47,7 +49,7 @@ function textToSvgPaths(
         `<path d="${dMatch[1]}" fill="${fill}" fill-opacity="${fillOpacity}"/>`
       )
     }
-    x += g.advanceWidth * scale + letterSpacing
+    x += (g.advanceWidth ?? 0) * scale + letterSpacing
   }
 
   return { markup: parts.join('\n'), totalW }

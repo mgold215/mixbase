@@ -20,6 +20,8 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
 
+  const previewUrl = currentArtwork ?? null
+
   async function handleFinalize() {
     if (!previewUrl) return
     setFinalizing(true)
@@ -42,8 +44,6 @@ export default function ArtworkGenerator({ projectId, projectTitle, genre, curre
     }
     setFinalizing(false)
   }
-
-  const previewUrl = currentArtwork ?? null
 
   async function handleGenerate() {
     setGenerating(true)
