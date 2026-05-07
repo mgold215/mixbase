@@ -2,25 +2,66 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
-import { Resvg } from '@resvg/resvg-js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
+import pkg from 'opentype.js'
+const { parse: parseFont } = pkg as any
 
 export const maxDuration = 60
 
-// Load real Futura Bold at startup (extracted from macOS system TTC, licensed per-device)
-// Stored as Buffer for resvg-js fontBuffers API — works cross-platform including Railway Linux
-const FUTURA_BOLD_BUF = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf'))
+// Load real Futura Bold at startup — parsed by opentype.js for glyph-path rendering
+// This converts text to SVG <path> elements directly, no font rendering engine needed
+const FONT_BUF = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf'))
+const FONT = parseFont(FONT_BUF.buffer)
+
+// ── Convert text → SVG path data via opentype.js ─────────────────────────────
+// Returns the combined SVG path markup and total text width
+function textToSvgPaths(
+  text: string,
+  cx: number,
+  baselineY: number,
+  fontSize: number,
+  letterSpacing: number,
+  fill: string,
+  fillOpacity: number
+): { markup: string; totalW: number } {
+  const glyphs = FONT.stringToGlyphs(text)
+  const scale  = fontSize / FONT.unitsPerEm
+
+  // Measure total width for centering
+  let totalW = 0
+  for (let i = 0; i < glyphs.length; i++) {
+    totalW += glyphs[i].advanceWidth * scale
+    if (i < glyphs.length - 1) totalW += letterSpacing
+  }
+
+  let x = cx - totalW / 2
+  const parts: string[] = []
+  for (const g of glyphs) {
+    const pathObj = g.getPath(x, baselineY, fontSize)
+    const svgEl   = pathObj.toSVG(1) as string
+    // toSVG returns a full <path .../> element — extract d attribute and rebuild with fill
+    const dMatch  = svgEl.match(/d="([^"]+)"/)
+    if (dMatch) {
+      parts.push(
+        `<path d="${dMatch[1]}" fill="${fill}" fill-opacity="${fillOpacity}"/>`
+      )
+    }
+    x += g.advanceWidth * scale + letterSpacing
+  }
+
+  return { markup: parts.join('\n'), totalW }
+}
 
 // ── Claude Vision: analyze image for text placement AND filter params ────────
 interface VisionParams {
-  textCenterY: number     // 0–1 relative to image height
-  overlayOpacity: number  // 0–0.55
-  contrast: number        // 0.90–1.25
-  saturation: number      // 0.75–1.35
-  brightness: number      // 0.85–1.10
+  textCenterY: number
+  overlayOpacity: number
+  contrast: number
+  saturation: number
+  brightness: number
   sharpen: boolean
-  vignette: number        // 0–0.6
+  vignette: number
 }
 
 async function analyzeImage(imageUrl: string): Promise<VisionParams> {
@@ -56,18 +97,18 @@ async function analyzeImage(imageUrl: string): Promise<VisionParams> {
               type: 'text',
               text: `Analyze this album artwork image and return a JSON object with two groups of parameters.
 
-1. TEXT PLACEMENT — find the largest area of low-detail, low-contrast space (sky, fog, dark background, negative space) where white text would be most readable without obscuring the main subject:
-   - textCenterY: 0.10–0.30 for a top zone, 0.72–0.90 for a bottom zone
-   - overlayOpacity: 0.0 (image already dark/clear) → 0.50 (busy or bright background)
+1. TEXT PLACEMENT — find the largest area of low-detail, low-contrast space where white text would be most readable without obscuring the main subject:
+   - textCenterY: 0.10–0.30 for top zone, 0.72–0.90 for bottom zone
+   - overlayOpacity: 0.0 (already dark/clear) → 0.50 (busy/bright background)
 
-2. IMAGE GRADING — suggest a subtle professional color grade to make the image feel polished and finished. Be tasteful and restrained:
-   - contrast: 1.00–1.22 (boost for flat/hazy images, leave near 1.0 if already punchy)
-   - saturation: 0.88–1.30 (desaturate moody looks, boost vivid images slightly)
-   - brightness: 0.90–1.08 (darken overexposed, lift underexposed)
-   - sharpen: true if the image looks soft or rendered; false if already crisp
-   - vignette: 0.0–0.55 (dark corner vignette strength; higher for busy/bright compositions)
+2. IMAGE GRADING — subtle professional color grade, tasteful and restrained:
+   - contrast: 1.00–1.22
+   - saturation: 0.88–1.30
+   - brightness: 0.90–1.08
+   - sharpen: true if soft/rendered; false if already crisp
+   - vignette: 0.0–0.55
 
-Reply with ONLY a JSON object, no markdown, no explanation:
+Reply with ONLY a JSON object, no markdown:
 {"textCenterY":0.18,"overlayOpacity":0.25,"contrast":1.10,"saturation":1.15,"brightness":0.97,"sharpen":true,"vignette":0.32}`,
             },
           ],
@@ -115,8 +156,9 @@ async function filterImage(
     const vignetteSvg = Buffer.from(
       `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <radialGradient id="vg" cx="50%" cy="50%" r="75%" gradientUnits="userSpaceOnUse"
-            gradientTransform="translate(${width / 2},${height / 2}) scale(${width / 2},${height / 2}) translate(-1,-1)">
+          <radialGradient id="vg" cx="50%" cy="50%" r="75%"
+            gradientTransform="translate(${width / 2},${height / 2}) scale(${width / 2},${height / 2}) translate(-1,-1)"
+            gradientUnits="userSpaceOnUse">
             <stop offset="0%"   stop-color="#000" stop-opacity="0"/>
             <stop offset="65%"  stop-color="#000" stop-opacity="0"/>
             <stop offset="100%" stop-color="#000" stop-opacity="${vop}"/>
@@ -126,49 +168,54 @@ async function filterImage(
       </svg>`
     )
     const filtered = await pipeline.toBuffer()
-    return sharp(filtered)
-      .composite([{ input: vignetteSvg, blend: 'over' }])
-      .toBuffer()
+    return sharp(filtered).composite([{ input: vignetteSvg, blend: 'over' }]).toBuffer()
   }
 
   return pipeline.toBuffer()
 }
 
-// ── Composite artist + title in real Futura Bold onto filtered image ─────────
+// ── Build finalized artwork: filter → overlay → text paths ──────────────────
 async function buildFinalized(
   imageBuffer: Buffer,
   title: string,
   artist: string,
   params: VisionParams
 ): Promise<Buffer> {
-  // Step 1: apply professional image grading
+  // Step 1: grade the image
   const gradedBuffer = await filterImage(imageBuffer, params)
 
-  // Step 2: composite text overlay onto graded image
   const img = sharp(gradedBuffer)
   const { width = 1024, height = 1024 } = await img.metadata()
 
   const cx = Math.round(width * 0.5)
   const cy = Math.round(params.textCenterY * height)
 
-  // Typography sizing — tuned to match reference image
-  const artistSize          = Math.round(width * 0.030)
-  const artistLetterSpacing = Math.round(artistSize * 0.22)
-  const titleSize           = Math.round(width * 0.064)
-  const titleLetterSpacing  = Math.round(titleSize  * 0.06)
-  const ruleH               = Math.max(1, Math.round(width * 0.0015))
-  // Rule width matches artist name text width (chars × avg glyph width + tracking)
-  const ruleW               = Math.round(artist.length * (artistSize * 0.62 + artistLetterSpacing))
-  const gapAbove            = Math.round(width * 0.014)  // artist → rule
-  const gapBelow            = Math.round(width * 0.006)  // rule → title (tight)
-  const totalH              = artistSize + gapAbove + ruleH + gapBelow + titleSize
+  // Typography
+  const artistSize = Math.round(width * 0.030)
+  const artistLS   = Math.round(artistSize * 0.22)
+  const titleSize  = Math.round(width * 0.064)
+  const titleLS    = Math.round(titleSize  * 0.06)
+  const ruleH      = Math.max(1, Math.round(width * 0.0015))
+  const gapAbove   = Math.round(width * 0.014)
+  const gapBelow   = Math.round(width * 0.006)
+  const totalH     = artistSize + gapAbove + ruleH + gapBelow + titleSize
 
-  // Vertical positions
   const artistY = Math.round(cy - totalH / 2 + artistSize)
   const ruleY   = Math.round(artistY + gapAbove)
   const titleY  = Math.round(ruleY + ruleH + gapBelow + titleSize)
 
-  // Feathered dark gradient band behind text
+  // Build glyph paths
+  const { markup: artistPaths, totalW: artistW } = textToSvgPaths(
+    artist.toLowerCase(), cx, artistY, artistSize, artistLS, 'white', 0.90
+  )
+  const { markup: titlePaths } = textToSvgPaths(
+    title.toUpperCase(), cx, titleY, titleSize, titleLS, 'white', 1.00
+  )
+
+  const ruleW = Math.round(artistW)
+  const ruleX = Math.round(cx - ruleW / 2)
+
+  // Feathered overlay behind text
   const overlayH  = Math.round(totalH * 4.5)
   const overlayY  = Math.max(0, Math.round(cy - overlayH / 2))
   const overlayHc = Math.min(overlayH, height - overlayY)
@@ -190,53 +237,18 @@ async function buildFinalized(
       )
     : null
 
-  // Text SVG rendered via resvg-js (Rust engine) which loads fonts directly from Buffer
-  // This works cross-platform including Railway Linux, unlike Sharp's librsvg @font-face
-  const ruleX = Math.round(cx - ruleW / 2)
-
-  const textSvgStr =
+  // Text layer: pure vector paths — no font engine needed, works everywhere
+  const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <!-- Artist name: Futura Bold, small, wide tracking -->
-      <text
-        x="${cx}" y="${artistY}"
-        font-family="Futura"
-        font-size="${artistSize}"
-        font-weight="bold"
-        fill="white"
-        fill-opacity="0.90"
-        text-anchor="middle"
-        letter-spacing="${artistLetterSpacing}"
-      >${artist.toLowerCase()}</text>
-
-      <!-- Horizontal rule between artist and title -->
-      <rect
-        x="${ruleX}" y="${ruleY}"
-        width="${ruleW}" height="${ruleH}"
-        fill="white"
-        fill-opacity="0.75"
-      />
-
-      <!-- Track title: Futura Bold, large, ALL CAPS -->
-      <text
-        x="${cx}" y="${titleY}"
-        font-family="Futura"
-        font-size="${titleSize}"
-        font-weight="bold"
-        fill="white"
-        text-anchor="middle"
-        letter-spacing="${titleLetterSpacing}"
-      >${title.toUpperCase()}</text>
+      ${artistPaths}
+      <rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75"/>
+      ${titlePaths}
     </svg>`
-
-  // Render SVG → PNG with resvg, passing the font buffer directly
-  const resvg = new Resvg(textSvgStr, {
-    font: { fontBuffers: [FUTURA_BOLD_BUF] },
-  })
-  const textPng = Buffer.from(resvg.render().asPng())
+  )
 
   const layers: sharp.OverlayOptions[] = []
   if (overlayLayer) layers.push({ input: overlayLayer, blend: 'over' })
-  layers.push({ input: textPng, blend: 'over' })
+  layers.push({ input: textSvg, blend: 'over' })
 
   return img.composite(layers).jpeg({ quality: 94 }).toBuffer()
 }
@@ -258,15 +270,15 @@ export async function POST(request: NextRequest) {
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
-  // 2. Single Claude Vision call: placement + color grade params
-  console.log('[finalize-artwork] Analyzing image with Claude Vision...')
+  // 2. Claude Vision: placement + color grade params
+  console.log('[finalize-artwork] Analyzing image...')
   const params = await analyzeImage(artwork_url)
-  console.log('[finalize-artwork] Vision params:', JSON.stringify(params))
+  console.log('[finalize-artwork] params:', JSON.stringify(params))
 
-  // 3. Apply professional filtering + render Futura Bold text overlay
+  // 3. Filter + render text
   const finalBuffer = await buildFinalized(imageBuffer, title, artist || 'moodmixformat', params)
 
-  // 4. Upload to Supabase
+  // 4. Upload
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
   const { data: uploadData, error: uploadError } = await supabase.storage
     .from('mf-artwork')
