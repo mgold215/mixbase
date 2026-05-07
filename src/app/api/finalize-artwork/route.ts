@@ -69,12 +69,12 @@ interface VisionParams {
 async function analyzeImage(imageUrl: string): Promise<VisionParams> {
   const defaults: VisionParams = {
     textCenterY: 0.18,
-    overlayOpacity: 0.25,
-    contrast: 1.08,
-    saturation: 1.12,
-    brightness: 0.97,
+    overlayOpacity: 0.18,
+    contrast: 1.15,
+    saturation: 1.28,
+    brightness: 1.02,
     sharpen: true,
-    vignette: 0.30,
+    vignette: 0.12,
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -103,15 +103,17 @@ async function analyzeImage(imageUrl: string): Promise<VisionParams> {
    - textCenterY: 0.10–0.30 for top zone, 0.72–0.90 for bottom zone
    - overlayOpacity: 0.0 (already dark/clear) → 0.50 (busy/bright background)
 
-2. IMAGE GRADING — subtle professional color grade, tasteful and restrained:
-   - contrast: 1.00–1.22
-   - saturation: 0.88–1.30
-   - brightness: 0.90–1.08
+2. IMAGE GRADING — vivid, punchy color grade. Push saturation and contrast to make
+   the image pop. DO NOT darken the image — keep brightness ≥ 1.00 unless it's
+   already overexposed. Use vignette sparingly, never as a shortcut to darken:
+   - contrast: 1.08–1.28
+   - saturation: 1.05–1.45
+   - brightness: 0.98–1.10
    - sharpen: true if soft/rendered; false if already crisp
-   - vignette: 0.0–0.55
+   - vignette: 0.0–0.25
 
 Reply with ONLY a JSON object, no markdown:
-{"textCenterY":0.18,"overlayOpacity":0.25,"contrast":1.10,"saturation":1.15,"brightness":0.97,"sharpen":true,"vignette":0.32}`,
+{"textCenterY":0.18,"overlayOpacity":0.18,"contrast":1.18,"saturation":1.30,"brightness":1.03,"sharpen":true,"vignette":0.10}`,
             },
           ],
         }],
@@ -125,12 +127,12 @@ Reply with ONLY a JSON object, no markdown:
     const p = JSON.parse(raw)
     return {
       textCenterY:    Math.min(0.90, Math.max(0.10, Number(p.textCenterY)    || defaults.textCenterY)),
-      overlayOpacity: Math.min(0.55, Math.max(0.00, Number(p.overlayOpacity) || defaults.overlayOpacity)),
-      contrast:       Math.min(1.25, Math.max(0.90, Number(p.contrast)       || defaults.contrast)),
-      saturation:     Math.min(1.35, Math.max(0.75, Number(p.saturation)     || defaults.saturation)),
-      brightness:     Math.min(1.10, Math.max(0.85, Number(p.brightness)     || defaults.brightness)),
+      overlayOpacity: Math.min(0.40, Math.max(0.00, Number(p.overlayOpacity) || defaults.overlayOpacity)),
+      contrast:       Math.min(1.30, Math.max(1.00, Number(p.contrast)       || defaults.contrast)),
+      saturation:     Math.min(1.50, Math.max(1.00, Number(p.saturation)     || defaults.saturation)),
+      brightness:     Math.min(1.12, Math.max(0.95, Number(p.brightness)     || defaults.brightness)),
       sharpen:        p.sharpen !== false,
-      vignette:       Math.min(0.60, Math.max(0.00, Number(p.vignette)       || defaults.vignette)),
+      vignette:       Math.min(0.30, Math.max(0.00, Number(p.vignette)       || defaults.vignette)),
     }
   } catch (err) {
     console.error('[finalize-artwork] Vision error:', err)
@@ -193,9 +195,9 @@ async function buildFinalized(
   const cy = Math.round(params.textCenterY * height)
 
   // Typography
-  const artistSize = Math.round(width * 0.030)
+  const artistSize = Math.round(width * 0.023)
   const artistLS   = Math.round(artistSize * 0.22)
-  const titleSize  = Math.round(width * 0.064)
+  const titleSize  = Math.round(width * 0.048)
   const titleLS    = Math.round(titleSize  * 0.06)
   const ruleH      = Math.max(1, Math.round(width * 0.0015))
   const gapAbove   = Math.round(width * 0.014)
