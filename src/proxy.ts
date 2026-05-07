@@ -28,7 +28,8 @@ const PUBLIC_PATHS = [
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  // 'lax' so the session survives top-level cross-origin entries. See /api/auth.
+  sameSite: 'lax' as const,
   path: '/',
 }
 
@@ -106,8 +107,8 @@ export async function proxy(request: NextRequest) {
       const res = NextResponse.next({ request: { headers: requestHeaders } })
       res.cookies.set('sb-access-token', refreshed.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
       res.cookies.set('sb-refresh-token', refreshed.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
-      res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
-      res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
+      res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+      res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
       return res
     }
 

@@ -67,14 +67,18 @@ interface VisionParams {
 }
 
 async function analyzeImage(imageUrl: string): Promise<VisionParams> {
+  // Defaults are deliberately on the "brighten + saturate, never darken" side.
+  // Overlay + vignette default to 0 — when the text is small (~3.5% of width),
+  // it reads fine over most album covers without any backdrop. Vision opts in
+  // to a small overlay only when the area immediately behind the text is busy.
   const defaults: VisionParams = {
-    textCenterY: 0.18,
-    overlayOpacity: 0.18,
-    contrast: 1.15,
-    saturation: 1.28,
-    brightness: 1.02,
+    textCenterY: 0.85,
+    overlayOpacity: 0.00,
+    contrast: 1.06,
+    saturation: 1.32,
+    brightness: 1.05,
     sharpen: true,
-    vignette: 0.12,
+    vignette: 0.00,
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -103,17 +107,17 @@ async function analyzeImage(imageUrl: string): Promise<VisionParams> {
    - textCenterY: 0.10–0.30 for top zone, 0.72–0.90 for bottom zone
    - overlayOpacity: 0.0 (already dark/clear) → 0.50 (busy/bright background)
 
-2. IMAGE GRADING — vivid, punchy color grade. Push saturation and contrast to make
-   the image pop. DO NOT darken the image — keep brightness ≥ 1.00 unless it's
-   already overexposed. Use vignette sparingly, never as a shortcut to darken:
-   - contrast: 1.08–1.28
-   - saturation: 1.05–1.45
-   - brightness: 0.98–1.10
+2. IMAGE GRADING — push the colors so the cover looks more vibrant than the
+   source. NEVER darken or mute. brightness must stay ≥ 1.00 — the user paid
+   for a render and wants the colors enhanced, not dimmed.
+   - contrast: 1.02–1.12 (gentle — heavy contrast crushes shadows on dark covers)
+   - saturation: 1.15–1.45 (lean high)
+   - brightness: 1.00–1.10 (NEVER below 1.00)
    - sharpen: true if soft/rendered; false if already crisp
-   - vignette: 0.0–0.25
+   - vignette: 0.0 unless the cover absolutely demands edge framing (max 0.15)
 
 Reply with ONLY a JSON object, no markdown:
-{"textCenterY":0.18,"overlayOpacity":0.18,"contrast":1.18,"saturation":1.30,"brightness":1.03,"sharpen":true,"vignette":0.10}`,
+{"textCenterY":0.85,"overlayOpacity":0.00,"contrast":1.06,"saturation":1.32,"brightness":1.05,"sharpen":true,"vignette":0.00}`,
             },
           ],
         }],
@@ -127,12 +131,14 @@ Reply with ONLY a JSON object, no markdown:
     const p = JSON.parse(raw)
     return {
       textCenterY:    Math.min(0.90, Math.max(0.10, Number(p.textCenterY)    || defaults.textCenterY)),
-      overlayOpacity: Math.min(0.40, Math.max(0.00, Number(p.overlayOpacity) || defaults.overlayOpacity)),
-      contrast:       Math.min(1.30, Math.max(1.00, Number(p.contrast)       || defaults.contrast)),
-      saturation:     Math.min(1.50, Math.max(1.00, Number(p.saturation)     || defaults.saturation)),
-      brightness:     Math.min(1.12, Math.max(0.95, Number(p.brightness)     || defaults.brightness)),
+      overlayOpacity: Math.min(0.30, Math.max(0.00, Number(p.overlayOpacity) || defaults.overlayOpacity)),
+      contrast:       Math.min(1.18, Math.max(1.00, Number(p.contrast)       || defaults.contrast)),
+      saturation:     Math.min(1.55, Math.max(1.05, Number(p.saturation)     || defaults.saturation)),
+      // Brightness is hard-floored at 1.00 — Finalize is allowed to brighten,
+      // never to darken. If Vision returns < 1.00 we ignore it.
+      brightness:     Math.min(1.15, Math.max(1.00, Number(p.brightness)     || defaults.brightness)),
       sharpen:        p.sharpen !== false,
-      vignette:       Math.min(0.30, Math.max(0.00, Number(p.vignette)       || defaults.vignette)),
+      vignette:       Math.min(0.20, Math.max(0.00, Number(p.vignette)       || defaults.vignette)),
     }
   } catch (err) {
     console.error('[finalize-artwork] Vision error:', err)
@@ -220,8 +226,10 @@ async function buildFinalized(
   const ruleW = Math.round(artistW)
   const ruleX = Math.round(cx - ruleW / 2)
 
-  // Feathered overlay behind text
-  const overlayH  = Math.round(totalH * 4.5)
+  // Feathered overlay behind text — kept tight to the text block so it never
+  // darkens a meaningful portion of the cover. With small text (~3.5% width)
+  // a 2.2× band gives just enough soft falloff for legibility.
+  const overlayH  = Math.round(totalH * 2.2)
   const overlayY  = Math.max(0, Math.round(cy - overlayH / 2))
   const overlayHc = Math.min(overlayH, height - overlayY)
   const op = params.overlayOpacity.toFixed(2)

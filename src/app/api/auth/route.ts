@@ -5,7 +5,11 @@ import { loginLimiter, ipKey } from '@/lib/rate-limit'
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  // 'lax' (not 'strict') — strict blocks cookies on top-level GETs from any
+  // other origin (Slack/email/Google links, cold-start PWA navigations, etc.),
+  // which made users look logged-out every visit. lax keeps the CSRF guarantees
+  // we actually need and lets the session survive cross-origin entry.
+  sameSite: 'lax' as const,
   path: '/',
 }
 
@@ -33,7 +37,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set('sb-access-token', data.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
   response.cookies.set('sb-refresh-token', data.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   // Non-httpOnly cookies — readable by client JS
-  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
   return response
 }

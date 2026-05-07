@@ -4,7 +4,9 @@ import { supabaseAdmin } from '@/lib/supabase'
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  // 'lax' so the session survives top-level cross-origin entries
+  // (Slack/email links, PWA cold-starts). See /api/auth/route.ts.
+  sameSite: 'lax' as const,
   path: '/',
 }
 
@@ -34,7 +36,7 @@ export async function POST(request: NextRequest) {
   const res = NextResponse.json({ ok: true, expires_at: expiresAt })
   res.cookies.set('sb-access-token', data.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
   res.cookies.set('sb-refresh-token', data.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
-  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
-  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
+  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
   return res
 }
