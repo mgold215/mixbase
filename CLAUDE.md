@@ -1,5 +1,8 @@
 @AGENTS.md
 
+# What is mixBASE?
+**mixBASE** (mixbase.app) is a version control and release management tool for music artists. Tagline: *"Rough-to-release."* Artists upload audio tracks, iterate on versions, A/B compare mixes, generate artwork, manage release checklists, and share tracks publicly for feedback — all in one app. Built by moodmixformat, LLC.
+
 # Automation First
 - **Never tell the user "you'll need to do this manually."** Use available tools to do it directly.
 - **Never say you can't do something** without first attempting it with the tools available.

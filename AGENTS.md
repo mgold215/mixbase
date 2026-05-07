@@ -1,3 +1,6 @@
+# What is mixBASE?
+**mixBASE** (mixbase.app) is a version control and release management tool for music artists. Tagline: *"Rough-to-release."* Artists upload audio tracks, iterate on versions, A/B compare mixes, generate artwork, manage release checklists, and share tracks publicly for feedback — all in one app. Built by moodmixformat, LLC.
+
 # This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
