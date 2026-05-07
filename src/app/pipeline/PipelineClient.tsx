@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, Link2, Copy, Check } from 'lucide-react'
 import type { Release } from '@/lib/supabase'
 
 type ReleaseWithProject = Release & { mb_projects: { title: string; artwork_url: string | null } | null }
@@ -131,6 +131,16 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     if (!confirm('Delete this release?')) return
     await fetch(`/api/releases/${id}`, { method: 'DELETE' })
     setReleases(prev => prev.filter(r => r.id !== id))
+  }
+
+  async function updateLink(releaseId: string, field: string, value: string) {
+    const val = value.trim() || null
+    setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, [field]: val } : r))
+    await fetch(`/api/releases/${releaseId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: val }),
+    })
   }
 
   // Separate upcoming vs past, then order each group chronologically.
@@ -293,6 +303,9 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
             <div className="flex gap-4 text-xs text-[var(--text-muted)]">
               {release.isrc && <span>ISRC: {release.isrc}</span>}
             </div>
+
+            {/* Streaming links */}
+            <StreamingLinks release={release} onUpdate={updateLink} />
 
             <div className="flex justify-end">
               <button
@@ -502,6 +515,100 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const LINK_FIELDS: { key: keyof Release; label: string; placeholder: string }[] = [
+  { key: 'spotify_url',      label: 'Spotify',       placeholder: 'https://open.spotify.com/track/...' },
+  { key: 'apple_music_url',  label: 'Apple Music',   placeholder: 'https://music.apple.com/...' },
+  { key: 'youtube_url',      label: 'YouTube',        placeholder: 'https://youtube.com/watch?v=...' },
+  { key: 'tidal_url',        label: 'Tidal',          placeholder: 'https://tidal.com/browse/track/...' },
+  { key: 'amazon_music_url', label: 'Amazon Music',   placeholder: 'https://music.amazon.com/...' },
+  { key: 'soundcloud_url',   label: 'SoundCloud',     placeholder: 'https://soundcloud.com/...' },
+  { key: 'bandcamp_url',     label: 'Bandcamp',       placeholder: 'https://artist.bandcamp.com/track/...' },
+]
+
+function StreamingLinks({
+  release,
+  onUpdate,
+}: {
+  release: Release
+  onUpdate: (id: string, field: string, value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const releasePageUrl = `https://mixbase.app/r/${release.id}`
+
+  function copyLink() {
+    navigator.clipboard.writeText(releasePageUrl).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const filledCount = LINK_FIELDS.filter(f => !!release[f.key]).length
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+      {/* Header row */}
+      <div
+        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="flex items-center gap-2 text-sm font-medium text-[var(--text)]">
+          <Link2 size={14} className="text-[#2dd4bf]" />
+          Release Link Page
+          {filledCount > 0 && (
+            <span className="text-xs text-[var(--text-muted)]">· {filledCount} platform{filledCount !== 1 ? 's' : ''}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={e => { e.stopPropagation(); copyLink() }}
+            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg transition-colors"
+            style={{ backgroundColor: 'var(--surface-2)', color: copied ? '#2dd4bf' : 'var(--text-muted)' }}
+            title="Copy release page link"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? 'Copied!' : 'Copy link'}
+          </button>
+          <a
+            href={releasePageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            className="text-xs px-2.5 py-1 rounded-lg transition-colors text-[#2dd4bf] hover:text-[#14b8a6]"
+            style={{ backgroundColor: 'var(--surface-2)' }}
+          >
+            Preview →
+          </a>
+          {open ? <ChevronUp size={14} className="text-[var(--text-muted)]" /> : <ChevronDown size={14} className="text-[var(--text-muted)]" />}
+        </div>
+      </div>
+
+      {/* Link inputs */}
+      {open && (
+        <div className="px-4 pb-4 space-y-2.5 border-t" style={{ borderColor: 'var(--border)' }}>
+          <p className="text-xs text-[var(--text-muted)] pt-3">
+            Paste your streaming links below. They'll appear on your public release page at{' '}
+            <span className="text-[#2dd4bf]">mixbase.app/r/{release.id.slice(0, 8)}…</span>
+          </p>
+          {LINK_FIELDS.map(({ key, label, placeholder }) => (
+            <div key={key}>
+              <label className="block text-xs text-[var(--text-muted)] mb-1">{label}</label>
+              <input
+                type="url"
+                defaultValue={(release[key] as string | null) ?? ''}
+                placeholder={placeholder}
+                onBlur={e => onUpdate(release.id, key, e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#2dd4bf]/50"
+                style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>

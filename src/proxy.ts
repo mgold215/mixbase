@@ -12,6 +12,7 @@ const PUBLIC_PATHS = [
   '/terms',
   '/dmca',
   '/share/',
+  '/r/',
   '/auth/callback',
   '/api/auth/signup',
   '/api/auth/logout',

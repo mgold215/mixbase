@@ -79,6 +79,13 @@ export type Release = {
   dsp_soundcloud: boolean
   dsp_youtube: boolean
   dsp_amazon: boolean
+  spotify_url: string | null
+  apple_music_url: string | null
+  youtube_url: string | null
+  soundcloud_url: string | null
+  tidal_url: string | null
+  amazon_music_url: string | null
+  bandcamp_url: string | null
   created_at: string
   updated_at: string
 }

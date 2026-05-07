@@ -12,6 +12,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     'title', 'release_date', 'project_id', 'genre', 'label', 'isrc', 'notes', 'final_version_id',
     'mixing_done', 'mastering_done', 'artwork_ready', 'dsp_submitted', 'social_posts_done', 'press_release_done',
     'dsp_spotify', 'dsp_apple_music', 'dsp_tidal', 'dsp_bandcamp', 'dsp_soundcloud', 'dsp_youtube', 'dsp_amazon',
+    'spotify_url', 'apple_music_url', 'youtube_url', 'soundcloud_url', 'tidal_url', 'amazon_music_url', 'bandcamp_url',
   ] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
