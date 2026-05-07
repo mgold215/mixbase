@@ -12,12 +12,16 @@ type Props = {
   currentFinalized?: string | null
   onArtworkUpdated: (url: string) => void
   onFinalizedUpdated: (url: string | null) => void
+  // Finalize is a heavier action (Vision call + render) — keep it on the
+  // dedicated Artwork tab, not on every embedded preview of this component.
+  showFinalize?: boolean
 }
 
 export default function ArtworkGenerator({
   projectId, projectTitle, genre,
   currentArtwork, currentFinalized,
   onArtworkUpdated, onFinalizedUpdated,
+  showFinalize = true,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
   const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
@@ -141,8 +145,9 @@ export default function ArtworkGenerator({
       )}
 
 
-      {/* Finalize button */}
-      {mode === 'idle' && previewUrl && (
+      {/* Finalize button — gated on showFinalize so the project header
+          thumbnail doesn't expose this heavy action. */}
+      {showFinalize && mode === 'idle' && previewUrl && (
         <button
           onClick={handleFinalize}
           disabled={finalizing}
