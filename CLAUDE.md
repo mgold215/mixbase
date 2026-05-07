@@ -30,6 +30,7 @@ If the agent reports failure: diagnose, fix, commit, push to `tst`, and re-run t
 Only surface the loop to the user if: (a) the same failure reproduces 3+ times in a row, (b) the fix requires a product decision, or (c) the staging deploy itself is broken (502/timeout from Railway).
 
 # Deployment
+- **Production URL: https://mixbase.app** (custom domain, CNAME → mixbase-production.up.railway.app)
 - Railway production URL (main branch): https://mixbase-production.up.railway.app
 - Railway staging URL (tst branch): https://mixbase-staging.up.railway.app
 - Supabase project: mdefkqaawrusoaojstpq (mmf-agents, us-east-1)
