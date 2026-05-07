@@ -50,25 +50,24 @@ function textToSvgPaths(
   return { markup: parts.join('\n'), totalW }
 }
 
-// ── Vision: just text placement, no color grading ────────────────────────────
-// We deliberately do NOT touch the source pixels (no contrast/saturation/
-// brightness/vignette pipeline). The user paid for the Replicate render — the
-// finalize step exists only to lay text on top, not to "improve" the image.
+// ── Vision: just text placement, no color grading, no backdrop ───────────────
+// We deliberately do NOT touch the source pixels — no contrast/saturation/
+// brightness/vignette pipeline AND no dark band behind the text. The user paid
+// for the Replicate render and wants those pixels to ship. Legibility comes
+// from per-glyph drop shadows on the text itself, which only darken pixels
+// immediately around each letter.
 type Placement = {
-  textCenterY: number      // 0.10–0.90, vertical center of text block
-  overlayOpacity: number   // 0.00–0.30, soft band behind text for legibility
-  showRule: boolean        // horizontal divider between artist and title
+  textCenterY: number  // 0.10–0.90, vertical center of text block
+  showRule: boolean    // horizontal divider between artist and title
 }
 
 async function pickPlacement(imageUrl: string, layoutSeed: number): Promise<Placement> {
-  // Randomise between top and bottom zones each click so re-running Finalize
-  // gives the user genuinely different layouts to choose from instead of the
-  // same deterministic render every time.
+  // Randomise zone + rule per click so re-running Finalize gives a different
+  // layout to choose from instead of the same deterministic render.
   const zone: 'top' | 'bottom' = layoutSeed % 2 === 0 ? 'bottom' : 'top'
   const showRule = (layoutSeed >> 1) % 2 === 0
   const fallback: Placement = {
     textCenterY: zone === 'top' ? 0.18 : 0.85,
-    overlayOpacity: 0.00,
     showRule,
   }
 
@@ -85,20 +84,16 @@ async function pickPlacement(imageUrl: string, layoutSeed: number): Promise<Plac
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 120,
+        max_tokens: 60,
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'url', url: imageUrl } },
             {
               type: 'text',
-              text: `Find where small white text would be most readable on this album cover, in the ${zone} zone of the image (${zone === 'top' ? '0.10–0.30' : '0.72–0.90'} of height). Pick the area with the least busy detail behind it.
+              text: `Find the best vertical position for small white text in the ${zone} zone of this album cover (${zone === 'top' ? '0.10–0.30' : '0.72–0.90'} of height). Pick the area with the least busy detail.
 
-Return ONLY this JSON:
-{"textCenterY": <number>, "overlayOpacity": <0.0–0.30>}
-
-textCenterY = vertical center of the text block.
-overlayOpacity = 0.0 if the area is already low-detail and clear; up to 0.30 if a faint backdrop helps the text read. Default to 0.0 unless the text would clearly be illegible without help.`,
+Reply with ONLY: {"textCenterY": <number>}`,
             },
           ],
         }],
@@ -113,8 +108,7 @@ overlayOpacity = 0.0 if the area is already low-detail and clear; up to 0.30 if 
     const minY = zone === 'top' ? 0.10 : 0.72
     const maxY = zone === 'top' ? 0.30 : 0.90
     return {
-      textCenterY:    Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback.textCenterY)),
-      overlayOpacity: Math.min(0.30, Math.max(0.00, Number(p.overlayOpacity) || 0)),
+      textCenterY: Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback.textCenterY)),
       showRule,
     }
   } catch (err) {
@@ -130,8 +124,9 @@ async function buildFinalized(
   artist: string,
   placement: Placement
 ): Promise<Buffer> {
-  // Source pixels go through Sharp untouched — no color grade. Whatever
-  // colors Replicate produced are the colors that ship.
+  // Source pixels go through Sharp untouched — no color grade, no overlay band.
+  // Legibility on busy backgrounds comes from per-glyph drop shadows applied
+  // via SVG filters, which only darken pixels right next to each letter.
   const img = sharp(imageBuffer)
   const { width = 1024, height = 1024 } = await img.metadata()
 
@@ -163,46 +158,35 @@ async function buildFinalized(
   const ruleW = Math.round(artistW)
   const ruleX = Math.round(cx - ruleW / 2)
   const ruleSvg = placement.showRule
-    ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75"/>`
+    ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75" filter="url(#textShadow)"/>`
     : ''
 
-  // Tight feathered backdrop only when Vision asked for it — kept narrow
-  // (2.2× text block height) so it never darkens a meaningful portion of the
-  // cover even when present.
-  const overlayH  = Math.round(totalH * 2.2)
-  const overlayY  = Math.max(0, Math.round(cy - overlayH / 2))
-  const overlayHc = Math.min(overlayH, height - overlayY)
-  const op = placement.overlayOpacity.toFixed(2)
-
-  const overlayLayer = placement.overlayOpacity > 0.02
-    ? Buffer.from(
-        `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stop-color="#000" stop-opacity="0"/>
-              <stop offset="30%"  stop-color="#000" stop-opacity="${op}"/>
-              <stop offset="70%"  stop-color="#000" stop-opacity="${op}"/>
-              <stop offset="100%" stop-color="#000" stop-opacity="0"/>
-            </linearGradient>
-          </defs>
-          <rect x="0" y="${overlayY}" width="${width}" height="${overlayHc}" fill="url(#g)"/>
-        </svg>`
-      )
-    : null
+  // Drop-shadow filter — gives white text legibility on any background without
+  // darkening any pixels not adjacent to a glyph. stdDeviation tuned to text
+  // size; flood-opacity 0.65 reads cleanly without looking heavy.
+  const shadowSigma = Math.max(2, Math.round(titleSize * 0.08))
 
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      ${artistPaths}
+      <defs>
+        <filter id="textShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="${Math.round(shadowSigma * 0.5)}" stdDeviation="${shadowSigma}" flood-color="#000" flood-opacity="0.65"/>
+        </filter>
+      </defs>
+      <g filter="url(#textShadow)">
+        ${artistPaths}
+        ${titlePaths}
+      </g>
       ${ruleSvg}
-      ${titlePaths}
     </svg>`
   )
 
-  const layers: sharp.OverlayOptions[] = []
-  if (overlayLayer) layers.push({ input: overlayLayer, blend: 'over' })
-  layers.push({ input: textSvg, blend: 'over' })
-
-  return img.composite(layers).jpeg({ quality: 94 }).toBuffer()
+  // Output JPEG at high quality with 4:4:4 chroma — preserves saturated edges
+  // (neon, etc.) that 4:2:0 subsampling can mute.
+  return img
+    .composite([{ input: textSvg, blend: 'over' }])
+    .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+    .toBuffer()
 }
 
 // ── POST /api/finalize-artwork ──────────────────────────────────────────────

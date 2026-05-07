@@ -1,7 +1,8 @@
 // Standalone proof: does my buildFinalized() darken pixels?
-// Generates a known-color image, runs it through the same Sharp pipeline I
-// commit to the route, then samples pixels in a region with NO text overlay.
-// Input pixel === output pixel ⇒ no darkening. Input ≠ output ⇒ I'm wrong.
+// Generates a known-color image, runs it through the SAME Sharp pipeline the
+// route uses, then samples pixels in regions both far from and adjacent to
+// the text. Far from text MUST be pixel-identical. Adjacent to text picks up
+// drop shadow but only in a narrow halo.
 
 import sharp from 'sharp'
 import { readFileSync } from 'fs'
@@ -53,19 +54,25 @@ async function buildFinalized(imageBuffer, title, artist, placement) {
   const { markup: titlePaths } = textToSvgPaths(title.toUpperCase(), cx, titleY, titleSize, titleLS, 'white', 1.00)
   const ruleW = Math.round(artistW)
   const ruleX = Math.round(cx - ruleW / 2)
-  const ruleSvg = placement.showRule ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75"/>` : ''
-  const overlayH  = Math.round(totalH * 2.2)
-  const overlayY  = Math.max(0, Math.round(cy - overlayH / 2))
-  const overlayHc = Math.min(overlayH, height - overlayY)
-  const op = placement.overlayOpacity.toFixed(2)
-  const overlayLayer = placement.overlayOpacity > 0.02
-    ? Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0"/><stop offset="30%" stop-color="#000" stop-opacity="${op}"/><stop offset="70%" stop-color="#000" stop-opacity="${op}"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient></defs><rect x="0" y="${overlayY}" width="${width}" height="${overlayHc}" fill="url(#g)"/></svg>`)
-    : null
-  const textSvg = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${artistPaths}${ruleSvg}${titlePaths}</svg>`)
-  const layers = []
-  if (overlayLayer) layers.push({ input: overlayLayer, blend: 'over' })
-  layers.push({ input: textSvg, blend: 'over' })
-  return img.composite(layers).jpeg({ quality: 94 }).toBuffer()
+  const ruleSvg = placement.showRule
+    ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75" filter="url(#textShadow)"/>`
+    : ''
+  const shadowSigma = Math.max(2, Math.round(titleSize * 0.08))
+  const textSvg = Buffer.from(
+    `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="textShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="${Math.round(shadowSigma * 0.5)}" stdDeviation="${shadowSigma}" flood-color="#000" flood-opacity="0.65"/>
+        </filter>
+      </defs>
+      <g filter="url(#textShadow)">${artistPaths}${titlePaths}</g>
+      ${ruleSvg}
+    </svg>`
+  )
+  return img
+    .composite([{ input: textSvg, blend: 'over' }])
+    .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+    .toBuffer()
 }
 
 async function samplePixel(buf, x, y) {
@@ -74,32 +81,48 @@ async function samplePixel(buf, x, y) {
   return [data[idx], data[idx + 1], data[idx + 2]]
 }
 
+function eq(a, b, tol = 0) {
+  return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol
+}
+
 async function run() {
-  // Build a 1024x1024 input with a known dim cyberpunk-ish color (RGB 32,42,52)
   const w = 1024, h = 1024
+  const SRC_RGB = { r: 32, g: 42, b: 52 }   // dim cyberpunk-ish
   const inputBuf = await sharp({
-    create: { width: w, height: h, channels: 3, background: { r: 32, g: 42, b: 52 } },
-  }).jpeg({ quality: 100 }).toBuffer()
+    create: { width: w, height: h, channels: 3, background: SRC_RGB },
+  }).jpeg({ quality: 100, chromaSubsampling: '4:4:4' }).toBuffer()
 
-  console.log('SOURCE pixel at (100,100):', await samplePixel(inputBuf, 100, 100))
-
-  // Bottom-zone placement (textCenterY=0.85), no overlay, no rule.
-  // Sample pixel at (100,100) — far away from the text region.
   const out = await buildFinalized(inputBuf, 'NEVERTHELESS', 'moodmixformat', {
-    textCenterY: 0.85, overlayOpacity: 0.0, showRule: true,
+    textCenterY: 0.85,
+    showRule: true,
   })
-  console.log('OUTPUT pixel at (100,100):', await samplePixel(out, 100, 100))
 
-  // Sample pixel at center of cover — well above the text band
-  console.log('SOURCE pixel at (512,400):', await samplePixel(inputBuf, 512, 400))
-  console.log('OUTPUT pixel at (512,400):', await samplePixel(out, 512, 400))
+  // Sample points: top-left corner, far-from-text middle, top-right
+  const tests = [
+    { name: 'corner (10,10)',         pt: [10, 10] },
+    { name: 'middle (512,400)',       pt: [512, 400] },
+    { name: 'top-right (1000,30)',    pt: [1000, 30] },
+    { name: 'left edge mid (5,500)',  pt: [5, 500] },
+  ]
 
-  // With a backdrop opacity, what happens to pixel under the text band?
-  const out2 = await buildFinalized(inputBuf, 'NEVERTHELESS', 'moodmixformat', {
-    textCenterY: 0.85, overlayOpacity: 0.20, showRule: true,
-  })
-  console.log('OVERLAY-ON pixel at (100,100) [outside band]:', await samplePixel(out2, 100, 100))
-  console.log('OVERLAY-ON pixel at (100,870) [inside band]:', await samplePixel(out2, 100, 870))
+  let allPass = true
+  console.log(`Source RGB: [${SRC_RGB.r}, ${SRC_RGB.g}, ${SRC_RGB.b}]`)
+  console.log('---')
+  for (const t of tests) {
+    const pix = await samplePixel(out, t.pt[0], t.pt[1])
+    const pass = eq([SRC_RGB.r, SRC_RGB.g, SRC_RGB.b], pix, 1)  // 1-LSB tolerance for JPEG round-trip
+    console.log(`${pass ? 'PASS' : 'FAIL'}  ${t.name.padEnd(24)} → [${pix.join(', ')}]`)
+    if (!pass) allPass = false
+  }
+
+  // Pixel directly under text glyph (should be brighter — white)
+  const textSamplePix = await samplePixel(out, 512, 875)  // rough center of title row
+  console.log('---')
+  console.log(`text-row sample (512,875)        → [${textSamplePix.join(', ')}]   (expect brighter from glyph or shadow)`)
+
+  console.log('---')
+  console.log(allPass ? '✅ ALL non-text pixels match source within 1 LSB.' : '❌ FAILURE — code is touching pixels it shouldn\'t.')
+  process.exit(allPass ? 0 : 1)
 }
 
 run().catch(e => { console.error(e); process.exit(1) })
