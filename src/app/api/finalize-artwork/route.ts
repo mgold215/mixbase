@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import sharp from 'sharp'
+import { Resvg } from '@resvg/resvg-js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
 export const maxDuration = 60
 
 // Load real Futura Bold at startup (extracted from macOS system TTC, licensed per-device)
-const FUTURA_BOLD = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf')).toString('base64')
+// Stored as Buffer for resvg-js fontBuffers API — works cross-platform including Railway Linux
+const FUTURA_BOLD_BUF = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf'))
 
 // ── Claude Vision: analyze image for text placement AND filter params ────────
 interface VisionParams {
@@ -188,24 +190,12 @@ async function buildFinalized(
       )
     : null
 
-  // Text SVG — real Futura Bold embedded as @font-face data URI (works in librsvg/Sharp)
+  // Text SVG rendered via resvg-js (Rust engine) which loads fonts directly from Buffer
+  // This works cross-platform including Railway Linux, unlike Sharp's librsvg @font-face
   const ruleX = Math.round(cx - ruleW / 2)
 
-  const textSvg = Buffer.from(
+  const textSvgStr =
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <style>
-          @font-face {
-            font-family: 'Futura';
-            font-weight: bold;
-            src: url('data:font/truetype;base64,${FUTURA_BOLD}') format('truetype');
-          }
-        </style>
-        <filter id="sh">
-          <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000" flood-opacity="0.8"/>
-        </filter>
-      </defs>
-
       <!-- Artist name: Futura Bold, small, wide tracking -->
       <text
         x="${cx}" y="${artistY}"
@@ -216,7 +206,6 @@ async function buildFinalized(
         fill-opacity="0.90"
         text-anchor="middle"
         letter-spacing="${artistLetterSpacing}"
-        filter="url(#sh)"
       >${artist.toLowerCase()}</text>
 
       <!-- Horizontal rule between artist and title -->
@@ -225,7 +214,6 @@ async function buildFinalized(
         width="${ruleW}" height="${ruleH}"
         fill="white"
         fill-opacity="0.75"
-        filter="url(#sh)"
       />
 
       <!-- Track title: Futura Bold, large, ALL CAPS -->
@@ -237,14 +225,18 @@ async function buildFinalized(
         fill="white"
         text-anchor="middle"
         letter-spacing="${titleLetterSpacing}"
-        filter="url(#sh)"
       >${title.toUpperCase()}</text>
     </svg>`
-  )
+
+  // Render SVG → PNG with resvg, passing the font buffer directly
+  const resvg = new Resvg(textSvgStr, {
+    font: { fontBuffers: [FUTURA_BOLD_BUF] },
+  })
+  const textPng = Buffer.from(resvg.render().asPng())
 
   const layers: sharp.OverlayOptions[] = []
   if (overlayLayer) layers.push({ input: overlayLayer, blend: 'over' })
-  layers.push({ input: textSvg, blend: 'over' })
+  layers.push({ input: textPng, blend: 'over' })
 
   return img.composite(layers).jpeg({ quality: 94 }).toBuffer()
 }
