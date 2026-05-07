@@ -1,4 +1,4 @@
-import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
 import Nav from '@/components/Nav'
 import MediaClient from './MediaClient'
@@ -8,10 +8,13 @@ export const dynamic = 'force-dynamic'
 export default async function MediaPage() {
   const userId = await getUserId()
 
+  // Media tab is the user's image library — only originals belong here.
+  // Finalized renders (text overlay baked into the bitmap) are derived
+  // outputs and intentionally excluded.
   const [projectsRes, collectionsRes] = await Promise.all([
     supabaseAdmin
       .from('mb_projects')
-      .select('id, title, artwork_url, finalized_artwork_url')
+      .select('id, title, artwork_url')
       .eq('user_id', userId)
       .not('artwork_url', 'is', null)
       .order('updated_at', { ascending: false }),
@@ -26,11 +29,7 @@ export default async function MediaPage() {
     <>
       <Nav />
       <MediaClient
-        projects={(projectsRes.data ?? []).map(p => ({
-          id: p.id,
-          title: p.title,
-          artwork_url: displayArtworkUrl(p),
-        }))}
+        projects={projectsRes.data ?? []}
         collections={collectionsRes.data ?? []}
       />
     </>
