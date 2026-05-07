@@ -386,7 +386,7 @@ export default function PlayerPage() {
                     {t.title}
                   </p>
                   <p className="text-xs text-[#666] truncate mt-1">
-                    <span className="font-mono">v{String(t.version).replace(/^v/i, '')}</span>
+                    <span className="font-mono">{t.version}</span>
                     <span className="mx-1.5 text-[#444]">·</span>
                     <span>{t.status}</span>
                   </p>
@@ -444,7 +444,7 @@ export default function PlayerPage() {
                   <div className="px-5 pb-2">
                     <h2 className="text-2xl font-bold text-white leading-tight">{current.title}</h2>
                     <div className="flex flex-wrap items-center gap-x-2 mt-1">
-                      <span className="font-mono text-sm text-white/50">v{String(current.version).replace(/^v/i, '')}</span>
+                      <span className="font-mono text-sm text-white/50">{current.version}</span>
                       <span className="text-white/20">·</span>
                       <span className="text-sm font-semibold" style={{ color: status.color }}>{status.label}</span>
                       {trackKey && <><span className="text-white/20">·</span><span className="text-sm font-mono text-white/50">{trackKey}</span></>}
