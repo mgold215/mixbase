@@ -63,8 +63,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Stable ref to the most recent media session metadata so onPlay (a [] effect) can
   // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
-  // set before play() resolves.
-  const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null } | null>(null)
+  // set before play() resolves. Also re-applied on visibilitychange because iOS can clear
+  // metadata when the PWA is backgrounded.
+  const mediaMetaRef = useRef<{ title: string; artist: string; artworkUrl: string | null } | null>(null)
+
+  // User's artist name from /api/auth/me — fetched once per session and used as the
+  // default artist for all playback. Falls back to 'mixBASE' until the fetch resolves.
+  const artistFallbackRef = useRef<string>('mixBASE')
 
   // Load tracks once on mount — retry once after 3 s on failure
   useEffect(() => {
@@ -72,6 +77,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false) })
     load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
+  }, [])
+
+  // Cache the user's artist_name once so playUrl callers don't have to thread it through
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { artist_name?: string; display_name?: string } | null) => {
+        const name = d?.artist_name?.trim() || d?.display_name?.trim()
+        if (name) artistFallbackRef.current = name
+      })
+      .catch(() => {})
   }, [])
 
   // When the app becomes visible after being hidden and the last load errored, retry.
@@ -111,7 +127,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Re-apply full metadata after iOS activates the audio session — iOS sometimes
       // ignores metadata set before play() resolves, so we push it again on the play event.
       if (mediaMetaRef.current) {
-        applyMediaSession(mediaMetaRef.current.title, mediaMetaRef.current.artworkUrl, true)
+        const m = mediaMetaRef.current
+        applyMediaSession(m.title, m.artist, m.artworkUrl, true)
       } else if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing'
       }
@@ -164,6 +181,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // ── visibilitychange — resume AudioContext + audio element after iOS suspends ─
   // iOS can pause <audio> *before* firing visibilitychange:hidden, so we track
   // user intent (playIntentRef) rather than the live audio.paused value.
+  // Also re-push MediaSession metadata: iOS clears Now Playing info when the PWA
+  // is backgrounded, leaving Tesla / lock-screen widgets blank until we re-set it.
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -173,6 +192,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
         if (playIntentRef.current && audioRef.current?.paused) {
           audioRef.current.play().catch(() => {})
+        }
+        if (mediaMetaRef.current && !audioRef.current?.paused) {
+          const m = mediaMetaRef.current
+          applyMediaSession(m.title, m.artist, m.artworkUrl, true)
         }
       }
     }
@@ -251,15 +274,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentTime(0)
       setDuration(0)
     }
-    mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url }
-    applyMediaSession(track.title, track.artwork_url, true)
+    const trackArtist = track.artist?.trim() || artistFallbackRef.current
+    mediaMetaRef.current = { title: track.title, artist: trackArtist, artworkUrl: track.artwork_url }
+    applyMediaSession(track.title, trackArtist, track.artwork_url, true)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
     audio.play().catch(() => {})
   }, [tracks, currentProjectId, volume])
 
-  const playUrl = useCallback((url: string, title: string, artist = 'mixBASE', artworkUrl?: string, versionLabel = '') => {
+  const playUrl = useCallback((url: string, title: string, artist?: string, artworkUrl?: string, versionLabel = '') => {
     const audio = audioRef.current
     if (!audio) return
     if (currentUrl !== url || currentProjectId !== null) {
@@ -267,11 +291,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentTime(0)
       setDuration(0)
     }
+    const resolvedArtist = artist?.trim() || artistFallbackRef.current
     setCurrentUrl(url)
     setCurrentProjectId(null)
-    setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
-    mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null }
-    applyMediaSession(title, artworkUrl ?? null, true)
+    setCustomMeta({ title, artist: resolvedArtist, artwork_url: artworkUrl ?? null, versionLabel })
+    mediaMetaRef.current = { title, artist: resolvedArtist, artworkUrl: artworkUrl ?? null }
+    applyMediaSession(title, resolvedArtist, artworkUrl ?? null, true)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
@@ -291,7 +316,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playIntentRef.current = false
       audio.pause()
     } else {
-      if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true)
+      if (currentTrack) {
+        const reuseArtist =
+          mediaMetaRef.current?.artist ||
+          currentTrack.artist?.trim() ||
+          artistFallbackRef.current
+        applyMediaSession(currentTrack.title, reuseArtist, currentTrack.artwork_url, true)
+      }
       playIntentRef.current = true
       audio.play().catch(() => {})
     }

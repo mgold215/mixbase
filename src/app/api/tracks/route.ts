@@ -47,16 +47,28 @@ export async function GET(request: NextRequest) {
 
   await ensureShareTokens(userId)
 
-  const { data, error } = await supabaseAdmin
-    .from('mb_versions')
-    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, key_signature, bpm, user_id)')
-    .eq('mb_projects.user_id', userId)
-    .order('version_number', { ascending: false })
+  const [tracksRes, profileRes] = await Promise.all([
+    supabaseAdmin
+      .from('mb_versions')
+      .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, key_signature, bpm, user_id)')
+      .eq('mb_projects.user_id', userId)
+      .order('version_number', { ascending: false }),
+    supabaseAdmin
+      .from('profiles')
+      .select('artist_name, display_name')
+      .eq('id', userId)
+      .maybeSingle(),
+  ])
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (tracksRes.error) return NextResponse.json({ error: tracksRes.error.message }, { status: 500 })
+
+  const artistName: string =
+    profileRes.data?.artist_name?.trim() ||
+    profileRes.data?.display_name?.trim() ||
+    'mixBASE'
 
   const seen = new Set<string>()
-  const latest = (data ?? []).filter((v) => {
+  const latest = (tracksRes.data ?? []).filter((v) => {
     if (seen.has(v.project_id)) return false
     seen.add(v.project_id)
     return true
@@ -71,7 +83,7 @@ export async function GET(request: NextRequest) {
       project_id: v.project_id,
       share_token: v.share_token ?? null,
       title: projectTitle,
-      artist: projectTitle,
+      artist: artistName,
       artwork_url: p?.artwork_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',

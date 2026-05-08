@@ -73,7 +73,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         </span>
       </header>
 
-      <ShareClient version={version} />
+      <ShareClient version={version} artistName={artistName} />
     </div>
   )
 }

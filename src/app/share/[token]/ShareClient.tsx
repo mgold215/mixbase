@@ -13,9 +13,10 @@ type Props = {
   // mb_projects is the full joined project row
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   version: Version & { mb_projects: any }
+  artistName: string
 }
 
-export default function ShareClient({ version }: Props) {
+export default function ShareClient({ version, artistName }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -42,7 +43,11 @@ export default function ShareClient({ version }: Props) {
     if (!audio) return
     const onTime = () => setCurrentTime(audio.currentTime)
     const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
-    const onPlay = () => setIsPlaying(true)
+    const onPlay = () => {
+      setIsPlaying(true)
+      // Re-apply after iOS activates the audio session — pre-play() metadata is sometimes ignored.
+      applyMediaSession(title, artistName, artworkUrl, true)
+    }
     const onPause = () => setIsPlaying(false)
     const onEnded = () => setIsPlaying(false)
     audio.addEventListener('timeupdate', onTime)
@@ -57,7 +62,7 @@ export default function ShareClient({ version }: Props) {
       audio.removeEventListener('pause', onPause)
       audio.removeEventListener('ended', onEnded)
     }
-  }, [])
+  }, [title, artistName, artworkUrl])
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
@@ -66,10 +71,10 @@ export default function ShareClient({ version }: Props) {
       audio.pause()
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     } else {
-      applyMediaSession(title, artworkUrl, true)
+      applyMediaSession(title, artistName, artworkUrl, true)
       audio.play().catch(() => {})
     }
-  }, [isPlaying, title, artworkUrl])
+  }, [isPlaying, title, artistName, artworkUrl])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current
