@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
     type: 'version_upload',
     project_id,
     version_id: data.id,
+    user_id: userId,
     description: `Version ${nextVersion} uploaded${label ? ` — "${label}"` : ''}`,
   })
 

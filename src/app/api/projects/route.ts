@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
   await supabaseAdmin.from('mb_activity').insert({
     type: 'project_created',
     project_id: data.id,
+    user_id: userId,
     description: `Project "${data.title}" created`,
   })
 

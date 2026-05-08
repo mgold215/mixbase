@@ -61,6 +61,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
       type: 'status_change',
       project_id: versionCheck.project_id,
       version_id: id,
+      user_id: userId,
       description: `v${versionCheck.version_number} moved from ${versionCheck.status} to ${patch.status}`,
     })
   }

@@ -28,18 +28,23 @@ export async function POST(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Fetch the version to get the project_id for the activity log
+  // Fetch the version + project owner for the activity log
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
-    .select('project_id, version_number')
+    .select('project_id, version_number, mb_projects!inner(user_id)')
     .eq('id', version_id)
     .single()
 
   if (version) {
+    const proj = version.mb_projects
+    const projectUserId: string | null = Array.isArray(proj)
+      ? (proj[0]?.user_id ?? null)
+      : ((proj as { user_id: string } | null)?.user_id ?? null)
     await supabaseAdmin.from('mb_activity').insert({
       type: 'feedback_received',
       project_id: version.project_id,
       version_id,
+      user_id: projectUserId,
       description: `Feedback from ${reviewer_name || 'Anonymous'} on v${version.version_number}`,
     })
   }

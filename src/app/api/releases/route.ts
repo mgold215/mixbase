@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
     type: 'release_created',
     project_id: project_id ?? null,
     release_id: data.id,
+    user_id: userId,
     description: `Release "${data.title}" added to pipeline`,
   })
 
