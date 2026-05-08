@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, type ChangeEvent } from 'react'
+import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -11,7 +11,7 @@ import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
   MessageSquare, Star, Trash2, Music, Upload, Pencil,
-  CalendarRange, ExternalLink, Play, Pause, Download
+  CalendarRange, ExternalLink, Play, Pause, Download, Sparkles
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -56,6 +56,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [projectSaved, setProjectSaved] = useState(false)
   const [release, setRelease] = useState<Release | null>(initialRelease)
   const [startingRelease, setStartingRelease] = useState(false)
+  const [summaries, setSummaries] = useState<Record<string, string>>({})
+  const [summaryLoading, setSummaryLoading] = useState<string | null>(null)
+  const [summaryError, setSummaryError] = useState<Record<string, string>>({})
 
   const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay } = usePlayer()
 
@@ -239,6 +242,28 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
       setUploadPct(0)
       setUploading(false)
+    }
+  }
+
+  async function summarizeFeedback(versionId: string) {
+    setSummaryLoading(versionId)
+    setSummaryError(prev => { const next = { ...prev }; delete next[versionId]; return next })
+    try {
+      const res = await fetch('/api/chat/summarize-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version_id: versionId }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setSummaryError(prev => ({ ...prev, [versionId]: data.error ?? 'Failed to summarize' }))
+        return
+      }
+      setSummaries(prev => ({ ...prev, [versionId]: data.summary as string }))
+    } catch (err) {
+      setSummaryError(prev => ({ ...prev, [versionId]: err instanceof Error ? err.message : 'Network error' }))
+    } finally {
+      setSummaryLoading(null)
     }
   }
 
@@ -700,7 +725,34 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                       {/* Feedback */}
                       {feedback.length > 0 && (
                         <div>
-                          <p className="text-xs text-[var(--text-muted)] mb-2">Listener Feedback</p>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-[var(--text-muted)]">Listener Feedback</p>
+                            <button
+                              onClick={() => summarizeFeedback(version.id)}
+                              disabled={summaryLoading === version.id}
+                              className="flex items-center gap-1.5 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors"
+                              title="Summarize this feedback with Claude"
+                            >
+                              <Sparkles size={11} />
+                              {summaryLoading === version.id
+                                ? 'Summarizing…'
+                                : summaries[version.id]
+                                  ? 'Re-summarize'
+                                  : 'Summarize with AI'}
+                            </button>
+                          </div>
+                          {summaryError[version.id] && (
+                            <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>
+                          )}
+                          {summaries[version.id] && (
+                            <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf33' }}>
+                              <div className="flex items-center gap-1.5 mb-2">
+                                <Sparkles size={11} className="text-[#2dd4bf]" />
+                                <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                              </div>
+                              <SummaryView markdown={summaries[version.id]} />
+                            </div>
+                          )}
                           <div className="space-y-2">
                             {feedback.map(f => (
                               <div key={f.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
@@ -769,4 +821,59 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       </div>
     </div>
   )
+}
+
+// Lightweight Markdown renderer for the AI summary — handles `## headings`,
+// `- bullets`, and italic `_text_`. Avoids pulling in a full Markdown library.
+function SummaryView({ markdown }: { markdown: string }) {
+  const lines = markdown.split('\n')
+  const blocks: ReactNode[] = []
+  let bulletGroup: string[] = []
+
+  function flushBullets() {
+    if (bulletGroup.length === 0) return
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="list-disc pl-4 space-y-1 mb-2">
+        {bulletGroup.map((b, i) => (
+          <li key={i} className="text-xs text-[var(--text-secondary)]">{renderInline(b)}</li>
+        ))}
+      </ul>,
+    )
+    bulletGroup = []
+  }
+
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) { flushBullets(); continue }
+    if (line.startsWith('## ')) {
+      flushBullets()
+      blocks.push(
+        <p key={`h-${blocks.length}`} className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text)] mt-2 mb-1">
+          {line.slice(3)}
+        </p>,
+      )
+    } else if (line.startsWith('- ')) {
+      bulletGroup.push(line.slice(2))
+    } else {
+      flushBullets()
+      blocks.push(
+        <p key={`p-${blocks.length}`} className="text-xs text-[var(--text-secondary)] mb-2">
+          {renderInline(line)}
+        </p>,
+      )
+    }
+  }
+  flushBullets()
+  return <>{blocks}</>
+}
+
+function renderInline(text: string): ReactNode {
+  // Render `_italic_` runs; everything else is plain text.
+  const parts = text.split(/(_[^_]+_)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('_') && part.endsWith('_') && part.length > 2) {
+      return <em key={i} className="text-[var(--text-muted)]">{part.slice(1, -1)}</em>
+    }
+    return <span key={i}>{part}</span>
+  })
 }
