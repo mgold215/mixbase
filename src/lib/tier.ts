@@ -4,13 +4,14 @@
 
 import { supabaseAdmin } from './supabase'
 
-export type SubscriptionTier = 'free' | 'pro' | 'studio'
+export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
 
-// Monthly generation allowances per tier
+// Monthly generation allowances per tier (admin = unlimited)
 export const TIER_LIMITS: Record<SubscriptionTier, { artworkGenerations: number; videoGenerations: number }> = {
-  free:   { artworkGenerations: 3,  videoGenerations: 0  },
-  pro:    { artworkGenerations: 25, videoGenerations: 0  },
-  studio: { artworkGenerations: 25, videoGenerations: 10 },
+  free:   { artworkGenerations: 3,     videoGenerations: 0     },
+  pro:    { artworkGenerations: 25,    videoGenerations: 0     },
+  studio: { artworkGenerations: 25,    videoGenerations: 10    },
+  admin:  { artworkGenerations: 99999, videoGenerations: 99999 },
 }
 
 // Prices shown in the UI
@@ -18,6 +19,7 @@ export const TIER_PRICES: Record<SubscriptionTier, string> = {
   free:   '$0/mo',
   pro:    '$8.99/mo',
   studio: '$19.99/mo',
+  admin:  'Platform Owner',
 }
 
 // Current month as 'YYYY-MM' — key for mb_usage rows
