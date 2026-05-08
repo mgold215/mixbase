@@ -510,21 +510,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               )}
             </div>
           ) : (
-            <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <CalendarRange size={28} className="text-[var(--text-muted)]" />
-              <div>
-                <p className="text-sm text-[var(--text-secondary)]">Ready to plan your release?</p>
-                <p className="text-xs text-[var(--text-muted)] mt-1">Track mixing, mastering, artwork, and DSP distribution from one place.</p>
-              </div>
-              <button
-                onClick={startRelease}
-                disabled={startingRelease}
-                className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 text-[#0a0a0a] text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
-              >
-                <Plus size={15} />
-                {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
-              </button>
-            </div>
+            <button
+              onClick={startRelease}
+              disabled={startingRelease}
+              className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 text-[#0a0a0a] text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+            >
+              <Plus size={15} />
+              {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
+            </button>
           )}
         </div>
 
