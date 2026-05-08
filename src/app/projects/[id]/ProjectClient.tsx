@@ -522,6 +522,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         </div>
 
         {/* Version list */}
+        <div className="mt-8 mb-3">
+          <h2 className="text-sm font-semibold text-[var(--text)]">Mixes</h2>
+        </div>
         <div className="space-y-3">
           {versions.length === 0 ? (
             <div className="text-center py-16 text-[var(--text-muted)]">
