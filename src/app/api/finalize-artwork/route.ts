@@ -61,18 +61,43 @@ type Placement = {
   showRule: boolean    // horizontal divider between artist and title
 }
 
-async function pickPlacement(imageUrl: string, layoutSeed: number): Promise<Placement> {
-  // Randomise zone + rule per click so re-running Finalize gives a different
-  // layout to choose from instead of the same deterministic render.
-  const zone: 'top' | 'bottom' = layoutSeed % 2 === 0 ? 'bottom' : 'top'
-  const showRule = (layoutSeed >> 1) % 2 === 0
+async function pickPlacement(
+  imageUrl: string,
+  layoutSeed: number,
+  guidance?: string
+): Promise<Placement> {
+  // Without guidance: randomise zone + rule per click so re-running gives a
+  // different layout. With guidance: Vision gets freedom across the whole
+  // image and is allowed to override the rule, so the user's instruction
+  // wins over the random seed.
+  const guided = !!guidance && guidance.trim().length > 0
+  const seedZone: 'top' | 'bottom' = layoutSeed % 2 === 0 ? 'bottom' : 'top'
+  const seedRule = (layoutSeed >> 1) % 2 === 0
   const fallback: Placement = {
-    textCenterY: zone === 'top' ? 0.18 : 0.85,
-    showRule,
+    textCenterY: seedZone === 'top' ? 0.18 : 0.85,
+    showRule: seedRule,
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return fallback
+
+  const guidanceBlock = guided
+    ? `\n\nUser guidance (follow this when possible): ${guidance!.trim()}`
+    : ''
+
+  // When guided, Vision can pick anywhere on the cover (0.10–0.90) and decide
+  // whether the horizontal rule belongs. Without guidance we constrain to the
+  // seeded zone so the per-click variation actually shows up.
+  const promptText = guided
+    ? `Pick the best position for the artist + title overlay on this album cover. Small white text with a soft drop shadow.
+
+textCenterY: 0.10–0.90 (vertical center of the text block).
+showRule: true to draw a thin horizontal line between artist and title, false for a cleaner look.${guidanceBlock}
+
+Reply with ONLY: {"textCenterY": <number>, "showRule": <boolean>}`
+    : `Find the best vertical position for small white text in the ${seedZone} zone of this album cover (${seedZone === 'top' ? '0.10–0.30' : '0.72–0.90'} of height). Pick the area with the least busy detail.
+
+Reply with ONLY: {"textCenterY": <number>}`
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -84,17 +109,12 @@ async function pickPlacement(imageUrl: string, layoutSeed: number): Promise<Plac
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 60,
+        max_tokens: guided ? 120 : 60,
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'url', url: imageUrl } },
-            {
-              type: 'text',
-              text: `Find the best vertical position for small white text in the ${zone} zone of this album cover (${zone === 'top' ? '0.10–0.30' : '0.72–0.90'} of height). Pick the area with the least busy detail.
-
-Reply with ONLY: {"textCenterY": <number>}`,
-            },
+            { type: 'text', text: promptText },
           ],
         }],
       }),
@@ -105,11 +125,12 @@ Reply with ONLY: {"textCenterY": <number>}`,
     const raw = (data.content?.[0]?.text ?? '').trim()
       .replace(/^```json?\s*/i, '').replace(/\s*```$/i, '')
     const p = JSON.parse(raw)
-    const minY = zone === 'top' ? 0.10 : 0.72
-    const maxY = zone === 'top' ? 0.30 : 0.90
+
+    const minY = guided ? 0.10 : (seedZone === 'top' ? 0.10 : 0.72)
+    const maxY = guided ? 0.90 : (seedZone === 'top' ? 0.30 : 0.90)
     return {
       textCenterY: Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback.textCenterY)),
-      showRule,
+      showRule:    guided && typeof p.showRule === 'boolean' ? p.showRule : seedRule,
     }
   } catch (err) {
     console.error('[finalize-artwork] Vision error:', err)
@@ -198,10 +219,15 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { project_id, artist } = await request.json()
+  const { project_id, artist, guidance } = await request.json()
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
   }
+  // Trim + cap guidance length so a runaway textarea can't blow Vision tokens
+  const guidanceText: string | undefined =
+    typeof guidance === 'string' && guidance.trim().length > 0
+      ? guidance.trim().slice(0, 400)
+      : undefined
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
@@ -226,10 +252,11 @@ export async function POST(request: NextRequest) {
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
-  // Random seed per call → different layout each Finalize click.
+  // Random seed per call → different layout each Finalize click when no
+  // guidance is given. With guidance, Vision's choices win over the seed.
   const layoutSeed = Math.floor(Math.random() * 1024)
-  const placement = await pickPlacement(project.artwork_url, layoutSeed)
-  console.log('[finalize-artwork] placement:', JSON.stringify(placement))
+  const placement = await pickPlacement(project.artwork_url, layoutSeed, guidanceText)
+  console.log('[finalize-artwork] guidance:', guidanceText ?? '(none)', 'placement:', JSON.stringify(placement))
 
   const finalBuffer = await buildFinalized(imageBuffer, project.title, artist || 'moodmixformat', placement)
 

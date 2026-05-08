@@ -29,6 +29,7 @@ export default function ArtworkGenerator({
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
+  const [guidance, setGuidance] = useState('')
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null
@@ -47,6 +48,7 @@ export default function ArtworkGenerator({
       body: JSON.stringify({
         project_id: projectId,
         artist: 'moodmixformat',
+        guidance: guidance.trim() || undefined,
       }),
     })
     const data = await res.json()
@@ -145,26 +147,35 @@ export default function ArtworkGenerator({
       )}
 
 
-      {/* Finalize button — gated on showFinalize so the project header
-          thumbnail doesn't expose this heavy action. */}
+      {/* Finalize button + guidance — gated on showFinalize so the project
+          header thumbnail doesn't expose this heavy action. */}
       {showFinalize && mode === 'idle' && previewUrl && (
-        <button
-          onClick={handleFinalize}
-          disabled={finalizing}
-          className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#0f0f0f] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2dd4bf]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {finalizing ? (
-            <>
-              <span className="w-3 h-3 border border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
-              Finalizing...
-            </>
-          ) : (
-            <>
-              <Wand2 size={13} />
-              Finalize Artwork
-            </>
-          )}
-        </button>
+        <div className="space-y-2">
+          <textarea
+            value={guidance}
+            onChange={e => setGuidance(e.target.value)}
+            rows={2}
+            placeholder="Optional notes for placement (e.g. &quot;put text at the top&quot;, &quot;avoid the cassette&quot;, &quot;keep it minimal&quot;)"
+            className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
+          />
+          <button
+            onClick={handleFinalize}
+            disabled={finalizing}
+            className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#0f0f0f] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2dd4bf]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {finalizing ? (
+              <>
+                <span className="w-3 h-3 border border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
+                Finalizing...
+              </>
+            ) : (
+              <>
+                <Wand2 size={13} />
+                Finalize Artwork
+              </>
+            )}
+          </button>
+        </div>
       )}
       {/* Generate mode */}
       {mode === 'generate' && (
