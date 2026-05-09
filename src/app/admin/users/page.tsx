@@ -33,7 +33,8 @@ export default function AdminUsersPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [])
 
   async function changeTier(userId: string, tier: string) {
     const res = await fetch(`/api/admin/users/${userId}`, {
