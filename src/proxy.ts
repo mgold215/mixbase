@@ -42,6 +42,27 @@ function clearAndRedirect(request: NextRequest) {
   return res
 }
 
+async function withAdminCheck(
+  request: NextRequest,
+  userId: string,
+  requestHeaders: Headers,
+): Promise<NextResponse> {
+  const { pathname } = request.nextUrl
+  if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('subscription_tier')
+      .eq('id', userId)
+      .single()
+    if (profile?.subscription_tier !== 'admin') {
+      return pathname.startsWith('/api/')
+        ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+        : NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+  }
+  return NextResponse.next({ request: { headers: requestHeaders } })
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
@@ -84,7 +105,7 @@ export async function proxy(request: NextRequest) {
     // Token is present and not expired — inject user ID and pass through
     const requestHeaders = new Headers(request.headers)
     requestHeaders.set('X-User-Id', userId)
-    return NextResponse.next({ request: { headers: requestHeaders } })
+    return withAdminCheck(request, userId, requestHeaders)
   }
 
   // ── Slow path: token is expired — attempt one refresh ─────────────────────
@@ -121,7 +142,7 @@ export async function proxy(request: NextRequest) {
     if (userId) {
       const requestHeaders = new Headers(request.headers)
       requestHeaders.set('X-User-Id', userId)
-      return NextResponse.next({ request: { headers: requestHeaders } })
+      return withAdminCheck(request, userId, requestHeaders)
     }
     return clearAndRedirect(request)
   }
