@@ -66,7 +66,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ]
 
-async function executeTool(name: string, input: Record<string, string>): Promise<string> {
+async function executeTool(name: string, input: Record<string, string>, requestingAdminId: string): Promise<string> {
   try {
     if (name === 'list_users') {
       const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
@@ -133,6 +133,7 @@ async function executeTool(name: string, input: Record<string, string>): Promise
       if (listError) return `Error: ${listError.message}`
       const user = listData.users.find(u => u.email === input.email)
       if (!user) return `User not found: ${input.email}`
+      if (user.id === requestingAdminId) return 'Cannot delete your own account.'
       const { error } = await supabaseAdmin.auth.admin.deleteUser(user.id)
       if (error) return `Error: ${error.message}`
       return `Deleted account for ${input.email}`
@@ -145,7 +146,8 @@ async function executeTool(name: string, input: Record<string, string>): Promise
 }
 
 export async function POST(request: NextRequest) {
-  if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const adminId = await assertAdmin(request)
+  if (!adminId) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { messages } = await request.json()
 
@@ -189,7 +191,7 @@ Rules:
       const toolResults: Anthropic.ToolResultBlockParam[] = []
       for (const block of response.content) {
         if (block.type !== 'tool_use') continue
-        const result = await executeTool(block.name, block.input as Record<string, string>)
+        const result = await executeTool(block.name, block.input as Record<string, string>, adminId)
         toolLog.push({ tool: block.name, result })
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
       }
