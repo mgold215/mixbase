@@ -125,7 +125,7 @@ export async function proxy(request: NextRequest) {
       const expiresAt = refreshed.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
       const requestHeaders = new Headers(request.headers)
       requestHeaders.set('X-User-Id', refreshed.session.user.id)
-      const res = NextResponse.next({ request: { headers: requestHeaders } })
+      const res = await withAdminCheck(request, refreshed.session.user.id, requestHeaders)
       res.cookies.set('sb-access-token', refreshed.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
       res.cookies.set('sb-refresh-token', refreshed.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
       res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
