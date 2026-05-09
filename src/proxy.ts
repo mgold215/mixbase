@@ -49,11 +49,17 @@ async function withAdminCheck(
 ): Promise<NextResponse> {
   const { pathname } = request.nextUrl
   if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
-    const { data: profile } = await supabaseAdmin
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('subscription_tier')
       .eq('id', userId)
       .single()
+    if (profileError) {
+      console.error('[withAdminCheck] profile query failed:', profileError.message)
+      return pathname.startsWith('/api/')
+        ? NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
+        : NextResponse.redirect(new URL('/dashboard', request.url))
+    }
     if (profile?.subscription_tier !== 'admin') {
       return pathname.startsWith('/api/')
         ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -139,10 +145,18 @@ export async function proxy(request: NextRequest) {
     // Network error during refresh — do NOT kick the user out for a transient
     // failure. Let them through; their data requests will fail gracefully if
     // Supabase is actually unreachable.
+    // Exception: admin paths get a hard deny — userId came from an expired,
+    // unverified token and the DB is unreachable so we cannot confirm admin status.
+    const { pathname } = request.nextUrl
+    if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
+      return pathname.startsWith('/api/')
+        ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+        : NextResponse.redirect(new URL('/dashboard', request.url))
+    }
     if (userId) {
       const requestHeaders = new Headers(request.headers)
       requestHeaders.set('X-User-Id', userId)
-      return withAdminCheck(request, userId, requestHeaders)
+      return NextResponse.next({ request: { headers: requestHeaders } })
     }
     return clearAndRedirect(request)
   }
