@@ -39,6 +39,11 @@ export default function AdminAssistantPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: apiMessages }),
       })
+      if (!res.ok) {
+        setMessages(prev => [...prev, { role: 'assistant', text: 'Request failed. Check your session and try again.' }])
+        setLoading(false)
+        return
+      }
       const data = await res.json()
       setMessages(prev => [...prev, {
         role: 'assistant',

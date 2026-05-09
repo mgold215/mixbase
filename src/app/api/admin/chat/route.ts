@@ -102,7 +102,8 @@ async function executeTool(name: string, input: Record<string, string>): Promise
       if (listError) return `Error: ${listError.message}`
       const user = listData.users.find(u => u.email === input.email)
       if (!user) return `User not found: ${input.email}`
-      await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', user.id)
+      const { error: updateError } = await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', user.id)
+      if (updateError) return `Error updating tier: ${updateError.message}`
       return `Changed ${input.email} to ${input.tier}`
     }
 
@@ -121,7 +122,8 @@ async function executeTool(name: string, input: Record<string, string>): Promise
       })
       if (error) return `Error: ${error.message}`
       if (input.tier && input.tier !== 'free') {
-        await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', data.user.id)
+        const { error: tierError } = await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', data.user.id)
+        if (tierError) return `Created account for ${input.email} but failed to set tier: ${tierError.message}`
       }
       return `Created account for ${input.email} (${input.tier ?? 'free'})`
     }
@@ -146,6 +148,10 @@ export async function POST(request: NextRequest) {
   if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { messages } = await request.json()
+
+  if (!Array.isArray(messages) || messages.length > 50) {
+    return NextResponse.json({ error: 'Invalid messages' }, { status: 400 })
+  }
 
   const systemPrompt = `You are the admin assistant for mixBase, a music mix versioning platform. Today is ${new Date().toISOString().split('T')[0]}.
 
@@ -190,6 +196,8 @@ Rules:
       msgs.push({ role: 'user', content: toolResults })
     }
   }
+
+  if (!finalText) finalText = 'I reached the maximum number of steps. Please try a simpler request.'
 
   return NextResponse.json({ text: finalText, toolLog })
 }
