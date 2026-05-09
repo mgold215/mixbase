@@ -13,7 +13,8 @@ export default async function AdminUsagePage() {
     supabaseAdmin.from('profiles').select('id, subscription_tier'),
   ])
 
-  const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  const users = listData?.users ?? []
   const emailMap = Object.fromEntries(users.map(u => [u.id, u.email ?? '']))
   const tierMap  = Object.fromEntries((profilesRes.data ?? []).map(p => [p.id, p.subscription_tier]))
 

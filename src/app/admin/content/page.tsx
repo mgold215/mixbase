@@ -8,7 +8,8 @@ export default async function AdminContentPage() {
     .order('created_at', { ascending: false })
     .limit(200)
 
-  const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  const users = listData?.users ?? []
   const emailMap = Object.fromEntries(users.map(u => [u.id, u.email ?? '—']))
 
   return (
@@ -35,7 +36,7 @@ export default async function AdminContentPage() {
                       {p.title}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>{emailMap[p.user_id]}</td>
+                  <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>{emailMap[p.user_id] ?? '—'}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>{versionCount}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(p.created_at).toLocaleDateString()}</td>
                 </tr>

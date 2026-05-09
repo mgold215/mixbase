@@ -36,26 +36,29 @@ export default function AdminUsersPage() {
   useEffect(() => { load() }, [load])
 
   async function changeTier(userId: string, tier: string) {
-    await fetch(`/api/admin/users/${userId}`, {
+    const res = await fetch(`/api/admin/users/${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tier }),
     })
+    if (!res.ok) { alert('Failed to update tier'); return }
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, subscription_tier: tier } : u))
   }
 
   async function resetUsage(userId: string) {
-    await fetch(`/api/admin/users/${userId}`, {
+    const res = await fetch(`/api/admin/users/${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resetUsage: true }),
     })
+    if (!res.ok) { alert('Failed to reset usage'); return }
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, artwork_used: 0, video_used: 0 } : u))
   }
 
   async function deleteUser(userId: string, email: string) {
     if (!confirm(`Delete account for ${email}? This cannot be undone.`)) return
-    await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' })
+    if (!res.ok) { alert('Failed to delete account'); return }
     setUsers(prev => prev.filter(u => u.id !== userId))
   }
 
@@ -162,6 +165,7 @@ export default function AdminUsersPage() {
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Email</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Tier</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Artwork</th>
+              <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Video</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Joined</th>
               <th className="px-4 py-3" />
             </tr>
@@ -192,6 +196,9 @@ export default function AdminUsersPage() {
                 </td>
                 <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {u.artwork_used} used
+                </td>
+                <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {u.video_used} used
                 </td>
                 <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {new Date(u.created_at).toLocaleDateString()}

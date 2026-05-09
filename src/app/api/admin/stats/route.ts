@@ -13,7 +13,9 @@ export async function GET(request: NextRequest) {
     supabaseAdmin.from('profiles').select('id, subscription_tier'),
   ])
 
-  const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+  if (listError) return NextResponse.json({ error: listError.message }, { status: 500 })
+  const users = listData.users
   const emailMap = Object.fromEntries(users.map(u => [u.id, u.email ?? '']))
   const tierMap  = Object.fromEntries((profilesRes.data ?? []).map(p => [p.id, p.subscription_tier]))
 

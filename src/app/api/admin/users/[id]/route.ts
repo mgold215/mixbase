@@ -11,6 +11,10 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const { tier, resetUsage } = await request.json()
 
   if (tier) {
+    const VALID_TIERS = ['free', 'pro', 'studio', 'admin']
+    if (!VALID_TIERS.includes(tier)) {
+      return NextResponse.json({ error: 'Invalid tier' }, { status: 400 })
+    }
     const { error } = await supabaseAdmin.from('profiles').update({ subscription_tier: tier }).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
