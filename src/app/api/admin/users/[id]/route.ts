@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { currentMonth } from '@/lib/tier'
-
-async function assertAdmin(request: NextRequest): Promise<boolean> {
-  const userId = request.headers.get('X-User-Id')
-  if (!userId) return false
-  const { data } = await supabaseAdmin.from('profiles').select('subscription_tier').eq('id', userId).single()
-  return data?.subscription_tier === 'admin'
-}
+import { assertAdmin } from '@/lib/auth'
 
 // PATCH /api/admin/users/[id] — update tier and/or reset usage
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -22,7 +16,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   if (resetUsage) {
-    await supabaseAdmin.from('mb_usage').delete().eq('user_id', id).eq('month', currentMonth())
+    const { error: usageError } = await supabaseAdmin.from('mb_usage').delete().eq('user_id', id).eq('month', currentMonth())
+    if (usageError) return NextResponse.json({ error: usageError.message }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })
@@ -33,6 +28,10 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id } = await ctx.params
+  const requestingUserId = request.headers.get('X-User-Id')
+  if (id === requestingUserId) {
+    return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 })
+  }
   const { error } = await supabaseAdmin.auth.admin.deleteUser(id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

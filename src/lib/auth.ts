@@ -24,3 +24,12 @@ export async function getUserId(): Promise<string> {
   if (!userId) redirect('/login')
   return userId
 }
+
+// Returns the userId string if the request comes from an admin, null otherwise.
+export async function assertAdmin(request: import('next/server').NextRequest): Promise<string | null> {
+  const { supabaseAdmin } = await import('./supabase')
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return null
+  const { data } = await supabaseAdmin.from('profiles').select('subscription_tier').eq('id', userId).single()
+  return data?.subscription_tier === 'admin' ? userId : null
+}

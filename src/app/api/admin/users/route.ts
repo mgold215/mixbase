@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { currentMonth } from '@/lib/tier'
-
-async function assertAdmin(request: NextRequest): Promise<string | null> {
-  const userId = request.headers.get('X-User-Id')
-  if (!userId) return null
-  const { data } = await supabaseAdmin.from('profiles').select('subscription_tier').eq('id', userId).single()
-  return data?.subscription_tier === 'admin' ? userId : null
-}
+import { assertAdmin } from '@/lib/auth'
 
 // GET /api/admin/users — list all users with profile + current-month usage
 export async function GET(request: NextRequest) {
@@ -45,6 +39,11 @@ export async function POST(request: NextRequest) {
 
   const { email, password, tier } = await request.json()
   if (!email || !password) return NextResponse.json({ error: 'email and password required' }, { status: 400 })
+
+  const VALID_TIERS = ['free', 'pro', 'studio', 'admin']
+  if (tier && !VALID_TIERS.includes(tier)) {
+    return NextResponse.json({ error: 'Invalid tier' }, { status: 400 })
+  }
 
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
