@@ -218,5 +218,11 @@ class AuthService: ObservableObject {
         self.userId = uid
         self.userEmail = email
         self.isAuthenticated = true
+
+        // Load artist name for Now Playing / Control Center / Bluetooth AVRCP
+        Task {
+            let name = await SupabaseService.shared.fetchArtistName(userId: uid)
+            await MainActor.run { AudioService.shared.artistName = name }
+        }
     }
 }

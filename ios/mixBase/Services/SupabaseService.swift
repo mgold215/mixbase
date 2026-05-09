@@ -128,6 +128,20 @@ class SupabaseService {
         return request
     }
 
+    // MARK: - Profile
+
+    /// Fetch the user's artist name from the profiles table
+    func fetchArtistName(userId: String) async -> String {
+        let path = "/rest/v1/profiles?id=eq.\(userId)&select=artist_name"
+        let request = makeRequest(path: path)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let name = json.first?["artist_name"] as? String,
+              !name.isEmpty
+        else { return "" }
+        return name
+    }
+
     // MARK: - Projects
 
     /// Fetch all projects, newest-updated first

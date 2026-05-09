@@ -47,16 +47,25 @@ export async function GET(request: NextRequest) {
 
   await ensureShareTokens(userId)
 
-  const { data, error } = await supabaseAdmin
-    .from('mb_versions')
-    .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, key_signature, bpm, user_id)')
-    .eq('mb_projects.user_id', userId)
-    .order('version_number', { ascending: false })
+  const [versionsResult, profileResult] = await Promise.all([
+    supabaseAdmin
+      .from('mb_versions')
+      .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, key_signature, bpm, user_id)')
+      .eq('mb_projects.user_id', userId)
+      .order('version_number', { ascending: false }),
+    supabaseAdmin
+      .from('profiles')
+      .select('artist_name')
+      .eq('id', userId)
+      .single(),
+  ])
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (versionsResult.error) return NextResponse.json({ error: versionsResult.error.message }, { status: 500 })
+
+  const artistName: string = profileResult.data?.artist_name || 'mixBase'
 
   const seen = new Set<string>()
-  const latest = (data ?? []).filter((v) => {
+  const latest = (versionsResult.data ?? []).filter((v) => {
     if (seen.has(v.project_id)) return false
     seen.add(v.project_id)
     return true
@@ -64,15 +73,15 @@ export async function GET(request: NextRequest) {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const p = project as { title?: string; artwork_url?: string | null; key_signature?: string | null; bpm?: number | null }
+    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; key_signature?: string | null; bpm?: number | null }
     const projectTitle: string = p?.title ?? 'Unknown'
     return {
       id: v.id,
       project_id: v.project_id,
       share_token: v.share_token ?? null,
       title: projectTitle,
-      artist: projectTitle,
-      artwork_url: p?.artwork_url ?? null,
+      artist: artistName,
+      artwork_url: p?.finalized_artwork_url ?? p?.artwork_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',
       version: v.label || `v${v.version_number}`,

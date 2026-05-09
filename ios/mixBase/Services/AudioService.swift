@@ -29,6 +29,9 @@ class AudioService: ObservableObject {
     /// The artwork URL for the currently playing track
     @Published var currentArtworkUrl: String?
 
+    /// The user's artist name — fetched once from profiles table
+    var artistName: String = "mixBase"
+
     /// Whether audio is actively playing right now
     @Published var isPlaying: Bool = false
 
@@ -206,8 +209,7 @@ class AudioService: ObservableObject {
         var info = [String: Any]()
 
         info[MPMediaItemPropertyTitle] = currentTrackName ?? "mixBase"
-        info[MPMediaItemPropertyArtist] = "mixBase"
-        info[MPMediaItemPropertyAlbumTitle] = "mixBase"
+        info[MPMediaItemPropertyArtist] = artistName.isEmpty ? "mixBase" : artistName
 
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration

@@ -64,7 +64,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Stable ref to the most recent media session metadata so onPlay (a [] effect) can
   // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
   // set before play() resolves.
-  const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null } | null>(null)
+  const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null; artist?: string } | null>(null)
 
   // Load tracks once on mount — retry once after 3 s on failure
   useEffect(() => {
@@ -111,7 +111,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Re-apply full metadata after iOS activates the audio session — iOS sometimes
       // ignores metadata set before play() resolves, so we push it again on the play event.
       if (mediaMetaRef.current) {
-        applyMediaSession(mediaMetaRef.current.title, mediaMetaRef.current.artworkUrl, true)
+        applyMediaSession(mediaMetaRef.current.title, mediaMetaRef.current.artworkUrl, true, mediaMetaRef.current.artist)
       } else if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing'
       }
@@ -251,8 +251,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentTime(0)
       setDuration(0)
     }
-    mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url }
-    applyMediaSession(track.title, track.artwork_url, true)
+    mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url, artist: track.artist }
+    applyMediaSession(track.title, track.artwork_url, true, track.artist)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
@@ -270,8 +270,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentUrl(url)
     setCurrentProjectId(null)
     setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
-    mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null }
-    applyMediaSession(title, artworkUrl ?? null, true)
+    mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null, artist }
+    applyMediaSession(title, artworkUrl ?? null, true, artist)
     audio.volume = volume
     playIntentRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
@@ -291,7 +291,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playIntentRef.current = false
       audio.pause()
     } else {
-      if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true)
+      if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true, currentTrack.artist)
       playIntentRef.current = true
       audio.play().catch(() => {})
     }
