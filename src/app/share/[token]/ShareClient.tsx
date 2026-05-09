@@ -202,7 +202,7 @@ export default function ShareClient({ version }: Props) {
           className="w-full flex items-center justify-center gap-2 py-4 text-sm text-white/35 hover:text-white/60 transition-colors"
         >
           <MessageSquare size={14} />
-          Leave feedback
+          What u think?
           <ChevronDown
             size={14}
             className="transition-transform duration-200"

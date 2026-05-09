@@ -93,13 +93,17 @@ export default function FeedbackForm({ versionId, onSubmitted }: Props) {
         )}
       </div>
 
-      <textarea
-        placeholder="What do you think? Be specific — what's working, what isn't?"
-        value={comment}
-        onChange={e => setComment(e.target.value)}
-        rows={3}
-        className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
-      />
+      <div>
+        <textarea
+          placeholder="What do you think? Be specific — what's working, what isn't?"
+          value={comment}
+          onChange={e => setComment(e.target.value.slice(0, 200))}
+          maxLength={200}
+          rows={3}
+          className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-3 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
+        />
+        <p className="text-right text-[11px] text-[#444] mt-1">{comment.length}/200</p>
+      </div>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
 
