@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type ChangeEvent } from 'react'
-import { Sparkles, Upload, X, Wand2 } from 'lucide-react'
+import { Sparkles, Upload, X, Wand2, ChevronDown, ChevronUp } from 'lucide-react'
 import Image from 'next/image'
 
 type Props = {
@@ -12,9 +12,37 @@ type Props = {
   currentFinalized?: string | null
   onArtworkUpdated: (url: string) => void
   onFinalizedUpdated: (url: string | null) => void
-  // Finalize is a heavier action (Vision call + render) — keep it on the
-  // dedicated Artwork tab, not on every embedded preview of this component.
   showFinalize?: boolean
+}
+
+function Slider({
+  label, value, min, max, step, onChange, displayFn,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  onChange: (v: number) => void
+  displayFn?: (v: number) => string
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-[10px] text-[#666] w-20 shrink-0">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="flex-1 accent-[#2dd4bf] h-1 cursor-pointer"
+      />
+      <span className="text-[10px] text-[#888] w-10 text-right tabular-nums">
+        {displayFn ? displayFn(value) : value.toFixed(2)}
+      </span>
+    </div>
+  )
 }
 
 export default function ArtworkGenerator({
@@ -29,14 +57,30 @@ export default function ArtworkGenerator({
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
-  const [guidance, setGuidance] = useState('')
 
-  // Source artwork (Generate / Upload result) — what the renderer reads.
+  // Finalize controls
+  const [guidance, setGuidance] = useState('')
+  const [position, setPosition] = useState<'auto' | 'top' | 'bottom'>('auto')
+  const [showRule, setShowRule] = useState(true)
+  const [showFilters, setShowFilters] = useState(false)
+
+  // Photo adjustment filters
+  const [brightness, setBrightness] = useState(1.0)
+  const [contrast, setContrast] = useState(1.0)
+  const [saturation, setSaturation] = useState(1.0)
+  const [vignette, setVignette] = useState(false)
+
   const sourceUrl = currentArtwork ?? null
-  // Preview prefers the finalized render when present so the user sees the
-  // exported version. If they Generate or Upload again the parent clears
-  // currentFinalized and we fall back to the new source.
   const previewUrl = currentFinalized ?? sourceUrl
+
+  const filtersAreDefault = brightness === 1.0 && contrast === 1.0 && saturation === 1.0 && !vignette
+
+  function resetFilters() {
+    setBrightness(1.0)
+    setContrast(1.0)
+    setSaturation(1.0)
+    setVignette(false)
+  }
 
   async function handleFinalize() {
     if (!sourceUrl) return
@@ -49,6 +93,14 @@ export default function ArtworkGenerator({
         project_id: projectId,
         artist: 'moodmixformat',
         guidance: guidance.trim() || undefined,
+        position: position !== 'auto' ? position : undefined,
+        showRule,
+        filters: {
+          brightness,
+          contrast,
+          saturation,
+          vignette,
+        },
       }),
     })
     const data = await res.json()
@@ -73,7 +125,6 @@ export default function ArtworkGenerator({
     const data = await res.json()
     if (res.ok && data.artwork_url) {
       onArtworkUpdated(data.artwork_url)
-      // Server cleared finalized_artwork_url; mirror that in client state.
       onFinalizedUpdated(null)
       setMode('idle')
     } else {
@@ -94,7 +145,6 @@ export default function ArtworkGenerator({
     const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
     const data = await res.json()
     if (res.ok && data.url) {
-      // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
       await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -106,7 +156,6 @@ export default function ArtworkGenerator({
     } else {
       setError(data.error ?? 'Upload failed. Try again.')
     }
-    // Reset the file input so re-uploading the same filename still triggers onChange
     e.target.value = ''
   }
 
@@ -146,18 +195,110 @@ export default function ArtworkGenerator({
         </div>
       )}
 
-
-      {/* Finalize button + guidance — gated on showFinalize so the project
-          header thumbnail doesn't expose this heavy action. */}
+      {/* Finalize section — gated on showFinalize */}
       {showFinalize && mode === 'idle' && previewUrl && (
         <div className="space-y-2">
+
+          {/* Text position row */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[#555] shrink-0">Position</span>
+            <div className="flex gap-1 flex-1">
+              {(['auto', 'top', 'bottom'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPosition(p)}
+                  className={`flex-1 py-1 text-[10px] font-medium rounded-lg border transition-colors ${
+                    position === p
+                      ? 'bg-[#2dd4bf]/20 border-[#2dd4bf]/40 text-[#2dd4bf]'
+                      : 'border-[#222] text-[#555] hover:text-[#888] hover:border-[#333]'
+                  }`}
+                >
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={showRule}
+                onChange={e => setShowRule(e.target.checked)}
+                className="accent-[#2dd4bf] w-3 h-3"
+              />
+              <span className="text-[10px] text-[#555]">Line</span>
+            </label>
+          </div>
+
+          {/* Guidance / feedback textarea */}
           <textarea
             value={guidance}
             onChange={e => setGuidance(e.target.value)}
+            maxLength={400}
             rows={2}
-            placeholder="Optional notes for placement (e.g. &quot;put text at the top&quot;, &quot;avoid the cassette&quot;, &quot;keep it minimal&quot;)"
+            placeholder="Describe what you want (e.g. &quot;text bottom right&quot;, &quot;smaller text&quot;, &quot;avoid the logo in the center&quot;)"
             className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
           />
+
+          {/* Photo adjustments — expandable */}
+          <div className="border border-[#1e1e1e] rounded-xl overflow-hidden">
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-[10px] text-[#555] hover:text-[#888] transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                Photo Adjustments
+                {!filtersAreDefault && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#2dd4bf]" />
+                )}
+              </span>
+              {showFilters ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+
+            {showFilters && (
+              <div className="px-3 pb-3 space-y-2.5">
+                <Slider
+                  label="Brightness"
+                  value={brightness}
+                  min={0.5} max={1.5} step={0.05}
+                  onChange={setBrightness}
+                  displayFn={v => `${Math.round(v * 100)}%`}
+                />
+                <Slider
+                  label="Contrast"
+                  value={contrast}
+                  min={0.5} max={1.5} step={0.05}
+                  onChange={setContrast}
+                  displayFn={v => `${Math.round(v * 100)}%`}
+                />
+                <Slider
+                  label="Saturation"
+                  value={saturation}
+                  min={0} max={2} step={0.05}
+                  onChange={setSaturation}
+                  displayFn={v => `${Math.round(v * 100)}%`}
+                />
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={vignette}
+                    onChange={e => setVignette(e.target.checked)}
+                    className="accent-[#2dd4bf] w-3 h-3"
+                  />
+                  <span className="text-[10px] text-[#666]">Vignette</span>
+                </label>
+                {!filtersAreDefault && (
+                  <button
+                    onClick={resetFilters}
+                    className="text-[10px] text-[#444] hover:text-[#666] transition-colors"
+                  >
+                    Reset adjustments
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {error && <p className="text-red-400 text-xs">{error}</p>}
+
           <button
             onClick={handleFinalize}
             disabled={finalizing}
@@ -177,10 +318,10 @@ export default function ArtworkGenerator({
           </button>
         </div>
       )}
+
       {/* Generate mode */}
       {mode === 'generate' && (
         <div className="space-y-2">
-          {/* Model selector */}
           <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
             {(['flux', 'imagen'] as const).map(m => (
               <button

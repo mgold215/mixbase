@@ -50,51 +50,51 @@ function textToSvgPaths(
   return { markup: parts.join('\n'), totalW }
 }
 
-// ── Vision: just text placement, no color grading, no backdrop ───────────────
-// We deliberately do NOT touch the source pixels — no contrast/saturation/
-// brightness/vignette pipeline AND no dark band behind the text. The user paid
-// for the Replicate render and wants those pixels to ship. Legibility comes
-// from per-glyph drop shadows on the text itself, which only darken pixels
-// immediately around each letter.
 type Placement = {
   textCenterY: number  // 0.10–0.90, vertical center of text block
   showRule: boolean    // horizontal divider between artist and title
 }
 
-async function pickPlacement(
+type Filters = {
+  brightness: number  // 0.5–1.5, 1.0 = no change
+  contrast: number    // 0.5–1.5, 1.0 = no change
+  saturation: number  // 0.0–2.0, 1.0 = no change
+  vignette: boolean
+}
+
+// ── Vision: pick vertical text position based on image content ────────────────
+// showRule is now an explicit user control, so Vision only determines textCenterY.
+// When position is explicitly set to 'top' or 'bottom', Vision is skipped entirely.
+async function pickTextCenterY(
   imageUrl: string,
   layoutSeed: number,
-  guidance?: string
-): Promise<Placement> {
-  // Without guidance: randomise zone + rule per click so re-running gives a
-  // different layout. With guidance: Vision gets freedom across the whole
-  // image and is allowed to override the rule, so the user's instruction
-  // wins over the random seed.
+  guidance?: string,
+  positionHint?: 'top' | 'bottom'
+): Promise<number> {
+  if (positionHint === 'top') return 0.18
+  if (positionHint === 'bottom') return 0.85
+
   const guided = !!guidance && guidance.trim().length > 0
   const seedZone: 'top' | 'bottom' = layoutSeed % 2 === 0 ? 'bottom' : 'top'
-  const seedRule = (layoutSeed >> 1) % 2 === 0
-  const fallback: Placement = {
-    textCenterY: seedZone === 'top' ? 0.18 : 0.85,
-    showRule: seedRule,
-  }
+  const fallback = seedZone === 'top' ? 0.18 : 0.85
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return fallback
 
-  const guidanceBlock = guided
-    ? `\n\nUser guidance (follow this when possible): ${guidance!.trim()}`
-    : ''
+  // Use Sonnet for guided mode — it follows complex instructions far more reliably
+  // than Haiku. For unguided (just zone picking), Haiku is sufficient.
+  const model = guided ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001'
 
-  // When guided, Vision can pick anywhere on the cover (0.10–0.90) and decide
-  // whether the horizontal rule belongs. Without guidance we constrain to the
-  // seeded zone so the per-click variation actually shows up.
   const promptText = guided
-    ? `Pick the best position for the artist + title overlay on this album cover. Small white text with a soft drop shadow.
+    ? `You are placing small white text (artist name + title) on an album cover.
 
-textCenterY: 0.10–0.90 (vertical center of the text block).
-showRule: true to draw a thin horizontal line between artist and title, false for a cleaner look.${guidanceBlock}
+IMPORTANT — the user has given this specific instruction: "${guidance!.trim()}"
 
-Reply with ONLY: {"textCenterY": <number>, "showRule": <boolean>}`
+Follow the user instruction precisely. Return the vertical center for the text block as a fraction of image height.
+
+textCenterY: 0.10 = very top edge, 0.50 = center, 0.90 = very bottom edge.
+
+Reply with ONLY valid JSON: {"textCenterY": <number between 0.10 and 0.90>}`
     : `Find the best vertical position for small white text in the ${seedZone} zone of this album cover (${seedZone === 'top' ? '0.10–0.30' : '0.72–0.90'} of height). Pick the area with the least busy detail.
 
 Reply with ONLY: {"textCenterY": <number>}`
@@ -108,8 +108,8 @@ Reply with ONLY: {"textCenterY": <number>}`
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: guided ? 120 : 60,
+        model,
+        max_tokens: 60,
         messages: [{
           role: 'user',
           content: [
@@ -128,28 +128,38 @@ Reply with ONLY: {"textCenterY": <number>}`
 
     const minY = guided ? 0.10 : (seedZone === 'top' ? 0.10 : 0.72)
     const maxY = guided ? 0.90 : (seedZone === 'top' ? 0.30 : 0.90)
-    return {
-      textCenterY: Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback.textCenterY)),
-      showRule:    guided && typeof p.showRule === 'boolean' ? p.showRule : seedRule,
-    }
+    return Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback))
   } catch (err) {
     console.error('[finalize-artwork] Vision error:', err)
     return fallback
   }
 }
 
-// ── Build finalized artwork: source pixels untouched, text composited on top ─
+// ── Build finalized artwork: source pixels + optional filter adjustments + text ─
 async function buildFinalized(
   imageBuffer: Buffer,
   title: string,
   artist: string,
-  placement: Placement
+  placement: Placement,
+  filters: Filters
 ): Promise<Buffer> {
-  // Source pixels go through Sharp untouched — no color grade, no overlay band.
-  // Legibility on busy backgrounds comes from per-glyph drop shadows applied
-  // via SVG filters, which only darken pixels right next to each letter.
-  const img = sharp(imageBuffer)
-  const { width = 1024, height = 1024 } = await img.metadata()
+  const { width = 1024, height = 1024 } = await sharp(imageBuffer).metadata()
+
+  // Apply photo adjustments via Sharp before compositing text.
+  // Each step is a separate pipeline call so they chain cleanly.
+  let pipeline = sharp(imageBuffer)
+
+  const { brightness, saturation, contrast, vignette } = filters
+
+  if (brightness !== 1.0 || saturation !== 1.0) {
+    pipeline = pipeline.modulate({ brightness, saturation })
+  }
+
+  if (contrast !== 1.0) {
+    // Linear contrast: output = contrast * input + 128 * (1 - contrast)
+    // Preserves midpoint at 128 so the image doesn't shift overall brightness.
+    pipeline = pipeline.linear(contrast, Math.round(128 * (1 - contrast)))
+  }
 
   const cx = Math.round(width * 0.5)
   const cy = Math.round(placement.textCenterY * height)
@@ -175,16 +185,12 @@ async function buildFinalized(
     title.toUpperCase(), cx, titleY, titleSize, titleLS, 'white', 1.00
   )
 
-  // Optional rule between artist and title
   const ruleW = Math.round(artistW)
   const ruleX = Math.round(cx - ruleW / 2)
   const ruleSvg = placement.showRule
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.75" filter="url(#textShadow)"/>`
     : ''
 
-  // Drop-shadow filter — gives white text legibility on any background without
-  // darkening any pixels not adjacent to a glyph. stdDeviation tuned to text
-  // size; flood-opacity 0.65 reads cleanly without looking heavy.
   const shadowSigma = Math.max(2, Math.round(titleSize * 0.08))
 
   const textSvg = Buffer.from(
@@ -202,32 +208,66 @@ async function buildFinalized(
     </svg>`
   )
 
-  // Output JPEG at high quality with 4:4:4 chroma — preserves saturated edges
-  // (neon, etc.) that 4:2:0 subsampling can mute.
-  return img
-    .composite([{ input: textSvg, blend: 'over' }])
+  // Build composite layers: vignette (if enabled) then text overlay
+  const composites: sharp.OverlayOptions[] = []
+
+  if (vignette) {
+    const vignetteSvg = Buffer.from(
+      `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="vig" cx="50%" cy="50%" r="71%">
+            <stop offset="0%" stop-color="black" stop-opacity="0"/>
+            <stop offset="100%" stop-color="black" stop-opacity="0.55"/>
+          </radialGradient>
+        </defs>
+        <rect width="${width}" height="${height}" fill="url(#vig)"/>
+      </svg>`
+    )
+    composites.push({ input: vignetteSvg, blend: 'over' })
+  }
+
+  composites.push({ input: textSvg, blend: 'over' })
+
+  return pipeline
+    .composite(composites)
     .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
     .toBuffer()
 }
 
 // ── POST /api/finalize-artwork ──────────────────────────────────────────────
-// Always renders against the immutable source (mb_projects.artwork_url) and
-// writes the rendered output to mb_projects.finalized_artwork_url. The client
-// only sends { project_id } — passing artwork_url from the browser would let
-// stale finalized URLs feed back into the renderer.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { project_id, artist, guidance } = await request.json()
+  const {
+    project_id, artist, guidance,
+    position,
+    showRule: showRuleParam,
+    filters: filtersParam,
+  } = await request.json()
+
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
   }
-  // Trim + cap guidance length so a runaway textarea can't blow Vision tokens
+
   const guidanceText: string | undefined =
     typeof guidance === 'string' && guidance.trim().length > 0
       ? guidance.trim().slice(0, 400)
       : undefined
+
+  // showRule defaults to true — always show the line between artist and title
+  // unless the user explicitly turns it off.
+  const showRule: boolean = typeof showRuleParam === 'boolean' ? showRuleParam : true
+
+  const filters: Filters = {
+    brightness: Math.min(1.5, Math.max(0.5, Number(filtersParam?.brightness ?? 1.0))),
+    contrast:   Math.min(1.5, Math.max(0.5, Number(filtersParam?.contrast   ?? 1.0))),
+    saturation: Math.min(2.0, Math.max(0.0, Number(filtersParam?.saturation ?? 1.0))),
+    vignette:   Boolean(filtersParam?.vignette ?? false),
+  }
+
+  const positionHint: 'top' | 'bottom' | undefined =
+    position === 'top' || position === 'bottom' ? position : undefined
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
@@ -252,13 +292,13 @@ export async function POST(request: NextRequest) {
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
-  // Random seed per call → different layout each Finalize click when no
-  // guidance is given. With guidance, Vision's choices win over the seed.
   const layoutSeed = Math.floor(Math.random() * 1024)
-  const placement = await pickPlacement(project.artwork_url, layoutSeed, guidanceText)
-  console.log('[finalize-artwork] guidance:', guidanceText ?? '(none)', 'placement:', JSON.stringify(placement))
+  const textCenterY = await pickTextCenterY(project.artwork_url, layoutSeed, guidanceText, positionHint)
+  const placement: Placement = { textCenterY, showRule }
 
-  const finalBuffer = await buildFinalized(imageBuffer, project.title, artist || 'moodmixformat', placement)
+  console.log('[finalize-artwork] guidance:', guidanceText ?? '(none)', 'placement:', JSON.stringify(placement), 'filters:', JSON.stringify(filters))
+
+  const finalBuffer = await buildFinalized(imageBuffer, project.title, artist || 'moodmixformat', placement, filters)
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
   const { data: uploadData, error: uploadError } = await supabase.storage
