@@ -40,18 +40,21 @@ export async function GET(request: NextRequest) {
   }
 
   // Set the custom cookies that our middleware checks
+  // Must use 'lax' (not 'strict') — the OAuth redirect arriving from supabase.co
+  // is a cross-site navigation; 'strict' would block the cookie on the very next
+  // same-site redirect to /dashboard, causing the user to appear logged out.
   const cookieOpts = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict' as const,
+    sameSite: 'lax' as const,
     path: '/',
   }
 
   const expiresAt = data.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
   response.cookies.set('sb-access-token', data.session.access_token, { ...cookieOpts, maxAge: 60 * 60 })
   response.cookies.set('sb-refresh-token', data.session.refresh_token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'strict', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
 
   return response
 }
