@@ -93,7 +93,7 @@ alter table mb_feedback disable row level security;
 alter table mb_releases disable row level security;
 alter table mb_activity disable row level security;
 
--- Ensure share_token column exists (idempotent — safe to re-run)
+-- Ensure share_token column exists on versions (idempotent — safe to re-run)
 alter table mb_versions
   add column if not exists share_token text unique default replace(gen_random_uuid()::text, '-', '');
 
@@ -103,6 +103,16 @@ create index if not exists idx_versions_share_token on mb_versions(share_token);
 update mb_versions
 set share_token = replace(gen_random_uuid()::text, '-', '')
 where share_token is null;
+
+-- Migration 012: project-level share token (share link always resolves to latest mix)
+alter table mb_projects
+  add column if not exists share_token text unique default replace(gen_random_uuid()::text, '-', '');
+
+update mb_projects
+set share_token = replace(gen_random_uuid()::text, '-', '')
+where share_token is null;
+
+create index if not exists idx_projects_share_token on mb_projects(share_token);
 
 -- Collections tables (idempotent)
 create table if not exists mb_collections (

@@ -9,9 +9,9 @@ import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
-  ArrowLeft, Plus, Share2, Check, ChevronDown, ChevronUp,
-  MessageSquare, Star, Trash2, Music, Upload, Pencil,
-  CalendarRange, ExternalLink, Play, Pause, Download, Sparkles
+  ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
+  Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
+  Sparkles, History, X,
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -39,8 +39,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
-  const [expandedVersion, setExpandedVersion] = useState<string | null>(versions[0]?.id ?? null)
-  const [copiedToken, setCopiedToken] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
@@ -59,6 +58,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [summaries, setSummaries] = useState<Record<string, string>>({})
   const [summaryLoading, setSummaryLoading] = useState<string | null>(null)
   const [summaryError, setSummaryError] = useState<Record<string, string>>({})
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [deletingProject, setDeletingProject] = useState(false)
 
   const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay } = usePlayer()
 
@@ -83,11 +85,23 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     return candidate > current ? v.status : best
   }, 'WIP' as string)
 
-  function copyShareLink(token: string) {
-    const url = `${window.location.origin}/share/${token}`
+  function copyShareLink() {
+    if (!project.share_token) return
+    const url = `${window.location.origin}/share/${project.share_token}`
     navigator.clipboard.writeText(url)
-    setCopiedToken(token)
-    setTimeout(() => setCopiedToken(null), 2000)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  async function deleteProject() {
+    if (!confirm('Delete this project and all its mixes? This cannot be undone.')) return
+    setDeletingProject(true)
+    const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
+    if (res.ok) {
+      window.location.href = '/dashboard'
+    } else {
+      setDeletingProject(false)
+    }
   }
 
   async function updateStatus(versionId: string, newStatus: Version['status']) {
@@ -125,7 +139,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     if (!file) return
     if (fileInputRef.current) fileInputRef.current.value = ''
 
-    // Detect BPM/key in background — only fill in fields the user hasn't set manually
     analyzeFile(file).then(result => {
       if (result) {
         setProjectForm(p => ({
@@ -199,16 +212,16 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
 
-    let duration: number | null = null
+    let audioDuration: number | null = null
     try {
-      duration = await new Promise((resolve) => {
+      audioDuration = await new Promise((resolve) => {
         const audio = new Audio(audioProxyUrl(audioUrl))
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
         setTimeout(() => resolve(null), 8000)
       })
     } catch {
-      duration = null
+      audioDuration = null
     }
 
     setUploadPct(92)
@@ -221,7 +234,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         project_id: project.id,
         audio_url: audioUrl,
         audio_filename: file.name,
-        duration_seconds: duration,
+        duration_seconds: audioDuration,
         file_size_bytes: file.size,
         label: parseMixLabel(file.name),
       }),
@@ -233,7 +246,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setUploadStatus('Done!')
       setTimeout(() => {
         setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
-        setExpandedVersion(newVersion.id)
         setUploadPct(0)
         setUploadStatus('')
         setUploading(false)
@@ -243,6 +255,28 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setUploadPct(0)
       setUploading(false)
     }
+  }
+
+  async function restoreVersion(archivedVersion: VersionWithFeedback) {
+    setRestoring(true)
+    const res = await fetch('/api/versions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: project.id,
+        audio_url: archivedVersion.audio_url,
+        audio_filename: archivedVersion.audio_filename,
+        duration_seconds: archivedVersion.duration_seconds,
+        file_size_bytes: archivedVersion.file_size_bytes,
+        label: archivedVersion.label,
+      }),
+    })
+    const newVersion = await res.json()
+    if (res.ok) {
+      setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
+      setArchivedOpen(false)
+    }
+    setRestoring(false)
   }
 
   async function summarizeFeedback(versionId: string) {
@@ -321,6 +355,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     ? Math.round((CHECKLIST_ITEMS.filter(c => release[c.key]).length / CHECKLIST_ITEMS.length) * 100)
     : 0
 
+  // Current mix = highest version_number (index 0, sorted desc). Everything else is archived.
+  const currentMix = versions[0] ?? null
+  const archivedVersions = versions.slice(1)
+
   return (
     <div className="pt-14">
       <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
@@ -387,7 +425,32 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   {(projectForm.key_signature || project.key_signature) && <span>{projectForm.key_signature || project.key_signature}</span>}
                   <span>{versions.length} mix{versions.length !== 1 ? 'es' : ''}</span>
                 </div>
-                <AddToCollectionButton projectId={project.id} />
+
+                {/* Project actions row */}
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <AddToCollectionButton projectId={project.id} />
+                  {project.share_token && (
+                    <button
+                      onClick={copyShareLink}
+                      className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                        copied
+                          ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] border-[var(--border)]'
+                      }`}
+                    >
+                      {copied ? <Check size={12} /> : <Share2 size={12} />}
+                      {copied ? 'Copied!' : 'Share'}
+                    </button>
+                  )}
+                  <button
+                    onClick={deleteProject}
+                    disabled={deletingProject}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-red-400 hover:border-red-400/30 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 size={12} />
+                    {deletingProject ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
               </>
             )}
             <StatusPipeline currentStatus={projectStatus} />
@@ -412,383 +475,158 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           ))}
         </div>
 
-        {/* Tab content — Versions */}
+        {/* Tab content — Mixes */}
         {activeTab === 'versions' && (
-        <div>
+          <div>
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-3 mb-6">
-          {uploading ? (
-            <div className="flex items-center gap-3 rounded-xl px-4 py-2.5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <span className="text-xs text-[var(--text-secondary)] flex-shrink-0">{uploadStatus}</span>
-              <div className="w-32 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{ backgroundColor: uploadPct === 100 ? '#34d399' : '#2dd4bf', width: `${uploadPct}%` }}
-                />
-              </div>
-              <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{uploadPct}%</span>
-            </div>
-          ) : (
-            <>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-              >
-                <Upload size={15} />
-                Update Mix
-              </button>
-              {uploadStatus.startsWith('Error') && (
-                <span className="text-xs text-red-400">{uploadStatus}</span>
-              )}
-            </>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
-            className="sr-only"
-            onChange={handleFileSelect}
-          />
-        </div>
-
-        {/* Release Pipeline section */}
-        <div className="mt-10 mb-2">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CalendarRange size={16} className="text-[#2dd4bf]" />
-              <h2 className="text-sm font-semibold text-[var(--text)]">Release Pipeline</h2>
-            </div>
-            {release && (
-              <Link
-                href="/pipeline"
-                className="flex items-center gap-1 text-xs text-[#555] hover:text-[#2dd4bf] transition-colors"
-              >
-                View in Pipeline
-                <ExternalLink size={11} />
-              </Link>
-            )}
-          </div>
-
-          {release ? (
-            <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-              {/* Progress bar */}
-              <div className="flex items-center gap-3 mb-5">
-                <div className="flex-1 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${releaseProgress}%`,
-                      backgroundColor: releaseProgress === 100 ? '#34d399' : releaseProgress >= 50 ? '#2dd4bf' : '#555',
-                    }}
-                  />
-                </div>
-                <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{releaseProgress}%</span>
-              </div>
-
-              {/* Checklist */}
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
-                {CHECKLIST_ITEMS.map(item => (
-                  <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={release[item.key]}
-                      onChange={() => toggleReleaseCheck(item.key, release[item.key])}
-                      className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
+            {/* Upload button */}
+            <div className="flex items-center gap-3 mb-6">
+              {uploading ? (
+                <div className="flex items-center gap-3 rounded-xl px-4 py-2.5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <span className="text-xs text-[var(--text-secondary)] flex-shrink-0">{uploadStatus}</span>
+                  <div className="w-32 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ backgroundColor: uploadPct === 100 ? '#34d399' : '#2dd4bf', width: `${uploadPct}%` }}
                     />
-                    <span className={`text-sm transition-colors ${release[item.key] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
-                      {item.label}
-                    </span>
-                  </label>
-                ))}
+                  </div>
+                  <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{uploadPct}%</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+                  >
+                    <Upload size={15} />
+                    Update Mix
+                  </button>
+                  {uploadStatus.startsWith('Error') && (
+                    <span className="text-xs text-red-400">{uploadStatus}</span>
+                  )}
+                </>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                className="sr-only"
+                onChange={handleFileSelect}
+              />
+            </div>
+
+            {/* Current mix */}
+            {currentMix === null ? (
+              <div className="text-center py-16 text-[var(--text-muted)]">
+                <Music size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
+                <p className="text-sm">No mixes yet — upload your first mix above</p>
+              </div>
+            ) : (
+              <CurrentMixCard
+                version={currentMix}
+                projectTitle={projectForm.title || project.title}
+                artwork={artwork}
+                currentUrl={currentUrl}
+                currentTime={currentTime}
+                duration={duration}
+                isPlaying={isPlaying}
+                seek={seek}
+                togglePlay={togglePlay}
+                playUrl={playUrl}
+                savedNoteKey={savedNoteKey}
+                summaries={summaries}
+                summaryLoading={summaryLoading}
+                summaryError={summaryError}
+                onUpdateStatus={updateStatus}
+                onUpdateNotes={updateNotes}
+                onSummarizeFeedback={summarizeFeedback}
+                onDeleteVersion={deleteVersion}
+                parseMixLabel={parseMixLabel}
+              />
+            )}
+
+            {/* Restore older mix */}
+            {archivedVersions.length > 0 && (
+              <div className="mt-5">
+                <button
+                  onClick={() => setArchivedOpen(true)}
+                  className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                >
+                  <History size={13} />
+                  Restore older mix ({archivedVersions.length} archived)
+                </button>
+              </div>
+            )}
+
+            {/* Release Pipeline */}
+            <div className="mt-10 mb-2">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <CalendarRange size={16} className="text-[#2dd4bf]" />
+                  <h2 className="text-sm font-semibold text-[var(--text)]">Release Pipeline</h2>
+                </div>
+                {release && (
+                  <Link
+                    href="/pipeline"
+                    className="flex items-center gap-1 text-xs text-[#555] hover:text-[#2dd4bf] transition-colors"
+                  >
+                    View in Pipeline
+                    <ExternalLink size={11} />
+                  </Link>
+                )}
               </div>
 
-              {release.release_date && (
-                <p className="text-xs text-[var(--text-muted)] mt-4">
-                  Target date: {new Date(release.release_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                </p>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={startRelease}
-              disabled={startingRelease}
-              className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 text-[#0a0a0a] text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
-            >
-              <Plus size={15} />
-              {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
-            </button>
-          )}
-        </div>
-
-        {/* Version list */}
-        <div className="mt-8 mb-3">
-          <h2 className="text-sm font-semibold text-[var(--text)]">Mixes</h2>
-        </div>
-        <div className="space-y-3">
-          {versions.length === 0 ? (
-            <div className="text-center py-16 text-[var(--text-muted)]">
-              <Music size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
-              <p className="text-sm">No mixes yet — upload your first mix above</p>
-            </div>
-          ) : (
-            versions.map((version, index) => {
-              const isExpanded = expandedVersion === version.id
-              const vUrl = audioProxyUrl(version.audio_url)
-              const isActive = currentUrl === vUrl
-              const vPct = isActive && duration > 0 ? (currentTime / duration) * 100 : 0
-              const displayDuration = isActive ? duration : (version.duration_seconds ?? 0)
-              const feedback = version.mb_feedback ?? []
-              const ratedFeedback = feedback.filter(f => f.rating)
-              const avgRating = ratedFeedback.length > 0
-                ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
-                : null
-
-              return (
-                <div key={version.id} className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-                  <div
-                    className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                    onClick={() => setExpandedVersion(isExpanded ? null : version.id)}
-                  >
-                    <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
-                      <Music size={16} className="text-[var(--text-secondary)]" />
+              {release ? (
+                <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="flex-1 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${releaseProgress}%`,
+                          backgroundColor: releaseProgress === 100 ? '#34d399' : releaseProgress >= 50 ? '#2dd4bf' : '#555',
+                        }}
+                      />
                     </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-[var(--text)]">
-                          {version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`}
-                        </span>
-                        {index === 0 && (
-                          <span className="text-[10px] text-[var(--text-muted)] bg-[var(--surface-2)] px-1.5 py-0.5 rounded-full">Latest</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--text-muted)]">
-                        <span>{new Date(version.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                        {version.duration_seconds && <span>{formatDuration(version.duration_seconds)}</span>}
-                        {version.file_size_bytes && <span>{formatFileSize(version.file_size_bytes)}</span>}
-                        {feedback.length > 0 && (
-                          <span className="flex items-center gap-1">
-                            <MessageSquare size={10} />
-                            {feedback.length} feedback
-                            {avgRating && <span>· ★ {avgRating}</span>}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <StatusBadge status={version.status} size="sm" />
-                      {version.share_token && (
-                        <button
-                          onClick={e => { e.stopPropagation(); copyShareLink(version.share_token!) }}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            copiedToken === version.share_token
-                              ? 'text-emerald-400 bg-emerald-400/10'
-                              : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)]'
-                          }`}
-                          title="Copy share link"
-                        >
-                          {copiedToken === version.share_token ? <Check size={14} /> : <Share2 size={14} />}
-                        </button>
-                      )}
-                      {isExpanded ? <ChevronUp size={14} className="text-[var(--text-muted)]" /> : <ChevronDown size={14} className="text-[var(--text-muted)]" />}
-                    </div>
+                    <span className="text-xs text-[var(--text-muted)] flex-shrink-0">{releaseProgress}%</span>
                   </div>
 
-                  {isExpanded && (
-                    <div className="px-4 pb-5 pt-1 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
-                      {/* Per-version player — routes through shared PlayerContext audio element */}
-                      <div className="w-full">
-                        <div
-                          className="relative w-full h-10 rounded-lg overflow-hidden mb-2"
-                          style={{ backgroundColor: 'var(--input-bg)' }}
-                        >
-                          <div
-                            className="absolute bottom-0 left-0 h-1 transition-all duration-100"
-                            style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
-                          />
-                          <input
-                            type="range"
-                            min={0}
-                            max={displayDuration || 1}
-                            step={0.1}
-                            value={isActive ? currentTime : 0}
-                            onChange={(e) => {
-                              if (isActive) seek(Number(e.target.value))
-                              else playUrl(vUrl, projectForm.title || project.title, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
-                            }}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          />
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => {
-                              if (isActive) togglePlay()
-                              else playUrl(vUrl, projectForm.title || project.title, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
-                            }}
-                            className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
-                            style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
-                          >
-                            {isActive && isPlaying ? <Pause size={14} /> : <Play size={14} />}
-                          </button>
-                          <span className="text-xs tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
-                          </span>
-                          <div className="flex-1" />
-                          {version.allow_download && (
-                            <a
-                              href={vUrl}
-                              download={version.audio_filename ?? 'mix.wav'}
-                              className="flex items-center gap-1 transition-colors"
-                              style={{ color: 'var(--text-muted)' }}
-                              title="Download"
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <Download size={13} />
-                            </a>
-                          )}
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
+                    {CHECKLIST_ITEMS.map(item => (
+                      <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                        <input
+                          type="checkbox"
+                          checked={release[item.key]}
+                          onChange={() => toggleReleaseCheck(item.key, release[item.key])}
+                          className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
+                        />
+                        <span className={`text-sm transition-colors ${release[item.key] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
+                          {item.label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
 
-                      {version.change_log && (
-                        <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
-                          <p className="text-xs text-[var(--text-muted)] mb-1">What changed</p>
-                          <p className="text-sm text-[var(--text-secondary)]">{version.change_log}</p>
-                        </div>
-                      )}
-
-                      {/* Status changer */}
-                      <div>
-                        <p className="text-xs text-[var(--text-muted)] mb-2">Status</p>
-                        <div className="flex gap-2 flex-wrap">
-                          {STATUSES.map(s => {
-                            const conf = STATUS_CONFIG[s]
-                            const isActive = version.status === s
-                            return (
-                              <button
-                                key={s}
-                                onClick={() => updateStatus(version.id, s)}
-                                className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                                  isActive
-                                    ? `${conf.color} ${conf.bg} ${conf.border}`
-                                    : 'text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-secondary)]'
-                                }`}
-                              >
-                                {conf.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Notes */}
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs text-[var(--text-muted)]">Private notes</label>
-                            {savedNoteKey === `${version.id}-private_notes` && (
-                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
-                            )}
-                          </div>
-                          <textarea
-                            defaultValue={version.private_notes ?? ''}
-                            onBlur={e => updateNotes(version.id, 'private_notes', e.target.value)}
-                            placeholder="Notes only you can see..."
-                            rows={3}
-                            className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
-                            style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-                          />
-                        </div>
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <label className="block text-xs text-[var(--text-muted)]">Public notes (share page)</label>
-                            {savedNoteKey === `${version.id}-public_notes` && (
-                              <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
-                            )}
-                          </div>
-                          <textarea
-                            defaultValue={version.public_notes ?? ''}
-                            onBlur={e => updateNotes(version.id, 'public_notes', e.target.value)}
-                            placeholder="Notes visible to listeners..."
-                            rows={3}
-                            className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
-                            style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Feedback */}
-                      {feedback.length > 0 && (
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-xs text-[var(--text-muted)]">Listener Feedback</p>
-                            <button
-                              onClick={() => summarizeFeedback(version.id)}
-                              disabled={summaryLoading === version.id}
-                              className="flex items-center gap-1.5 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors"
-                              title="Summarize this feedback with Claude"
-                            >
-                              <Sparkles size={11} />
-                              {summaryLoading === version.id
-                                ? 'Summarizing…'
-                                : summaries[version.id]
-                                  ? 'Re-summarize'
-                                  : 'Summarize with AI'}
-                            </button>
-                          </div>
-                          {summaryError[version.id] && (
-                            <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>
-                          )}
-                          {summaries[version.id] && (
-                            <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf33' }}>
-                              <div className="flex items-center gap-1.5 mb-2">
-                                <Sparkles size={11} className="text-[#2dd4bf]" />
-                                <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
-                              </div>
-                              <SummaryView markdown={summaries[version.id]} />
-                            </div>
-                          )}
-                          <div className="space-y-2">
-                            {feedback.map(f => (
-                              <div key={f.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
-                                  {f.rating && (
-                                    <div className="flex gap-0.5">
-                                      {[1,2,3,4,5].map(s => (
-                                        <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                                <p className="text-xs text-[var(--text-secondary)]">{f.comment}</p>
-                                <p className="text-[10px] text-[var(--text-muted)] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex justify-end">
-                        <button
-                          onClick={() => deleteVersion(version.id)}
-                          className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
-                        >
-                          <Trash2 size={12} />
-                          Delete mix
-                        </button>
-                      </div>
-                    </div>
+                  {release.release_date && (
+                    <p className="text-xs text-[var(--text-muted)] mt-4">
+                      Target date: {new Date(release.release_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </p>
                   )}
                 </div>
-              )
-            })
-          )}
-        </div>
+              ) : (
+                <button
+                  onClick={startRelease}
+                  disabled={startingRelease}
+                  className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 text-[#0a0a0a] text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+                >
+                  <Plus size={15} />
+                  {startingRelease ? 'Creating…' : 'Start Release Pipeline'}
+                </button>
+              )}
+            </div>
 
-        </div>
-        )} {/* end activeTab === 'versions' */}
+          </div>
+        )}
 
         {/* Tab content — Artwork */}
         {activeTab === 'artwork' && (
@@ -815,12 +653,314 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         )}
 
       </div>
+
+      {/* Archived mixes modal */}
+      {archivedOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={e => { if (e.target === e.currentTarget) setArchivedOpen(false) }}
+        >
+          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-sm font-semibold text-[var(--text)]">Archived Mixes</h3>
+              <button onClick={() => setArchivedOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-96 divide-y" style={{ borderColor: 'var(--border)' }}>
+              {archivedVersions.map(av => (
+                <div key={av.id} className="flex items-center gap-4 px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-[var(--text)]">
+                      {av.label || parseMixLabel(av.audio_filename ?? '') || `Mix ${av.version_number}`}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
+                      <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                      {av.duration_seconds && <span>{formatDuration(av.duration_seconds)}</span>}
+                      {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
+                    </div>
+                  </div>
+                  <StatusBadge status={av.status} size="sm" />
+                  <button
+                    onClick={() => restoreVersion(av)}
+                    disabled={restoring}
+                    className="text-xs font-medium text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors flex-shrink-0"
+                  >
+                    {restoring ? 'Restoring…' : 'Restore'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)' }}>
+              <p className="text-[11px] text-[var(--text-muted)]">Restoring a mix makes it the current version. The old one stays in this archive.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-// Lightweight Markdown renderer for the AI summary — handles `## headings`,
-// `- bullets`, and italic `_text_`. Avoids pulling in a full Markdown library.
+// ── Current mix card — always fully expanded ──────────────────────────────────
+
+type CurrentMixCardProps = {
+  version: VersionWithFeedback
+  projectTitle: string
+  artwork: string | null
+  currentUrl: string | null
+  currentTime: number
+  duration: number
+  isPlaying: boolean
+  seek: (t: number) => void
+  togglePlay: () => void
+  playUrl: (url: string, title: string, artist?: string, artwork?: string, label?: string) => void
+  savedNoteKey: string | null
+  summaries: Record<string, string>
+  summaryLoading: string | null
+  summaryError: Record<string, string>
+  onUpdateStatus: (id: string, status: Version['status']) => void
+  onUpdateNotes: (id: string, field: 'private_notes' | 'public_notes', value: string) => void
+  onSummarizeFeedback: (id: string) => void
+  onDeleteVersion: (id: string) => void
+  parseMixLabel: (filename: string) => string | null
+}
+
+function CurrentMixCard({
+  version, projectTitle, artwork,
+  currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
+  savedNoteKey, summaries, summaryLoading, summaryError,
+  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onDeleteVersion, parseMixLabel,
+}: CurrentMixCardProps) {
+  const vUrl = audioProxyUrl(version.audio_url)
+  const isActive = currentUrl === vUrl
+  const vPct = isActive && duration > 0 ? (currentTime / duration) * 100 : 0
+  const displayDuration = isActive ? duration : (version.duration_seconds ?? 0)
+  const feedback = version.mb_feedback ?? []
+  const ratedFeedback = feedback.filter(f => f.rating)
+  const avgRating = ratedFeedback.length > 0
+    ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
+    : null
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+      {/* Card header */}
+      <div className="flex items-center gap-4 p-4">
+        <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
+          <Music size={16} className="text-[var(--text-secondary)]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-[var(--text)]">
+              {version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`}
+            </span>
+            <span className="text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded-full">Current</span>
+          </div>
+          <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--text-muted)]">
+            <span>{new Date(version.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+            {version.duration_seconds && <span>{formatDuration(version.duration_seconds)}</span>}
+            {version.file_size_bytes && <span>{formatFileSize(version.file_size_bytes)}</span>}
+            {feedback.length > 0 && (
+              <span className="flex items-center gap-1">
+                <MessageSquare size={10} />
+                {feedback.length} feedback
+                {avgRating && <span>· ★ {avgRating}</span>}
+              </span>
+            )}
+          </div>
+        </div>
+        <StatusBadge status={version.status} size="sm" />
+      </div>
+
+      {/* Always-expanded content */}
+      <div className="px-4 pb-5 pt-1 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
+        {/* Player */}
+        <div className="w-full">
+          <div
+            className="relative w-full h-10 rounded-lg overflow-hidden mb-2"
+            style={{ backgroundColor: 'var(--input-bg)' }}
+          >
+            <div
+              className="absolute bottom-0 left-0 h-1 transition-all duration-100"
+              style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
+            />
+            <input
+              type="range"
+              min={0}
+              max={displayDuration || 1}
+              step={0.1}
+              value={isActive ? currentTime : 0}
+              onChange={(e) => {
+                if (isActive) seek(Number(e.target.value))
+                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+              }}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                if (isActive) togglePlay()
+                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+              }}
+              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+              style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+            >
+              {isActive && isPlaying ? <Pause size={14} /> : <Play size={14} />}
+            </button>
+            <span className="text-xs tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+              {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
+            </span>
+            <div className="flex-1" />
+            {version.allow_download && (
+              <a
+                href={vUrl}
+                download={version.audio_filename ?? 'mix.wav'}
+                className="flex items-center gap-1 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="Download"
+              >
+                <Download size={13} />
+              </a>
+            )}
+          </div>
+        </div>
+
+        {version.change_log && (
+          <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+            <p className="text-xs text-[var(--text-muted)] mb-1">What changed</p>
+            <p className="text-sm text-[var(--text-secondary)]">{version.change_log}</p>
+          </div>
+        )}
+
+        {/* Status */}
+        <div>
+          <p className="text-xs text-[var(--text-muted)] mb-2">Status</p>
+          <div className="flex gap-2 flex-wrap">
+            {STATUSES.map(s => {
+              const conf = STATUS_CONFIG[s]
+              const active = version.status === s
+              return (
+                <button
+                  key={s}
+                  onClick={() => onUpdateStatus(version.id, s)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                    active
+                      ? `${conf.color} ${conf.bg} ${conf.border}`
+                      : 'text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {conf.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs text-[var(--text-muted)]">Private notes</label>
+              {savedNoteKey === `${version.id}-private_notes` && (
+                <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+              )}
+            </div>
+            <textarea
+              defaultValue={version.private_notes ?? ''}
+              onBlur={e => onUpdateNotes(version.id, 'private_notes', e.target.value)}
+              placeholder="Notes only you can see..."
+              rows={3}
+              className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
+              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs text-[var(--text-muted)]">Public notes (share page)</label>
+              {savedNoteKey === `${version.id}-public_notes` && (
+                <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
+              )}
+            </div>
+            <textarea
+              defaultValue={version.public_notes ?? ''}
+              onBlur={e => onUpdateNotes(version.id, 'public_notes', e.target.value)}
+              placeholder="Notes visible to listeners..."
+              rows={3}
+              className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
+              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+            />
+          </div>
+        </div>
+
+        {/* Feedback */}
+        {feedback.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-[var(--text-muted)]">Listener Feedback</p>
+              <button
+                onClick={() => onSummarizeFeedback(version.id)}
+                disabled={summaryLoading === version.id}
+                className="flex items-center gap-1.5 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors"
+                title="Summarize this feedback with Claude"
+              >
+                <Sparkles size={11} />
+                {summaryLoading === version.id
+                  ? 'Summarizing…'
+                  : summaries[version.id]
+                    ? 'Re-summarize'
+                    : 'Summarize with AI'}
+              </button>
+            </div>
+            {summaryError[version.id] && (
+              <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>
+            )}
+            {summaries[version.id] && (
+              <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf33' }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Sparkles size={11} className="text-[#2dd4bf]" />
+                  <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                </div>
+                <SummaryView markdown={summaries[version.id]} />
+              </div>
+            )}
+            <div className="space-y-2">
+              {feedback.map(f => (
+                <div key={f.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
+                    {f.rating && (
+                      <div className="flex gap-0.5">
+                        {[1,2,3,4,5].map(s => (
+                          <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-[var(--text-secondary)]">{f.comment}</p>
+                  <p className="text-[10px] text-[var(--text-muted)] mt-1">{new Date(f.created_at).toLocaleDateString()}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            onClick={() => onDeleteVersion(version.id)}
+            className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
+          >
+            <Trash2 size={12} />
+            Delete mix
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Lightweight Markdown renderer for AI summaries ────────────────────────────
+
 function SummaryView({ markdown }: { markdown: string }) {
   const lines = markdown.split('\n')
   const blocks: ReactNode[] = []
@@ -864,7 +1004,6 @@ function SummaryView({ markdown }: { markdown: string }) {
 }
 
 function renderInline(text: string): ReactNode {
-  // Render `_italic_` runs; everything else is plain text.
   const parts = text.split(/(_[^_]+_)/g)
   return parts.map((part, i) => {
     if (part.startsWith('_') && part.endsWith('_') && part.length > 2) {

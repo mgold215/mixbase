@@ -6,12 +6,46 @@ import ShareClient from './ShareClient'
 export const dynamic = 'force-dynamic'
 
 async function getShareData(token: string) {
+  // ── 1. Project-level share token (always resolves to the latest mix) ──
+  const { data: project } = await supabaseAdmin
+    .from('mb_projects')
+    .select('*')
+    .eq('share_token', token)
+    .single()
+
+  if (project) {
+    const { data: latestVersion } = await supabaseAdmin
+      .from('mb_versions')
+      .select('*, mb_feedback(*)')
+      .eq('project_id', project.id)
+      .order('version_number', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (!latestVersion) return null
+
+    const version = { ...latestVersion, mb_projects: project }
+    let artistName = 'mixBASE'
+    if (project.user_id) {
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('artist_name, display_name')
+        .eq('id', project.user_id)
+        .single()
+      if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
+    }
+    return { version, artistName }
+  }
+
+  // ── 2. Legacy: version-level share token (old links keep working) ──
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
     .select('*, mb_projects(*)')
     .eq('share_token', token)
     .single()
+
   if (!version) return null
+
   let artistName = 'mixBASE'
   if (version.mb_projects?.user_id) {
     const { data: profile } = await supabaseAdmin

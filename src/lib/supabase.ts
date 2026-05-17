@@ -23,6 +23,7 @@ export type Project = {
   genre: string | null
   bpm: number | null
   key_signature: string | null
+  share_token: string | null
   created_at: string
   updated_at: string
   user_id: string
