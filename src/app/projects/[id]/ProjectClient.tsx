@@ -301,12 +301,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
-  async function deleteVersion(versionId: string) {
-    if (!confirm('Delete this mix? This cannot be undone.')) return
-    const res = await fetch(`/api/versions/${versionId}`, { method: 'DELETE' })
-    if (res.ok) setVersions(prev => prev.filter(v => v.id !== versionId))
-  }
-
   async function saveProject() {
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
@@ -470,7 +464,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 marginBottom: '-1px',
               }}
             >
-              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Mixes'}
+              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Song Info'}
             </button>
           ))}
         </div>
@@ -540,7 +534,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onUpdateStatus={updateStatus}
                 onUpdateNotes={updateNotes}
                 onSummarizeFeedback={summarizeFeedback}
-                onDeleteVersion={deleteVersion}
                 parseMixLabel={parseMixLabel}
               />
             )}
@@ -702,7 +695,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   )
 }
 
-// ── Current mix card — always fully expanded ──────────────────────────────────
+// ── Current mix card ─────────────────────────────────────────────────────────
 
 type CurrentMixCardProps = {
   version: VersionWithFeedback
@@ -722,7 +715,6 @@ type CurrentMixCardProps = {
   onUpdateStatus: (id: string, status: Version['status']) => void
   onUpdateNotes: (id: string, field: 'private_notes' | 'public_notes', value: string) => void
   onSummarizeFeedback: (id: string) => void
-  onDeleteVersion: (id: string) => void
   parseMixLabel: (filename: string) => string | null
 }
 
@@ -730,7 +722,7 @@ function CurrentMixCard({
   version, projectTitle, artwork,
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
-  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onDeleteVersion, parseMixLabel,
+  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, parseMixLabel,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -741,85 +733,77 @@ function CurrentMixCard({
   const avgRating = ratedFeedback.length > 0
     ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
     : null
+  const label = version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-      {/* Card header */}
-      <div className="flex items-center gap-4 p-4">
-        <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
-          <Music size={16} className="text-[var(--text-secondary)]" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-[var(--text)]">
-              {version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`}
-            </span>
-            <span className="text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded-full">Current</span>
-          </div>
-          <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--text-muted)]">
-            <span>{new Date(version.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-            {version.duration_seconds && <span>{formatDuration(version.duration_seconds)}</span>}
-            {version.file_size_bytes && <span>{formatFileSize(version.file_size_bytes)}</span>}
-            {feedback.length > 0 && (
-              <span className="flex items-center gap-1">
-                <MessageSquare size={10} />
-                {feedback.length} feedback
-                {avgRating && <span>· ★ {avgRating}</span>}
-              </span>
-            )}
-          </div>
+
+      {/* ── Header row ── */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
+          <span className="text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded-full leading-none">Current</span>
+          <span className="text-[var(--border)]">·</span>
+          <span className="text-xs text-[var(--text-muted)]">
+            {new Date(version.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+          {version.duration_seconds != null && (
+            <><span className="text-[var(--border)]">·</span><span className="text-xs text-[var(--text-muted)]">{formatDuration(version.duration_seconds)}</span></>
+          )}
+          {version.file_size_bytes != null && (
+            <><span className="text-[var(--border)]">·</span><span className="text-xs text-[var(--text-muted)]">{formatFileSize(version.file_size_bytes)}</span></>
+          )}
+          {feedback.length > 0 && (
+            <><span className="text-[var(--border)]">·</span>
+            <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
+              <MessageSquare size={10} />{feedback.length}{avgRating ? ` · ★ ${avgRating}` : ''}
+            </span></>
+          )}
         </div>
         <StatusBadge status={version.status} size="sm" />
       </div>
 
-      {/* Always-expanded content */}
-      <div className="px-4 pb-5 pt-1 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
+      {/* ── Body ── */}
+      <div className="px-4 pb-4 pt-3 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
+
         {/* Player */}
-        <div className="w-full">
+        <div>
           <div
-            className="relative w-full h-10 rounded-lg overflow-hidden mb-2"
+            className="relative w-full h-8 rounded-lg overflow-hidden mb-2"
             style={{ backgroundColor: 'var(--input-bg)' }}
           >
             <div
-              className="absolute bottom-0 left-0 h-1 transition-all duration-100"
+              className="absolute bottom-0 left-0 h-0.5 transition-all duration-100"
               style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
             />
             <input
-              type="range"
-              min={0}
-              max={displayDuration || 1}
-              step={0.1}
+              type="range" min={0} max={displayDuration || 1} step={0.1}
               value={isActive ? currentTime : 0}
-              onChange={(e) => {
+              onChange={e => {
                 if (isActive) seek(Number(e.target.value))
-                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label)
               }}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               onClick={() => {
                 if (isActive) togglePlay()
-                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, version.label || `v${version.version_number}`)
+                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label)
               }}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+              className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full transition-colors"
               style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
             >
-              {isActive && isPlaying ? <Pause size={14} /> : <Play size={14} />}
+              {isActive && isPlaying ? <Pause size={12} /> : <Play size={12} />}
             </button>
-            <span className="text-xs tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-xs tabular-nums text-[var(--text-muted)]">
               {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
             </span>
             <div className="flex-1" />
             {version.allow_download && (
-              <a
-                href={vUrl}
-                download={version.audio_filename ?? 'mix.wav'}
-                className="flex items-center gap-1 transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                title="Download"
-              >
+              <a href={vUrl} download={version.audio_filename ?? 'mix.wav'}
+                className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors" title="Download">
                 <Download size={13} />
               </a>
             )}
@@ -827,112 +811,85 @@ function CurrentMixCard({
         </div>
 
         {version.change_log && (
-          <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
-            <p className="text-xs text-[var(--text-muted)] mb-1">What changed</p>
-            <p className="text-sm text-[var(--text-secondary)]">{version.change_log}</p>
-          </div>
+          <p className="text-xs text-[var(--text-muted)] px-3 py-2 rounded-lg" style={{ backgroundColor: 'var(--surface-2)' }}>
+            {version.change_log}
+          </p>
         )}
 
         {/* Status */}
-        <div>
-          <p className="text-xs text-[var(--text-muted)] mb-2">Status</p>
-          <div className="flex gap-2 flex-wrap">
-            {STATUSES.map(s => {
-              const conf = STATUS_CONFIG[s]
-              const active = version.status === s
-              return (
-                <button
-                  key={s}
-                  onClick={() => onUpdateStatus(version.id, s)}
-                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                    active
-                      ? `${conf.color} ${conf.bg} ${conf.border}`
-                      : 'text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {conf.label}
-                </button>
-              )
-            })}
-          </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {STATUSES.map(s => {
+            const conf = STATUS_CONFIG[s]
+            const active = version.status === s
+            return (
+              <button key={s} onClick={() => onUpdateStatus(version.id, s)}
+                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                  active
+                    ? `${conf.color} ${conf.bg} ${conf.border}`
+                    : 'text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-secondary)]'
+                }`}
+              >{conf.label}</button>
+            )
+          })}
         </div>
 
         {/* Notes */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs text-[var(--text-muted)]">Private notes</label>
-              {savedNoteKey === `${version.id}-private_notes` && (
-                <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
-              )}
+        <div className="grid grid-cols-2 gap-3">
+          {(['private_notes', 'public_notes'] as const).map(field => (
+            <div key={field}>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] text-[var(--text-muted)]">
+                  {field === 'private_notes' ? 'Private notes' : 'Public notes'}
+                </label>
+                {savedNoteKey === `${version.id}-${field}` && (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><Check size={9} /> Saved</span>
+                )}
+              </div>
+              <textarea
+                defaultValue={version[field] ?? ''}
+                onBlur={e => onUpdateNotes(version.id, field, e.target.value)}
+                placeholder={field === 'private_notes' ? 'Your notes…' : 'Visible to listeners…'}
+                rows={2}
+                className="w-full rounded-lg px-3 py-2 text-xs text-[var(--text)] focus:outline-none resize-none"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+              />
             </div>
-            <textarea
-              defaultValue={version.private_notes ?? ''}
-              onBlur={e => onUpdateNotes(version.id, 'private_notes', e.target.value)}
-              placeholder="Notes only you can see..."
-              rows={3}
-              className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
-              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-            />
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs text-[var(--text-muted)]">Public notes (share page)</label>
-              {savedNoteKey === `${version.id}-public_notes` && (
-                <span className="text-[10px] text-emerald-400 flex items-center gap-1"><Check size={10} /> Saved</span>
-              )}
-            </div>
-            <textarea
-              defaultValue={version.public_notes ?? ''}
-              onBlur={e => onUpdateNotes(version.id, 'public_notes', e.target.value)}
-              placeholder="Notes visible to listeners..."
-              rows={3}
-              className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none resize-none"
-              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-            />
-          </div>
+          ))}
         </div>
 
         {/* Feedback */}
         {feedback.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-[var(--text-muted)]">Listener Feedback</p>
+              <span className="text-[11px] text-[var(--text-muted)]">Feedback</span>
               <button
                 onClick={() => onSummarizeFeedback(version.id)}
                 disabled={summaryLoading === version.id}
-                className="flex items-center gap-1.5 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors"
-                title="Summarize this feedback with Claude"
+                className="flex items-center gap-1 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 transition-colors"
               >
-                <Sparkles size={11} />
-                {summaryLoading === version.id
-                  ? 'Summarizing…'
-                  : summaries[version.id]
-                    ? 'Re-summarize'
-                    : 'Summarize with AI'}
+                <Sparkles size={10} />
+                {summaryLoading === version.id ? 'Summarizing…' : summaries[version.id] ? 'Re-summarize' : 'Summarize with AI'}
               </button>
             </div>
-            {summaryError[version.id] && (
-              <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>
-            )}
+            {summaryError[version.id] && <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>}
             {summaries[version.id] && (
-              <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf33' }}>
+              <div className="rounded-xl p-3 mb-2" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf22' }}>
                 <div className="flex items-center gap-1.5 mb-2">
-                  <Sparkles size={11} className="text-[#2dd4bf]" />
+                  <Sparkles size={10} className="text-[#2dd4bf]" />
                   <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
                 </div>
                 <SummaryView markdown={summaries[version.id]} />
               </div>
             )}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {feedback.map(f => (
-                <div key={f.id} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+                <div key={f.id} className="rounded-xl px-3 py-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
                     {f.rating && (
                       <div className="flex gap-0.5">
                         {[1,2,3,4,5].map(s => (
-                          <Star key={s} size={10} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
+                          <Star key={s} size={9} className={s <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
                         ))}
                       </div>
                     )}
@@ -944,16 +901,6 @@ function CurrentMixCard({
             </div>
           </div>
         )}
-
-        <div className="flex justify-end">
-          <button
-            onClick={() => onDeleteVersion(version.id)}
-            className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
-          >
-            <Trash2 size={12} />
-            Delete mix
-          </button>
-        </div>
       </div>
     </div>
   )
