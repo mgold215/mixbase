@@ -72,10 +72,9 @@ async function pickPlacement(
   // wins over the random seed.
   const guided = !!guidance && guidance.trim().length > 0
   const seedZone: 'top' | 'bottom' = layoutSeed % 2 === 0 ? 'bottom' : 'top'
-  const seedRule = (layoutSeed >> 1) % 2 === 0
   const fallback: Placement = {
     textCenterY: seedZone === 'top' ? 0.18 : 0.85,
-    showRule: seedRule,
+    showRule: true,
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -130,7 +129,7 @@ Reply with ONLY: {"textCenterY": <number>}`
     const maxY = guided ? 0.90 : (seedZone === 'top' ? 0.30 : 0.90)
     return {
       textCenterY: Math.min(maxY, Math.max(minY, Number(p.textCenterY) || fallback.textCenterY)),
-      showRule:    guided && typeof p.showRule === 'boolean' ? p.showRule : seedRule,
+      showRule:    guided && typeof p.showRule === 'boolean' ? p.showRule : true,
     }
   } catch (err) {
     console.error('[finalize-artwork] Vision error:', err)
