@@ -15,6 +15,7 @@ type Props = {
   // Finalize is a heavier action (Vision call + render) — keep it on the
   // dedicated Artwork tab, not on every embedded preview of this component.
   showFinalize?: boolean
+  showActions?: boolean
 }
 
 export default function ArtworkGenerator({
@@ -22,6 +23,7 @@ export default function ArtworkGenerator({
   currentArtwork, currentFinalized,
   onArtworkUpdated, onFinalizedUpdated,
   showFinalize = true,
+  showActions = true,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
   const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
@@ -129,7 +131,7 @@ export default function ArtworkGenerator({
       </div>
 
       {/* Action buttons */}
-      {mode === 'idle' && (
+      {showActions && mode === 'idle' && (
         <div className="flex gap-2">
           <button
             onClick={() => setMode('generate')}
@@ -178,7 +180,7 @@ export default function ArtworkGenerator({
         </div>
       )}
       {/* Generate mode */}
-      {mode === 'generate' && (
+      {showActions && mode === 'generate' && (
         <div className="space-y-2">
           {/* Model selector */}
           <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">

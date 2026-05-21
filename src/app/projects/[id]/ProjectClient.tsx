@@ -373,6 +373,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               onArtworkUpdated={setArtwork}
               onFinalizedUpdated={setFinalizedArtwork}
               showFinalize={false}
+              showActions={false}
             />
           </div>
 
