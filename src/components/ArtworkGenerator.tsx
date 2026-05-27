@@ -175,7 +175,7 @@ export default function ArtworkGenerator({
             ) : (
               <><Upload size={13} />Upload</>
             )}
-            <input type="file" accept="image/*,.heic,.heif" onChange={handleUpload} disabled={uploading} className="hidden" />
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleUpload} disabled={uploading} className="hidden" />
           </label>
         </div>
       )}
