@@ -61,7 +61,9 @@ export async function POST(request: NextRequest) {
 
   const expiresAt = signInData.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
   const response = NextResponse.json({ ok: true })
-  response.cookies.set('sb-access-token', signInData.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
+  // 30-day cookie lifetime — see /api/auth/route.ts. JWT still expires in ~1h
+  // and is validated; the cookie outlives it so middleware can refresh.
+  response.cookies.set('sb-access-token', signInData.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-refresh-token', signInData.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
