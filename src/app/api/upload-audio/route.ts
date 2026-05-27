@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork (signed-URL path bypasses Railway's 10MB wall)
 
-const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']
+const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
 
 // Track which buckets have been synced this process lifetime
