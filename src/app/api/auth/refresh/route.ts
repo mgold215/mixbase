@@ -34,7 +34,10 @@ export async function POST(request: NextRequest) {
 
   const expiresAt = data.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
   const res = NextResponse.json({ ok: true, expires_at: expiresAt })
-  res.cookies.set('sb-access-token', data.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
+  // 30-day cookie lifetime — see /api/auth/route.ts. The JWT inside still
+  // expires in ~1h and is validated; the cookie just outlives it so the
+  // session can be refreshed on the next visit rather than forcing re-login.
+  res.cookies.set('sb-access-token', data.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   res.cookies.set('sb-refresh-token', data.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
   res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })

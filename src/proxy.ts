@@ -33,6 +33,25 @@ const COOKIE_OPTS = {
   path: '/',
 }
 
+// Both token cookies live 30 days. The access-token JWT itself still expires in
+// ~1 hour and is always validated against its `exp` — keeping the cookie around
+// after the JWT expires is what lets this middleware *see* an expired session and
+// silently refresh it, instead of finding no cookie and bouncing the user to
+// /login. As long as the user returns within 30 days, the session slides forward.
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30
+
+function setSessionCookies(
+  res: NextResponse,
+  accessToken: string,
+  refreshToken: string,
+  expiresAt: number,
+) {
+  res.cookies.set('sb-access-token', accessToken, { ...COOKIE_OPTS, maxAge: SESSION_MAX_AGE })
+  res.cookies.set('sb-refresh-token', refreshToken, { ...COOKIE_OPTS, maxAge: SESSION_MAX_AGE })
+  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: SESSION_MAX_AGE })
+  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: SESSION_MAX_AGE })
+}
+
 function clearAndRedirect(request: NextRequest) {
   const res = NextResponse.redirect(new URL('/login', request.url))
   res.cookies.delete('sb-access-token')
@@ -83,10 +102,7 @@ export async function proxy(request: NextRequest) {
   }
 
   const accessToken = request.cookies.get('sb-access-token')?.value
-
-  if (!accessToken) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
+  const refreshToken = request.cookies.get('sb-refresh-token')?.value
 
   // ── Fast path: decode JWT payload locally — no network call ───────────────
   // decodeJwt reads the payload without verifying the signature (< 1ms).
@@ -96,29 +112,32 @@ export async function proxy(request: NextRequest) {
   let userId: string | null = null
   let tokenExpired = false
 
-  try {
-    const payload = decodeJwt(accessToken)
-    userId = payload.sub ?? null
-    tokenExpired = typeof payload.exp === 'number'
-      ? payload.exp < Math.floor(Date.now() / 1000)
-      : false
-  } catch {
-    // Malformed JWT
-    return clearAndRedirect(request)
+  if (accessToken) {
+    try {
+      const payload = decodeJwt(accessToken)
+      userId = payload.sub ?? null
+      tokenExpired = typeof payload.exp === 'number'
+        ? payload.exp < Math.floor(Date.now() / 1000)
+        : false
+    } catch {
+      // Malformed access token — fall through to a refresh attempt below.
+      userId = null
+      tokenExpired = true
+    }
   }
 
-  if (!tokenExpired && userId) {
+  if (accessToken && !tokenExpired && userId) {
     // Token is present and not expired — inject user ID and pass through
     const requestHeaders = new Headers(request.headers)
     requestHeaders.set('X-User-Id', userId)
     return withAdminCheck(request, userId, requestHeaders)
   }
 
-  // ── Slow path: token is expired — attempt one refresh ─────────────────────
-  // Under normal operation this path is rarely reached because SessionRefresher
-  // proactively refreshes 5 minutes before the token expires.
-  const refreshToken = request.cookies.get('sb-refresh-token')?.value
-
+  // ── Slow path: access token is missing, expired, or malformed — refresh ───
+  // The access-token cookie can simply be gone (browser dropped it after the
+  // user was away a while) while the 30-day refresh token is still valid, so we
+  // always try to refresh here rather than redirecting to login. Under normal
+  // foreground use this is rare because SessionRefresher refreshes proactively.
   if (!refreshToken) {
     return clearAndRedirect(request)
   }
@@ -132,10 +151,7 @@ export async function proxy(request: NextRequest) {
       const requestHeaders = new Headers(request.headers)
       requestHeaders.set('X-User-Id', refreshed.session.user.id)
       const res = await withAdminCheck(request, refreshed.session.user.id, requestHeaders)
-      res.cookies.set('sb-access-token', refreshed.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 })
-      res.cookies.set('sb-refresh-token', refreshed.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
-      res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
-      res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+      setSessionCookies(res, refreshed.session.access_token, refreshed.session.refresh_token, expiresAt)
       return res
     }
 
