@@ -87,38 +87,56 @@ export default function ArtworkGenerator({
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    // Reset the file input so re-uploading the same filename still triggers onChange
+    e.target.value = ''
     if (!file) return
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Image too large — maximum size is 10 MB.')
+      return
+    }
 
     setUploading(true)
     setError('')
 
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('project_id', projectId)
-      formData.append('type', 'artwork')
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+    const filename = `${projectId}/${Date.now()}.${ext}`
+    const contentType = file.type || 'image/jpeg'
 
-      const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (res.ok && data.url) {
-        // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
-        await fetch(`/api/projects/${projectId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ artwork_url: data.url }),
-        })
-        onArtworkUpdated(data.url)
-        onFinalizedUpdated(null)
-        setMode('idle')
-      } else {
-        setError(data.error ?? 'Upload failed. Try again.')
-      }
-    } catch {
-      setError('Upload failed — check your connection and try again.')
+    try {
+      // Signed upload URL → PUT straight to Supabase. Never routes the image
+      // bytes through Railway, whose proxy truncates request bodies at 10 MB.
+      const urlRes = await fetch('/api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, contentType, bucket: 'mf-artwork' }),
+      })
+      const urlData = await urlRes.json()
+      if (!urlRes.ok) throw new Error(urlData.error ?? 'Could not get upload URL')
+
+      const putRes = await fetch(urlData.signedUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType, 'x-upsert': 'true' },
+        body: file,
+      })
+      if (!putRes.ok) throw new Error('Upload failed — please try again.')
+
+      const artworkUrl = urlData.publicUrl as string
+      // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
+      const patchRes = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artwork_url: artworkUrl }),
+      })
+      if (!patchRes.ok) throw new Error('Could not save artwork.')
+
+      onArtworkUpdated(artworkUrl)
+      onFinalizedUpdated(null)
+      setMode('idle')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed. Try again.')
     } finally {
       setUploading(false)
-      // Reset the file input so re-uploading the same filename still triggers onChange
-      e.target.value = ''
     }
   }
 
@@ -145,7 +163,8 @@ export default function ArtworkGenerator({
         <div className="flex gap-2">
           <button
             onClick={() => setMode('generate')}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] transition-colors"
+            disabled={uploading}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Sparkles size={13} />
             Generate with AI

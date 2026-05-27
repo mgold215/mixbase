@@ -17,22 +17,25 @@ export type Track = {
 }
 
 let _backfillDone = false
+// Share links must resolve to the *latest* mix, so they point at the project
+// (mb_projects.share_token), not a single version. Backfill any project that
+// predates project-level tokens so every track has a shareable link.
 async function ensureShareTokens(userId: string) {
   if (_backfillDone) return
   try {
     const { data } = await supabaseAdmin
-      .from('mb_versions')
-      .select('id, mb_projects!inner(user_id)')
+      .from('mb_projects')
+      .select('id')
       .is('share_token', null)
-      .eq('mb_projects.user_id', userId)
+      .eq('user_id', userId)
       .limit(200)
     if (!data?.length) { _backfillDone = true; return }
     await Promise.all(
-      data.map(v =>
+      data.map(p =>
         supabaseAdmin
-          .from('mb_versions')
+          .from('mb_projects')
           .update({ share_token: crypto.randomUUID().replace(/-/g, '') })
-          .eq('id', v.id)
+          .eq('id', p.id)
       )
     )
     _backfillDone = true
@@ -50,7 +53,7 @@ export async function GET(request: NextRequest) {
   const [versionsResult, profileResult] = await Promise.all([
     supabaseAdmin
       .from('mb_versions')
-      .select('id, project_id, share_token, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, key_signature, bpm, user_id)')
+      .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, key_signature, bpm, user_id, share_token)')
       .eq('mb_projects.user_id', userId)
       .order('version_number', { ascending: false }),
     supabaseAdmin
@@ -73,12 +76,13 @@ export async function GET(request: NextRequest) {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; key_signature?: string | null; bpm?: number | null }
+    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; key_signature?: string | null; bpm?: number | null; share_token?: string | null }
     const projectTitle: string = p?.title ?? 'Unknown'
     return {
       id: v.id,
       project_id: v.project_id,
-      share_token: v.share_token ?? null,
+      // Project-level token — the share page resolves it to the latest mix.
+      share_token: p?.share_token ?? null,
       title: projectTitle,
       artist: artistName,
       artwork_url: p?.finalized_artwork_url ?? p?.artwork_url ?? null,
