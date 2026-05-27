@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
 const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
+const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork (signed-URL path bypasses Railway's 10MB wall)
 
 const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']
 const AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
@@ -14,7 +14,7 @@ const syncedBuckets = new Set<string>()
 async function ensureBucket(bucket: string, isAudio: boolean) {
   if (syncedBuckets.has(bucket)) return
   const mimeTypes = isAudio ? AUDIO_MIME_TYPES : ARTWORK_MIME_TYPES
-  const sizeLimit = isAudio ? 52428800 : 10485760
+  const sizeLimit = 52428800  // 50MB for both buckets — direct-to-Supabase uploads bypass Railway's 10MB wall
   const { error } = await supabaseAdmin.storage.getBucket(bucket)
   if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
     await supabaseAdmin.storage.createBucket(bucket, {
@@ -23,7 +23,7 @@ async function ensureBucket(bucket: string, isAudio: boolean) {
       allowedMimeTypes: mimeTypes,
     })
   } else if (!error) {
-    await supabaseAdmin.storage.updateBucket(bucket, { public: true, allowedMimeTypes: mimeTypes })
+    await supabaseAdmin.storage.updateBucket(bucket, { public: true, fileSizeLimit: sizeLimit, allowedMimeTypes: mimeTypes })
   }
   syncedBuckets.add(bucket)
 }
