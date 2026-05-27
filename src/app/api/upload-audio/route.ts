@@ -4,18 +4,28 @@ import { supabaseAdmin } from '@/lib/supabase'
 const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB for artwork
 
-// Ensure the storage bucket exists, creating it if needed
+const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']
+const AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
+
+// Track which buckets have been synced this process lifetime
+const syncedBuckets = new Set<string>()
+
+// Ensure the storage bucket exists and has up-to-date allowed types
 async function ensureBucket(bucket: string, isAudio: boolean) {
+  if (syncedBuckets.has(bucket)) return
+  const mimeTypes = isAudio ? AUDIO_MIME_TYPES : ARTWORK_MIME_TYPES
+  const sizeLimit = isAudio ? 52428800 : 10485760
   const { error } = await supabaseAdmin.storage.getBucket(bucket)
   if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
     await supabaseAdmin.storage.createBucket(bucket, {
       public: true,
-      fileSizeLimit: isAudio ? 52428800 : 10485760,
-      allowedMimeTypes: isAudio
-        ? ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
-        : ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      fileSizeLimit: sizeLimit,
+      allowedMimeTypes: mimeTypes,
     })
+  } else if (!error) {
+    await supabaseAdmin.storage.updateBucket(bucket, { public: true, allowedMimeTypes: mimeTypes })
   }
+  syncedBuckets.add(bucket)
 }
 
 // POST /api/upload-audio — upload audio file or artwork to Supabase Storage
@@ -41,8 +51,16 @@ export async function POST(request: NextRequest) {
   // Auto-create the bucket if it doesn't exist yet
   await ensureBucket(bucket, isAudio)
 
-  const ext = file.name.split('.').pop()
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
   const filename = `${projectId}/${Date.now()}.${ext}`
+
+  // Some browsers report empty mime for HEIC/HEIF — fall back by extension
+  const mimeByExt: Record<string, string> = {
+    heic: 'image/heic', heif: 'image/heif',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+  }
+  const contentType = file.type || mimeByExt[ext] || 'application/octet-stream'
 
   const arrayBuffer = await file.arrayBuffer()
   const buffer = new Uint8Array(arrayBuffer)
@@ -50,7 +68,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabaseAdmin.storage
     .from(bucket)
     .upload(filename, buffer, {
-      contentType: file.type,
+      contentType,
       upsert: false,
     })
 

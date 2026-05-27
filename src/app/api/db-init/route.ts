@@ -260,7 +260,7 @@ export async function GET() {
         fileSizeLimit: isAudio ? 52428800 : 10485760,
         allowedMimeTypes: isAudio
           ? ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
-          : ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif'],
       })
       if (createErr) {
         results.push({ step: `bucket_${bucket}`, status: 'error', detail: createErr.message })
