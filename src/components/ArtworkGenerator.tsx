@@ -91,8 +91,8 @@ export default function ArtworkGenerator({
     e.target.value = ''
     if (!file) return
 
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Image too large — maximum size is 10 MB.')
+    if (file.size > 50 * 1024 * 1024) {
+      setError('Image too large — maximum size is 50 MB.')
       return
     }
 
