@@ -29,6 +29,7 @@ export default function ArtworkGenerator({
   const [prompt, setPrompt] = useState(`realistic tape cassette fused into futuristic dystopian techno infrastructure, Inception-style folding brutalist megastructures, dark neon-lit corridors, hyper-detailed photorealistic render, cinematic lighting, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
   const [guidance, setGuidance] = useState('')
@@ -88,28 +89,37 @@ export default function ArtworkGenerator({
     const file = e.target.files?.[0]
     if (!file) return
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('project_id', projectId)
-    formData.append('type', 'artwork')
+    setUploading(true)
+    setError('')
 
-    const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
-    const data = await res.json()
-    if (res.ok && data.url) {
-      // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
-      await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artwork_url: data.url }),
-      })
-      onArtworkUpdated(data.url)
-      onFinalizedUpdated(null)
-      setMode('idle')
-    } else {
-      setError(data.error ?? 'Upload failed. Try again.')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('project_id', projectId)
+      formData.append('type', 'artwork')
+
+      const res = await fetch('/api/upload-audio', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (res.ok && data.url) {
+        // Persist artwork URL to DB — PATCH also nulls finalized_artwork_url.
+        await fetch(`/api/projects/${projectId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artwork_url: data.url }),
+        })
+        onArtworkUpdated(data.url)
+        onFinalizedUpdated(null)
+        setMode('idle')
+      } else {
+        setError(data.error ?? 'Upload failed. Try again.')
+      }
+    } catch {
+      setError('Upload failed — check your connection and try again.')
+    } finally {
+      setUploading(false)
+      // Reset the file input so re-uploading the same filename still triggers onChange
+      e.target.value = ''
     }
-    // Reset the file input so re-uploading the same filename still triggers onChange
-    e.target.value = ''
   }
 
   return (
@@ -140,13 +150,17 @@ export default function ArtworkGenerator({
             <Sparkles size={13} />
             Generate with AI
           </button>
-          <label className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#333] text-white rounded-xl hover:bg-[#2a2a2a] transition-colors cursor-pointer">
-            <Upload size={13} />
-            Upload
-            <input type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+          <label className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#333] text-white rounded-xl transition-colors ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-[#2a2a2a] cursor-pointer'}`}>
+            {uploading ? (
+              <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Uploading...</>
+            ) : (
+              <><Upload size={13} />Upload</>
+            )}
+            <input type="file" accept="image/*,.heic,.heif" onChange={handleUpload} disabled={uploading} className="hidden" />
           </label>
         </div>
       )}
+      {error && !generating && <p className="text-red-400 text-xs">{error}</p>}
 
 
       {/* Finalize button + guidance — gated on showFinalize so the project

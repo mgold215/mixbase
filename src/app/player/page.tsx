@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
   Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown,
@@ -49,7 +49,15 @@ function statusTag(status: string): { label: string; color: string } {
 }
 
 
-export default function PlayerPage() {
+export default function PlayerPageWrapper() {
+  return (
+    <Suspense>
+      <PlayerPage />
+    </Suspense>
+  )
+}
+
+function PlayerPage() {
   const {
     tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
@@ -57,6 +65,8 @@ export default function PlayerPage() {
   } = usePlayer()
 
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const trackParam = searchParams.get('track')
   const [filtered, setFiltered] = useState<Track[]>([])
   const [loopMode, setLoopMode] = useState<LoopMode>('none')
   const [shuffle, setShuffle] = useState(false)
@@ -96,17 +106,16 @@ export default function PlayerPage() {
   // If nothing is playing yet, autoplay the first track.
   useEffect(() => {
     if (filtered.length === 0) return
-    const targetId = new URLSearchParams(window.location.search).get('track')
-    if (targetId) {
-      if (currentTrack?.project_id !== targetId) {
-        const t = filtered.find(t => t.project_id === targetId)
+    if (trackParam) {
+      if (currentTrack?.project_id !== trackParam) {
+        const t = filtered.find(t => t.project_id === trackParam)
         if (t) playTrack(t.project_id)
       }
     } else if (!currentTrack && filtered[0]) {
       playTrack(filtered[0].project_id)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered.length > 0 ? 'ready' : 'empty'])
+  }, [trackParam, filtered.length > 0 ? 'ready' : 'empty'])
 
   // ── Accent color from artwork ──────────────────────────────────────────────
   useEffect(() => {

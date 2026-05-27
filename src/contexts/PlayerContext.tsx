@@ -66,25 +66,52 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // set before play() resolves.
   const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null; artist?: string } | null>(null)
 
+  // Timestamp of last successful track fetch — used to avoid hammering on visibility
+  const lastFetchRef = useRef(0)
+
+  // Restore last-played track + position from localStorage.
+  // Defined before the load effects so it can be called from their .then() callbacks.
+  const restoreLastTrack = useCallback((trackList: Track[]) => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    try {
+      const raw = localStorage.getItem('mx-last-track')
+      if (!raw) return
+      const { projectId, time } = JSON.parse(raw) as { projectId: string; time: number }
+      const track = trackList.find(t => t.project_id === projectId)
+      if (!track) return
+      const audio = audioRef.current
+      if (!audio) return
+      const url = audioProxyUrl(track.audio_url)
+      audio.src = url
+      audio.currentTime = time
+      setCurrentProjectId(projectId)
+      setCurrentUrl(url)
+      setCurrentTime(time)
+      mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url, artist: track.artist }
+      applyMediaSession(track.title, track.artwork_url, false, track.artist)
+    } catch {}
+  }, [])
+
   // Load tracks once on mount — retry once after 3 s on failure
   useEffect(() => {
     const load = () => fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
-      .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false) })
+      .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false); lastFetchRef.current = Date.now(); restoreLastTrack(d) })
     load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
-  }, [])
+  }, [restoreLastTrack])
 
-  // When the app becomes visible after being hidden and the last load errored, retry.
-  // This covers the iOS PWA case where the app wakes up before the network is ready.
+  // Re-fetch tracks when the app becomes visible (tab switch, phone unlock, PWA resume).
+  // On error: retry immediately. On success: only re-fetch if stale (>60s since last load).
   useEffect(() => {
-    if (!loadError) return
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
-      setLoading(true)
+      // Always retry on error; otherwise only if data is stale
+      if (!loadError && Date.now() - lastFetchRef.current < 60_000) return
       setLoadError(false)
       fetch('/api/tracks')
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
-        .then((d: Track[]) => { setTracks(d); setLoading(false) })
+        .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false); lastFetchRef.current = Date.now() })
         .catch(() => { setLoading(false); setLoadError(true) })
     }
     document.addEventListener('visibilitychange', onVisible)
@@ -96,15 +123,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setLoadError(false)
     const load = () => fetch('/api/tracks')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
-      .then((d: Track[]) => { setTracks(d); setLoading(false) })
+      .then((d: Track[]) => { setTracks(d); setLoading(false); lastFetchRef.current = Date.now() })
     load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
   }, [])
+
+  // ── Persist playback position to localStorage so it survives navigation ────
+  // Save every 5 seconds (not every timeupdate) to avoid thrashing storage.
+  const lastSaveRef = useRef(0)
+  const savePosition = useCallback((projectId: string | null, time: number) => {
+    if (!projectId || time < 1) return
+    const now = Date.now()
+    if (now - lastSaveRef.current < 5000) return
+    lastSaveRef.current = now
+    try { localStorage.setItem('mx-last-track', JSON.stringify({ projectId, time: Math.floor(time) })) } catch {}
+  }, [])
+
+  // Restore last position on mount (before any user interaction)
+  const restoredRef = useRef(false)
 
   // Wire up audio event listeners
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime)
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime)
+      savePosition(currentProjectId, audio.currentTime)
+    }
     const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
     const onPlay = () => {
       setIsPlaying(true)
@@ -118,6 +162,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const onPause = () => {
       setIsPlaying(false)
+      // Force-save position on pause so we don't lose it
+      if (currentProjectId && audio.currentTime > 1) {
+        try { localStorage.setItem('mx-last-track', JSON.stringify({ projectId: currentProjectId, time: Math.floor(audio.currentTime) })) } catch {}
+      }
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
     const onEnded = () => { playIntentRef.current = false; setIsPlaying(false) }
@@ -133,7 +181,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener('pause', onPause)
       audio.removeEventListener('ended', onEnded)
     }
-  }, [])
+  }, [currentProjectId, savePosition])
 
   const currentTrack = useMemo<Track | null>(() => {
     if (currentProjectId) return tracks.find(t => t.project_id === currentProjectId) ?? null
