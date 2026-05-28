@@ -136,8 +136,8 @@ async function buildFinalized(
   const cy = Math.round(placement.textCenterY * height)
 
   // Typography — small, album-overlay scale (~3.5% of width for the title).
-  const artistSize = Math.round(width * 0.018)
-  const artistLS   = Math.round(artistSize * 0.22)
+  const artistSize = Math.round(width * 0.020)
+  const artistLS   = Math.round(artistSize * 0.10)
   const titleSize  = Math.round(width * 0.038)
   const titleLS    = Math.round(titleSize  * 0.06)
   const ruleH      = placement.showRule ? Math.max(2, Math.round(width * 0.004)) : 0
@@ -163,22 +163,28 @@ async function buildFinalized(
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.9"/>`
     : ''
 
-  // Drop-shadow filter — gives white text legibility on any background without
-  // darkening any pixels not adjacent to a glyph. stdDeviation tuned to text
-  // size; flood-opacity 0.65 reads cleanly without looking heavy.
-  const shadowSigma = Math.max(2, Math.round(titleSize * 0.08))
+  // Drop-shadow filters — give white text legibility on any background without
+  // darkening any pixels not adjacent to a glyph. One filter PER LINE, scaled to
+  // that line's size, with an explicit full-canvas userSpaceOnUse region. A
+  // single filter over the whole text group made librsvg rasterize the filter
+  // buffer from the group's large bounding box, which was too low-resolution for
+  // the small artist glyphs and visibly mangled some of them (e.g. the 'm').
+  const artistSigma = Math.max(1, Math.round(artistSize * 0.10))
+  const titleSigma  = Math.max(2, Math.round(titleSize * 0.08))
+  const filterRegion = `filterUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}" color-interpolation-filters="sRGB"`
 
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <filter id="textShadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="${Math.round(shadowSigma * 0.5)}" stdDeviation="${shadowSigma}" flood-color="#000" flood-opacity="0.65"/>
+        <filter id="artistShadow" ${filterRegion}>
+          <feDropShadow dx="0" dy="${Math.round(artistSigma * 0.5)}" stdDeviation="${artistSigma}" flood-color="#000" flood-opacity="0.65"/>
+        </filter>
+        <filter id="titleShadow" ${filterRegion}>
+          <feDropShadow dx="0" dy="${Math.round(titleSigma * 0.5)}" stdDeviation="${titleSigma}" flood-color="#000" flood-opacity="0.65"/>
         </filter>
       </defs>
-      <g filter="url(#textShadow)">
-        ${artistPaths}
-        ${titlePaths}
-      </g>
+      <g filter="url(#artistShadow)">${artistPaths}</g>
+      <g filter="url(#titleShadow)">${titlePaths}</g>
       ${ruleSvg}
     </svg>`
   )
