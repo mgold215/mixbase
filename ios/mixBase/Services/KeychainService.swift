@@ -21,14 +21,23 @@ struct KeychainService {
             kSecAttrAccount:      key,
         ]
 
-        // Try to update an existing item first
-        let attributes: [CFString: Any] = [kSecValueData: data]
+        // Try to update an existing item first. We also push the accessibility
+        // attribute on update so older items get upgraded to AfterFirstUnlock.
+        let attributes: [CFString: Any] = [
+            kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+        ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
 
         if status == errSecItemNotFound {
-            // Item doesn't exist yet — add it
+            // Item doesn't exist yet — add it.
+            // kSecAttrAccessibleAfterFirstUnlock lets us read/refresh the token
+            // while the app is backgrounded and the device is locked (e.g. a
+            // foreground refresh kicked off just as the screen locks), which
+            // kSecAttrAccessibleWhenUnlocked (the default) would block.
             var addQuery = query
             addQuery[kSecValueData] = data
+            addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
             SecItemAdd(addQuery as CFDictionary, nil)
         }
     }
@@ -66,7 +75,7 @@ struct KeychainService {
 
     // MARK: - Clear all
     static func clearAll() {
-        for key in ["access_token", "refresh_token", "user_id", "user_email"] {
+        for key in ["access_token", "refresh_token", "user_id", "user_email", "expires_at"] {
             delete(forKey: key)
         }
     }
