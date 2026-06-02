@@ -1,17 +1,18 @@
--- ===== TABLES =====
-create table tracks (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) default auth.uid(),
-  title text not null,
-  artist text default 'moodmixformat',
-  genre text,
-  track_url text,
-  artwork_url text,
-  pitch text,
-  created_at timestamptz default now()
-);
+-- ============================================================================
+-- 013_submitbase_curators.sql
+-- SubmitBase tab: submit a mixBASE song directly to a directory of curators.
+--
+-- ADDITIVE ONLY — creates two new tables (sb_curators, sb_submissions) and
+-- touches NO existing tables. Songs come from mb_projects / mb_versions; the
+-- listening link sent to curators is the existing /share/<token> link.
+--
+-- NOTE: the legacy public.curators table (int PK, used by the older outreach
+-- automation) is intentionally left untouched. This researched directory lives
+-- in its own sb_curators table so VERIFIED/UNVERIFIED + channel data survive.
+-- ============================================================================
 
-create table curators (
+-- ===== TABLES =====
+create table if not exists sb_curators (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id),   -- NULL = shared starter directory
   name text not null,
@@ -30,46 +31,56 @@ create table curators (
   created_at timestamptz default now()
 );
 
-create table submissions (
+create table if not exists sb_submissions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) default auth.uid(),
-  track_id uuid references tracks(id) on delete cascade,
-  curator_id uuid references curators(id) on delete cascade,
+  project_id uuid references mb_projects(id) on delete cascade,   -- the mixBASE song
+  version_id uuid references mb_versions(id) on delete set null,  -- optional specific mix
+  curator_id uuid references sb_curators(id) on delete cascade,
   channel text check (channel in ('email','form','social','spotify')),
   message text,
+  share_url text,                -- the /share/<token> link sent to the curator
   status text check (status in ('draft','sent','opened','responded','accepted','rejected','no_response')) default 'draft',
   response_notes text,
   sent_at timestamptz,
   created_at timestamptz default now()
 );
 
--- ===== ROW LEVEL SECURITY =====
-alter table tracks enable row level security;
-alter table curators enable row level security;
-alter table submissions enable row level security;
+create index if not exists sb_submissions_user_idx on sb_submissions(user_id);
+create index if not exists sb_submissions_project_idx on sb_submissions(project_id);
+create index if not exists sb_submissions_curator_idx on sb_submissions(curator_id);
 
-create policy "own tracks" on tracks for all
-  using (user_id = auth.uid()) with check (user_id = auth.uid());
+-- ===== ROW LEVEL SECURITY =====
+-- (The app talks to these via service-role API routes scoped by user_id, but we
+--  enable RLS for defense-in-depth, matching migration 005's convention.)
+alter table sb_curators enable row level security;
+alter table sb_submissions enable row level security;
 
 -- Owner sees their own curators PLUS the shared starter directory (user_id IS NULL).
--- They can only insert/update/delete their OWN rows.
-create policy "read curators" on curators for select
+drop policy if exists "sb read curators" on sb_curators;
+create policy "sb read curators" on sb_curators for select
   using (user_id = auth.uid() or user_id is null);
-create policy "insert own curators" on curators for insert
+drop policy if exists "sb insert own curators" on sb_curators;
+create policy "sb insert own curators" on sb_curators for insert
   with check (user_id = auth.uid());
-create policy "update own curators" on curators for update
+drop policy if exists "sb update own curators" on sb_curators;
+create policy "sb update own curators" on sb_curators for update
   using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "delete own curators" on curators for delete
+drop policy if exists "sb delete own curators" on sb_curators;
+create policy "sb delete own curators" on sb_curators for delete
   using (user_id = auth.uid());
 
-create policy "own submissions" on submissions for all
+drop policy if exists "sb own submissions" on sb_submissions;
+create policy "sb own submissions" on sb_submissions for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ===== PRELOADED CURATOR DIRECTORY (researched + verified — insert verbatim) =====
 -- columns: user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url
+-- Idempotent: refresh only the shared starter directory (user_id IS NULL) on re-run.
+delete from sb_curators where user_id is null;
 
 -- ---- HOUSE / MELODIC / DEEP / PROGRESSIVE / TECH / ORGANIC HOUSE ----
-insert into curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
+insert into sb_curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
 (null,'Defected','label','LabelRadar',ARRAY['house','deep house','tech house'],'form','https://www.labelradar.com/labels/defected/portal',true,'Free via LabelRadar; covers all sub-labels (DFTD, Glitterbox, Classic, Nu Groove).','VERIFIED','https://www.labelradar.com/labels/defected/portal'),
 (null,'Toolroom','label','web',ARRAY['tech house','house'],'form','https://toolroomrecords.com/demos/',true,'Upload via the demos page; they listen to everything and reply only if interested.','VERIFIED','https://toolroomrecords.com/demos/'),
 (null,'Spinnin'' Records','label','web',ARRAY['house','tech house'],'form','https://spinninrecords.com/talentpool',true,'Free upload via Talent Pool; also has a LabelRadar portal.','VERIFIED','https://spinninrecords.com/talentpool'),
@@ -103,7 +114,7 @@ insert into curators (user_id, name, type, platform, genres, contact_method, con
 (null,'Progressive House Worldwide','label','web',ARRAY['progressive house','trance'],'email','demos@progressivehouseworldwide.com',true,'Third-party listing only — confirm before sending.','UNVERIFIED','https://labelsbase.net/progressive-house-worldwide');
 
 -- ---- DRUM & BASS / LIQUID / MELODIC DnB ----
-insert into curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
+insert into sb_curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
 (null,'Hospital Records','label','Label-Engine',ARRAY['drum and bass','liquid dnb'],'form','https://hospitalrecords.label-engine.com/demos',true,'Provide info and select up to 5 tracks; reviewed and contacted by email.','VERIFIED','https://hospitalrecords.label-engine.com/demos'),
 (null,'Liquicity','label','web',ARRAY['liquid dnb','melodic dnb'],'form','https://liquicity.com/demo/',true,'Use the form for all submissions; every track is listened to, no guaranteed reply.','VERIFIED','https://liquicity.com/demo/'),
 (null,'Viper Recordings','label','LabelRadar',ARRAY['drum and bass'],'form','https://viperrecordings.co.uk/demos/',true,'LabelRadar portal linked from own site.','VERIFIED','https://viperrecordings.co.uk/demos/'),
@@ -128,7 +139,7 @@ insert into curators (user_id, name, type, platform, genres, contact_method, con
 (null,'Intrigue Music','label','web',ARRAY['drum and bass'],'email','demobox@intrigue.org.uk',true,'Forum-sourced — confirm before sending.','UNVERIFIED','https://www.dogsonacid.com/threads/how-to-send-tunes-to-labels.793042/');
 
 -- ---- RIDDIM / DUBSTEP / BASS MUSIC ----
-insert into curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
+insert into sb_curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
 (null,'Circus Records','label','LabelRadar',ARRAY['dubstep','bass'],'form','https://www.labelradar.com/labels/circusrecords/portal',true,'Demos via LabelRadar only; covers Circus Electric and DPMO.','VERIFIED','https://circus-records.co.uk/about/'),
 (null,'Monstercat','label','web',ARRAY['bass','dubstep','electronic'],'form','https://www.monstercat.com/contact-us',true,'They listen to every demo; submit only your best original work; Uncaged is the heavy side.','VERIFIED','https://www.monstercat.com/contact-us'),
 (null,'Wakaan','label','SoundCloud',ARRAY['bass','experimental bass'],'email','Chloe@wakaan.com',true,'Per official SoundCloud bio (Liquid Stranger''s label).','VERIFIED','https://soundcloud.com/wakaan'),
@@ -144,7 +155,7 @@ insert into curators (user_id, name, type, platform, genres, contact_method, con
 (null,'Cyclops Recordings','label','web',ARRAY['riddim','dubstep','experimental bass'],'form','https://cyclopsrecordings.net/contact/',true,'Contact page exists; exact email unconfirmed (Subtronics'' label) — confirm before sending.','UNVERIFIED','https://cyclopsrecordings.net/contact/');
 
 -- ---- BLOGS / RADIO / PLAYLISTS (cross-genre) ----
-insert into curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
+insert into sb_curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
 (null,'Run The Trap','blog','web',ARRAY['trap','bass','dubstep','edm','house'],'email','rttsubmit@gmail.com',true,'Email a PRIVATE SoundCloud link, no attachments, no social DMs; reply within ~3 days only if interested.','VERIFIED','https://runthetrap.com/contact-us/'),
 (null,'EARMILK','blog','web',ARRAY['electronic','edm','bass'],'form','https://earmilk.com/submit-music/',true,'SubmitHub or Pillargram only (SubmitHub has a free tier).','VERIFIED','https://earmilk.com/submit-music/'),
 (null,'Magnetic Magazine','blog','web',ARRAY['electronic','house','techno'],'form','https://www.magneticmag.com/page/submissions/',true,'Use the submissions page; finished tracks only.','VERIFIED','https://www.magneticmag.com/page/submissions/'),
@@ -155,5 +166,5 @@ insert into curators (user_id, name, type, platform, genres, contact_method, con
 (null,'Your EDM','blog','web',ARRAY['edm','electronic'],'form','https://www.youredm.com/contact-us/',true,'Music Review Submission Form on the contact page.','VERIFIED','https://www.youredm.com/contact-us/');
 
 -- ---- SPOTIFY EDITORIAL (the one free way to reach Spotify's own editors) ----
-insert into curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
+insert into sb_curators (user_id, name, type, platform, genres, contact_method, contact_value, accepts_submissions, guidelines, confidence, source_url) values
 (null,'Spotify Editorial (via Spotify for Artists)','playlist','Spotify for Artists',ARRAY['all'],'form','https://artists.spotify.com',true,'Pitch ONE unreleased song 7+ days (ideally 2-4 weeks) before release: Music > Upcoming > Pitch a Song. Fill every field and the ~500-character story. Free. No email/social back channel.','VERIFIED','https://support.spotify.com/us/artists/article/pitching-music-to-playlist-editors/');
