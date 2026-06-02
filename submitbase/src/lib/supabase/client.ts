@@ -1,0 +1,10 @@
+"use client";
+
+import { createBrowserClient } from "@supabase/ssr";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./env";
+
+// Browser-side Supabase client. Safe to use the anon key here — Row Level
+// Security policies (see schema.sql) are what actually protect the data.
+export function createClient() {
+  return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
