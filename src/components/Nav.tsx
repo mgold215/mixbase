@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -32,6 +32,7 @@ export default function Nav() {
     { href: '/collections', label: 'Collections' },
     { href: '/media', label: 'Media' },
     { href: '/pipeline', label: 'Pipeline' },
+    { href: '/submit', label: 'Submit' },
     { href: '/player', label: 'Player' },
   ]
 
@@ -40,6 +41,7 @@ export default function Nav() {
     { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,    match: '/dashboard' },
     { href: '/collections', label: 'Collections', icon: Library,       match: '/collections' },
     { href: '/media',       label: 'Media',       icon: Images,        match: '/media' },
+    { href: '/submit',      label: 'Submit',      icon: Send,          match: '/submit' },
     { href: currentTrack ? `/player?track=${currentTrack.project_id}` : '/player', label: 'Player', icon: PlayCircle, match: '/player' },
     { href: '/pipeline',    label: 'Pipeline',    icon: ClipboardList, match: '/pipeline' },
   ]
