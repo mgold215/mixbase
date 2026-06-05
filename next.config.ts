@@ -20,7 +20,7 @@ const securityHeaders = [
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js requires unsafe-inline/eval for dev
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https://mdefkqaawrusoaojstpq.supabase.co https://*.replicate.delivery https://replicate.delivery",
-      "media-src 'self' blob: https://mdefkqaawrusoaojstpq.supabase.co",
+      "media-src 'self' blob: https://mdefkqaawrusoaojstpq.supabase.co https://*.runwayml.com https://*.cloudfront.net",
       "connect-src 'self' https://mdefkqaawrusoaojstpq.supabase.co https://api.replicate.com",
       "font-src 'self'",
       "frame-ancestors 'self'",
