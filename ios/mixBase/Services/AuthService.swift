@@ -2,8 +2,9 @@ import Foundation
 import Combine
 
 // MARK: - AuthService
-// Handles Supabase Auth via direct REST calls (no SDK dependency).
-// Publishes auth state so views can reactively update.
+// Handles Supabase Auth via direct REST calls.
+// Stores tokens in Keychain with expiry tracking for reliable 30-day sessions.
+// Proactively refreshes the access token before it expires so API calls never fail silently.
 
 @MainActor
 class AuthService: ObservableObject {
@@ -31,7 +32,6 @@ class AuthService: ObservableObject {
     private var refreshTimer: Timer?
 
     private init() {
-        // Restore session from Keychain on launch
         restoreSession()
     }
 
@@ -162,7 +162,6 @@ class AuthService: ObservableObject {
             guard let http = response as? HTTPURLResponse else { return }
 
             if http.statusCode == 200 {
-                // Sign up succeeded — sign in immediately to get a session
                 await signIn(email: email, password: password)
             } else {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -175,7 +174,6 @@ class AuthService: ObservableObject {
     }
 
     // MARK: - Sign In with Apple
-    // Exchanges the Apple identity token with Supabase for a session.
     func signInWithApple(idToken: String, nonce: String) async {
         isLoading = true
         errorMessage = nil
@@ -229,8 +227,7 @@ class AuthService: ObservableObject {
     // Critically, we ONLY sign the user out when Supabase *definitively* rejects
     // the refresh token (HTTP 400/401 — revoked or truly expired). Network errors,
     // timeouts and 5xx/429 responses are transient: we keep the existing session so
-    // a momentary blip can't log the user out. This is the main fix for the
-    // "constantly getting logged out" bug.
+    // a momentary blip can't log the user out.
     @discardableResult
     func refreshSession() async -> Bool {
         // Collapse concurrent refreshes into the first one.
@@ -281,6 +278,8 @@ class AuthService: ObservableObject {
     }
 
     // MARK: - Apply session from Supabase response JSON
+    // Saves all tokens + expiry to Keychain, updates in-memory state,
+    // and schedules the next proactive refresh.
     private func applySession(json: [String: Any]?, email: String) {
         guard
             let accessToken = json?["access_token"] as? String,
@@ -292,6 +291,7 @@ class AuthService: ObservableObject {
             return
         }
 
+        // Persist everything to Keychain (survives app restarts, updates, etc.)
         KeychainService.save(accessToken, forKey: "access_token")
         KeychainService.save(refreshToken, forKey: "refresh_token")
         KeychainService.save(uid, forKey: "user_id")

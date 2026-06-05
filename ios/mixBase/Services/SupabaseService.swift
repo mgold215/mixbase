@@ -134,7 +134,7 @@ class SupabaseService {
     func fetchArtistName(userId: String) async -> String {
         let path = "/rest/v1/profiles?id=eq.\(userId)&select=artist_name"
         let request = makeRequest(path: path)
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
+        guard let (data, _) = try? await authenticatedData(for: request),
               let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               let name = json.first?["artist_name"] as? String,
               !name.isEmpty
@@ -147,7 +147,7 @@ class SupabaseService {
     /// Fetch all projects, newest-updated first
     func fetchProjects() async throws -> [Project] {
         let request = makeRequest(path: "/rest/v1/mb_projects?order=updated_at.desc")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Project].self, from: data)
     }
@@ -155,7 +155,7 @@ class SupabaseService {
     /// Fetch a single project by its ID
     func fetchProject(id: UUID) async throws -> Project {
         let request = makeRequest(path: "/rest/v1/mb_projects?id=eq.\(id.uuidString)")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let projects = try decoder.decode([Project].self, from: data)
         guard let project = projects.first else {
@@ -175,7 +175,7 @@ class SupabaseService {
 
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_projects", method: "POST", body: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let projects = try decoder.decode([Project].self, from: data)
         guard let project = projects.first else {
@@ -192,7 +192,7 @@ class SupabaseService {
             method: "PATCH",
             body: body
         )
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
     }
 
@@ -202,7 +202,7 @@ class SupabaseService {
     func fetchVersions(projectId: UUID) async throws -> [Version] {
         let path = "/rest/v1/mb_versions?project_id=eq.\(projectId.uuidString)&order=version_number.asc"
         let request = makeRequest(path: path)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Version].self, from: data)
     }
@@ -225,7 +225,7 @@ class SupabaseService {
 
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_versions", method: "POST", body: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let versions = try decoder.decode([Version].self, from: data)
         guard let version = versions.first else {
@@ -243,7 +243,7 @@ class SupabaseService {
             method: "PATCH",
             body: body
         )
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
     }
 
@@ -252,7 +252,7 @@ class SupabaseService {
     /// Fetch all releases, ordered by release date (newest first)
     func fetchReleases() async throws -> [Release] {
         let request = makeRequest(path: "/rest/v1/mb_releases?order=release_date.desc.nullslast")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Release].self, from: data)
     }
@@ -260,7 +260,7 @@ class SupabaseService {
     /// Fetch a single release by its ID
     func fetchRelease(id: UUID) async throws -> Release {
         let request = makeRequest(path: "/rest/v1/mb_releases?id=eq.\(id.uuidString)")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let releases = try decoder.decode([Release].self, from: data)
         guard let release = releases.first else {
@@ -299,7 +299,7 @@ class SupabaseService {
 
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_releases", method: "POST", body: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let releases = try decoder.decode([Release].self, from: data)
         guard let release = releases.first else {
@@ -316,7 +316,7 @@ class SupabaseService {
             method: "PATCH",
             body: body
         )
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
     }
 
@@ -325,7 +325,7 @@ class SupabaseService {
     /// Fetch all collections, newest first
     func fetchCollections() async throws -> [Collection] {
         let request = makeRequest(path: "/rest/v1/mb_collections?order=updated_at.desc")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Collection].self, from: data)
     }
@@ -335,7 +335,7 @@ class SupabaseService {
         let fields: [String: Any] = ["title": title, "type": type]
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_collections", method: "POST", body: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let collections = try decoder.decode([Collection].self, from: data)
         guard let collection = collections.first else {
@@ -348,7 +348,7 @@ class SupabaseService {
     func fetchCollectionItems(collectionId: UUID) async throws -> [CollectionItem] {
         let path = "/rest/v1/mb_collection_items?collection_id=eq.\(collectionId.uuidString)&order=position.asc"
         let request = makeRequest(path: path)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([CollectionItem].self, from: data)
     }
@@ -362,7 +362,7 @@ class SupabaseService {
         ]
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_collection_items", method: "POST", body: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         let items = try decoder.decode([CollectionItem].self, from: data)
         guard let item = items.first else {
@@ -377,7 +377,7 @@ class SupabaseService {
             path: "/rest/v1/mb_collection_items?id=eq.\(itemId.uuidString)",
             method: "DELETE"
         )
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
     }
 
@@ -390,7 +390,7 @@ class SupabaseService {
             method: "PATCH",
             body: body
         )
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
     }
 
@@ -400,7 +400,7 @@ class SupabaseService {
     func fetchFeedback(versionId: UUID) async throws -> [Feedback] {
         let path = "/rest/v1/mb_feedback?version_id=eq.\(versionId.uuidString)&order=created_at.desc"
         let request = makeRequest(path: path)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Feedback].self, from: data)
     }
@@ -411,7 +411,7 @@ class SupabaseService {
     func fetchActivities(limit: Int = 20) async throws -> [Activity] {
         let path = "/rest/v1/mb_activity?order=created_at.desc&limit=\(limit)"
         let request = makeRequest(path: path)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authenticatedData(for: request)
         try validateResponse(response)
         return try decoder.decode([Activity].self, from: data)
     }
@@ -456,12 +456,38 @@ class SupabaseService {
 
         request.httpBody = data
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authenticatedData(for: request)
         try validateResponse(response)
 
         // Build and return the public URL for the uploaded file
         let publicURL = "\(supabaseURL)/storage/v1/object/public/\(bucket)/\(filename)"
         return publicURL
+    }
+
+    // MARK: - Authenticated Request with Auto-Retry
+    // Runs a request. If it gets a 401 (unauthorized), refreshes the token and retries once.
+    // This prevents silent auth failures when the access token expires mid-session.
+    func authenticatedData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        // First attempt with current token
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        // If we got a 401, the access token probably expired
+        guard let http = response as? HTTPURLResponse, http.statusCode == 401 else {
+            return (data, response)
+        }
+
+        // Try refreshing the token (AuthService is @MainActor)
+        await AuthService.shared.refreshSession()
+
+        // Rebuild the request with the new token
+        guard let newToken = accessToken else {
+            return (data, response)
+        }
+        var retryRequest = request
+        retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+
+        // Second attempt with refreshed token
+        return try await URLSession.shared.data(for: retryRequest)
     }
 
     // MARK: - Response Validation
