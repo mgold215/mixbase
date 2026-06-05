@@ -50,9 +50,6 @@ export default function Nav() {
     return pathname.startsWith(tab.match)
   }
 
-  // Whether the mini player is currently visible (affects bottom tab spacing)
-  const miniPlayerVisible = !!currentTrack && !pathname.startsWith('/player')
-
   return (
     <>
       {/* ── Top nav bar (always visible, links hidden on mobile) ── */}

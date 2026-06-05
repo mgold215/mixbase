@@ -4,7 +4,7 @@ import path from 'path'
 const AUTH_FILE = path.join(__dirname, '.auth.json')
 
 // Login once and save the session cookie for all subsequent tests
-setup('authenticate', async ({ page, baseURL }) => {
+setup('authenticate', async ({ page }) => {
   const password = process.env.MIXBASE_PASSWORD
   if (!password) throw new Error('MIXBASE_PASSWORD env var required for E2E tests')
 

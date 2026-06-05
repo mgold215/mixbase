@@ -13,8 +13,6 @@ type Props = {
   collections: Collection[]
 }
 
-type AssignTarget = { type: 'collection'; id: string; title: string } | { type: 'track'; id: string; title: string }
-
 const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
 
 export default function MediaClient({ projects, collections }: Props) {

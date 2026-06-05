@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 // Fields the owner may edit on their OWN curators.
 const EDITABLE = [
@@ -9,12 +10,18 @@ const EDITABLE = [
 
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const body = await request.json()
   const patch: Record<string, unknown> = {}
   for (const key of EDITABLE) if (key in body) patch[key] = body[key]
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 })
+  }
 
   // .eq('user_id', userId) ensures shared (NULL) rows can't be modified.
   const { data, error } = await supabaseAdmin
@@ -31,8 +38,11 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
 export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const { error } = await supabaseAdmin
     .from('sb_curators')

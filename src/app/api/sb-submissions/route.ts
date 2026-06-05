@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { sbWriteLimiter } from '@/lib/rate-limit'
+import { isUuid } from '@/lib/validators'
 
 // GET — the user's submission log (newest first).
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { data, error } = await supabaseAdmin
     .from('sb_submissions')
@@ -18,11 +22,26 @@ export async function GET(request: NextRequest) {
 // POST — log one submission (a song pitched to a curator).
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const limit = sbWriteLimiter.check(userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+  }
 
   const body = await request.json()
   const { project_id, version_id, curator_id, channel, message, share_url } = body
-  if (!curator_id) return NextResponse.json({ error: 'curator_id required' }, { status: 400 })
+  if (!isUuid(curator_id)) {
+    return NextResponse.json({ error: 'curator_id must be a UUID' }, { status: 400 })
+  }
+  if (project_id != null && !isUuid(project_id)) {
+    return NextResponse.json({ error: 'project_id must be a UUID' }, { status: 400 })
+  }
+  if (version_id != null && !isUuid(version_id)) {
+    return NextResponse.json({ error: 'version_id must be a UUID' }, { status: 400 })
+  }
 
   const { data, error } = await supabaseAdmin
     .from('sb_submissions')

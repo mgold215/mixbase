@@ -64,6 +64,11 @@ export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 }
 // Chat (Claude): 20 per hour per user — caps Anthropic spend per account
 export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 
+// SubmitBase writes (curator add/import + submission log): 120 per hour per
+// user. Generous enough for a real CSV import session, low enough to stop a
+// runaway client loop from flooding the directory or activity log.
+export const sbWriteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 })
+
 // ── Helper to extract a usable key from a request ────────────────────────────
 // Prefers X-Forwarded-For (set by Railway's proxy) over the raw IP.
 export function ipKey(request: { headers: { get(name: string): string | null } }): string {

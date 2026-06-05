@@ -1,26 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { sbWriteLimiter } from '@/lib/rate-limit'
+import { isUuid } from '@/lib/validators'
 import type { CuratorInsert } from '@/lib/submit'
 
 // GET — the shared starter directory (user_id IS NULL) plus the user's own curators.
+//
+// Fan out into two parameterised queries instead of building a `.or()` string
+// with the user id interpolated in. The id comes from a trusted JWT claim
+// today, but interpolating untyped input into a PostgREST filter string is the
+// wrong shape for a security-sensitive query.
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
-  const { data, error } = await supabaseAdmin
-    .from('sb_curators')
-    .select('*')
-    .or(`user_id.eq.${userId},user_id.is.null`)
-    .order('name')
+  const [shared, mine] = await Promise.all([
+    supabaseAdmin.from('sb_curators').select('*').is('user_id', null),
+    supabaseAdmin.from('sb_curators').select('*').eq('user_id', userId),
+  ])
+  if (shared.error) return NextResponse.json({ error: shared.error.message }, { status: 500 })
+  if (mine.error) return NextResponse.json({ error: mine.error.message }, { status: 500 })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  const combined = [...(shared.data ?? []), ...(mine.data ?? [])]
+  combined.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+  return NextResponse.json(combined)
 }
 
 // POST — add a single curator, or bulk-import via { rows: [...] } (CSV import).
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!userId || !isUuid(userId)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const limit = sbWriteLimiter.check(userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+  }
 
   const body = await request.json()
 

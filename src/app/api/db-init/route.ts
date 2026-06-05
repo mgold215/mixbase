@@ -1,5 +1,15 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { timingSafeEqual } from 'node:crypto'
+
+// Constant-time string compare. Length differences short-circuit safely because
+// we compare encoded bytes, not raw strings.
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
 
 // The full schema SQL — same as supabase/migrations/001_initial.sql + 002_remaining_tables.sql
 const SCHEMA_SQL = `
@@ -204,7 +214,20 @@ create policy "users_own_activity" on mb_activity
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.
 // Requires SUPABASE_MANAGEMENT_TOKEN env var (create one at supabase.com/dashboard/account/tokens).
 // Also auto-creates storage buckets using the service role key.
-export async function GET() {
+//
+// Auth: the caller must present `x-setup-token: <token>` where <token> matches
+// either DB_INIT_SECRET (preferred) or SUPABASE_MANAGEMENT_TOKEN. Without this,
+// any unauthenticated visitor could trigger schema runs against the production
+// database. Routes under /api/db-init are kept in the middleware's PUBLIC_PATHS
+// because the very first call happens before any user exists — so we gate at
+// the handler instead of at the cookie layer.
+export async function GET(request: NextRequest) {
+  const provided = request.headers.get('x-setup-token') ?? ''
+  const expected = process.env.DB_INIT_SECRET || process.env.SUPABASE_MANAGEMENT_TOKEN || ''
+  if (!expected || !provided || !safeEqual(provided, expected)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const results: { step: string; status: string; detail?: string }[] = []
 
   // ── Step 1: Run SQL migrations via Management API ──────────────────────────

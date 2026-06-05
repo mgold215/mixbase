@@ -51,7 +51,8 @@ node scripts/test-upload.mjs https://mixbase-staging.up.railway.app  # Upload + 
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Falls back to hardcoded public key |
 | `REPLICATE_API_TOKEN` | Optional | Artwork generation (Flux 2 Pro / Imagen 4 via Replicate) |
 | `RUNWAY_API_KEY` | Optional | Visualizer video generation (Runway Gen-3) |
-| `SUPABASE_MANAGEMENT_TOKEN` | Optional | DB schema init via `/api/db-init` |
+| `SUPABASE_MANAGEMENT_TOKEN` | Optional | DB schema init via `/api/db-init` (also doubles as the setup token if `DB_INIT_SECRET` isn't set) |
+| `DB_INIT_SECRET` | Optional | Required in the `x-setup-token` header to invoke `/api/db-init`. Falls back to `SUPABASE_MANAGEMENT_TOKEN` if unset. |
 
 **Critical:** `SUPABASE_SERVICE_ROLE_KEY` is required for server-side auth validation and storage operations.
 
