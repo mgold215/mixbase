@@ -16,8 +16,12 @@ struct PlayerView: View {
     @State private var allVersions: [Version] = []
     @State private var isLoading = true
 
-    // A/B compare toggle
-    @State private var abCompareEnabled = false
+    // Shuffle & loop
+    @State private var isShuffled = false
+    @State private var loopMode = 0  // 0 = off, 1 = all, 2 = one
+
+    // Search
+    @State private var searchText = ""
 
     var body: some View {
         NavigationStack {
@@ -126,13 +130,32 @@ struct PlayerView: View {
                     .font(.headline)
                     .foregroundColor(Color(hex: "#f0f0f0"))
                 Spacer()
-                Text("\(trackList.count) projects")
+                Text("\(filteredTrackList.count) projects")
                     .font(.caption)
                     .foregroundColor(.gray)
             }
             .padding(.horizontal)
             .padding(.top, 16)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
+
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.gray)
+                TextField("Search tracks...", text: $searchText)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color(hex: "#111111"))
+            .cornerRadius(8)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
 
             if isLoading {
                 ProgressView()
@@ -153,7 +176,7 @@ struct PlayerView: View {
             } else {
                 // List of tracks
                 LazyVStack(spacing: 2) {
-                    ForEach(trackList) { item in
+                    ForEach(filteredTrackList) { item in
                         trackRow(item: item)
                     }
                 }
@@ -345,26 +368,42 @@ struct PlayerView: View {
 
     // MARK: - Playback Controls
     private var playbackControls: some View {
-        HStack(spacing: 36) {
-            Button(action: previousVersion) {
-                Image(systemName: "backward.end.fill")
-                    .font(.title3)
-                    .foregroundColor(Color(hex: "#f0f0f0"))
-            }
+        VStack(spacing: 8) {
+            HStack(spacing: 36) {
+                // Shuffle
+                Button(action: { isShuffled.toggle() }) {
+                    Image(systemName: "shuffle")
+                        .font(.body)
+                        .foregroundColor(isShuffled ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                }
 
-            Button(action: { audioService.togglePlayPause() }) {
-                Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title3)
-                    .foregroundColor(Color(hex: "#080808"))
-                    .frame(width: 52, height: 52)
-                    .background(Color(hex: "#2dd4bf"))
-                    .clipShape(Circle())
-            }
+                Button(action: previousTrack) {
+                    Image(systemName: "backward.end.fill")
+                        .font(.title3)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                }
 
-            Button(action: nextVersion) {
-                Image(systemName: "forward.end.fill")
-                    .font(.title3)
-                    .foregroundColor(Color(hex: "#f0f0f0"))
+                Button(action: { audioService.togglePlayPause() }) {
+                    Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title3)
+                        .foregroundColor(Color(hex: "#080808"))
+                        .frame(width: 52, height: 52)
+                        .background(Color(hex: "#2dd4bf"))
+                        .clipShape(Circle())
+                }
+
+                Button(action: nextTrack) {
+                    Image(systemName: "forward.end.fill")
+                        .font(.title3)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                }
+
+                // Loop
+                Button(action: { loopMode = (loopMode + 1) % 3 }) {
+                    Image(systemName: loopMode == 2 ? "repeat.1" : "repeat")
+                        .font(.body)
+                        .foregroundColor(loopMode > 0 ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                }
             }
         }
     }
@@ -406,6 +445,14 @@ struct PlayerView: View {
 
     // MARK: - Helpers
 
+    private var filteredTrackList: [TrackItem] {
+        if searchText.isEmpty { return trackList }
+        return trackList.filter {
+            $0.project.title.localizedCaseInsensitiveContains(searchText) ||
+            ($0.project.genre?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
+
     private var playbackProgress: CGFloat {
         guard audioService.duration > 0 else { return 0 }
         return CGFloat(audioService.currentTime / audioService.duration)
@@ -427,27 +474,37 @@ struct PlayerView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    private func previousVersion() {
+    // Navigate to previous track in the track list
+    private func previousTrack() {
         guard let current = audioService.currentVersion else { return }
-        let sorted = allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })
-        if let index = sorted.firstIndex(where: { $0.id == current.id }), index > 0 {
-            audioService.play(
-                version: sorted[index - 1],
-                trackName: audioService.currentTrackName ?? "Unknown",
-                artworkUrl: audioService.currentArtworkUrl
-            )
+        let list = isShuffled ? trackList.shuffled() : trackList
+        if let index = list.firstIndex(where: { $0.project.id == current.projectId }), index > 0 {
+            let prev = list[index - 1]
+            audioService.play(version: prev.latestVersion, trackName: prev.project.title, artworkUrl: prev.project.artworkUrl)
+        } else if loopMode == 1, let last = list.last {
+            // Loop all: wrap to end
+            audioService.play(version: last.latestVersion, trackName: last.project.title, artworkUrl: last.project.artworkUrl)
         }
     }
 
-    private func nextVersion() {
+    // Navigate to next track in the track list
+    private func nextTrack() {
         guard let current = audioService.currentVersion else { return }
-        let sorted = allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })
-        if let index = sorted.firstIndex(where: { $0.id == current.id }), index < sorted.count - 1 {
-            audioService.play(
-                version: sorted[index + 1],
-                trackName: audioService.currentTrackName ?? "Unknown",
-                artworkUrl: audioService.currentArtworkUrl
-            )
+
+        // Loop one: restart the same track
+        if loopMode == 2 {
+            audioService.seek(to: 0)
+            audioService.resume()
+            return
+        }
+
+        let list = isShuffled ? trackList.shuffled() : trackList
+        if let index = list.firstIndex(where: { $0.project.id == current.projectId }), index < list.count - 1 {
+            let next = list[index + 1]
+            audioService.play(version: next.latestVersion, trackName: next.project.title, artworkUrl: next.project.artworkUrl)
+        } else if loopMode == 1, let first = list.first {
+            // Loop all: wrap to start
+            audioService.play(version: first.latestVersion, trackName: first.project.title, artworkUrl: first.project.artworkUrl)
         }
     }
 

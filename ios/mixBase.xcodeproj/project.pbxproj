@@ -47,6 +47,12 @@
 		/* Views - Artwork */
 		A100000080 /* ArtworkGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000080; };
 
+		/* Models - Curator */
+		A100000016 /* Curator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000016; };
+
+		/* Views - Submit */
+		A1000000D0 /* SubmitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000D0; };
+
 		/* Views - Settings */
 		A100000090 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000090; };
 
@@ -78,6 +84,7 @@
 		B100000013 /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
 		B100000014 /* Activity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity.swift; sourceTree = "<group>"; };
 		B100000015 /* Collection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Collection.swift; sourceTree = "<group>"; };
+		B100000016 /* Curator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Curator.swift; sourceTree = "<group>"; };
 
 		/* Services */
 		B100000020 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
@@ -99,6 +106,7 @@
 		B100000071 /* ReleaseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDetailView.swift; sourceTree = "<group>"; };
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B1000000D0 /* SubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmitView.swift; sourceTree = "<group>"; };
 		B1000000A0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		B1000000A2 /* StatCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCard.swift; sourceTree = "<group>"; };
@@ -180,6 +188,7 @@
 				B100000013 /* Feedback.swift */,
 				B100000014 /* Activity.swift */,
 				B100000015 /* Collection.swift */,
+				B100000016 /* Curator.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -196,6 +205,7 @@
 				E100000023 /* Pipeline */,
 				E100000024 /* Artwork */,
 				E100000025 /* Settings */,
+				E100000028 /* Submit */,
 				E100000026 /* Components */,
 			);
 			path = Views;
@@ -257,6 +267,15 @@
 				B100000080 /* ArtworkGeneratorView.swift */,
 			);
 			path = Artwork;
+			sourceTree = "<group>";
+		};
+
+		E100000028 /* Submit */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000D0 /* SubmitView.swift */,
+			);
+			path = Submit;
 			sourceTree = "<group>";
 		};
 
@@ -400,6 +419,8 @@
 				A100000024 /* KeychainService.swift in Sources */,
 				A1000000B1 /* LoginView.swift in Sources */,
 				A1000000B2 /* SignUpView.swift in Sources */,
+				A100000016 /* Curator.swift in Sources */,
+				A1000000D0 /* SubmitView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

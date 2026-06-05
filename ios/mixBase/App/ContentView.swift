@@ -34,9 +34,13 @@ struct ContentView: View {
                     .tabItem { Image(systemName: "play.circle"); Text("Player") }
                     .tag(2)
 
+                SubmitView()
+                    .tabItem { Image(systemName: "paperplane"); Text("Submit") }
+                    .tag(3)
+
                 PipelineView()
                     .tabItem { Image(systemName: "checklist"); Text("Pipeline") }
-                    .tag(3)
+                    .tag(4)
             }
             .tint(Color(hex: "#2dd4bf"))
             .onAppear {

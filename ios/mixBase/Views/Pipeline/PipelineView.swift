@@ -72,6 +72,11 @@ struct PipelineView: View {
             .task {
                 await loadReleases()
             }
+            .sheet(isPresented: $showNewRelease) {
+                NewReleaseSheet(onSave: { release in
+                    releases.insert(release, at: 0)
+                })
+            }
         }
     }
 
@@ -159,5 +164,142 @@ struct PipelineView: View {
             print("PipelineView: Failed to load releases — \(error.localizedDescription)")
         }
         isLoading = false
+    }
+}
+
+// MARK: - New Release Sheet
+// Simple form to create a new release and add it to the pipeline.
+
+struct NewReleaseSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var onSave: (Release) -> Void
+
+    @State private var title = ""
+    @State private var releaseDate = Date()
+    @State private var hasDate = false
+    @State private var projects: [Project] = []
+    @State private var selectedProjectId: UUID? = nil
+    @State private var isSaving = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(hex: "#080808").ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 16) {
+                        // Title
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Title")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                            TextField("Release title", text: $title)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .padding(10)
+                                .background(Color(hex: "#111111"))
+                                .cornerRadius(8)
+                        }
+
+                        // Release date toggle + picker
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle(isOn: $hasDate) {
+                                Text("Set Release Date")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .tint(Color(hex: "#2dd4bf"))
+
+                            if hasDate {
+                                DatePicker("", selection: $releaseDate, displayedComponents: .date)
+                                    .datePickerStyle(.compact)
+                                    .labelsHidden()
+                                    .colorScheme(.dark)
+                            }
+                        }
+
+                        // Link to a project (optional)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Link to Project (optional)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+
+                            if projects.isEmpty {
+                                Text("Loading projects...")
+                                    .font(.caption)
+                                    .foregroundColor(.gray.opacity(0.5))
+                            } else {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        // "None" option
+                                        Button(action: { selectedProjectId = nil }) {
+                                            Text("None")
+                                                .font(.caption2)
+                                                .foregroundColor(selectedProjectId == nil ? Color(hex: "#080808") : Color(hex: "#f0f0f0"))
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(selectedProjectId == nil ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                                                .clipShape(Capsule())
+                                        }
+
+                                        ForEach(projects) { project in
+                                            Button(action: {
+                                                selectedProjectId = project.id
+                                                if title.isEmpty { title = project.title }
+                                            }) {
+                                                Text(project.title)
+                                                    .font(.caption2)
+                                                    .foregroundColor(selectedProjectId == project.id ? Color(hex: "#080808") : Color(hex: "#f0f0f0"))
+                                                    .padding(.horizontal, 12)
+                                                    .padding(.vertical, 6)
+                                                    .background(selectedProjectId == project.id ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                                                    .clipShape(Capsule())
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("New Release")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(.gray)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await createRelease() } }
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                        .disabled(title.isEmpty || isSaving)
+                }
+            }
+            .task {
+                do {
+                    projects = try await SupabaseService.shared.fetchProjects()
+                } catch {
+                    print("Failed to load projects: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func createRelease() async {
+        isSaving = true
+        do {
+            let release = try await SupabaseService.shared.createRelease(
+                title: title,
+                projectId: selectedProjectId,
+                releaseDate: hasDate ? releaseDate : nil
+            )
+            onSave(release)
+            dismiss()
+        } catch {
+            print("Failed to create release: \(error.localizedDescription)")
+        }
+        isSaving = false
     }
 }

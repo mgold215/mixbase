@@ -416,6 +416,109 @@ class SupabaseService {
         return try decoder.decode([Activity].self, from: data)
     }
 
+    // MARK: - Curators
+
+    /// Fetch all curators (shared directory + user's own)
+    func fetchCurators() async throws -> [Curator] {
+        // Shared directory (user_id is null) + user's own
+        let path = "/rest/v1/sb_curators?or=(user_id.is.null,user_id.eq.\(currentUserId ?? ""))&order=name.asc"
+        let request = makeRequest(path: path)
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+        return try decoder.decode([Curator].self, from: data)
+    }
+
+    /// Create a new curator
+    func createCurator(_ fields: [String: Any]) async throws -> Curator {
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(path: "/rest/v1/sb_curators", method: "POST", body: body)
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+        let curators = try decoder.decode([Curator].self, from: data)
+        guard let curator = curators.first else {
+            throw SupabaseError.decodingFailed("Failed to decode created curator")
+        }
+        return curator
+    }
+
+    /// Update a curator
+    func updateCurator(id: UUID, fields: [String: Any]) async throws {
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(
+            path: "/rest/v1/sb_curators?id=eq.\(id.uuidString)&user_id=eq.\(currentUserId ?? "")",
+            method: "PATCH",
+            body: body
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
+    /// Delete a curator (only user-owned)
+    func deleteCurator(id: UUID) async throws {
+        let request = makeRequest(
+            path: "/rest/v1/sb_curators?id=eq.\(id.uuidString)&user_id=eq.\(currentUserId ?? "")",
+            method: "DELETE"
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
+    // MARK: - Submissions
+
+    /// Fetch all submissions for the current user
+    func fetchSubmissions() async throws -> [Submission] {
+        let path = "/rest/v1/sb_submissions?order=created_at.desc"
+        let request = makeRequest(path: path)
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+        return try decoder.decode([Submission].self, from: data)
+    }
+
+    /// Create a submission (log a pitch to a curator)
+    func createSubmission(_ fields: [String: Any]) async throws -> Submission {
+        var allFields = fields
+        allFields["status"] = "sent"
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        allFields["sent_at"] = isoFormatter.string(from: Date())
+
+        let body = try JSONSerialization.data(withJSONObject: allFields)
+        let request = makeRequest(path: "/rest/v1/sb_submissions", method: "POST", body: body)
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+        let submissions = try decoder.decode([Submission].self, from: data)
+        guard let submission = submissions.first else {
+            throw SupabaseError.decodingFailed("Failed to decode created submission")
+        }
+        return submission
+    }
+
+    /// Update a submission's status
+    func updateSubmissionStatus(id: UUID, status: String, responseNotes: String? = nil) async throws {
+        var fields: [String: Any] = ["status": status]
+        if let notes = responseNotes { fields["response_notes"] = notes }
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let request = makeRequest(
+            path: "/rest/v1/sb_submissions?id=eq.\(id.uuidString)",
+            method: "PATCH",
+            body: body
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
+    // MARK: - Delete Project
+
+    /// Delete a project and all its versions
+    func deleteProject(id: UUID) async throws {
+        let request = makeRequest(
+            path: "/rest/v1/mb_projects?id=eq.\(id.uuidString)",
+            method: "DELETE"
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
     // MARK: - Storage: Audio Upload
 
     /// Upload an audio file to the "mf-audio" bucket in Supabase Storage.

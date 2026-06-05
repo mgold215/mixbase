@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 // MARK: - ProjectDetailView
 // Shows full details for a single project: artwork, editable metadata, versions list,
@@ -26,6 +27,16 @@ struct ProjectDetailView: View {
     // Photo picker for artwork upload
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var isUploadingArtwork = false
+
+    // Audio upload for new versions
+    @State private var showAudioPicker = false
+    @State private var isUploadingAudio = false
+    @State private var uploadProgress = ""
+    @State private var newVersionLabel = ""
+
+    // Feedback
+    @State private var feedbackByVersion: [UUID: [Feedback]] = [:]
+    @State private var expandedFeedback: Set<UUID> = []
 
     var body: some View {
         ZStack {
@@ -94,22 +105,48 @@ struct ProjectDetailView: View {
                         }
 
                         // MARK: - Upload Version Button
-                        Button(action: {
-                            print("Upload version tapped")
-                        }) {
-                            HStack {
-                                Image(systemName: "arrow.up.doc")
-                                Text("Upload Version")
+                        if isUploadingAudio {
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                    .tint(Color(hex: "#2dd4bf"))
+                                Text(uploadProgress)
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
                             }
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(Color(hex: "#2dd4bf"))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color(hex: "#2dd4bf").opacity(0.15))
+                            .background(Color(hex: "#111111"))
                             .cornerRadius(10)
+                            .padding(.horizontal)
+                        } else {
+                            VStack(spacing: 8) {
+                                TextField("Version label (optional)", text: $newVersionLabel)
+                                    .font(.caption)
+                                    .foregroundColor(Color(hex: "#f0f0f0"))
+                                    .padding(8)
+                                    .background(Color(hex: "#161616"))
+                                    .cornerRadius(6)
+                                    .padding(.horizontal)
+
+                                Button(action: { showAudioPicker = true }) {
+                                    HStack {
+                                        Image(systemName: "arrow.up.doc")
+                                        Text("Upload Version")
+                                    }
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(Color(hex: "#2dd4bf").opacity(0.15))
+                                    .cornerRadius(10)
+                                }
+                                .padding(.horizontal)
+                            }
                         }
-                        .padding(.horizontal)
+
+                        // MARK: - Feedback Section
+                        feedbackSection
 
                         Spacer(minLength: 80)
                     }
@@ -129,6 +166,16 @@ struct ProjectDetailView: View {
         .onChange(of: selectedPhoto) { _, newItem in
             if let newItem {
                 Task { await uploadSelectedPhoto(newItem) }
+            }
+        }
+        // Audio file picker for new versions
+        .fileImporter(
+            isPresented: $showAudioPicker,
+            allowedContentTypes: [.audio, .mp3, .wav, .aiff, .mpeg4Audio],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { await uploadAudioVersion(url: url) }
             }
         }
     }
@@ -468,12 +515,156 @@ struct ProjectDetailView: View {
         selectedPhoto = nil
     }
 
+    // MARK: - Feedback Section
+    @ViewBuilder
+    private var feedbackSection: some View {
+        let allFeedback = versions.flatMap { v in feedbackByVersion[v.id] ?? [] }
+        if !allFeedback.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Feedback")
+                        .font(.headline)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                    Text("(\(allFeedback.count))")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+                .padding(.horizontal)
+
+                ForEach(versions.filter { feedbackByVersion[$0.id]?.isEmpty == false }) { version in
+                    VStack(alignment: .leading, spacing: 6) {
+                        // Version header
+                        Button(action: {
+                            if expandedFeedback.contains(version.id) {
+                                expandedFeedback.remove(version.id)
+                            } else {
+                                expandedFeedback.insert(version.id)
+                            }
+                        }) {
+                            HStack {
+                                Text("v\(version.versionNumber)")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                Text("\(feedbackByVersion[version.id]?.count ?? 0) responses")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Image(systemName: expandedFeedback.contains(version.id) ? "chevron.up" : "chevron.down")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        // Feedback items
+                        if expandedFeedback.contains(version.id) {
+                            ForEach(feedbackByVersion[version.id] ?? []) { feedback in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(feedback.reviewerName ?? "Anonymous")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(Color(hex: "#f0f0f0"))
+
+                                        if let rating = feedback.rating {
+                                            HStack(spacing: 2) {
+                                                ForEach(1...5, id: \.self) { star in
+                                                    Image(systemName: star <= rating ? "star.fill" : "star")
+                                                        .font(.system(size: 8))
+                                                        .foregroundColor(star <= rating ? .yellow : .gray.opacity(0.3))
+                                                }
+                                            }
+                                        }
+
+                                        Spacer()
+
+                                        Text(feedback.createdAt, style: .date)
+                                            .font(.caption2)
+                                            .foregroundColor(.gray.opacity(0.5))
+                                    }
+
+                                    if let comment = feedback.comment, !comment.isEmpty {
+                                        Text(comment)
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                .padding(10)
+                                .background(Color(hex: "#161616"))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(hex: "#111111"))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+            }
+        }
+    }
+
+    // MARK: - Upload Audio Version
+    private func uploadAudioVersion(url: URL) async {
+        guard let project = project else { return }
+        isUploadingAudio = true
+        uploadProgress = "Reading file..."
+
+        // Start accessing the security-scoped resource
+        guard url.startAccessingSecurityScopedResource() else {
+            uploadProgress = "Cannot access file"
+            isUploadingAudio = false
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let ext = url.pathExtension.lowercased()
+            let nextVersion = (versions.map(\.versionNumber).max() ?? 0) + 1
+            let filename = "\(project.id.uuidString)-v\(nextVersion)-\(Int(Date().timeIntervalSince1970)).\(ext)"
+
+            uploadProgress = "Uploading audio..."
+            let audioUrl = try await SupabaseService.shared.uploadAudio(data: data, filename: filename)
+
+            uploadProgress = "Creating version..."
+            let label = newVersionLabel.isEmpty ? nil : newVersionLabel
+            let version = try await SupabaseService.shared.createVersion(
+                projectId: project.id,
+                versionNumber: nextVersion,
+                audioUrl: audioUrl,
+                label: label
+            )
+
+            versions.append(version)
+            newVersionLabel = ""
+            uploadProgress = "Done!"
+        } catch {
+            uploadProgress = "Upload failed: \(error.localizedDescription)"
+        }
+
+        // Brief delay to show result
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        isUploadingAudio = false
+        uploadProgress = ""
+    }
+
     // MARK: - Data Loading
     private func loadProjectData() async {
         isLoading = true
         do {
             project = try await SupabaseService.shared.fetchProject(id: projectId)
             versions = try await SupabaseService.shared.fetchVersions(projectId: projectId)
+
+            // Load feedback for each version
+            for version in versions {
+                let feedback = try await SupabaseService.shared.fetchFeedback(versionId: version.id)
+                if !feedback.isEmpty {
+                    feedbackByVersion[version.id] = feedback
+                }
+            }
         } catch {
             print("ProjectDetailView: Failed to load project — \(error.localizedDescription)")
         }
