@@ -15,7 +15,7 @@ const MINIPLAYER_STYLES = `
 `
 
 export default function MiniPlayer() {
-  const { currentTrack, isPlaying, currentTime, duration, togglePlay, seek, next, prev } = usePlayer()
+  const { currentTrack, isPlaying, buffering, currentTime, duration, togglePlay, seek, next, prev } = usePlayer()
   const pathname = usePathname()
 
   // Hide on the full player page or when nothing is loaded
@@ -89,7 +89,9 @@ export default function MiniPlayer() {
             className="w-9 h-9 rounded-full bg-[#2dd4bf] hover:bg-[#14b8a6] flex items-center justify-center transition-colors"
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? <Pause size={15} fill="white" className="text-white" /> : <Play size={15} fill="white" className="text-white ml-0.5" />}
+            {buffering
+              ? <span className="w-3.5 h-3.5 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,0.35)', borderTopColor: 'white' }} />
+              : isPlaying ? <Pause size={15} fill="white" className="text-white" /> : <Play size={15} fill="white" className="text-white ml-0.5" />}
           </button>
           <button
             onClick={next}

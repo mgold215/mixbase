@@ -59,7 +59,7 @@ export default function PlayerPageWrapper() {
 
 function PlayerPage() {
   const {
-    tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, currentTime, duration,
+    tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, buffering, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
     audioRef,
   } = usePlayer()
@@ -379,7 +379,7 @@ function PlayerPage() {
                   {t.artwork_url
                     ? <Image src={t.artwork_url} alt={t.title} fill className="object-cover" unoptimized />
                     : <div className="w-full h-full flex items-center justify-center"><Music size={16} className="text-[#444]" /></div>}
-                  {active && isPlaying && (
+                  {active && isPlaying && !buffering && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/45">
                       <div className="flex gap-[3px] items-end h-5">
                         {[1, 0.6, 0.85].map((h, j) => (
@@ -387,6 +387,12 @@ function PlayerPage() {
                             style={{ height: `${h * 100}%`, backgroundColor: accentCss, animationDelay: `${j * 0.15}s` }} />
                         ))}
                       </div>
+                    </div>
+                  )}
+                  {active && buffering && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/45">
+                      <div className="w-4 h-4 border-2 rounded-full animate-spin"
+                        style={{ borderColor: 'rgba(255,255,255,0.25)', borderTopColor: accentCss }} />
                     </div>
                   )}
                 </div>
@@ -544,7 +550,9 @@ function PlayerPage() {
                   className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
                   style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
+                  {buffering
+                    ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />
+                    : isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
                 <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors" title="Next">
                   <SkipForward size={26} fill="currentColor" />
@@ -592,7 +600,9 @@ function PlayerPage() {
                   className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
                   style={{ background: PASTEL_GREEN }}
                   title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
+                  {buffering
+                    ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />
+                    : isPlaying ? <Pause size={28} fill="#000" className="text-black" /> : <Play size={28} fill="#000" className="text-black ml-0.5" />}
                 </button>
                 <button onClick={next} className="p-2 text-white/75 hover:text-white transition-colors" title="Next">
                   <SkipForward size={26} fill="currentColor" />
