@@ -12,6 +12,9 @@ type PlayerCtx = {
   loadError: boolean
   currentTrack: Track | null
   isPlaying: boolean
+  /** True while the engine is buffering/seeking with intent to play — use to show a spinner
+   *  instead of a fake "playing" animation. */
+  buffering: boolean
   currentTime: number
   duration: number
   volume: number
@@ -42,6 +45,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [loadError, setLoadError] = useState(false)
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [buffering, setBuffering] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolumeState] = useState(0.85)
@@ -60,6 +64,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Tracks user *intent* to play — iOS can pause the audio element before visibilitychange
   // fires, so we can't rely on audio.paused to know if we should restore playback.
   const playIntentRef = useRef(false)
+
+  // True between calling play() and playback actually starting. If play() rejects with
+  // AbortError (the load was interrupted — the #1 cause of "I clicked play and nothing
+  // happened"), the 'canplay' listener retries while this is set. Cleared once 'playing'
+  // fires or play() resolves.
+  const pendingPlayRef = useRef(false)
+
+  // A seek requested before metadata loaded (e.g. restoring last position). Applied on
+  // 'loadedmetadata' since setting currentTime before the media is seekable is a no-op.
+  const pendingSeekRef = useRef<number | null>(null)
+
+  // Live mirror of currentProjectId so the (mount-once) audio event listeners can read it
+  // without re-subscribing on every track change.
+  const currentProjectIdRef = useRef<string | null>(null)
+  useEffect(() => { currentProjectIdRef.current = currentProjectId }, [currentProjectId])
 
   // Stable ref to the most recent media session metadata so onPlay (a [] effect) can
   // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
@@ -84,7 +103,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!audio) return
       const url = audioProxyUrl(track.audio_url)
       audio.src = url
-      audio.currentTime = time
+      // Setting currentTime now is a no-op (media not seekable yet) — defer to loadedmetadata.
+      pendingSeekRef.current = time
       setCurrentProjectId(projectId)
       setCurrentUrl(url)
       setCurrentTime(time)
@@ -141,16 +161,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Restore last position on mount (before any user interaction)
   const restoredRef = useRef(false)
 
-  // Wire up audio event listeners
+  // ── Audio engine event wiring ──────────────────────────────────────────────
+  // Mounted once. Reads currentProjectId via a ref so it never re-subscribes (which
+  // previously dropped events mid-track-change). Covers the FULL lifecycle so the UI
+  // state can never get stuck out of sync with the real element:
+  //   play/playing → playing   waiting/seeking → buffering   pause/ended/error/emptied → stopped
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
+
+    const syncDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
+
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime)
-      savePosition(currentProjectId, audio.currentTime)
+      savePosition(currentProjectIdRef.current, audio.currentTime)
     }
-    const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
+    const onLoadedMeta = () => {
+      syncDuration()
+      // Apply any seek requested before the media was seekable (e.g. restored position).
+      if (pendingSeekRef.current != null) {
+        const t = pendingSeekRef.current
+        pendingSeekRef.current = null
+        try { audio.currentTime = Math.min(t, audio.duration || t) } catch { /* not seekable */ }
+      }
+    }
     const onPlay = () => {
+      // Optimistic: the engine is running. 'playing'/'waiting' refine buffering below.
       setIsPlaying(true)
       // Re-apply full metadata after iOS activates the audio session — iOS sometimes
       // ignores metadata set before play() resolves, so we push it again on the play event.
@@ -160,28 +196,80 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         navigator.mediaSession.playbackState = 'playing'
       }
     }
+    const onPlaying = () => {
+      // Audio is actually producing output now — this is the truthful "playing" signal.
+      pendingPlayRef.current = false
+      setIsPlaying(true)
+      setBuffering(false)
+    }
+    const onWaiting = () => {
+      // Stalled waiting for data while we intend to play → buffering, not playing.
+      if (playIntentRef.current) setBuffering(true)
+    }
+    const onCanPlay = () => {
+      setBuffering(false)
+      // If an earlier play() was aborted by the load (AbortError), retry now that the
+      // resource is ready. This is what kills "had to click play several times".
+      if (pendingPlayRef.current && playIntentRef.current && audio.paused) {
+        audio.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
+      }
+    }
     const onPause = () => {
       setIsPlaying(false)
+      setBuffering(false)
+      pendingPlayRef.current = false
       // Force-save position on pause so we don't lose it
-      if (currentProjectId && audio.currentTime > 1) {
-        try { localStorage.setItem('mx-last-track', JSON.stringify({ projectId: currentProjectId, time: Math.floor(audio.currentTime) })) } catch {}
+      const pid = currentProjectIdRef.current
+      if (pid && audio.currentTime > 1) {
+        try { localStorage.setItem('mx-last-track', JSON.stringify({ projectId: pid, time: Math.floor(audio.currentTime) })) } catch {}
       }
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
-    const onEnded = () => { playIntentRef.current = false; setIsPlaying(false) }
+    const onEnded = () => {
+      playIntentRef.current = false
+      pendingPlayRef.current = false
+      setIsPlaying(false)
+      setBuffering(false)
+    }
+    const onError = () => {
+      // Load/decode failed — clear all "in flight" flags so the UI doesn't lie.
+      pendingPlayRef.current = false
+      setIsPlaying(false)
+      setBuffering(false)
+    }
+    const onEmptied = () => {
+      // src was swapped out. If no play is queued, we're stopped; reset progress.
+      if (!pendingPlayRef.current) {
+        setIsPlaying(false)
+        setBuffering(false)
+      }
+    }
+
     audio.addEventListener('timeupdate', onTimeUpdate)
-    audio.addEventListener('durationchange', onDurationChange)
+    audio.addEventListener('durationchange', syncDuration)
+    audio.addEventListener('loadedmetadata', onLoadedMeta)
     audio.addEventListener('play', onPlay)
+    audio.addEventListener('playing', onPlaying)
+    audio.addEventListener('waiting', onWaiting)
+    audio.addEventListener('canplay', onCanPlay)
     audio.addEventListener('pause', onPause)
     audio.addEventListener('ended', onEnded)
+    audio.addEventListener('error', onError)
+    audio.addEventListener('emptied', onEmptied)
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate)
-      audio.removeEventListener('durationchange', onDurationChange)
+      audio.removeEventListener('durationchange', syncDuration)
+      audio.removeEventListener('loadedmetadata', onLoadedMeta)
       audio.removeEventListener('play', onPlay)
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('waiting', onWaiting)
+      audio.removeEventListener('canplay', onCanPlay)
       audio.removeEventListener('pause', onPause)
       audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('error', onError)
+      audio.removeEventListener('emptied', onEmptied)
     }
-  }, [currentProjectId, savePosition])
+  }, [savePosition])
 
   const currentTrack = useMemo<Track | null>(() => {
     if (currentProjectId) return tracks.find(t => t.project_id === currentProjectId) ?? null
@@ -220,7 +308,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ctx.resume().catch(() => {})
         }
         if (playIntentRef.current && audioRef.current?.paused) {
-          audioRef.current.play().catch(() => {})
+          pendingPlayRef.current = true
+          audioRef.current.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
         }
       }
     }
@@ -234,7 +323,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const ctx = audioCtxRef.current
       if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
       if (playIntentRef.current && audioRef.current?.paused) {
-        audioRef.current.play().catch(() => {})
+        pendingPlayRef.current = true
+        audioRef.current.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
       }
     }
     window.addEventListener('pageshow', onPageShow)
@@ -249,7 +339,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (playIntentRef.current && audio.paused) {
         const ctx = audioCtxRef.current
         if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
-        audio.play().catch(() => {})
+        pendingPlayRef.current = true
+        audio.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
       }
     }
     audio.addEventListener('stalled', onStalled)
@@ -285,6 +376,35 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (trebleRef.current) trebleRef.current.gain.value = treble
   }, [])
 
+  // Single entry point for starting playback. Handles the play() promise robustly:
+  //  - resumes a suspended Web Audio context first (required for output)
+  //  - on AbortError (load interrupted by a track switch) leaves pendingPlayRef set so the
+  //    'canplay' listener retries automatically — no lost clicks
+  //  - on NotAllowedError (autoplay blocked, no user gesture) clears intent cleanly so the
+  //    UI shows "paused" rather than a fake "playing" state
+  const attemptPlay = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    playIntentRef.current = true
+    pendingPlayRef.current = true
+    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
+    setBuffering(true)
+    const p = audio.play()
+    if (p && typeof p.then === 'function') {
+      p.then(() => { pendingPlayRef.current = false })
+       .catch((err: { name?: string }) => {
+         if (err?.name === 'NotAllowedError') {
+           // Needs a fresh user gesture — don't pretend we're playing.
+           pendingPlayRef.current = false
+           playIntentRef.current = false
+           setIsPlaying(false)
+           setBuffering(false)
+         }
+         // AbortError / other transient load errors: keep pendingPlayRef set; 'canplay' retries.
+       })
+    }
+  }, [])
+
   const playTrack = useCallback((projectId: string) => {
     const audio = audioRef.current
     if (!audio) return
@@ -292,6 +412,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!track) return
     if (currentProjectId !== projectId) {
       const url = audioProxyUrl(track.audio_url)
+      pendingSeekRef.current = null
       audio.src = url
       setCurrentProjectId(projectId)
       setCurrentUrl(url)
@@ -302,15 +423,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     mediaMetaRef.current = { title: track.title, artworkUrl: track.artwork_url, artist: track.artist }
     applyMediaSession(track.title, track.artwork_url, true, track.artist)
     audio.volume = volume
-    playIntentRef.current = true
-    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    audio.play().catch(() => {})
-  }, [tracks, currentProjectId, volume])
+    attemptPlay()
+  }, [tracks, currentProjectId, volume, attemptPlay])
 
   const playUrl = useCallback((url: string, title: string, artist = 'mixBASE', artworkUrl?: string, versionLabel = '') => {
     const audio = audioRef.current
     if (!audio) return
     if (currentUrl !== url || currentProjectId !== null) {
+      pendingSeekRef.current = null
       audio.src = url
       setCurrentTime(0)
       setDuration(0)
@@ -321,29 +441,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null, artist }
     applyMediaSession(title, artworkUrl ?? null, true, artist)
     audio.volume = volume
-    playIntentRef.current = true
-    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    audio.play().catch(() => {})
-  }, [currentUrl, currentProjectId, volume])
+    attemptPlay()
+  }, [currentUrl, currentProjectId, volume, attemptPlay])
 
   const pause = useCallback(() => {
     playIntentRef.current = false
+    pendingPlayRef.current = false
     audioRef.current?.pause()
   }, [])
 
+  // Reads the element's *real* paused state, not React's isPlaying — the two can diverge
+  // (a stalled/errored load stops audio without a pause event), and trusting stale state
+  // was a source of "click play twice".
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
     if (!audio || !currentTrack) return
-    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    if (isPlaying) {
-      playIntentRef.current = false
-      audio.pause()
+    if (audio.paused) {
+      applyMediaSession(currentTrack.title, currentTrack.artwork_url, true, currentTrack.artist)
+      audio.volume = volume
+      attemptPlay()
     } else {
-      if (currentTrack) applyMediaSession(currentTrack.title, currentTrack.artwork_url, true, currentTrack.artist)
-      playIntentRef.current = true
-      audio.play().catch(() => {})
+      playIntentRef.current = false
+      pendingPlayRef.current = false
+      audio.pause()
     }
-  }, [isPlaying, currentTrack])
+  }, [currentTrack, volume, attemptPlay])
 
   const seek = useCallback((time: number) => {
     if (audioRef.current) audioRef.current.currentTime = time
@@ -393,6 +515,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       loadError,
       currentTrack,
       isPlaying,
+      buffering,
       currentTime,
       duration,
       volume,
