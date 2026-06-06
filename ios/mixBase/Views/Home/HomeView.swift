@@ -1,25 +1,35 @@
 import SwiftUI
 
 // MARK: - HomeView
-// Dashboard: stats, now playing card, recent activity with timestamps and listen links.
+// A music-forward home: at-a-glance stats, a tappable Now Playing card, a
+// "Your Tracks" quick-play carousel so you can start listening right away, and
+// Recent Activity as a secondary feed below. The carousel and the Now Playing
+// card both jump straight into the Player tab.
 
 struct HomeView: View {
 
     @EnvironmentObject var audioService: AudioService
 
+    // Lets the Now Playing card / "See all" jump to other tabs.
+    @Binding var selectedTab: Int
+
     @State private var projects: [Project] = []
     @State private var releases: [Release] = []
     @State private var activities: [Activity] = []
     @State private var isLoading = true
-    @State private var showSettings = false
+
+    // Latest versions per project — powers the quick-play carousel + activity rows
+    @State private var latestVersions: [UUID: Version] = [:]
 
     // Map project IDs to projects for activity rows
     private var projectMap: [UUID: Project] {
         Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     }
 
-    // Latest versions per project for play buttons in activity
-    @State private var latestVersions: [UUID: Version] = [:]
+    // Most recently updated projects that actually have audio to play
+    private var recentTracks: [Project] {
+        Array(projects.filter { latestVersions[$0.id] != nil }.prefix(8))
+    }
 
     var body: some View {
         NavigationStack {
@@ -28,31 +38,24 @@ struct HomeView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 24) {
                         // MARK: - Stats Row
                         HStack(spacing: 12) {
-                            StatCard(
-                                value: projects.count,
-                                label: "Projects",
-                                color: Color(hex: "#f0f0f0")
-                            )
-                            StatCard(
-                                value: mixingCount,
-                                label: "Mixing",
-                                color: .yellow
-                            )
-                            StatCard(
-                                value: releases.count,
-                                label: "Pipeline",
-                                color: Color(hex: "#2dd4bf")
-                            )
+                            StatCard(value: projects.count, label: "Projects", color: Color(hex: "#f0f0f0"))
+                            StatCard(value: mixingCount, label: "Mixing", color: .yellow)
+                            StatCard(value: releases.count, label: "Pipeline", color: Color(hex: "#2dd4bf"))
                         }
                         .padding(.horizontal)
 
-                        // MARK: - Now Playing Card
+                        // MARK: - Now Playing Card (taps through to the Player tab)
                         if let version = audioService.currentVersion {
                             nowPlayingCard(version: version)
                                 .padding(.horizontal)
+                        }
+
+                        // MARK: - Your Tracks (quick-play carousel)
+                        if !recentTracks.isEmpty {
+                            yourTracksSection
                         }
 
                         // MARK: - Recent Activity
@@ -81,7 +84,6 @@ struct HomeView: View {
                 }
             }
             .toolbar {
-                // Custom title with teal color
                 ToolbarItem(placement: .navigationBarLeading) {
                     Text("mixBase")
                         .font(.system(size: 28, weight: .bold))
@@ -117,22 +119,22 @@ struct HomeView: View {
                     } placeholder: {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color(hex: "#222222"))
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.gray)
-                            )
+                            .overlay(Image(systemName: "music.note").foregroundColor(.gray))
                     }
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
+                    Text("NOW PLAYING")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.gray)
                     Text(audioService.currentTrackName ?? "Unknown Track")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(Color(hex: "#f0f0f0"))
                         .lineLimit(1)
-
                     Text("v\(version.versionNumber) \(version.label ?? "")")
                         .font(.caption)
                         .foregroundColor(Color(hex: "#2dd4bf"))
@@ -140,6 +142,7 @@ struct HomeView: View {
 
                 Spacer()
 
+                // Play/pause stays an explicit control; tapping the card opens the player.
                 Button(action: { audioService.togglePlayPause() }) {
                     Image(systemName: audioService.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.system(size: 36))
@@ -162,6 +165,8 @@ struct HomeView: View {
         .padding(16)
         .background(Color(hex: "#111111"))
         .cornerRadius(12)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedTab = 2 }  // Open the Player tab
     }
 
     private var progress: CGFloat {
@@ -169,12 +174,110 @@ struct HomeView: View {
         return CGFloat(audioService.currentTime / audioService.duration)
     }
 
+    // MARK: - Your Tracks Carousel
+    private var yourTracksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Your Tracks")
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                Spacer()
+                Button(action: { selectedTab = 1 }) {  // Open the Projects tab
+                    Text("See all")
+                        .font(.caption)
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+            }
+            .padding(.horizontal)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(recentTracks) { project in
+                        trackCard(project: project)
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func trackCard(project: Project) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                        AsyncImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: { trackArtworkPlaceholder }
+                    } else {
+                        trackArtworkPlaceholder
+                    }
+                }
+                .frame(width: 140, height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                if let version = latestVersions[project.id] {
+                    Button(action: {
+                        audioService.play(
+                            version: version,
+                            trackName: project.title,
+                            artworkUrl: project.artworkUrl
+                        )
+                        selectedTab = 2  // Jump to the Player
+                    }) {
+                        let isThisPlaying = audioService.currentVersion?.projectId == project.id && audioService.isPlaying
+                        Circle()
+                            .fill(Color(hex: "#2dd4bf"))
+                            .frame(width: 34, height: 34)
+                            .overlay(
+                                Image(systemName: isThisPlaying ? "waveform" : "play.fill")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color(hex: "#080808"))
+                            )
+                            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                    }
+                    .padding(8)
+                }
+            }
+
+            Text(project.title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+                .lineLimit(1)
+                .frame(width: 140, alignment: .leading)
+
+            if let genre = project.genre {
+                Text(genre)
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .lineLimit(1)
+                    .frame(width: 140, alignment: .leading)
+            }
+        }
+    }
+
+    private var trackArtworkPlaceholder: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(
+                LinearGradient(
+                    colors: [Color(hex: "#1a1a1a"), Color(hex: "#111111")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                Image(systemName: "music.note")
+                    .font(.title)
+                    .foregroundColor(.gray.opacity(0.3))
+            )
+    }
+
     // MARK: - Activity Row
-    // Shows icon, description, track name, timestamp, and listen button
     @ViewBuilder
     private func activityRow(activity: Activity) -> some View {
         HStack(spacing: 12) {
-            // Activity type icon
             Image(systemName: iconForActivityType(activity.type))
                 .foregroundColor(Color(hex: "#2dd4bf"))
                 .frame(width: 28, height: 28)
@@ -182,14 +285,12 @@ struct HomeView: View {
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
-                // Description
                 Text(activity.description ?? "Activity")
                     .font(.subheadline)
                     .foregroundColor(Color(hex: "#f0f0f0"))
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
-                    // Track name (linked to project)
                     if let project = projectMap[activity.projectId] {
                         Text(project.title)
                             .font(.caption2)
@@ -197,7 +298,6 @@ struct HomeView: View {
                             .foregroundColor(Color(hex: "#2dd4bf"))
                     }
 
-                    // Timestamp
                     Text(activity.createdAt, style: .relative)
                         .font(.caption2)
                         .foregroundColor(.gray)
@@ -214,7 +314,6 @@ struct HomeView: View {
 
             Spacer()
 
-            // Play button — plays the latest version of the related project
             if let version = latestVersions[activity.projectId],
                let project = projectMap[activity.projectId] {
                 Button(action: {
@@ -258,7 +357,7 @@ struct HomeView: View {
             releases = try await fetchedReleases
             activities = try await fetchedActivities
 
-            // Fetch latest versions for play buttons in activity rows
+            // Fetch latest versions for quick-play carousel + activity rows
             var versions: [UUID: Version] = [:]
             for project in projects {
                 let projectVersions = try await SupabaseService.shared.fetchVersions(projectId: project.id)

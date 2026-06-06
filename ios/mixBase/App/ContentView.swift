@@ -22,7 +22,7 @@ struct ContentView: View {
     private var mainTabView: some View {
         ZStack(alignment: .bottom) {
             TabView(selection: $selectedTab) {
-                HomeView()
+                HomeView(selectedTab: $selectedTab)
                     .tabItem { Image(systemName: "house"); Text("Home") }
                     .tag(0)
 
