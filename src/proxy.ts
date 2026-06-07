@@ -1,7 +1,21 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { decodeJwt } from 'jose'
 import { supabaseAdmin } from '@/lib/supabase'
+import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
+
+// Shared HS256 key used to verify access-token signatures locally (no network
+// call). Built once at module load. If SUPABASE_JWT_SECRET is unset we fall
+// back to UNVERIFIED decoding (legacy behaviour) and warn loudly — that path
+// trusts the token's claims without checking the signature, which is an
+// auth-bypass risk. Set SUPABASE_JWT_SECRET (Supabase → Settings → API → JWT
+// Secret) on every deployment to close it.
+const JWT_KEY = makeJwtKey(process.env.SUPABASE_JWT_SECRET)
+if (!JWT_KEY) {
+  console.warn(
+    '[proxy] SUPABASE_JWT_SECRET is not set — access tokens are NOT signature-verified. ' +
+      'Set this env var to verify JWTs and close an authentication-bypass risk.',
+  )
+}
 
 // Routes that never require authentication
 const PUBLIC_PATHS = [
@@ -104,26 +118,19 @@ export async function proxy(request: NextRequest) {
   const accessToken = request.cookies.get('sb-access-token')?.value
   const refreshToken = request.cookies.get('sb-refresh-token')?.value
 
-  // ── Fast path: decode JWT payload locally — no network call ───────────────
-  // decodeJwt reads the payload without verifying the signature (< 1ms).
-  // The old approach called auth.getUser() on every request, which made a
-  // live Supabase round-trip, hit rate limits, and caused random logouts on
-  // any transient network error.
+  // ── Fast path: verify JWT signature locally — no network call ─────────────
+  // verifyAccessToken checks the HS256 signature against SUPABASE_JWT_SECRET
+  // (< 1ms, no Supabase round-trip). A forged or tampered token fails the
+  // check and is treated as invalid, so it can never be used to spoof another
+  // user's X-User-Id. The old approach called auth.getUser() on every request,
+  // which hit rate limits and caused random logouts on transient errors.
   let userId: string | null = null
   let tokenExpired = false
 
   if (accessToken) {
-    try {
-      const payload = decodeJwt(accessToken)
-      userId = payload.sub ?? null
-      tokenExpired = typeof payload.exp === 'number'
-        ? payload.exp < Math.floor(Date.now() / 1000)
-        : false
-    } catch {
-      // Malformed access token — fall through to a refresh attempt below.
-      userId = null
-      tokenExpired = true
-    }
+    const check = await verifyAccessToken(accessToken, JWT_KEY)
+    userId = check.userId
+    tokenExpired = check.expired
   }
 
   if (accessToken && !tokenExpired && userId) {

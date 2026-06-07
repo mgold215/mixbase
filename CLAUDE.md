@@ -56,6 +56,7 @@ node scripts/finalize-test.mjs                                             # Art
 | Variable | Required | Purpose |
 |---|---|---|
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin DB access, auth validation, bypasses RLS and storage size limits |
+| `SUPABASE_JWT_SECRET` | **Strongly recommended** | HS256 secret (Supabase → Settings → API → JWT Secret) used by middleware to **verify** access-token signatures locally. Without it, tokens are decoded but NOT signature-verified — an auth-bypass risk. Set on staging AND prod. |
 | `NEXT_PUBLIC_SUPABASE_URL` | No | Falls back to hardcoded project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Falls back to hardcoded public key |
 | `ANTHROPIC_API_KEY` | Optional | AI feedback summarizer (`/api/chat/summarize-feedback`) — feature disabled without it |
@@ -72,7 +73,7 @@ node scripts/finalize-test.mjs                                             # Art
 ## Auth Model
 Multi-user with Supabase Auth (email + password). Cookies set on login: `sb-access-token` (1hr), `sb-refresh-token` (30d), `sb-authed`, `sb-expires-at`.
 
-**Middleware (`src/proxy.ts`):** Decodes the JWT locally with `jose.decodeJwt` — no Supabase round-trip on every request. If the token is expired, attempts one refresh via Supabase. On success, injects `X-User-Id` header. All API routes read user identity from `X-User-Id` — never trust the request body for user ID.
+**Middleware (`src/proxy.ts`):** Verifies the access-token HS256 signature locally via `verifyAccessToken()` (`src/lib/verifyToken.ts`) against `SUPABASE_JWT_SECRET` — no Supabase round-trip on the fast path. A forged or tampered token fails verification and is treated as having no user, so it cannot spoof `X-User-Id`. If the token is expired (but validly signed), attempts one refresh via Supabase. On success, injects `X-User-Id` header. All API routes read user identity from `X-User-Id` — never trust the request body for user ID. **If `SUPABASE_JWT_SECRET` is unset, the middleware falls back to UNVERIFIED decoding (legacy behaviour) and logs a warning — set the secret to close the bypass.**
 
 **Auth routes:**
 - `POST /api/auth` — sign in (rate-limited: 10/15min per IP)
