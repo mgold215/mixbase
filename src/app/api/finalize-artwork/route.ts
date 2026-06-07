@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 import sharp from 'sharp'
 import { readFileSync } from 'fs'
 import { join } from 'path'
@@ -207,8 +208,8 @@ export async function POST(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
   const { project_id, artist, guidance } = await request.json()
-  if (!project_id) {
-    return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+  if (!isUuid(project_id)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
   // Trim + cap guidance length so a runaway textarea can't blow Vision tokens
   const guidanceText: string | undefined =
@@ -261,6 +262,7 @@ export async function POST(request: NextRequest) {
     .from('mb_projects')
     .update({ finalized_artwork_url: finalUrl, updated_at: new Date().toISOString() })
     .eq('id', project_id)
+    .eq('user_id', userId) // defense-in-depth: scope the write to the owner
 
   return NextResponse.json({ finalized_artwork_url: finalUrl, placement })
 }

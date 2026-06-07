@@ -35,8 +35,10 @@ export async function POST(req: NextRequest) {
   })
 
   if (!upstream.ok) {
+    // Return JSON so the client's `await res.json()` can't throw on a plain-text
+    // body and crash the upload with an unhandled rejection.
     const text = await upstream.text()
-    return new NextResponse(text, { status: upstream.status })
+    return NextResponse.json({ error: text || 'TUS session creation failed' }, { status: upstream.status })
   }
 
   // Supabase returns: Location: https://…/storage/v1/upload/resumable/<uploadId>
