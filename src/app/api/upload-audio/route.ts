@@ -7,14 +7,15 @@ const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork (signed-URL path by
 const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
 
-// Track which buckets have been synced this process lifetime
-const syncedBuckets = new Set<string>()
+// Track which buckets have been verified this process lifetime
+const verifiedBuckets = new Set<string>()
 
-// Ensure the storage bucket exists and has up-to-date allowed types
+// Verify the storage bucket exists (create only if missing — never update limits)
 async function ensureBucket(bucket: string, isAudio: boolean) {
-  if (syncedBuckets.has(bucket)) return
+  if (verifiedBuckets.has(bucket)) return
   const mimeTypes = isAudio ? AUDIO_MIME_TYPES : ARTWORK_MIME_TYPES
-  const sizeLimit = 52428800  // 50MB for both buckets — direct-to-Supabase uploads bypass Railway's 10MB wall
+  // mf-audio is configured for 2GB; mf-artwork for 50MB — set in Supabase dashboard
+  const sizeLimit = isAudio ? 2147483648 : 52428800
   const { error } = await supabaseAdmin.storage.getBucket(bucket)
   if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
     await supabaseAdmin.storage.createBucket(bucket, {
@@ -22,10 +23,9 @@ async function ensureBucket(bucket: string, isAudio: boolean) {
       fileSizeLimit: sizeLimit,
       allowedMimeTypes: mimeTypes,
     })
-  } else if (!error) {
-    await supabaseAdmin.storage.updateBucket(bucket, { public: true, fileSizeLimit: sizeLimit, allowedMimeTypes: mimeTypes })
   }
-  syncedBuckets.add(bucket)
+  // Never updateBucket — that would overwrite limits configured in the dashboard
+  verifiedBuckets.add(bucket)
 }
 
 // POST /api/upload-audio — upload audio file or artwork to Supabase Storage

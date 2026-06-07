@@ -78,7 +78,7 @@ export default function NewProjectPage() {
       return
     }
 
-    // Step 2: Upload the audio file directly to Supabase via signed URL
+    // Step 2: Upload the audio file
     if (selectedFile.size > 2 * 1024 * 1024 * 1024) {
       setError('File too large (max 2GB)')
       setLoading(false)
@@ -97,42 +97,113 @@ export default function NewProjectPage() {
     const fileExt = (selectedFile.name.split('.').pop() ?? '').toLowerCase()
     const contentType = selectedFile.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    const urlRes = await fetch('/api/upload-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, contentType }),
-    })
-    const urlData = await urlRes.json()
-    if (!urlRes.ok) {
-      setError(urlData.error ?? 'Could not get upload URL')
-      setLoading(false)
-      return
+    // Files > 50MB use TUS chunked upload (bypasses Supabase non-resumable size limit)
+    const useTus = selectedFile.size > 50 * 1024 * 1024
+    let audioUrl: string
+
+    if (useTus) {
+      setUploadStatus('Uploading (chunked)...')
+      const { Upload } = await import('tus-js-client')
+      const tusResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const upload = new Upload(selectedFile!, {
+          endpoint: '/api/tus',
+          chunkSize: 8 * 1024 * 1024,
+          retryDelays: [0, 1000, 3000, 5000],
+          metadata: {
+            bucketName: 'mf-audio',
+            objectName: filename,
+            contentType,
+            cacheControl: '3600',
+          },
+          headers: { 'x-upsert': 'true' },
+          onProgress: (bytesUploaded, bytesTotal) => {
+            setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
+          },
+          onSuccess: () => resolve({ ok: true }),
+          onError: (err) => resolve({ ok: false, error: err.message }),
+        })
+        upload.start()
+      })
+      if (!tusResult.ok) {
+        setError(tusResult.error ?? 'Upload failed')
+        setLoading(false)
+        return
+      }
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
+      audioUrl = `${supabaseUrl}/storage/v1/object/public/mf-audio/${filename}`
+    } else {
+      // Small files: signed URL direct to Supabase (fast, no Railway in the path)
+      const urlRes = await fetch('/api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, contentType }),
+      })
+      const urlData = await urlRes.json()
+      if (!urlRes.ok) {
+        setError(urlData.error ?? 'Could not get upload URL')
+        setLoading(false)
+        return
+      }
+
+      const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const xhr = new XMLHttpRequest()
+        xhr.upload.addEventListener('progress', (ev) => {
+          if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
+        })
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
+          else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
+        })
+        xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+        xhr.open('PUT', urlData.signedUrl)
+        xhr.setRequestHeader('Content-Type', contentType)
+        xhr.setRequestHeader('x-upsert', 'true')
+        xhr.send(selectedFile)
+      })
+
+      if (!putResult.ok) {
+        // If signed URL fails with 413, retry with TUS
+        if (putResult.error?.includes('413') || putResult.error?.includes('exceeded the maximum')) {
+          setUploadStatus('Retrying with chunked upload...')
+          setUploadPct(0)
+          const { Upload } = await import('tus-js-client')
+          const tusResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+            const upload = new Upload(selectedFile!, {
+              endpoint: '/api/tus',
+              chunkSize: 8 * 1024 * 1024,
+              retryDelays: [0, 1000, 3000, 5000],
+              metadata: {
+                bucketName: 'mf-audio',
+                objectName: filename,
+                contentType,
+                cacheControl: '3600',
+              },
+              headers: { 'x-upsert': 'true' },
+              onProgress: (bytesUploaded, bytesTotal) => {
+                setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
+              },
+              onSuccess: () => resolve({ ok: true }),
+              onError: (err) => resolve({ ok: false, error: err.message }),
+            })
+            upload.start()
+          })
+          if (!tusResult.ok) {
+            setError(tusResult.error ?? 'Upload failed')
+            setLoading(false)
+            return
+          }
+          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
+          audioUrl = `${supabaseUrl}/storage/v1/object/public/mf-audio/${filename}`
+        } else {
+          setError(putResult.error ?? 'Upload failed')
+          setLoading(false)
+          return
+        }
+      } else {
+        audioUrl = urlData.publicUrl as string
+      }
     }
 
-    // Upload file directly to Supabase with progress tracking
-    const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      const xhr = new XMLHttpRequest()
-      xhr.upload.addEventListener('progress', (ev) => {
-        if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
-      })
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
-        else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
-      })
-      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-      xhr.open('PUT', urlData.signedUrl)
-      xhr.setRequestHeader('Content-Type', contentType)
-      xhr.setRequestHeader('x-upsert', 'true')
-      xhr.send(selectedFile)
-    })
-
-    if (!putResult.ok) {
-      setError(putResult.error ?? 'Upload failed')
-      setLoading(false)
-      return
-    }
-
-    const audioUrl = urlData.publicUrl as string
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
 
