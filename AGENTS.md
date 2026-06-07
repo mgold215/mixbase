@@ -7,17 +7,24 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## Upload — Never Route File Bytes Through Railway
 Railway's proxy truncates request bodies above 10 MB (10,485,760 bytes exactly). This is infrastructure, not a code bug.
 
-**Active path (audio uploads in ProjectClient.tsx) — Signed URL:**
+**Smart upload routing (ProjectClient.tsx + projects/new/page.tsx):**
+- Files ≤ 50 MB → Signed URL (direct browser-to-Supabase PUT, fast)
+- Files > 50 MB → TUS chunked (8 MB chunks through Railway proxy)
+- If signed URL fails with 413 → auto-retry via TUS
+
+**Signed URL path:**
 - `POST /api/upload-url` — server generates a short-lived Supabase signed upload URL
 - Browser PUTs directly to Supabase — Railway is never in the byte path
-- Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUploadSubmit()`
+- Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUpload()`
 
-**Also available — TUS chunked proxy (resumable uploads):**
-- `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses anon 50 MB limit)
+**TUS chunked proxy (resumable uploads, auto-used for large files):**
+- `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses size limits)
 - `PATCH /api/tus/<uploadId>` — proxies one 8 MB chunk to Supabase (under Railway's 10 MB wall)
 - `HEAD /api/tus/<uploadId>` — checks resume offset
-- Client uses `tus-js-client` with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
+- Client uses `tus-js-client` (dynamic import) with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
 - `/api/tus` is in PUBLIC_PATHS in middleware
+
+**Critical: `mf-audio` bucket limit is 2 GB, set via direct SQL.** Never use the Storage API (`updateBucket`) to change it — the API caps at the project's 500 MB global limit and will silently downgrade.
 
 ## Audio — Always Use audioProxyUrl()
 Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so browsers can't seek or determine duration.
@@ -29,8 +36,8 @@ Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so br
 - Do not remove `/api/audio` from middleware public paths
 
 ## Supabase Storage Buckets
-- `mf-audio` — audio files, public read
-- `mf-artwork` — artwork images, public read
+- `mf-audio` — audio files, public read, 2 GB limit (set via SQL, not API)
+- `mf-artwork` — artwork images, public read, 50 MB limit
 
 ## PWA + iOS Wrapper
 Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. There is a native iOS app wrapper in `ios/` (Xcode project).
