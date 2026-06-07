@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
-const MAX_AUDIO_SIZE = 50 * 1024 * 1024  // 50MB — Supabase free tier max
-const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork (signed-URL path bypasses Railway's 10MB wall)
+const MAX_AUDIO_SIZE = 500 * 1024 * 1024 // 500MB — Supabase Pro project limit
+const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork
 
 const ARTWORK_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aiff', 'audio/x-aiff', 'audio/flac', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/*']
@@ -14,8 +14,8 @@ const verifiedBuckets = new Set<string>()
 async function ensureBucket(bucket: string, isAudio: boolean) {
   if (verifiedBuckets.has(bucket)) return
   const mimeTypes = isAudio ? AUDIO_MIME_TYPES : ARTWORK_MIME_TYPES
-  // mf-audio is configured for 2GB; mf-artwork for 50MB — set in Supabase dashboard
-  const sizeLimit = isAudio ? 2147483648 : 52428800
+  // mf-audio: 500MB (Supabase Pro project max); mf-artwork: 50MB
+  const sizeLimit = isAudio ? 524288000 : 52428800
   const { error } = await supabaseAdmin.storage.getBucket(bucket)
   if (error?.message?.includes('not found') || error?.message?.includes('does not exist')) {
     await supabaseAdmin.storage.createBucket(bucket, {
