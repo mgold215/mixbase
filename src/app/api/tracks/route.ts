@@ -39,8 +39,10 @@ async function ensureShareTokens(userId: string) {
       )
     )
     _backfillDone = true
-  } catch {
-    // Non-fatal
+  } catch (e) {
+    // Non-fatal — leave _backfillDone false so the next request retries the
+    // backfill, but surface the failure so it isn't silently swallowed forever.
+    console.warn('[tracks] share-token backfill failed:', e)
   }
 }
 

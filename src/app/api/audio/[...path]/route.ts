@@ -29,6 +29,13 @@ export async function GET(
     return new NextResponse(null, { status: upstream.status })
   }
 
+  // Guard against a header-only / empty-body upstream response. Streaming a null
+  // body as a 200/206 hands the browser a zero-length media file it treats as
+  // corrupt (ERR_INVALID_RESPONSE) instead of a recoverable error.
+  if (!upstream.body) {
+    return new NextResponse(null, { status: 502 })
+  }
+
   const headers = new Headers()
   headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'audio/mpeg')
   headers.set('Accept-Ranges', 'bytes')
@@ -37,11 +44,15 @@ export async function GET(
   const contentLength = upstream.headers.get('Content-Length')
   if (contentLength) headers.set('Content-Length', contentLength)
 
+  // A 206 is only valid when it carries Content-Range. Mirror upstream's real
+  // status rather than forcing 206 whenever the client merely *sent* a Range:
+  // if Supabase ignored the Range and returned a full 200, forging a 206 with no
+  // Content-Range is an invalid partial response and breaks seeking in some browsers.
   const contentRange = upstream.headers.get('Content-Range')
   if (contentRange) headers.set('Content-Range', contentRange)
 
   return new NextResponse(upstream.body, {
-    status: range ? 206 : upstream.status,
+    status: contentRange ? 206 : upstream.status,
     headers,
   })
 }
