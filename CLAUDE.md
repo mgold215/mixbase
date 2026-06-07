@@ -160,28 +160,35 @@ All AI routes enforce per-user rate limits. Usage is also gated by subscription 
 
 **Rule: Never route file bytes through Railway.** Railway truncates request bodies above exactly 10 MB (10,485,760 bytes). This is infrastructure, not a code bug.
 
-**Active path — Signed URL (audio uploads in ProjectClient.tsx):**
+**Smart upload routing (ProjectClient.tsx + projects/new/page.tsx):**
+- Files ≤ 50 MB → **Signed URL** (fast, direct browser-to-Supabase PUT)
+- Files > 50 MB → **TUS chunked** (8 MB chunks through Railway proxy)
+- If signed URL fails with 413 → **auto-retry via TUS** (transparent to user)
+
+**Signed URL path:**
 - `POST /api/upload-url` — server generates a short-lived Supabase signed upload URL
 - Browser PUTs directly to Supabase — Railway is never in the byte path
-- Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUploadSubmit()`
+- Implementation: `src/app/api/upload-url/route.ts` + `ProjectClient.tsx` `handleUpload()`
 
 **TUS chunked proxy (resumable uploads, for large files):**
-- `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses anon 50 MB limit)
+- `POST /api/tus` — creates TUS session at Supabase using service-role key (bypasses size limits)
 - `PATCH /api/tus/<uploadId>` — proxies one 8 MB chunk (under Railway's 10 MB wall)
 - `HEAD /api/tus/<uploadId>` — checks resume offset
-- Client uses `tus-js-client` with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
+- Client uses `tus-js-client` (dynamic import) with `endpoint: '/api/tus'`, `chunkSize: 8 * 1024 * 1024`
 - `/api/tus` is in PUBLIC_PATHS in middleware
 
 **Direct multipart upload (`/api/upload-audio`):**
 - Accepts multipart form data (`file`, `project_id`, `type: 'audio'|'artwork'`)
 - Uploads directly to Supabase Storage via service-role key
-- 50 MB limit for audio, 10 MB for artwork
-- Creates/ensures storage bucket if it doesn't exist
+- 500 MB limit for audio, 50 MB for artwork
+- Creates storage bucket if it doesn't exist — **never updates** existing bucket config
 
 **Root causes documented:**
 - Railway truncates HTTP bodies at exactly 10 MB — confirmed by uploads showing 10,485,760 bytes in storage
-- Supabase anon-key uploads capped at ~50 MB — service-role key on server bypasses this
-- 8 MB chunks safely clear the Railway wall
+- Supabase project global upload limit is 500 MB (Pro default) — the Storage API enforces this cap when setting bucket `file_size_limit`
+- `mf-audio` bucket is set to 2 GB via direct SQL (`storage.buckets` table) — this bypasses the API's 500 MB cap
+- **NEVER use the Storage API** (`updateBucket`) to change `mf-audio` limits — it will silently downgrade to 500 MB
+- 8 MB TUS chunks safely clear the Railway wall
 
 ## Architecture: Audio Range Requests — always use audioProxyUrl()
 Supabase public audio URLs don't reliably return `Accept-Ranges` headers, so browsers can't seek or determine duration.
@@ -193,8 +200,8 @@ Supabase public audio URLs don't reliably return `Accept-Ranges` headers, so bro
 - `/api/audio` is in PUBLIC_PATHS — do not remove it
 
 ## Supabase Storage Buckets
-- `mf-audio` — audio files, public read
-- `mf-artwork` — artwork images, public read
+- `mf-audio` — audio files, public read, 2 GB limit (set via SQL, not API), MIME types: mpeg/wav/mp4/aac/flac/ogg/webm/aiff/m4a
+- `mf-artwork` — artwork images, public read, 50 MB limit, MIME types: jpeg/png/webp/gif
 
 ## Security
 **Headers** (applied to every response via `next.config.ts`):
