@@ -46,3 +46,9 @@ struct SentryStatus: Decodable {
         var id: String { title + (lastSeen ?? "") }
     }
 }
+
+// Mirrors POST /api/infra/actions.
+struct ActionResult: Decodable {
+    let ok: Bool
+    let message: String
+}

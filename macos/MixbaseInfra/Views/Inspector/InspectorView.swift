@@ -17,6 +17,7 @@ struct InspectorView: View {
                     case "sentry":   sentrySection()
                     default:         staticSection(node)
                     }
+                    NodeActionsView(node: node)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
