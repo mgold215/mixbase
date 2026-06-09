@@ -14,7 +14,6 @@ import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import Nav from '@/components/Nav'
 import { usePlayer } from '@/contexts/PlayerContext'
 
-type LoopMode = 'none' | 'all' | 'one'
 type SortKey = 'title' | 'date'
 
 const PASTEL_GREEN = '#86efac'
@@ -61,15 +60,13 @@ function PlayerPage() {
   const {
     tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, buffering, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
-    audioRef,
+    loopMode, shuffle, setLoopMode, setShuffle, setQueue, next, prev,
   } = usePlayer()
 
   const router = useRouter()
   const searchParams = useSearchParams()
   const trackParam = searchParams.get('track')
   const [filtered, setFiltered] = useState<Track[]>([])
-  const [loopMode, setLoopMode] = useState<LoopMode>('none')
-  const [shuffle, setShuffle] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -87,8 +84,6 @@ function PlayerPage() {
 
   // current = whatever the shared audio engine is playing right now
   const current = currentTrack
-  // index of current track within the filtered sidebar list (for nav + highlight)
-  const currentIdx = filtered.findIndex(t => t.project_id === currentTrack?.project_id)
 
   // ── Sort + search (uses tracks from context) ──────────────────────────────
   useEffect(() => {
@@ -101,9 +96,17 @@ function PlayerPage() {
     setFiltered(list)
   }, [tracks, sortKey, search])
 
+  // ── Shared queue ───────────────────────────────────────────────────────────
+  // Push the visible (filtered + sorted) order into the engine so next/prev and
+  // auto-advance follow it from ANY tab — the queue outlives this page.
+  useEffect(() => {
+    setQueue(filtered.map(t => t.project_id))
+  }, [filtered, setQueue])
+
   // ── Deep-link / autoplay ───────────────────────────────────────────────────
-  // If a ?track= param is present, switch to it (but don't restart if already on it).
-  // If nothing is playing yet, autoplay the first track.
+  // If a ?track= param is present, switch to it (but don't restart if already on it),
+  // then strip the param so revisiting this URL (back/forward, tab switches) can't
+  // force-restart a stale track later. If nothing is playing yet, start the first track.
   useEffect(() => {
     if (filtered.length === 0) return
     if (trackParam) {
@@ -111,6 +114,7 @@ function PlayerPage() {
         const t = filtered.find(t => t.project_id === trackParam)
         if (t) playTrack(t.project_id)
       }
+      router.replace('/player', { scroll: false })
     } else if (!currentTrack && filtered[0]) {
       playTrack(filtered[0].project_id)
     }
@@ -152,38 +156,12 @@ function PlayerPage() {
   }, [current])
 
 
-  // ── Playback (operates on shared context state + filtered list) ───────────
+  // ── Playback ───────────────────────────────────────────────────────────────
+  // Transport (next/prev), loop and auto-advance live in PlayerContext now, so
+  // they keep working after this page unmounts. This page only picks tracks.
   const goTo = useCallback((idx: number) => {
     if (filtered[idx]) playTrack(filtered[idx].project_id)
   }, [filtered, playTrack])
-
-  const next = useCallback(() => {
-    if (filtered.length === 0) return
-    const idx = currentIdx >= 0 ? currentIdx : 0
-    if (shuffle) goTo(Math.floor(Math.random() * filtered.length))
-    else goTo((idx + 1) % filtered.length)
-  }, [shuffle, currentIdx, filtered.length, goTo])
-
-  const prev = useCallback(() => {
-    if (currentTime > 3) { ctxSeek(0); return }
-    if (filtered.length === 0) return
-    const idx = currentIdx >= 0 ? currentIdx : 0
-    goTo((idx - 1 + filtered.length) % filtered.length)
-  }, [currentIdx, currentTime, filtered.length, goTo, ctxSeek])
-
-  // ── Loop mode: add ended listener to the shared audio element ────────────
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
-    const handleEnded = () => {
-      if (loopMode === 'one') { audio.play().catch(() => {}); return }
-      if (loopMode === 'all') { next(); return }
-      const idx = currentIdx >= 0 ? currentIdx : 0
-      if (idx < filtered.length - 1) next()
-    }
-    audio.addEventListener('ended', handleEnded)
-    return () => audio.removeEventListener('ended', handleEnded)
-  }, [audioRef, loopMode, currentIdx, filtered.length, next])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -198,53 +176,15 @@ function PlayerPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [togglePlay, prev, next])
 
-  // ── Media Session: override context's action handlers with full-player nav ─
-  // (shuffle + filtered-list next/prev). Context handles metadata + position state.
-  useEffect(() => {
-    if (!('mediaSession' in navigator)) return
-    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
-      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
-    }
-    set('play',          () => togglePlay())
-    set('pause',         () => togglePlay())
-    set('previoustrack', () => prev())
-    set('nexttrack',     () => next())
-    set('seekbackward', (d) => {
-      if (!audioRef.current) return
-      audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10))
-    })
-    set('seekforward', (d) => {
-      if (!audioRef.current) return
-      audioRef.current.currentTime = Math.min(duration, audioRef.current.currentTime + (d.seekOffset ?? 10))
-    })
-    set('seekto', (d) => {
-      if (d.seekTime == null || !audioRef.current) return
-      audioRef.current.currentTime = Math.min(d.seekTime, duration)
-    })
-    // On unmount, restore context's global handlers by re-triggering its effect
-    return () => {
-      ;(['play','pause','previoustrack','nexttrack','seekbackward','seekforward','seekto'] as MediaSessionAction[])
-        .forEach(a => set(a, null))
-    }
-  }, [togglePlay, prev, next, duration, audioRef])
-
-  // setPositionState with playbackRate (context handles the rest)
-  useEffect(() => {
-    if (!('mediaSession' in navigator) || duration <= 0) return
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        position: Math.min(currentTime, duration),
-        playbackRate: 1,
-      })
-    } catch { /* guard against race where position > duration */ }
-  }, [currentTime, duration])
+  // Media Session handlers + position state are owned entirely by PlayerContext.
+  // (This page used to override them and null them on unmount, which killed
+  // lock-screen/media-key controls after navigating away.)
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     ctxSeek(parseFloat(e.target.value))
   }
 
-  const cycleLoop = () => setLoopMode(m => m === 'none' ? 'all' : m === 'all' ? 'one' : 'none')
+  const cycleLoop = () => setLoopMode(loopMode === 'none' ? 'all' : loopMode === 'all' ? 'one' : 'none')
 
   const handleShare = useCallback(() => {
     if (!current?.share_token) return
@@ -536,7 +476,7 @@ function PlayerPage() {
             {/* ── Mobile: grid so transport is perfectly centered ── */}
             <div className="sm:hidden grid grid-cols-[1fr_auto_1fr] items-center">
               <div className="flex items-center gap-2">
-                <button onClick={() => setShuffle(s => !s)}
+                <button onClick={() => setShuffle(!shuffle)}
                   className="p-2 transition-colors"
                   style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
@@ -586,7 +526,7 @@ function PlayerPage() {
             {/* ── Desktop: full bar with inline progress ── */}
             <div className="hidden sm:flex items-center gap-6">
               <div className="flex items-center gap-2 flex-shrink-0">
-                <button onClick={() => setShuffle(s => !s)}
+                <button onClick={() => setShuffle(!shuffle)}
                   className="p-2 transition-colors"
                   style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>

@@ -118,6 +118,17 @@ async function main() {
     } else fail('GET /api/infra/supabase', `status ${status}`)
   }
 
+  // ── 5b. Phase-2 provider nodes (github / stripe / sentry) ───────────────────
+  for (const [path, key] of [
+    ['/api/infra/github', 'runs'],
+    ['/api/infra/stripe', 'tierCounts'],
+    ['/api/infra/sentry', 'org'],
+  ]) {
+    const { status, json } = await getJson(path)
+    if (status === 200 && json && key in json) ok(`GET ${path}`, `configured=${json.configured}`)
+    else fail(`GET ${path}`, `status ${status}`)
+  }
+
   // ── 6. Chat (optional — only meaningful with ANTHROPIC_API_KEY set) ─────────
   {
     const res = await fetch(`${BASE}/api/infra/chat`, {

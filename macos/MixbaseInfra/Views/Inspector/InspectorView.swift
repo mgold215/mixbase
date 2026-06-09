@@ -12,6 +12,9 @@ struct InspectorView: View {
                     switch node.provider {
                     case "railway":  railwaySection(node)
                     case "supabase": supabaseSection(node)
+                    case "github":   githubSection()
+                    case "stripe":   stripeSection()
+                    case "sentry":   sentrySection()
                     default:         staticSection(node)
                     }
                 }
@@ -115,6 +118,73 @@ struct InspectorView: View {
             }
         } else {
             note("No live Supabase data.")
+        }
+    }
+
+    // MARK: - GitHub
+
+    @ViewBuilder
+    private func githubSection() -> some View {
+        if let gh = vm.github {
+            section("CI runs (\(gh.repo))") {
+                if gh.runs.isEmpty {
+                    infoRow("Status", gh.error ?? "no recent runs")
+                } else {
+                    ForEach(gh.runs) { run in
+                        infoRow(run.branch, run.conclusion ?? run.status ?? "—")
+                    }
+                }
+            }
+            if !gh.authenticated {
+                note("Unauthenticated GitHub access (public repo). Set GITHUB_TOKEN to raise the API rate limit.")
+            }
+        } else {
+            note("No live GitHub data.")
+        }
+    }
+
+    // MARK: - Stripe
+
+    @ViewBuilder
+    private func stripeSection() -> some View {
+        if let st = vm.stripe {
+            section("Billing") {
+                infoRow("Est. MRR", String(format: "$%.2f/mo", Double(st.estimatedMrrCents) / 100.0))
+                infoRow("Active subscriptions", st.activeSubscriptions != nil ? "\(st.activeSubscriptions!)" : "—")
+            }
+            section("Subscribers by tier") {
+                ForEach(["free", "pro", "studio", "admin"], id: \.self) { tier in
+                    infoRow(tier, "\(st.tierCounts[tier] ?? 0)")
+                }
+            }
+            if !st.configured {
+                note("STRIPE_SECRET_KEY isn't set — tier counts come from the profiles table; live subscription count is unavailable.")
+            }
+        } else {
+            note("No live Stripe data.")
+        }
+    }
+
+    // MARK: - Sentry
+
+    @ViewBuilder
+    private func sentrySection() -> some View {
+        if let se = vm.sentry {
+            if !se.configured {
+                note("SENTRY_AUTH_TOKEN isn't set — error monitoring data is unavailable. Set it (project:read) to light up this node.")
+            } else {
+                section("Recent unresolved issues (\(se.org)/\(se.project))") {
+                    if let issues = se.recentIssues, !issues.isEmpty {
+                        ForEach(issues) { issue in
+                            infoRow(issue.title, "×\(issue.count)")
+                        }
+                    } else {
+                        infoRow("Open issues", se.error ?? "none 🎉")
+                    }
+                }
+            }
+        } else {
+            note("No live Sentry data.")
         }
     }
 

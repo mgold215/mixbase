@@ -36,8 +36,8 @@ export type NodeType =
 export type InfraLayer = 'client' | 'edge' | 'app' | 'data' | 'external'
 
 // Which live aggregator (if any) populates this node's status badge.
-// 'static' nodes are drawn but not probed in phase 1.
-export type StatusSource = 'railway' | 'supabase' | 'health' | 'static'
+// 'static' nodes are drawn but not probed.
+export type StatusSource = 'railway' | 'supabase' | 'health' | 'github' | 'stripe' | 'sentry' | 'static'
 
 export interface InfraNode {
   id: string
@@ -78,9 +78,9 @@ export const INFRA_NODES: InfraNode[] = [
   { id: 'anthropic', type: 'external', provider: 'anthropic', label: 'Anthropic (Claude)', layer: 'external', statusSource: 'static', description: 'Feedback summarizer, finalize-artwork, admin chat' },
   { id: 'replicate', type: 'external', provider: 'replicate', label: 'Replicate',          layer: 'external', statusSource: 'static', description: 'Flux 2 Pro / Imagen 4 artwork generation' },
   { id: 'runway',    type: 'external', provider: 'runway',    label: 'Runway',             layer: 'external', statusSource: 'static', description: 'Gen-4 / Veo image-to-video visualizer' },
-  { id: 'stripe',    type: 'external', provider: 'stripe',    label: 'Stripe',             layer: 'external', statusSource: 'static', description: 'Subscription billing (pro / studio)' },
-  { id: 'sentry',    type: 'monitor',  provider: 'sentry',    label: 'Sentry',             layer: 'external', statusSource: 'static', description: 'Error monitoring (moodmixformat/mixbase)' },
-  { id: 'github',    type: 'ci',       provider: 'github',    label: 'GitHub Actions',     layer: 'external', statusSource: 'static', description: 'CI: build/lint, gitleaks, audit → auto-deploy' },
+  { id: 'stripe',    type: 'external', provider: 'stripe',    label: 'Stripe',             layer: 'external', statusSource: 'stripe', description: 'Subscription billing (pro / studio)' },
+  { id: 'sentry',    type: 'monitor',  provider: 'sentry',    label: 'Sentry',             layer: 'external', statusSource: 'sentry', description: 'Error monitoring (moodmixformat/mixbase)' },
+  { id: 'github',    type: 'ci',       provider: 'github',    label: 'GitHub Actions',     layer: 'external', statusSource: 'github', description: 'CI: build/lint, gitleaks, audit → auto-deploy' },
 ]
 
 export const INFRA_EDGES: InfraEdge[] = [

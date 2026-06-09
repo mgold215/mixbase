@@ -30,6 +30,8 @@ struct InfraDashboardView: View {
                 sourcePill("Railway", configured: s.railway.configured)
                 sourcePill("Supabase", configured: s.supabase.configured)
                 if !s.supabase.managementConfigured { sourcePill("Mgmt API", configured: false) }
+                if let st = s.stripe { sourcePill("Stripe", configured: st.configured) }
+                if let se = s.sentry { sourcePill("Sentry", configured: se.configured) }
             }
 
             Spacer()

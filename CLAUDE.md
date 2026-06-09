@@ -286,14 +286,18 @@ A "pumped-up network diagram" for visualizing & querying the architecture. Two h
 - `GET /api/infra/topology` — declarative node+edge graph (`src/lib/infra/topology.ts`) merged with live status badges. Always works (zero tokens).
 - `GET /api/infra/railway` — Railway env deploy status + metrics via GraphQL (`src/lib/infra/railway.ts`); plus `/api/health` liveness probes. Degrades to health-only without `RAILWAY_API_TOKEN`.
 - `GET /api/infra/supabase` — table row counts (service-role), storage usage, DB size, migrations, scaling signals (`src/lib/infra/supabase.ts`). DB size / per-bucket bytes / migrations need `SUPABASE_MANAGEMENT_TOKEN`.
-- `POST /api/infra/chat` — Claude tool-loop (mirrors `/api/admin/chat`) with **read-only** tools; needs `ANTHROPIC_API_KEY`.
+- `GET /api/infra/github` — latest CI run per branch (main/tst) via GitHub REST (`src/lib/infra/github.ts`). Public repo → works token-free; `GITHUB_TOKEN` only raises rate limits.
+- `GET /api/infra/stripe` — subscriber counts by tier + estimated MRR (from `profiles`) and active-subscription count (Stripe API when `STRIPE_SECRET_KEY` set) (`src/lib/infra/stripe.ts`).
+- `GET /api/infra/sentry` — latest unresolved issues sample (`src/lib/infra/sentry.ts`); needs `SENTRY_AUTH_TOKEN` (reuses existing `SENTRY_ORG`/`SENTRY_PROJECT`).
+- `POST /api/infra/chat` — Claude tool-loop (mirrors `/api/admin/chat`) with **read-only** tools across all providers; needs `ANTHROPIC_API_KEY`.
 - All gated by `assertAdmin` + the `/api/infra` prefix added to `withAdminCheck` in `src/proxy.ts`. **Endpoints never 500 on a missing token — they return `configured:false`.**
-- New env var: `RAILWAY_API_TOKEN` (+ optional `RAILWAY_PROJECT_ID`, `SUPABASE_STORAGE_LIMIT_BYTES`, `SUPABASE_DB_LIMIT_BYTES`). See `.env.example`.
+- New env vars: `RAILWAY_API_TOKEN` (+ optional `RAILWAY_PROJECT_ID`, `SUPABASE_STORAGE_LIMIT_BYTES`, `SUPABASE_DB_LIMIT_BYTES`, `GITHUB_TOKEN`/`GITHUB_REPO`). See `.env.example`.
 
 **Frontend — native SwiftUI macOS app in `macos/`:**
 - Generated with **XcodeGen** (`macos/project.yml`); build via `cd macos && ./build.sh`. The `.xcodeproj` is generated, not committed. See `macos/README.md`.
 - Auths via the cookie session (`POST /api/auth`), then calls `/api/infra/*`. Provider secrets stay server-side on Railway.
-- Phase 2 (deferred): GitHub/Stripe/Sentry nodes go live; add guarded write/scaling actions.
+- **Live nodes:** Railway, Supabase, GitHub CI, Stripe billing, Sentry errors (all read-only). Anthropic/Replicate/Runway are drawn but not probed.
+- Phase 3 (deferred): guarded write/scaling actions (restart/redeploy/scale/re-run CI) — mutating endpoints; test on staging before shipping to prod.
 
 ## Business & Legal
 - **Legal entity:** moodmixformat, LLC (formed — do not suggest forming an LLC)

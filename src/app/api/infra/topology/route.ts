@@ -3,6 +3,9 @@ import { assertAdmin } from '@/lib/auth'
 import { INFRA_NODES, INFRA_EDGES, LAYER_ORDER, type InfraNode } from '@/lib/infra/topology'
 import { getRailwayStatus, type RailwayStatus } from '@/lib/infra/railway'
 import { getSupabaseStatus, type SupabaseStatus } from '@/lib/infra/supabase'
+import { getGithubStatus, type GithubStatus } from '@/lib/infra/github'
+import { getStripeStatus, type StripeStatus } from '@/lib/infra/stripe'
+import { getSentryStatus, type SentryStatus } from '@/lib/infra/sentry'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,11 +53,40 @@ function supabaseNodeStatus(node: InfraNode, supabase: SupabaseStatus): { status
   return { status: 'ok' }
 }
 
+function githubNodeStatus(github: GithubStatus): { status: NodeStatus; metric?: string } {
+  if (github.error || github.runs.length === 0) return { status: 'unknown', metric: 'CI: ?' }
+  const anyFailed = github.runs.some((r) => r.conclusion === 'failure' || r.conclusion === 'cancelled')
+  const anyRunning = github.runs.some((r) => r.status !== 'completed')
+  const status: NodeStatus = anyFailed ? 'degraded' : 'ok'
+  const tst = github.runs.find((r) => r.branch === 'tst')
+  const metric = anyRunning ? 'CI: running' : `CI: ${tst?.conclusion ?? github.runs[0].conclusion ?? 'ok'}`
+  return { status, metric }
+}
+
+function stripeNodeStatus(stripe: StripeStatus): { status: NodeStatus; metric?: string } {
+  const mrr = (stripe.estimatedMrrCents / 100).toFixed(0)
+  const paid = (stripe.tierCounts.pro ?? 0) + (stripe.tierCounts.studio ?? 0)
+  return { status: 'ok', metric: `$${mrr}/mo · ${paid} paid` }
+}
+
+function sentryNodeStatus(sentry: SentryStatus): { status: NodeStatus; metric?: string } {
+  if (!sentry.configured) return { status: 'not_configured', metric: 'no token' }
+  if (sentry.error) return { status: 'unknown' }
+  const n = sentry.shownIssues ?? 0
+  return { status: n > 0 ? 'degraded' : 'ok', metric: `${n} open issue${n === 1 ? '' : 's'}` }
+}
+
 export async function GET(request: NextRequest) {
   const adminId = await assertAdmin(request)
   if (!adminId) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const [railway, supabase] = await Promise.all([getRailwayStatus(), getSupabaseStatus()])
+  const [railway, supabase, github, stripe, sentry] = await Promise.all([
+    getRailwayStatus(),
+    getSupabaseStatus(),
+    getGithubStatus(),
+    getStripeStatus(),
+    getSentryStatus(),
+  ])
 
   const nodes: TopologyNode[] = INFRA_NODES.map((node) => {
     switch (node.statusSource) {
@@ -62,6 +94,12 @@ export async function GET(request: NextRequest) {
         return { ...node, ...railwayNodeStatus(node, railway) }
       case 'supabase':
         return { ...node, ...supabaseNodeStatus(node, supabase) }
+      case 'github':
+        return { ...node, ...githubNodeStatus(github) }
+      case 'stripe':
+        return { ...node, ...stripeNodeStatus(stripe) }
+      case 'sentry':
+        return { ...node, ...sentryNodeStatus(sentry) }
       case 'static':
         return { ...node, status: 'static' }
       default:
@@ -76,6 +114,9 @@ export async function GET(request: NextRequest) {
     sources: {
       railway: { configured: railway.configured, error: railway.error ?? null },
       supabase: { configured: supabase.configured, managementConfigured: supabase.managementConfigured },
+      github: { configured: github.configured, authenticated: github.authenticated },
+      stripe: { configured: stripe.configured },
+      sentry: { configured: sentry.configured },
     },
     generatedAt: new Date().toISOString(),
   })
