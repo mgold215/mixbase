@@ -38,8 +38,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({
   children,
+  modal,
 }: Readonly<{
   children: ReactNode;
+  modal: ReactNode;
 }>) {
   return (
     <html lang="en" className={`h-full ${jost.variable} ${bebasNeue.variable} ${spaceMono.variable}`}>
@@ -51,6 +53,7 @@ export default function RootLayout({
             <PullToRefresh />
             <MiniPlayer />
             {children}
+            {modal}
           </PlayerProvider>
         </ThemeProvider>
       </body>

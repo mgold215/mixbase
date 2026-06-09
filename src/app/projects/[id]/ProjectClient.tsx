@@ -34,9 +34,10 @@ type Props = {
   project: Project
   initialVersions: VersionWithFeedback[]
   initialRelease: Release | null
+  inModal?: boolean
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, inModal = false }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -100,8 +101,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setDeletingProject(true)
     const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
     if (res.ok) {
-      router.push('/dashboard')
-      router.refresh()
+      if (inModal) {
+        // Close the modal — ModalShell refreshes the page underneath on unmount
+        router.back()
+      } else {
+        router.push('/dashboard')
+        router.refresh()
+      }
     } else {
       setDeletingProject(false)
     }
@@ -420,12 +426,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const archivedVersions = versions.slice(1)
 
   return (
-    <div className="pt-14">
-      <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
-        <Link href="/dashboard" className="flex items-center gap-2 text-[var(--text-muted)] hover:text-[var(--text)] text-sm mb-6 transition-colors w-fit">
-          <ArrowLeft size={14} />
-          Dashboard
-        </Link>
+    <div className={inModal ? '' : 'pt-14'}>
+      <div className={inModal ? 'max-w-4xl mx-auto px-5 sm:px-6 py-6 pb-16' : 'max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10'}>
+        {!inModal && (
+          <Link href="/dashboard" className="flex items-center gap-2 text-[var(--text-muted)] hover:text-[var(--text)] text-sm mb-6 transition-colors w-fit">
+            <ArrowLeft size={14} />
+            Dashboard
+          </Link>
+        )}
 
         {/* Project header */}
         <div className="flex gap-6 mb-8">
