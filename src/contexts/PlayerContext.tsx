@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, us
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 import { applyMediaSession } from '@/lib/media-session'
+import { announcePlay, onOtherSourcePlay } from '@/lib/audio-coordinator'
 
 export type LoopMode = 'none' | 'all' | 'one'
 
@@ -219,6 +220,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onPlay = () => {
       // Optimistic: the engine is running. 'playing'/'waiting' refine buffering below.
       setIsPlaying(true)
+      // Tell other audio sources (share-page player) to pause.
+      announcePlay('player-context')
       // Re-apply full metadata after iOS activates the audio session — iOS sometimes
       // ignores metadata set before play() resolves, so we push it again on the play event.
       if (mediaMetaRef.current) {
@@ -358,6 +361,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     window.addEventListener('pageshow', onPageShow)
     return () => window.removeEventListener('pageshow', onPageShow)
   }, [])
+
+  // ── Pause when another audio source starts playing (e.g. share-page player).
+  // Must clear play intent too, or the iOS visibility/stalled recovery effects
+  // would immediately resurrect playback.
+  useEffect(() => onOtherSourcePlay('player-context', () => {
+    playIntentRef.current = false
+    pendingPlayRef.current = false
+    audioRef.current?.pause()
+  }), [])
 
   // ── stalled / interrupted recovery — iOS can silently pause audio
   useEffect(() => {

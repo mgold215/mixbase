@@ -105,7 +105,13 @@ export function extractDominantColor(imgUrl: string): Promise<[number, number, n
 // ─── Analyze audio URL (fetch first 4 MB and decode) ───────────────────────────
 // Accepts an AbortSignal so skipping tracks actually cancels the in-flight 4 MB fetch
 // instead of leaving it (and a fresh AudioContext) competing with playback.
+// Successful results are cached per URL — revisiting a track must not re-fetch
+// and re-decode 4 MB while the element is trying to buffer the same file.
+const analysisCache = new Map<string, { bpm: number; key: string }>()
+
 export async function analyzeAudioUrl(url: string, signal?: AbortSignal): Promise<{ bpm: number; key: string } | null> {
+  const cached = analysisCache.get(url)
+  if (cached) return cached
   let ctx: AudioContext | null = null
   try {
     const resp = await fetch(url, { headers: { Range: 'bytes=0-4000000' }, signal })
@@ -113,7 +119,9 @@ export async function analyzeAudioUrl(url: string, signal?: AbortSignal): Promis
     if (signal?.aborted) return null
     ctx = new AudioContext()
     const ab = await ctx.decodeAudioData(buf)
-    return { bpm: detectBPM(ab), key: detectKey(ab) }
+    const result = { bpm: detectBPM(ab), key: detectKey(ab) }
+    analysisCache.set(url, result)
+    return result
   } catch { return null }
   finally { if (ctx) await ctx.close().catch(() => {}) }
 }

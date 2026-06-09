@@ -39,7 +39,7 @@ export async function GET(
 
   // 304 Not Modified — pass straight through (no body).
   if (upstream.status === 304) {
-    return new NextResponse(null, { status: 304, headers: { 'Cache-Control': 'public, max-age=3600' } })
+    return new NextResponse(null, { status: 304, headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } })
   }
 
   if (!upstream.ok && upstream.status !== 206) {
@@ -56,7 +56,7 @@ export async function GET(
   const headers = new Headers()
   headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'audio/mpeg')
   headers.set('Accept-Ranges', 'bytes')
-  headers.set('Cache-Control', 'public, max-age=3600')
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable')
 
   const contentLength = upstream.headers.get('Content-Length')
   if (contentLength) headers.set('Content-Length', contentLength)

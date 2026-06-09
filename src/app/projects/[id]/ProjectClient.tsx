@@ -280,6 +280,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     try {
       audioDuration = await new Promise((resolve) => {
         const audio = new Audio(audioProxyUrl(audioUrl))
+        // Only need duration — don't buffer the whole file we just uploaded.
+        audio.preload = 'metadata'
         audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
         audio.addEventListener('error', () => resolve(null))
         setTimeout(() => resolve(null), 8000)
