@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { refreshSessionOnce } from '@/lib/refresh-session'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -20,7 +20,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No refresh token' }, { status: 401 })
   }
 
-  const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken })
+  // Single-flight (shared with the proxy) — concurrent refreshes of the same
+  // token share one Supabase call, avoiding rotation races across tabs.
+  const { data, error } = await refreshSessionOnce(refreshToken)
 
   if (error || !data.session) {
     // Session is truly expired — clear cookies so the client redirects to login
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
   // session can be refreshed on the next visit rather than forcing re-login.
   res.cookies.set('sb-access-token', data.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   res.cookies.set('sb-refresh-token', data.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
-  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
-  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: 60 * 60 * 24 * 30 })
+  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: 60 * 60 * 24 * 30 })
   return res
 }

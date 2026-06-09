@@ -63,13 +63,32 @@ struct MiniPlayerView: View {
 
             Spacer()
 
-            // Play / Pause button in teal
-            Button(action: {
-                audioService.togglePlayPause()
-            }) {
-                Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title3)
-                    .foregroundColor(Color(hex: "#2dd4bf"))
+            // Transport: prev / play-pause / next — drives the shared queue so skipping
+            // works from any tab, not just the player screen.
+            HStack(spacing: 18) {
+                Button(action: { audioService.prev() }) {
+                    Image(systemName: "backward.fill")
+                        .font(.subheadline)
+                        .foregroundColor(Color(hex: "#f0f0f0").opacity(0.7))
+                }
+
+                Button(action: { audioService.togglePlayPause() }) {
+                    if audioService.buffering {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "#2dd4bf")))
+                            .frame(width: 22, height: 22)
+                    } else {
+                        Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title3)
+                            .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                }
+
+                Button(action: { audioService.next() }) {
+                    Image(systemName: "forward.fill")
+                        .font(.subheadline)
+                        .foregroundColor(Color(hex: "#f0f0f0").opacity(0.7))
+                }
             }
             .padding(.trailing, 4)
         }

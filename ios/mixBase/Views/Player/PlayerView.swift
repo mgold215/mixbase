@@ -13,14 +13,11 @@ struct PlayerView: View {
 
     @EnvironmentObject var audioService: AudioService
 
-    // All projects with their latest version. Powers prev/next and the queue sheet.
+    // All projects with their latest version. Powers the queue sheet + seeds the
+    // shared playback queue in AudioService (which owns next/prev/loop/shuffle now).
     @State private var trackList: [TrackItem] = []
     @State private var allVersions: [Version] = []
     @State private var isLoading = true
-
-    // Shuffle & loop
-    @State private var isShuffled = false
-    @State private var loopMode = 0  // 0 = off, 1 = all, 2 = one
 
     // Queue sheet
     @State private var showQueue = false
@@ -239,39 +236,46 @@ struct PlayerView: View {
     // MARK: - Playback Controls
     private var playbackControls: some View {
         HStack(spacing: 36) {
-            // Shuffle
-            Button(action: { isShuffled.toggle() }) {
+            // Shuffle (state lives in AudioService so it applies everywhere)
+            Button(action: { audioService.isShuffled.toggle() }) {
                 Image(systemName: "shuffle")
                     .font(.body)
-                    .foregroundColor(isShuffled ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                    .foregroundColor(audioService.isShuffled ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
             }
 
-            Button(action: previousTrack) {
+            Button(action: { audioService.prev() }) {
                 Image(systemName: "backward.end.fill")
                     .font(.title3)
                     .foregroundColor(Color(hex: "#f0f0f0"))
             }
 
             Button(action: { audioService.togglePlayPause() }) {
-                Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2)
-                    .foregroundColor(Color(hex: "#080808"))
-                    .frame(width: 64, height: 64)
-                    .background(Color(hex: "#2dd4bf"))
-                    .clipShape(Circle())
+                Group {
+                    if audioService.buffering {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "#080808")))
+                    } else {
+                        Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .foregroundColor(Color(hex: "#080808"))
+                    }
+                }
+                .frame(width: 64, height: 64)
+                .background(Color(hex: "#2dd4bf"))
+                .clipShape(Circle())
             }
 
-            Button(action: nextTrack) {
+            Button(action: { audioService.next() }) {
                 Image(systemName: "forward.end.fill")
                     .font(.title3)
                     .foregroundColor(Color(hex: "#f0f0f0"))
             }
 
-            // Loop
-            Button(action: { loopMode = (loopMode + 1) % 3 }) {
-                Image(systemName: loopMode == 2 ? "repeat.1" : "repeat")
+            // Loop (off → all → one)
+            Button(action: { audioService.loopMode = nextLoopMode(audioService.loopMode) }) {
+                Image(systemName: audioService.loopMode == .one ? "repeat.1" : "repeat")
                     .font(.body)
-                    .foregroundColor(loopMode > 0 ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                    .foregroundColor(audioService.loopMode != .off ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
             }
         }
     }
@@ -329,41 +333,19 @@ struct PlayerView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    // Navigate to previous track in the queue
-    private func previousTrack() {
-        guard let current = audioService.currentVersion else { return }
-        let list = isShuffled ? trackList.shuffled() : trackList
-        if let index = list.firstIndex(where: { $0.project.id == current.projectId }), index > 0 {
-            let prev = list[index - 1]
-            audioService.play(version: prev.latestVersion, trackName: prev.project.title, artworkUrl: prev.project.artworkUrl)
-        } else if loopMode == 1, let last = list.last {
-            audioService.play(version: last.latestVersion, trackName: last.project.title, artworkUrl: last.project.artworkUrl)
-        }
-    }
-
-    // Navigate to next track in the queue
-    private func nextTrack() {
-        guard let current = audioService.currentVersion else { return }
-
-        // Loop one: restart the same track
-        if loopMode == 2 {
-            audioService.seek(to: 0)
-            audioService.resume()
-            return
-        }
-
-        let list = isShuffled ? trackList.shuffled() : trackList
-        if let index = list.firstIndex(where: { $0.project.id == current.projectId }), index < list.count - 1 {
-            let next = list[index + 1]
-            audioService.play(version: next.latestVersion, trackName: next.project.title, artworkUrl: next.project.artworkUrl)
-        } else if loopMode == 1, let first = list.first {
-            audioService.play(version: first.latestVersion, trackName: first.project.title, artworkUrl: first.project.artworkUrl)
+    // Cycle the shared loop mode: off → all → one → off
+    private func nextLoopMode(_ mode: LoopMode) -> LoopMode {
+        switch mode {
+        case .off: return .all
+        case .all: return .one
+        case .one: return .off
         }
     }
 
     // MARK: - Data Loading
 
-    // Load all projects + their latest versions for the queue / prev-next
+    // Load all projects + their latest versions, then publish them as the shared queue
+    // so next/prev/auto-advance (which live in AudioService) follow this order on every tab.
     private func loadAllTracks() async {
         isLoading = true
         do {
@@ -382,6 +364,14 @@ struct PlayerView: View {
             }
 
             trackList = items
+            audioService.setQueue(items.map {
+                QueueItem(
+                    projectId: $0.project.id,
+                    version: $0.latestVersion,
+                    trackName: $0.project.title,
+                    artworkUrl: $0.project.artworkUrl
+                )
+            })
         } catch {
             print("PlayerView: Failed to load tracks — \(error.localizedDescription)")
         }

@@ -290,14 +290,15 @@ A "pumped-up network diagram" for visualizing & querying the architecture. Two h
 - `GET /api/infra/stripe` — subscriber counts by tier + estimated MRR (from `profiles`) and active-subscription count (Stripe API when `STRIPE_SECRET_KEY` set) (`src/lib/infra/stripe.ts`).
 - `GET /api/infra/sentry` — latest unresolved issues sample (`src/lib/infra/sentry.ts`); needs `SENTRY_AUTH_TOKEN` (reuses existing `SENTRY_ORG`/`SENTRY_PROJECT`).
 - `POST /api/infra/chat` — Claude tool-loop (mirrors `/api/admin/chat`) with **read-only** tools across all providers; needs `ANTHROPIC_API_KEY`.
-- All gated by `assertAdmin` + the `/api/infra` prefix added to `withAdminCheck` in `src/proxy.ts`. **Endpoints never 500 on a missing token — they return `configured:false`.**
+- `POST /api/infra/actions` — phase-3 **safe, reversible** controls (`src/lib/infra/actions.ts`): Railway `restart`/`redeploy` (needs `RAILWAY_API_TOKEN`) and GitHub `rerun-ci` (needs `GITHUB_TOKEN` with `actions:write`). Requires `confirm:true`; **no destructive ops** (no write SQL / user deletion / paid scaling).
+- All gated by `assertAdmin` + the `/api/infra` prefix added to `withAdminCheck` in `src/proxy.ts`. **Read endpoints never 500 on a missing token — they return `configured:false`.**
 - New env vars: `RAILWAY_API_TOKEN` (+ optional `RAILWAY_PROJECT_ID`, `SUPABASE_STORAGE_LIMIT_BYTES`, `SUPABASE_DB_LIMIT_BYTES`, `GITHUB_TOKEN`/`GITHUB_REPO`). See `.env.example`.
 
 **Frontend — native SwiftUI macOS app in `macos/`:**
 - Generated with **XcodeGen** (`macos/project.yml`); build via `cd macos && ./build.sh`. The `.xcodeproj` is generated, not committed. See `macos/README.md`.
 - Auths via the cookie session (`POST /api/auth`), then calls `/api/infra/*`. Provider secrets stay server-side on Railway.
 - **Live nodes:** Railway, Supabase, GitHub CI, Stripe billing, Sentry errors (all read-only). Anthropic/Replicate/Runway are drawn but not probed.
-- Phase 3 (deferred): guarded write/scaling actions (restart/redeploy/scale/re-run CI) — mutating endpoints; test on staging before shipping to prod.
+- **Safe controls (phase 3):** node inspector exposes confirmation-gated Railway restart/redeploy and CI re-run via `POST /api/infra/actions` (`NodeActionsView.swift`). Reversible only.
 
 ## Business & Legal
 - **Legal entity:** moodmixformat, LLC (formed — do not suggest forming an LLC)

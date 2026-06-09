@@ -8,7 +8,9 @@ export const dynamic = 'force-dynamic'
 export default async function PipelinePage() {
   const userId = await getUserId()
 
-  const [releasesRes, projectsRes] = await Promise.all([
+  // mb_versions has no user_id column — scope it through the project join so
+  // all three queries can run in parallel instead of waiting on project ids.
+  const [releasesRes, projectsRes, versionsRes] = await Promise.all([
     supabaseAdmin
       .from('mb_releases')
       .select('*, mb_projects(title, artwork_url, finalized_artwork_url)')
@@ -19,16 +21,21 @@ export default async function PipelinePage() {
       .select('id, title')
       .eq('user_id', userId)
       .order('title'),
+    supabaseAdmin
+      .from('mb_versions')
+      .select('id, project_id, version_number, label, status, mb_projects!inner(user_id)')
+      .eq('mb_projects.user_id', userId)
+      .order('version_number', { ascending: false }),
   ])
 
-  const projectIds = (projectsRes.data ?? []).map(p => p.id)
-  const versionsRes = projectIds.length > 0
-    ? await supabaseAdmin
-        .from('mb_versions')
-        .select('id, project_id, version_number, label, status')
-        .in('project_id', projectIds)
-        .order('version_number', { ascending: false })
-    : { data: [] }
+  // Strip the join helper column so PipelineClient's prop shape is unchanged.
+  const versions = (versionsRes.data ?? []).map(v => ({
+    id: v.id,
+    project_id: v.project_id,
+    version_number: v.version_number,
+    label: v.label,
+    status: v.status,
+  }))
 
   return (
     <div className="min-h-screen bg-[#080808]">
@@ -37,7 +44,7 @@ export default async function PipelinePage() {
         <PipelineClient
           initialReleases={releasesRes.data ?? []}
           projects={projectsRes.data ?? []}
-          versions={versionsRes.data ?? []}
+          versions={versions}
         />
       </div>
     </div>

@@ -1,25 +1,15 @@
 // Service Worker for mixBase PWA
-// Caches app shell for offline support, always fetches fresh data from network
+// Caches static assets only. HTML documents are never cached: every page is
+// auth-gated and server-rendered, so caching them serves stale or
+// logged-out/redirect content (the old APP_SHELL pre-cache did exactly that).
 
-const CACHE_NAME = 'mixbase-v2';
+const CACHE_NAME = 'mixbase-v3';
 
-// App shell files to cache for offline
-const APP_SHELL = [
-  '/dashboard',
-  '/projects',
-  '/player',
-  '/pipeline',
-];
-
-// Install: cache app shell
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches (purges the poisoned v2 HTML entries)
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -29,18 +19,19 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: network-first for everything, fall back to cache
+// Fetch: network-only for documents/API, network-first with cache fallback for
+// static assets (icons, fonts, _next/static, images).
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET and API/Supabase requests
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.pathname.startsWith('/api/')) return;
   if (url.hostname.includes('supabase')) return;
+  // Never intercept or cache HTML navigations — they depend on auth cookies.
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') return;
 
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Cache successful responses
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
