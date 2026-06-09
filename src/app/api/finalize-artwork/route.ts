@@ -258,11 +258,17 @@ export async function POST(request: NextRequest) {
   const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const finalUrl = urlData.publicUrl
 
-  await supabaseAdmin
+  const { error: dbError } = await supabaseAdmin
     .from('mb_projects')
     .update({ finalized_artwork_url: finalUrl, updated_at: new Date().toISOString() })
     .eq('id', project_id)
     .eq('user_id', userId) // defense-in-depth: scope the write to the owner
+  if (dbError) {
+    // The render uploaded fine but the URL didn't persist — surface it rather
+    // than returning a success the next page load won't reflect.
+    console.error('[finalize-artwork] DB update error:', dbError.message)
+    return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
+  }
 
   return NextResponse.json({ finalized_artwork_url: finalUrl, placement })
 }

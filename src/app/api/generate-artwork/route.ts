@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage } from '@/lib/tier'
 import { artworkLimiter } from '@/lib/rate-limit'
+import { isUuid } from '@/lib/validators'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
 export const maxDuration = 120
@@ -44,6 +45,24 @@ export async function POST(request: NextRequest) {
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
+  }
+
+  // Reject malformed project ids before they reach a storage key or DB write.
+  if (!isUuid(project_id)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
+  }
+
+  // Ownership check: the artwork write below targets this project, so confirm
+  // the caller actually owns it. Without this, an authenticated user could
+  // overwrite another user's project artwork by passing their project_id (IDOR).
+  const { data: ownerRow, error: ownerErr } = await supabaseAdmin
+    .from('mb_projects')
+    .select('id')
+    .eq('id', project_id)
+    .eq('user_id', userId)
+    .single()
+  if (ownerErr || !ownerRow) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
   // Gate: check monthly artwork limit before hitting Replicate
@@ -120,27 +139,30 @@ export async function POST(request: NextRequest) {
     .upload(filename, imageBytes, { contentType, upsert: false })
 
   if (uploadError) {
+    // Don't hand back the raw Replicate URL as a fallback: it expires within
+    // ~1 hour and is never persisted (the DB write below only runs on success),
+    // so the client would show artwork that 404s on the next reload. Fail loudly
+    // so the user retries instead of saving a dead link.
     console.error('[generate-artwork] Supabase upload error:', uploadError.message)
-    return NextResponse.json({ artwork_url: outputUrl })
+    return NextResponse.json({ error: 'Failed to save generated image. Please try again.' }, { status: 500 })
   }
 
   const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
-  if (project_id) {
-    // New source artwork — drop any prior finalized render so the next Finalize
-    // pass starts from this fresh source instead of stacking onto stale output.
-    const { error: dbError } = await supabaseAdmin
-      .from('mb_projects')
-      .update({
-        artwork_url: artworkUrl,
-        finalized_artwork_url: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', project_id)
-    if (dbError) {
-      console.error('[generate-artwork] DB update error:', dbError.message)
-    }
+  // New source artwork — drop any prior finalized render so the next Finalize
+  // pass starts from this fresh source instead of stacking onto stale output.
+  const { error: dbError } = await supabaseAdmin
+    .from('mb_projects')
+    .update({
+      artwork_url: artworkUrl,
+      finalized_artwork_url: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', project_id)
+    .eq('user_id', userId) // defense-in-depth: scope the write to the owner
+  if (dbError) {
+    console.error('[generate-artwork] DB update error:', dbError.message)
   }
 
   return NextResponse.json({ artwork_url: artworkUrl })
