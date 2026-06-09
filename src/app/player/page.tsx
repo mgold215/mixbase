@@ -127,7 +127,10 @@ function PlayerPage() {
   }, [current])
 
   // ── BPM / key analysis ─────────────────────────────────────────────────────
-  // Manual project values take priority — only auto-detect what isn't set
+  // Manual project values take priority — only auto-detect what isn't set.
+  // Deferred ~2.5s and abortable so the 4 MB analysis fetch never competes with the
+  // critical first buffer of the track that's trying to start playing (a major cause
+  // of stalled/"had to click play twice" starts).
   useEffect(() => {
     if (!current) return
     analysisAbortRef.current?.abort()
@@ -135,15 +138,17 @@ function PlayerPage() {
     analysisAbortRef.current = abort
     setTrackKey(current.key_signature ?? null)
     setTrackBPM(current.bpm ?? null)
-    if (!current.key_signature || !current.bpm) {
-      analyzeAudioUrl(audioProxyUrl(current.audio_url)).then(result => {
-        if (abort.signal.aborted) return
-        if (result) {
-          if (!current.key_signature) setTrackKey(result.key)
-          if (!current.bpm) setTrackBPM(result.bpm)
-        }
+    if (current.key_signature && current.bpm) return
+    const url = audioProxyUrl(current.audio_url)
+    const timer = setTimeout(() => {
+      if (abort.signal.aborted) return
+      analyzeAudioUrl(url, abort.signal).then(result => {
+        if (abort.signal.aborted || !result) return
+        if (!current.key_signature) setTrackKey(result.key)
+        if (!current.bpm) setTrackBPM(result.bpm)
       })
-    }
+    }, 2500)
+    return () => clearTimeout(timer)
   }, [current])
 
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 const MAX_AUDIO_SIZE = 500 * 1024 * 1024 // 500MB — Supabase Pro project limit
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork
@@ -30,12 +31,33 @@ async function ensureBucket(bucket: string, isAudio: boolean) {
 
 // POST /api/upload-audio — upload audio file or artwork to Supabase Storage
 export async function POST(request: NextRequest) {
+  // Require an authenticated caller. Middleware injects X-User-Id for non-public
+  // routes; we read it explicitly so the storage write is always tied to a user.
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
   const formData = await request.formData()
   const file = formData.get('file') as File | null
   const projectId = formData.get('project_id') as string
   const type = (formData.get('type') as string) ?? 'audio'  // 'audio' | 'artwork'
 
   if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+
+  // projectId becomes a storage-key prefix below — reject anything that isn't a
+  // real UUID to block path traversal / malformed keys, then confirm ownership so
+  // a user can't write into another user's project folder (IDOR).
+  if (!isUuid(projectId)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
+  }
+  const { data: ownerRow, error: ownerErr } = await supabaseAdmin
+    .from('mb_projects')
+    .select('id')
+    .eq('id', projectId)
+    .eq('user_id', userId)
+    .single()
+  if (ownerErr || !ownerRow) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
 
   const maxSize = type === 'artwork' ? MAX_IMAGE_SIZE : MAX_AUDIO_SIZE
   if (file.size > maxSize) {

@@ -56,6 +56,7 @@ node scripts/finalize-test.mjs                                             # Art
 | Variable | Required | Purpose |
 |---|---|---|
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin DB access, auth validation, bypasses RLS and storage size limits |
+| `SUPABASE_JWT_SECRET` | **Strongly recommended** | HS256 secret (Supabase → Settings → API → JWT Secret) used by middleware to **verify** access-token signatures locally. Without it, tokens are decoded but NOT signature-verified — an auth-bypass risk. Set on staging AND prod. |
 | `NEXT_PUBLIC_SUPABASE_URL` | No | Falls back to hardcoded project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Falls back to hardcoded public key |
 | `ANTHROPIC_API_KEY` | Optional | AI feedback summarizer (`/api/chat/summarize-feedback`) — feature disabled without it |
@@ -72,7 +73,7 @@ node scripts/finalize-test.mjs                                             # Art
 ## Auth Model
 Multi-user with Supabase Auth (email + password). Cookies set on login: `sb-access-token` (1hr), `sb-refresh-token` (30d), `sb-authed`, `sb-expires-at`.
 
-**Middleware (`src/proxy.ts`):** Decodes the JWT locally with `jose.decodeJwt` — no Supabase round-trip on every request. If the token is expired, attempts one refresh via Supabase. On success, injects `X-User-Id` header. All API routes read user identity from `X-User-Id` — never trust the request body for user ID.
+**Middleware (`src/proxy.ts`):** Verifies the access-token HS256 signature locally via `verifyAccessToken()` (`src/lib/verifyToken.ts`) against `SUPABASE_JWT_SECRET` — no Supabase round-trip on the fast path. A forged or tampered token fails verification and is treated as having no user, so it cannot spoof `X-User-Id`. If the token is expired (but validly signed), attempts one refresh via Supabase. On success, injects `X-User-Id` header. All API routes read user identity from `X-User-Id` — never trust the request body for user ID. **If `SUPABASE_JWT_SECRET` is unset, the middleware falls back to UNVERIFIED decoding (legacy behaviour) and logs a warning — set the secret to close the bypass.**
 
 **Auth routes:**
 - `POST /api/auth` — sign in (rate-limited: 10/15min per IP)
@@ -272,8 +273,27 @@ node scripts/finalize-test.mjs
 # Playwright e2e tests (tests/e2e/, runs against staging by default)
 npm run test:e2e
 BASE_URL=http://localhost:3000 npm run test:e2e  # against local
+
+# Infra control-panel endpoints smoke test (login as admin, hit /api/infra/*)
+node scripts/test-infra.mjs https://mixbase-staging.up.railway.app <admin-email> <admin-password>
 ```
 All tests must pass before telling the user a fix is done.
+
+## Infra Control Panel (macOS app + /api/infra/*)
+A "pumped-up network diagram" for visualizing & querying the architecture. Two halves:
+
+**Backend — admin-gated `/api/infra/*` (read-only):**
+- `GET /api/infra/topology` — declarative node+edge graph (`src/lib/infra/topology.ts`) merged with live status badges. Always works (zero tokens).
+- `GET /api/infra/railway` — Railway env deploy status + metrics via GraphQL (`src/lib/infra/railway.ts`); plus `/api/health` liveness probes. Degrades to health-only without `RAILWAY_API_TOKEN`.
+- `GET /api/infra/supabase` — table row counts (service-role), storage usage, DB size, migrations, scaling signals (`src/lib/infra/supabase.ts`). DB size / per-bucket bytes / migrations need `SUPABASE_MANAGEMENT_TOKEN`.
+- `POST /api/infra/chat` — Claude tool-loop (mirrors `/api/admin/chat`) with **read-only** tools; needs `ANTHROPIC_API_KEY`.
+- All gated by `assertAdmin` + the `/api/infra` prefix added to `withAdminCheck` in `src/proxy.ts`. **Endpoints never 500 on a missing token — they return `configured:false`.**
+- New env var: `RAILWAY_API_TOKEN` (+ optional `RAILWAY_PROJECT_ID`, `SUPABASE_STORAGE_LIMIT_BYTES`, `SUPABASE_DB_LIMIT_BYTES`). See `.env.example`.
+
+**Frontend — native SwiftUI macOS app in `macos/`:**
+- Generated with **XcodeGen** (`macos/project.yml`); build via `cd macos && ./build.sh`. The `.xcodeproj` is generated, not committed. See `macos/README.md`.
+- Auths via the cookie session (`POST /api/auth`), then calls `/api/infra/*`. Provider secrets stay server-side on Railway.
+- Phase 2 (deferred): GitHub/Stripe/Sentry nodes go live; add guarded write/scaling actions.
 
 ## Business & Legal
 - **Legal entity:** moodmixformat, LLC (formed — do not suggest forming an LLC)

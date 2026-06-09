@@ -1,0 +1,43 @@
+# XcodeGen spec for the mixBase Infra control panel (macOS).
+#
+# Why XcodeGen: this project is authored in a Linux environment that cannot open
+# or validate Xcode. A hand-written .pbxproj risks shipping an un-openable
+# project; instead we commit this small, human-readable YAML and generate a
+# guaranteed-valid .xcodeproj on the Mac at build time (see build.sh).
+#
+#   brew install xcodegen   # one-time
+#   cd macos && ./build.sh  # generate + build
+
+name: MixbaseInfra
+options:
+  bundleIdPrefix: com.moodmixformat.mixbase
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: AP8UC39D4D
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  MixbaseInfra:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: MixbaseInfra
+    settings:
+      base:
+        PRODUCT_NAME: MixbaseInfra
+        PRODUCT_BUNDLE_IDENTIFIER: com.moodmixformat.mixbase.infra
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: MixbaseInfra/MixbaseInfra.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_CFBundleDisplayName: mixBase Infra
+        # macOS app, not a document-based app:
+        INFOPLIST_KEY_NSMainStoryboardFile: ""

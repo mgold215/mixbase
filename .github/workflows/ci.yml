@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main, tst]
 
+# Opt the bundled JavaScript actions (checkout, setup-node, gitleaks) into the
+# Node 24 runtime ahead of GitHub's 2026-06-16 Node 20 deprecation, WITHOUT
+# bumping any action major versions (which could change gitleaks-action's
+# license/config behaviour and break the required Secret Scanning check).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-and-lint:
     name: Build & Lint

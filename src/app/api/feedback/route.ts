@@ -15,6 +15,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
   }
 
+  // Rating is optional, but if present it must be a whole number 1–5 — the UI
+  // renders it as stars. This is a public route, so don't trust the value.
+  if (rating != null && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) {
+    return NextResponse.json({ error: 'Rating must be a whole number from 1 to 5' }, { status: 400 })
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_feedback')
     .insert({

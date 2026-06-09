@@ -174,6 +174,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime)
+      // Safety net: if time is advancing, the element is truly playing — clear any
+      // stale buffering/paused flags so the UI can never be stuck showing a spinner
+      // (or a fake "paused") while audio is actually coming out. setState to the same
+      // value is a no-op in React, so this doesn't churn renders.
+      if (!audio.paused) { setBuffering(false); setIsPlaying(true) }
       savePosition(currentProjectIdRef.current, audio.currentTime)
     }
     const onLoadedMeta = () => {
@@ -388,7 +393,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     playIntentRef.current = true
     pendingPlayRef.current = true
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
-    setBuffering(true)
+    // Only show buffering if we're genuinely not playing yet. Re-triggering an
+    // already-playing element fires no 'playing' event, which would otherwise leave
+    // the spinner stuck on.
+    if (audio.paused || audio.readyState < 3 /* HAVE_FUTURE_DATA */) setBuffering(true)
     const p = audio.play()
     if (p && typeof p.then === 'function') {
       p.then(() => { pendingPlayRef.current = false })

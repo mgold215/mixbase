@@ -22,8 +22,25 @@ export async function GET(
   const range = req.headers.get('range')
   const upstreamHeaders: HeadersInit = {}
   if (range) upstreamHeaders['Range'] = range
+  // Forward conditional-request headers so the browser's cache revalidation keeps working.
+  const ifRange = req.headers.get('if-range')
+  if (ifRange) upstreamHeaders['If-Range'] = ifRange
+  const ifNoneMatch = req.headers.get('if-none-match')
+  if (ifNoneMatch) upstreamHeaders['If-None-Match'] = ifNoneMatch
 
-  const upstream = await fetch(supabaseUrl, { headers: upstreamHeaders })
+  let upstream: Response
+  try {
+    upstream = await fetch(supabaseUrl, { headers: upstreamHeaders })
+  } catch {
+    // Network blip talking to Supabase — surface as 502 so the element can retry
+    // rather than throwing a 500 that looks like a hard failure.
+    return new NextResponse(null, { status: 502 })
+  }
+
+  // 304 Not Modified — pass straight through (no body).
+  if (upstream.status === 304) {
+    return new NextResponse(null, { status: 304, headers: { 'Cache-Control': 'public, max-age=3600' } })
+  }
 
   if (!upstream.ok && upstream.status !== 206) {
     return new NextResponse(null, { status: upstream.status })
@@ -51,8 +68,16 @@ export async function GET(
   const contentRange = upstream.headers.get('Content-Range')
   if (contentRange) headers.set('Content-Range', contentRange)
 
-  return new NextResponse(upstream.body, {
-    status: contentRange ? 206 : upstream.status,
-    headers,
-  })
+  // Pass through validators so range requests and caches stay coherent.
+  const etag = upstream.headers.get('ETag')
+  if (etag) headers.set('ETag', etag)
+  const lastModified = upstream.headers.get('Last-Modified')
+  if (lastModified) headers.set('Last-Modified', lastModified)
+
+  // Only emit 206 when upstream genuinely returned partial content (it set a
+  // Content-Range). Forging a 206 with no Content-Range is an invalid partial
+  // response that breaks seeking/buffering in some browsers.
+  const status = upstream.status === 206 && contentRange ? 206 : 200
+
+  return new NextResponse(upstream.body, { status, headers })
 }

@@ -103,15 +103,19 @@ export function extractDominantColor(imgUrl: string): Promise<[number, number, n
 }
 
 // ─── Analyze audio URL (fetch first 4 MB and decode) ───────────────────────────
-export async function analyzeAudioUrl(url: string): Promise<{ bpm: number; key: string } | null> {
+// Accepts an AbortSignal so skipping tracks actually cancels the in-flight 4 MB fetch
+// instead of leaving it (and a fresh AudioContext) competing with playback.
+export async function analyzeAudioUrl(url: string, signal?: AbortSignal): Promise<{ bpm: number; key: string } | null> {
+  let ctx: AudioContext | null = null
   try {
-    const resp = await fetch(url, { headers: { Range: 'bytes=0-4000000' } })
+    const resp = await fetch(url, { headers: { Range: 'bytes=0-4000000' }, signal })
     const buf = await resp.arrayBuffer()
-    const ctx = new AudioContext()
+    if (signal?.aborted) return null
+    ctx = new AudioContext()
     const ab = await ctx.decodeAudioData(buf)
-    await ctx.close()
     return { bpm: detectBPM(ab), key: detectKey(ab) }
   } catch { return null }
+  finally { if (ctx) await ctx.close().catch(() => {}) }
 }
 
 // ─── Analyze a local File (before upload) ──────────────────────────────────────
