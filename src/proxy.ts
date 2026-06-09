@@ -81,7 +81,7 @@ async function withAdminCheck(
   requestHeaders: Headers,
 ): Promise<NextResponse> {
   const { pathname } = request.nextUrl
-  if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
+  if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin') || pathname.startsWith('/api/infra')) {
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('subscription_tier')
@@ -171,7 +171,7 @@ export async function proxy(request: NextRequest) {
     // Exception: admin paths get a hard deny — userId came from an expired,
     // unverified token and the DB is unreachable so we cannot confirm admin status.
     const { pathname } = request.nextUrl
-    if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
+    if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin') || pathname.startsWith('/api/infra')) {
       return pathname.startsWith('/api/')
         ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
         : NextResponse.redirect(new URL('/dashboard', request.url))

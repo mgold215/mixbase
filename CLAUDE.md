@@ -273,8 +273,27 @@ node scripts/finalize-test.mjs
 # Playwright e2e tests (tests/e2e/, runs against staging by default)
 npm run test:e2e
 BASE_URL=http://localhost:3000 npm run test:e2e  # against local
+
+# Infra control-panel endpoints smoke test (login as admin, hit /api/infra/*)
+node scripts/test-infra.mjs https://mixbase-staging.up.railway.app <admin-email> <admin-password>
 ```
 All tests must pass before telling the user a fix is done.
+
+## Infra Control Panel (macOS app + /api/infra/*)
+A "pumped-up network diagram" for visualizing & querying the architecture. Two halves:
+
+**Backend — admin-gated `/api/infra/*` (read-only):**
+- `GET /api/infra/topology` — declarative node+edge graph (`src/lib/infra/topology.ts`) merged with live status badges. Always works (zero tokens).
+- `GET /api/infra/railway` — Railway env deploy status + metrics via GraphQL (`src/lib/infra/railway.ts`); plus `/api/health` liveness probes. Degrades to health-only without `RAILWAY_API_TOKEN`.
+- `GET /api/infra/supabase` — table row counts (service-role), storage usage, DB size, migrations, scaling signals (`src/lib/infra/supabase.ts`). DB size / per-bucket bytes / migrations need `SUPABASE_MANAGEMENT_TOKEN`.
+- `POST /api/infra/chat` — Claude tool-loop (mirrors `/api/admin/chat`) with **read-only** tools; needs `ANTHROPIC_API_KEY`.
+- All gated by `assertAdmin` + the `/api/infra` prefix added to `withAdminCheck` in `src/proxy.ts`. **Endpoints never 500 on a missing token — they return `configured:false`.**
+- New env var: `RAILWAY_API_TOKEN` (+ optional `RAILWAY_PROJECT_ID`, `SUPABASE_STORAGE_LIMIT_BYTES`, `SUPABASE_DB_LIMIT_BYTES`). See `.env.example`.
+
+**Frontend — native SwiftUI macOS app in `macos/`:**
+- Generated with **XcodeGen** (`macos/project.yml`); build via `cd macos && ./build.sh`. The `.xcodeproj` is generated, not committed. See `macos/README.md`.
+- Auths via the cookie session (`POST /api/auth`), then calls `/api/infra/*`. Provider secrets stay server-side on Railway.
+- Phase 2 (deferred): GitHub/Stripe/Sentry nodes go live; add guarded write/scaling actions.
 
 ## Business & Legal
 - **Legal entity:** moodmixformat, LLC (formed — do not suggest forming an LLC)
