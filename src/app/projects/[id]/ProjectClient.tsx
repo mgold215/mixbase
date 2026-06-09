@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -61,6 +62,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [deletingProject, setDeletingProject] = useState(false)
+  const router = useRouter()
 
   const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay } = usePlayer()
 
@@ -98,7 +100,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setDeletingProject(true)
     const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
     if (res.ok) {
-      window.location.href = '/dashboard'
+      router.push('/dashboard')
+      router.refresh()
     } else {
       setDeletingProject(false)
     }
