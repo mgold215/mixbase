@@ -5,6 +5,8 @@ import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 import { applyMediaSession } from '@/lib/media-session'
 
+export type LoopMode = 'none' | 'all' | 'one'
+
 type PlayerCtx = {
   tracks: Track[]
   loading: boolean
@@ -21,6 +23,15 @@ type PlayerCtx = {
   currentUrl: string | null
   /** The persistent <audio> element — share with the full player for seamless handoff */
   audioRef: RefObject<HTMLAudioElement | null>
+  /** Playback policy — lives here (not in the player page) so auto-advance, loop and
+   *  shuffle keep working on every tab, not just while /player is mounted. */
+  loopMode: LoopMode
+  shuffle: boolean
+  setLoopMode: (m: LoopMode) => void
+  setShuffle: (s: boolean) => void
+  /** Set the playback order (project ids) used by next/prev/auto-advance. The full
+   *  player pushes its filtered/sorted list here so every surface follows one queue. */
+  setQueue: (projectIds: string[]) => void
   playTrack: (projectId: string) => void
   /** Play any URL through the shared audio element (shows in mini player) */
   playUrl: (url: string, title: string, artist?: string, artworkUrl?: string, versionLabel?: string) => void
@@ -54,6 +65,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [customMeta, setCustomMeta] = useState<{
     title: string; artist: string; artwork_url: string | null; versionLabel: string
   } | null>(null)
+
+  // ── Playback policy (queue / loop / shuffle) ────────────────────────────────
+  // Mirrored into refs so the once-mounted audio 'ended' listener always sees the
+  // latest values without re-subscribing.
+  const [loopMode, setLoopMode] = useState<LoopMode>('none')
+  const [shuffle, setShuffle] = useState(false)
+  const loopRef = useRef(loopMode)
+  useEffect(() => { loopRef.current = loopMode }, [loopMode])
+  const shuffleRef = useRef(shuffle)
+  useEffect(() => { shuffleRef.current = shuffle }, [shuffle])
+  // Ordered project ids to advance through. Empty → fall back to tracks order.
+  const queueRef = useRef<string[]>([])
+  const setQueue = useCallback((projectIds: string[]) => { queueRef.current = projectIds }, [])
+  // Latest end-of-track handler, callable from the once-mounted engine listeners.
+  const onEndedRef = useRef<() => void>(() => {})
 
   // EQ chain — created lazily on first interaction with the full player
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -230,12 +256,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
-    const onEnded = () => {
-      playIntentRef.current = false
-      pendingPlayRef.current = false
-      setIsPlaying(false)
-      setBuffering(false)
-    }
+    // Delegate to the policy handler (loop / auto-advance) — defined below and kept
+    // fresh via ref so track endings advance the queue on EVERY tab, not just /player.
+    const onEnded = () => onEndedRef.current()
     const onError = () => {
       // Load/decode failed — clear all "in flight" flags so the UI doesn't lie.
       pendingPlayRef.current = false
@@ -484,27 +507,75 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (audioRef.current) audioRef.current.volume = v
   }, [])
 
+  // Queue used for transport: the full player's filtered/sorted list when it has
+  // pushed one, otherwise the natural tracks order. Works from any tab.
+  const getQueue = useCallback((): string[] => (
+    queueRef.current.length > 0 ? queueRef.current : tracks.map(t => t.project_id)
+  ), [tracks])
+
   const next = useCallback(() => {
-    if (!currentProjectId || tracks.length === 0) return
-    const idx = tracks.findIndex(t => t.project_id === currentProjectId)
-    const nextTrack = tracks[(idx + 1) % tracks.length]
-    if (nextTrack) playTrack(nextTrack.project_id)
-  }, [tracks, currentProjectId, playTrack])
+    const list = getQueue()
+    if (list.length === 0) return
+    const cur = currentProjectIdRef.current
+    const idx = cur ? list.indexOf(cur) : -1
+    let target = list[(idx + 1) % list.length]
+    if (shuffleRef.current && list.length > 1) {
+      do { target = list[Math.floor(Math.random() * list.length)] } while (target === cur)
+    }
+    playTrack(target)
+  }, [getQueue, playTrack])
 
   const prev = useCallback(() => {
-    if (!currentProjectId || tracks.length === 0) return
-    const idx = tracks.findIndex(t => t.project_id === currentProjectId)
-    const prevTrack = tracks[(idx - 1 + tracks.length) % tracks.length]
-    if (prevTrack) playTrack(prevTrack.project_id)
-  }, [tracks, currentProjectId, playTrack])
+    // Standard transport behaviour: first tap restarts the current track,
+    // only within the first 3 seconds does it go to the previous one.
+    const audio = audioRef.current
+    if (audio && audio.currentTime > 3 && currentProjectIdRef.current) {
+      audio.currentTime = 0
+      return
+    }
+    const list = getQueue()
+    if (list.length === 0) return
+    const cur = currentProjectIdRef.current
+    const idx = cur ? list.indexOf(cur) : 0
+    const target = list[((idx >= 0 ? idx : 0) - 1 + list.length) % list.length]
+    playTrack(target)
+  }, [getQueue, playTrack])
+
+  // ── End-of-track policy: loop / auto-advance ────────────────────────────────
+  // Runs via onEndedRef from the engine listener, so it fires no matter which page
+  // is mounted. (Previously this lived in /player's own 'ended' listener — playback
+  // simply stopped after one track on every other tab.)
+  const handleTrackEnd = useCallback(() => {
+    const audio = audioRef.current
+    const stop = () => {
+      playIntentRef.current = false
+      pendingPlayRef.current = false
+      setIsPlaying(false)
+      setBuffering(false)
+    }
+    if (!audio) { stop(); return }
+    if (loopRef.current === 'one') {
+      audio.currentTime = 0
+      attemptPlay()
+      return
+    }
+    const cur = currentProjectIdRef.current
+    if (!cur) { stop(); return } // custom URL (playUrl) — nothing to advance to
+    const list = getQueue()
+    const idx = list.indexOf(cur)
+    const isLast = idx >= 0 && idx === list.length - 1
+    if (loopRef.current === 'none' && isLast && !shuffleRef.current) { stop(); return }
+    next()
+  }, [getQueue, next, attemptPlay])
+  useEffect(() => { onEndedRef.current = handleTrackEnd }, [handleTrackEnd])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
     }
-    set('play',          () => { playIntentRef.current = true; audioRef.current?.play().catch(() => {}) })
-    set('pause',         () => { playIntentRef.current = false; audioRef.current?.pause() })
+    set('play',          () => attemptPlay())
+    set('pause',         () => pause())
     set('previoustrack', () => prev())
     set('nexttrack',     () => next())
     set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
@@ -514,7 +585,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
         .forEach(a => set(a, null))
     }
-  }, [prev, next])
+  }, [prev, next, attemptPlay, pause])
 
   return (
     <PlayerContext.Provider value={{
@@ -529,6 +600,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       volume,
       currentUrl,
       audioRef,
+      loopMode,
+      shuffle,
+      setLoopMode,
+      setShuffle,
+      setQueue,
       playTrack,
       playUrl,
       pause,
