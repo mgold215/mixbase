@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { refreshSessionOnce } from '@/lib/refresh-session'
 import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
 
 // Shared HS256 key used to verify access-token signatures locally (no network
@@ -32,11 +33,14 @@ const PUBLIC_PATHS = [
   '/api/auth/refresh', // must be reachable without a valid session
   '/api/feedback',
   '/api/audio',
-  '/api/audio-url',
   '/api/health',
   '/api/db-init',
   '/api/tus',
   '/api/stripe/webhook', // Stripe posts without user cookies; signature-verified internally
+  // PWA static assets — must load logged-out or service-worker install breaks
+  '/sw.js',
+  '/manifest.json',
+  '/icons/',
 ]
 
 const COOKIE_OPTS = {
@@ -62,8 +66,9 @@ function setSessionCookies(
 ) {
   res.cookies.set('sb-access-token', accessToken, { ...COOKIE_OPTS, maxAge: SESSION_MAX_AGE })
   res.cookies.set('sb-refresh-token', refreshToken, { ...COOKIE_OPTS, maxAge: SESSION_MAX_AGE })
-  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: SESSION_MAX_AGE })
-  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: SESSION_MAX_AGE })
+  // Non-httpOnly — client JS (SessionRefresher) must read these.
+  res.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: SESSION_MAX_AGE })
+  res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: SESSION_MAX_AGE })
 }
 
 function clearAndRedirect(request: NextRequest) {
@@ -150,8 +155,9 @@ export async function proxy(request: NextRequest) {
   }
 
   try {
-    const { data: refreshed, error: refreshError } =
-      await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken })
+    // Single-flight: concurrent requests with the same expired token share one
+    // refresh call, avoiding refresh-token rotation races (random logouts).
+    const { data: refreshed, error: refreshError } = await refreshSessionOnce(refreshToken)
 
     if (!refreshError && refreshed.session) {
       const expiresAt = refreshed.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600

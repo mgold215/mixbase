@@ -6,6 +6,7 @@ export async function POST() {
   response.cookies.delete('sb-access-token')
   response.cookies.delete('sb-refresh-token')
   response.cookies.delete('sb-authed')
+  response.cookies.delete('sb-expires-at')
   // Keep backward compat with old mb-session cookie
   response.cookies.delete('mb-session')
   return response

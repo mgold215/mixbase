@@ -55,8 +55,8 @@ export async function GET(request: NextRequest) {
   // expiry; middleware re-validates `exp` and refreshes. See /api/auth/route.ts.
   response.cookies.set('sb-access-token', data.session.access_token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-refresh-token', data.session.refresh_token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', secure: cookieOpts.secure, maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', secure: cookieOpts.secure, maxAge: 60 * 60 * 24 * 30 })
 
   return response
 }
