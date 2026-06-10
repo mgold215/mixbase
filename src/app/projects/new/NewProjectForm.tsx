@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation'
 import { Upload, Music, Trash2 } from 'lucide-react'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { audioProxyUrl } from '@/lib/supabase'
+import { usePlayer } from '@/contexts/PlayerContext'
 
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
                'Cm', 'C#m', 'Dm', 'D#m', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bm']
 
 export default function NewProjectForm() {
   const router = useRouter()
+  const { refreshTracks } = usePlayer()
   const [form, setForm] = useState({ title: '', genre: '', bpm: '', key_signature: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -73,6 +75,7 @@ export default function NewProjectForm() {
     // If no file selected, just redirect to the project page.
     // replace() so going back skips the now-stale form.
     if (!selectedFile) {
+      router.refresh()
       router.replace(`/projects/${project.id}`)
       return
     }
@@ -238,6 +241,8 @@ export default function NewProjectForm() {
     if (versionRes.ok) {
       setUploadPct(100)
       setUploadStatus('Done!')
+      refreshTracks()
+      router.refresh()
       setTimeout(() => router.replace(`/projects/${project.id}`), 400)
     } else {
       const err = await versionRes.json()

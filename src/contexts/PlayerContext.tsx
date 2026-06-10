@@ -44,6 +44,9 @@ type PlayerCtx = {
   prev: () => void
   /** Re-fetch the track list (e.g. after a failed initial load) */
   reloadTracks: () => void
+  /** Silently re-fetch the track list (no loading flicker) — call after editing
+   *  projects/mixes so the player reflects the change without a full reload */
+  refreshTracks: () => void
   /** Lazily initialises the Web Audio EQ chain on the shared <audio> element (call once on first interaction) */
   ensureAudioChain: () => void
   setEQGains: (bass: number, mid: number, treble: number) => void
@@ -172,6 +175,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
       .then((d: Track[]) => { setTracks(d); setLoading(false); lastFetchRef.current = Date.now() })
     load().catch(() => setTimeout(() => load().catch(() => { setLoading(false); setLoadError(true) }), 3000))
+  }, [])
+
+  // Silent refetch — keeps `loading` untouched so open UIs (full player, mini
+  // player) never flash skeletons. The current <audio> src is left alone; the
+  // fresh data applies from the next playTrack().
+  const refreshTracks = useCallback(() => {
+    fetch('/api/tracks')
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+      .then((d: Track[]) => { setTracks(d); setLoading(false); setLoadError(false); lastFetchRef.current = Date.now() })
+      .catch(() => {})
   }, [])
 
   // ── Persist playback position to localStorage so it survives navigation ────
@@ -626,6 +639,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       next,
       prev,
       reloadTracks,
+      refreshTracks,
       ensureAudioChain,
       setEQGains,
     }}>

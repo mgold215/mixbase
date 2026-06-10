@@ -58,10 +58,15 @@ export default function PlayerPageWrapper() {
 
 function PlayerPage() {
   const {
-    tracks, loading, loadError, reloadTracks, currentTrack, isPlaying, buffering, currentTime, duration,
+    tracks, loading, loadError, reloadTracks, refreshTracks, currentTrack, isPlaying, buffering, currentTime, duration,
     volume, playTrack, togglePlay, seek: ctxSeek, setVolume,
     loopMode, shuffle, setLoopMode, setShuffle, setQueue, next, prev,
   } = usePlayer()
+
+  // The track list lives in PlayerContext (which outlives every page), so it can
+  // be stale by the time the full player opens — e.g. after editing a project.
+  // Silently re-sync on every mount.
+  useEffect(() => { refreshTracks() }, [refreshTracks])
 
   const router = useRouter()
   const searchParams = useSearchParams()
