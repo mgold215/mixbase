@@ -4,9 +4,11 @@ import { useCallback, useEffect, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 
-// Overlay used by the intercepted /projects/* routes. Closing navigates back
-// to the page underneath (dashboard, pipeline, …) and refreshes it so any
-// edits made inside the modal (title, artwork, new mixes) show immediately.
+// Overlay used by the intercepted /projects/* routes. Closing just navigates
+// back — the page underneath stays fresh because every mutation inside the
+// modal (save, upload, artwork, …) already calls router.refresh() itself.
+// Do NOT refresh here: refreshing on unmount invalidates the whole client
+// router cache on every close/navigation and makes the app feel sluggish.
 export default function ModalShell({ children }: { children: ReactNode }) {
   const router = useRouter()
 
@@ -22,10 +24,8 @@ export default function ModalShell({ children }: { children: ReactNode }) {
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = prevOverflow
-      // Runs on every close path (X, ESC, backdrop, browser back, soft nav away)
-      router.refresh()
     }
-  }, [dismiss, router])
+  }, [dismiss])
 
   return (
     <div

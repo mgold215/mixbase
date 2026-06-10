@@ -65,7 +65,25 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [deletingProject, setDeletingProject] = useState(false)
   const router = useRouter()
 
-  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay } = usePlayer()
+  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, refreshTracks } = usePlayer()
+
+  // Push edits to the rest of the app: the player's client-side track list
+  // (refreshTracks) and the server-rendered pages cached by the router —
+  // dashboard stage chips, pipeline, the dashboard visible under the modal.
+  function syncAfterMutation() {
+    refreshTracks()
+    router.refresh()
+  }
+
+  function handleArtworkUpdated(url: string) {
+    setArtwork(url)
+    syncAfterMutation()
+  }
+
+  function handleFinalizedUpdated(url: string | null) {
+    setFinalizedArtwork(url)
+    syncAfterMutation()
+  }
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
@@ -101,13 +119,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setDeletingProject(true)
     const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
     if (res.ok) {
-      if (inModal) {
-        // Close the modal — ModalShell refreshes the page underneath on unmount
-        router.back()
-      } else {
-        router.push('/dashboard')
-        router.refresh()
-      }
+      refreshTracks()
+      if (inModal) router.back()
+      else router.push('/dashboard')
+      router.refresh()
     } else {
       setDeletingProject(false)
     }
@@ -121,6 +136,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     })
     if (res.ok) {
       setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: newStatus } : v))
+      syncAfterMutation()
     }
   }
 
@@ -321,6 +337,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         setUploadPct(0)
         setUploadStatus('')
         setUploading(false)
+        syncAfterMutation()
       }, 600)
     } else {
       setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
@@ -347,6 +364,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     if (res.ok) {
       setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
       setArchivedOpen(false)
+      syncAfterMutation()
     }
     setRestoring(false)
   }
@@ -388,6 +406,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setProjectSaved(true)
       setEditingProject(false)
       setTimeout(() => setProjectSaved(false), 2000)
+      syncAfterMutation()
     }
   }
 
@@ -401,6 +420,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     if (res.ok) {
       const data = await res.json()
       setRelease(data)
+      syncAfterMutation()
     }
     setStartingRelease(false)
   }
@@ -444,8 +464,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               genre={project.genre}
               currentArtwork={artwork}
               currentFinalized={finalizedArtwork}
-              onArtworkUpdated={setArtwork}
-              onFinalizedUpdated={setFinalizedArtwork}
+              onArtworkUpdated={handleArtworkUpdated}
+              onFinalizedUpdated={handleFinalizedUpdated}
               showFinalize={false}
               showActions={false}
             />
@@ -705,8 +725,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               genre={project.genre}
               currentArtwork={artwork}
               currentFinalized={finalizedArtwork}
-              onArtworkUpdated={setArtwork}
-              onFinalizedUpdated={setFinalizedArtwork}
+              onArtworkUpdated={handleArtworkUpdated}
+              onFinalizedUpdated={handleFinalizedUpdated}
             />
           </div>
         )}
