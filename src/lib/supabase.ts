@@ -122,6 +122,16 @@ export function audioProxyUrl(supabaseUrl: string): string {
   return `/api/audio/${supabaseUrl.slice(idx + marker.length)}`
 }
 
+// Rewrite an mf-artwork public URL to our same-origin proxy so iOS can render it on
+// the lock screen / Control Center (see src/app/api/artwork/[...path]/route.ts).
+// Non-mf-artwork URLs (e.g. transient Replicate URLs) are returned unchanged.
+export function artworkProxyUrl(url: string): string {
+  const marker = '/storage/v1/object/public/mf-artwork/'
+  const idx = url.indexOf(marker)
+  if (idx === -1) return url
+  return `/api/artwork/${url.slice(idx + marker.length)}`
+}
+
 export function formatDuration(seconds: number | null): string {
   if (!seconds) return '--:--'
   const m = Math.floor(seconds / 60)
