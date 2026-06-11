@@ -88,6 +88,11 @@ class AudioService: ObservableObject {
     // Stores the time-observer reference so we can clean it up later
     private var timeObserver: Any?
 
+    // Cached lock-screen artwork so updateNowPlayingInfo() doesn't drop it on every
+    // pause/seek/duration update, and so we only hit the network when the URL changes.
+    private var currentArtwork: MPMediaItemArtwork?
+    private var currentArtworkFetchUrl: String?
+
     // Long-lived subscriptions (audio session interruptions)
     private var cancellables = Set<AnyCancellable>()
     // Per-track subscriptions — cleared and rebuilt on every play() so they don't leak.
@@ -116,6 +121,21 @@ class AudioService: ObservableObject {
                 self?.handleInterruption(notification)
             }
             .store(in: &cancellables)
+    }
+
+    /// Re-activate the audio session right before we play. iOS deactivates the session
+    /// after interruptions (calls, notification sounds, other apps) — which happen often
+    /// while the phone is locked — and AVPlayer will then report `.playing` while routing
+    /// no audio out. Re-asserting the category + active state keeps lock-screen playback
+    /// truthful: if it's "playing", sound is actually coming out.
+    private func activateSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+        } catch {
+            print("AudioService: Failed to (re)activate audio session: \(error)")
+        }
     }
 
     // MARK: - Queue
@@ -162,6 +182,9 @@ class AudioService: ObservableObject {
         isPlaying = true
         buffering = true
 
+        // Make sure the session is live before playing — otherwise (e.g. after an
+        // interruption while locked) the player reports playing but emits no sound.
+        activateSession()
         newPlayer.play()
         updateNowPlayingInfo()
         addTimeObserver()
@@ -247,6 +270,7 @@ class AudioService: ObservableObject {
     func resume() {
         guard player != nil else { return }
         playIntent = true
+        activateSession()
         player?.play()
         isPlaying = true
         updateNowPlayingInfo()
@@ -390,10 +414,23 @@ class AudioService: ObservableObject {
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
+        // Keep the already-loaded artwork attached so it doesn't blink off the lock screen
+        // every time we refresh playback state. Only drop it if the track's art URL changed.
+        if let art = currentArtwork, currentArtworkFetchUrl == currentArtworkUrl {
+            info[MPMediaItemPropertyArtwork] = art
+        }
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
 
-        if let urlString = currentArtworkUrl, let url = URL(string: urlString) {
-            fetchArtwork(from: url)
+        // Fetch over the network only when the art URL actually changes — not on every
+        // pause/seek/duration tick.
+        if let urlString = currentArtworkUrl {
+            if urlString != currentArtworkFetchUrl, let url = URL(string: urlString) {
+                fetchArtwork(from: url, forUrlString: urlString)
+            }
+        } else {
+            currentArtwork = nil
+            currentArtworkFetchUrl = nil
         }
     }
 
@@ -405,12 +442,17 @@ class AudioService: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
-    private func fetchArtwork(from url: URL) {
+    private func fetchArtwork(from url: URL, forUrlString urlString: String) {
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data, let image = UIImage(data: data) else { return }
             DispatchQueue.main.async {
-                guard self != nil else { return }
+                guard let self = self else { return }
+                // Ignore a slow response for a track we've already skipped past, so a
+                // previous track's art can't land on the current one.
+                guard self.currentArtworkUrl == urlString else { return }
                 let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                self.currentArtwork = artwork
+                self.currentArtworkFetchUrl = urlString
                 var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo

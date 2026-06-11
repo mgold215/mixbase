@@ -245,9 +245,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const onPlaying = () => {
       // Audio is actually producing output now — this is the truthful "playing" signal.
+      // Only now do we tell the lock screen we're playing, so it can never show "playing"
+      // while a backgrounded track-change is silently stuck loading.
       pendingPlayRef.current = false
       setIsPlaying(true)
       setBuffering(false)
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
     }
     const onWaiting = () => {
       // Stalled waiting for data while we intend to play → buffering, not playing.
@@ -280,6 +283,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       pendingPlayRef.current = false
       setIsPlaying(false)
       setBuffering(false)
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
     const onEmptied = () => {
       // src was swapped out. If no play is queued, we're stopped; reset progress.
@@ -450,11 +454,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       p.then(() => { pendingPlayRef.current = false })
        .catch((err: { name?: string }) => {
          if (err?.name === 'NotAllowedError') {
-           // Needs a fresh user gesture — don't pretend we're playing.
-           pendingPlayRef.current = false
-           playIntentRef.current = false
+           // iOS blocked the start (no transient activation — typical of a backgrounded
+           // auto-advance/skip). Stop pretending we're playing so the lock screen shows
+           // the truth, but KEEP playIntentRef set: the visibility/pageshow recovery
+           // resumes this track the moment the screen unlocks, instead of leaving a
+           // "playing" lock screen with no sound.
            setIsPlaying(false)
            setBuffering(false)
+           if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
          }
          // AbortError / other transient load errors: keep pendingPlayRef set; 'canplay' retries.
        })
@@ -577,6 +584,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       pendingPlayRef.current = false
       setIsPlaying(false)
       setBuffering(false)
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
     if (!audio) { stop(); return }
     if (loopRef.current === 'one') {

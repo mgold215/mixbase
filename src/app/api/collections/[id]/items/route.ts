@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 // Verify the collection belongs to this user — returns false if not found/unauthorized
 async function ownsCollection(collectionId: string, userId: string): Promise<boolean> {
@@ -7,6 +8,17 @@ async function ownsCollection(collectionId: string, userId: string): Promise<boo
     .from('mb_collections')
     .select('id')
     .eq('id', collectionId)
+    .eq('user_id', userId)
+    .single()
+  return !!data
+}
+
+// Verify the project belongs to this user — returns false if not found/unauthorized
+async function ownsProject(projectId: string, userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('mb_projects')
+    .select('id')
+    .eq('id', projectId)
     .eq('user_id', userId)
     .single()
   return !!data
@@ -25,8 +37,17 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const body = await request.json()
   const { project_id, position } = body
 
-  if (!project_id) {
-    return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+  // Validate the id shape before it reaches a DB write.
+  if (!isUuid(project_id)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
+  }
+
+  // Ownership check: the collection GET reads each item back joined with its
+  // project's title/artwork/genre. Without this an authed user could attach
+  // another user's project to their own collection and read those fields out
+  // of it (cross-user disclosure / IDOR).
+  if (!await ownsProject(project_id, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
   const { data, error } = await supabaseAdmin

@@ -55,6 +55,10 @@ export const signupLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 })
 // Artwork generation: 10 per hour per user — cost control before tier gate fully activates
 export const artworkLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
 
+// Video generation: 5 per hour per user — Runway image-to-video is the single most
+// expensive AI call in the app. Defence-in-depth alongside the monthly tier gate.
+export const videoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 })
+
 // Upload-url: 30 per hour per user — generous but blocks hammering
 export const uploadLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 

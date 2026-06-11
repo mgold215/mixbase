@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
+import { ownsProject, ownsVersion } from '@/lib/ownership'
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
@@ -23,6 +25,18 @@ export async function POST(request: NextRequest) {
   const { title, release_date, project_id, genre, label, isrc, notes, final_version_id } = body
 
   if (!title?.trim()) return NextResponse.json({ error: 'Title is required' }, { status: 400 })
+
+  // Both ids are optional, but when present they must be UUIDs this user owns.
+  // GET reads releases back joined with mb_projects(title, artwork_url) via the
+  // RLS-bypassing service client, so an unchecked project_id would let a user pull
+  // another user's project title/artwork into their own pipeline (cross-user
+  // disclosure / IDOR). final_version_id ownership flows through its parent project.
+  if (project_id != null && (!isUuid(project_id) || !await ownsProject(project_id, userId))) {
+    return NextResponse.json({ error: 'Invalid project_id' }, { status: 400 })
+  }
+  if (final_version_id != null && (!isUuid(final_version_id) || !await ownsVersion(final_version_id, userId))) {
+    return NextResponse.json({ error: 'Invalid final_version_id' }, { status: 400 })
+  }
 
   const { data, error } = await supabaseAdmin
     .from('mb_releases')

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkAndIncrementUsage } from '@/lib/tier'
+import { videoLimiter } from '@/lib/rate-limit'
 
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
 const RUNWAY_BASE = 'https://api.dev.runwayml.com/v1'
@@ -45,7 +47,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'RUNWAY_API_KEY not configured' }, { status: 501 })
   }
 
-  const { imageUrl, promptText: customPrompt, model: requestedModel, duration, ratio } = await req.json()
+  // Require an authenticated caller — middleware injects X-User-Id for non-public routes.
+  // Without this the most expensive AI call in the app was reachable with no per-user
+  // accounting at all.
+  const userId = req.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  // Rate limit: 5/hour per user — defence-in-depth alongside the monthly tier gate below.
+  if (!videoLimiter.check(userId).allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429 })
+  }
+
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { imageUrl, promptText: customPrompt, model: requestedModel, duration, ratio } = body
 
   if (!imageUrl) {
     return NextResponse.json({ error: 'imageUrl is required' }, { status: 400 })
@@ -73,6 +88,17 @@ export async function POST(req: NextRequest) {
     : modelCfg.ratios.includes('720:1280') ? '720:1280' : modelCfg.ratios[0]
 
   const promptText = customPrompt?.trim() || 'Slow cinematic drift, subtle atmospheric shimmer, ambient light play, looping, no text, no faces'
+
+  // Monthly tier gate — enforces the per-plan video quota (free/pro: 0, studio: 10).
+  // Placed after input validation but before the paid Runway call so a bad request
+  // never consumes quota. Mirrors generate-artwork's gate.
+  const gate = await checkAndIncrementUsage(userId, 'video')
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },
+      { status: 403 }
+    )
+  }
 
   // Create Runway task
   const createRes = await fetch(`${RUNWAY_BASE}/image_to_video`, {

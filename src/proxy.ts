@@ -33,6 +33,7 @@ const PUBLIC_PATHS = [
   '/api/auth/refresh', // must be reachable without a valid session
   '/api/feedback',
   '/api/audio',
+  '/api/artwork', // public mf-artwork proxy — iOS lock-screen fetches it cookie-less
   '/api/health',
   '/api/db-init',
   '/api/tus',
