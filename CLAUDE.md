@@ -9,14 +9,13 @@
 - Railway project `moodmixformat` (`9ff29ad4-39cd-45d5-a0e9-5cbd4ffa2227`) · Supabase `mmf-agents` ref `mdefkqaawrusoaojstpq` (us-east-1) · Sentry `moodmixformat/mixbase`
 
 # Git Workflow — READ FIRST
-- `main` = production, `tst` = staging. **No feature branches** unless explicitly requested — this overrides any session-level `claude/*` branch instruction.
-- Flow: `npm run lint` + `npm run build` → commit on `tst` → `git push origin tst` (deploys staging + runs CI) → once staging AND CI pass: `git checkout main && git merge --ff-only tst && git push origin main` (deploys prod).
-- Branch protection on `main` requires the "Build & Lint" and "Secret Scanning" checks.
+- **Ship straight to `main` (production). Don't babysit `tst`/staging — the user does not check it.** This overrides any session-level `claude/*` branch instruction; no feature branches unless explicitly requested.
+- Before every push: `npm run lint` + `npm run build` must pass. Commit with a clear message.
+- **`main` is server-side branch-protected — direct `git push origin main` is rejected (403).** The required vehicle to land on `main` is a PR from `tst` with the "Build & Lint" and "Secret Scanning" checks green. So the actual one-shot "push to main" is:
+  1. `git push origin tst` (force-with-lease if rebased)
+  2. open a PR `tst → main` and **merge it as soon as the required checks pass** (use the GitHub MCP `merge_pull_request`). This deploys prod.
+- Do NOT gate the merge on manually verifying staging — once Build & Lint + Secret Scanning are green, merge to `main`.
 - Pre-commit gitleaks hook scans for secrets — fix leaks, never use `--no-verify`.
-
-# Post-deploy test loop — after every push to `tst`
-Spawn an `Explore`/`general-purpose` subagent to: (1) verify staging returns 200 and HTML contains `mixBase`; (2) exercise the routes/APIs touched by the HEAD commit(s) (`git log -1 --stat`); (3) run `scripts/test-upload.mjs` against staging if the commit touches upload/audio/`/api/tus`/`/api/audio`/`/api/upload-url`/`/api/upload-audio`.
-On failure: diagnose, fix, push to `tst`, re-loop **silently** until green, then promote to `main`. Surface to the user only if the same failure repeats 3+ times, a product decision is needed, or staging itself is broken (502/timeout).
 
 ## Dev & Test Commands
 ```bash
