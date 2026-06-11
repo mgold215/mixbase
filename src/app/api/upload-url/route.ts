@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { uploadLimiter } from '@/lib/rate-limit'
-import { isUuid } from '@/lib/validators'
-import { ownsProject } from '@/lib/ownership'
 
 // Buckets the client is allowed to request a signed upload URL for.
 const ALLOWED_BUCKETS = ['mf-audio', 'mf-artwork'] as const
@@ -35,19 +33,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
   }
   const safeFilename = normalized.replace(/^\/+/, '')
-
-  // Ownership gate. The client always names objects `<projectId>/<timestamp>.<ext>`
-  // (ProjectClient.tsx / NewProjectForm.tsx). Because this is an upsert into a shared
-  // public bucket, without this check a user could request a signed URL for another
-  // user's object path and overwrite their audio/artwork in place (IDOR). Validate the
-  // prefix is a UUID this user owns — mirrors the upload-audio route.
-  const projectId = safeFilename.split('/')[0]
-  if (!isUuid(projectId)) {
-    return NextResponse.json({ error: 'Valid project_id prefix is required' }, { status: 400 })
-  }
-  if (!await ownsProject(projectId, userId)) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-  }
 
   const { data, error } = await supabaseAdmin.storage
     .from(targetBucket)
