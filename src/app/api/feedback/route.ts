@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey } from '@/lib/rate-limit'
+import { isUuid } from '@/lib/validators'
 
 // POST /api/feedback — submit feedback for a shared version (public route)
 export async function POST(request: NextRequest) {
@@ -9,10 +10,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
   }
 
-  const { version_id, reviewer_name, rating, comment } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { version_id, reviewer_name, rating, comment } = body
 
   if (!version_id || !comment?.trim()) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
+  }
+
+  // Public endpoint — validate the id shape before it reaches a DB insert/lookup so a
+  // malformed value can't surface a raw Postgres error message to an anonymous caller.
+  if (!isUuid(version_id)) {
+    return NextResponse.json({ error: 'Valid version_id is required' }, { status: 400 })
   }
 
   // Rating is optional, but if present it must be a whole number 1–5 — the UI

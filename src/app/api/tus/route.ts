@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isUuid } from '@/lib/validators'
+import { ownsProject } from '@/lib/ownership'
+import { verifyAccessToken, makeJwtKey } from '@/lib/verifyToken'
 
 // Disable body parsing — we stream the body straight through to Supabase
 export const maxDuration = 300
@@ -11,11 +14,50 @@ function serviceKey() {
   return key
 }
 
+// Parse a TUS Upload-Metadata header ("key b64val,key2 b64val2") and return the
+// decoded value for one key, or null if absent/undecodable.
+function metadataValue(header: string | null, key: string): string | null {
+  if (!header) return null
+  for (const pair of header.split(',')) {
+    const [k, v] = pair.trim().split(' ')
+    if (k === key && v) {
+      try { return Buffer.from(v, 'base64').toString('utf8') } catch { return null }
+    }
+  }
+  return null
+}
+
+// Resolve the caller from the access-token cookie. /api/tus is a public path (the
+// resumable protocol streams large bodies and must skip the auth-refresh middleware),
+// so we verify the cookie here in-route instead of reading the X-User-Id header.
+async function userIdFromCookie(req: NextRequest): Promise<string | null> {
+  const token = req.cookies.get('sb-access-token')?.value
+  if (!token) return null
+  const { userId } = await verifyAccessToken(token, makeJwtKey(process.env.SUPABASE_JWT_SECRET))
+  return userId
+}
+
 // POST — create a new TUS upload session at Supabase using the service-role key.
 // The service-role key bypasses Supabase's anon per-file size limit.
 // We return a /api/tus/<uploadId> Location so subsequent PATCHes go through this proxy
 // (each PATCH is one chunk ≤ 8 MB, well under Railway's 10 MB request body wall).
 export async function POST(req: NextRequest) {
+  // Authenticate (cookie-based — see userIdFromCookie) and verify the caller owns the
+  // project the object path is namespaced under. The path is `<projectId>/<ts>.<ext>`
+  // and this creates an upsert-enabled session into the shared public bucket, so
+  // without this a user could overwrite another user's audio/artwork (IDOR).
+  const userId = await userIdFromCookie(req)
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  const objectName = metadataValue(req.headers.get('upload-metadata'), 'objectName')
+  const projectId = objectName?.split('/')[0]
+  if (!projectId || !isUuid(projectId)) {
+    return NextResponse.json({ error: 'Valid objectName project prefix is required' }, { status: 400 })
+  }
+  if (!await ownsProject(projectId, userId)) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+
   const forwardHeaders: Record<string, string> = {
     Authorization: `Bearer ${serviceKey()}`,
     'Tus-Resumable': req.headers.get('tus-resumable') ?? '1.0.0',
