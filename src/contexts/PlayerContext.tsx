@@ -345,39 +345,43 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch { /* position race */ }
   }, [currentTime, duration])
 
-  // ── visibilitychange — resume AudioContext + audio element after iOS suspends ─
-  // iOS can pause <audio> *before* firing visibilitychange:hidden, so we track
-  // user intent (playIntentRef) rather than the live audio.paused value.
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        const ctx = audioCtxRef.current
-        if (ctx && ctx.state !== 'running') {
-          ctx.resume().catch(() => {})
-        }
-        if (playIntentRef.current && audioRef.current?.paused) {
-          pendingPlayRef.current = true
-          audioRef.current.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
-        }
-      }
+  // Re-push the current Media Session metadata (title/artist/artwork) so the lock screen
+  // and car head-unit display get fresh artwork after a resume — some routes drop it when
+  // backgrounded or on reconnect.
+  const reapplyMetadata = useCallback((playing: boolean) => {
+    const m = mediaMetaRef.current
+    if (m) applyMediaSession(m.title, m.artworkUrl, playing, m.artist)
+  }, [])
+
+  // Shared resume path for every "we came back" signal (unlock, pageshow, stall, output
+  // device reconnect). Gated on playIntentRef — true only if the user hadn't deliberately
+  // paused — so an OS interruption (Bluetooth drop) can be recovered, but a manual pause
+  // is never overridden.
+  const resumeIfIntended = useCallback(() => {
+    const ctx = audioCtxRef.current
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
+    const audio = audioRef.current
+    if (playIntentRef.current && audio?.paused) {
+      pendingPlayRef.current = true
+      audio.play()
+        .then(() => { pendingPlayRef.current = false; reapplyMetadata(true) })
+        .catch(() => {})
     }
+  }, [reapplyMetadata])
+
+  // ── visibilitychange — resume after iOS suspends. iOS can pause <audio> *before*
+  // firing visibilitychange:hidden, so resumeIfIntended() keys off playIntentRef.
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === 'visible') resumeIfIntended() }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [])
+  }, [resumeIfIntended])
 
   // ── pageshow — iOS sometimes fires this instead of visibilitychange on unlock
   useEffect(() => {
-    const onPageShow = () => {
-      const ctx = audioCtxRef.current
-      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
-      if (playIntentRef.current && audioRef.current?.paused) {
-        pendingPlayRef.current = true
-        audioRef.current.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
-      }
-    }
-    window.addEventListener('pageshow', onPageShow)
-    return () => window.removeEventListener('pageshow', onPageShow)
-  }, [])
+    window.addEventListener('pageshow', resumeIfIntended)
+    return () => window.removeEventListener('pageshow', resumeIfIntended)
+  }, [resumeIfIntended])
 
   // ── Pause when another audio source starts playing (e.g. share-page player).
   // Must clear play intent too, or the iOS visibility/stalled recovery effects
@@ -392,17 +396,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
-    const onStalled = () => {
-      if (playIntentRef.current && audio.paused) {
-        const ctx = audioCtxRef.current
-        if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
-        pendingPlayRef.current = true
-        audio.play().then(() => { pendingPlayRef.current = false }).catch(() => {})
-      }
+    audio.addEventListener('stalled', resumeIfIntended)
+    return () => audio.removeEventListener('stalled', resumeIfIntended)
+  }, [resumeIfIntended])
+
+  // ── Audio output device reconnect (e.g. Bluetooth/car) — resume playback.
+  // Only resume when an output device is *added*, never on removal: resuming on
+  // disconnect (leaving the car / unplugging) would blast the phone speaker. We detect
+  // an addition by comparing the audiooutput count across devicechange events.
+  // On platforms that don't enumerate audiooutput (notably iOS Safari) the count stays
+  // flat, so this is a safe no-op there rather than a misfire.
+  useEffect(() => {
+    const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
+    if (!md?.enumerateDevices || !md.addEventListener) return
+    let prevOutputs = -1
+    const countOutputs = () => md.enumerateDevices()
+      .then(devs => devs.filter(d => d.kind === 'audiooutput').length)
+      .catch(() => -1)
+    countOutputs().then(n => { prevOutputs = n })
+    const onDeviceChange = () => {
+      countOutputs().then(n => {
+        const added = prevOutputs >= 0 && n > prevOutputs
+        prevOutputs = n
+        if (added) resumeIfIntended()
+      })
     }
-    audio.addEventListener('stalled', onStalled)
-    return () => audio.removeEventListener('stalled', onStalled)
-  }, [])
+    md.addEventListener('devicechange', onDeviceChange)
+    return () => md.removeEventListener('devicechange', onDeviceChange)
+  }, [resumeIfIntended])
 
   // ── EQ chain ─────────────────────────────────────────────────────────────────
   const ensureAudioChain = useCallback(() => {
