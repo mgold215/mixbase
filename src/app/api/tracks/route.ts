@@ -16,12 +16,16 @@ export type Track = {
   bpm: number | null
 }
 
-let _backfillDone = false
+// Track which users we've already backfilled this process. Must be PER-USER:
+// a single module-level boolean would let the first caller after a deploy mark
+// the backfill "done" for everyone, so every other user's legacy projects keep
+// share_token:null and their share links stay broken until the next restart.
+const _backfilled = new Set<string>()
 // Share links must resolve to the *latest* mix, so they point at the project
 // (mb_projects.share_token), not a single version. Backfill any project that
 // predates project-level tokens so every track has a shareable link.
 async function ensureShareTokens(userId: string) {
-  if (_backfillDone) return
+  if (_backfilled.has(userId)) return
   try {
     const { data } = await supabaseAdmin
       .from('mb_projects')
@@ -29,7 +33,7 @@ async function ensureShareTokens(userId: string) {
       .is('share_token', null)
       .eq('user_id', userId)
       .limit(200)
-    if (!data?.length) { _backfillDone = true; return }
+    if (!data?.length) { _backfilled.add(userId); return }
     await Promise.all(
       data.map(p =>
         supabaseAdmin
@@ -38,9 +42,9 @@ async function ensureShareTokens(userId: string) {
           .eq('id', p.id)
       )
     )
-    _backfillDone = true
+    _backfilled.add(userId)
   } catch (e) {
-    // Non-fatal — leave _backfillDone false so the next request retries the
+    // Non-fatal — leave this user out of the set so the next request retries the
     // backfill, but surface the failure so it isn't silently swallowed forever.
     console.warn('[tracks] share-token backfill failed:', e)
   }

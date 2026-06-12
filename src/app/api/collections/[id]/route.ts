@@ -23,6 +23,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     .select('*, mb_projects(title, artwork_url, genre)')
     .eq('collection_id', id)
     .order('position', { ascending: true })
+    .limit(500)
 
   return NextResponse.json({
     collection: collectionRes.data,
