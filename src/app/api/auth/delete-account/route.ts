@@ -9,10 +9,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  // Gather all project and version IDs before deleting anything
+  // Gather projects (with artwork_url) and version IDs before deleting anything.
+  // Folding artwork_url into this select avoids a second full projects scan.
   const { data: projects } = await supabaseAdmin
     .from('mb_projects')
-    .select('id')
+    .select('id, artwork_url')
     .eq('user_id', userId)
 
   const projectIds = (projects ?? []).map(p => p.id)
@@ -39,36 +40,41 @@ export async function POST(request: NextRequest) {
       .filter((p): p is string => !!p)
   }
 
-  // Collect artwork paths from projects
-  const { data: projectsWithArt } = await supabaseAdmin
-    .from('mb_projects')
-    .select('artwork_url')
-    .eq('user_id', userId)
-
   const artworkMarker = '/storage/v1/object/public/mf-artwork/'
-  const artworkPaths = (projectsWithArt ?? [])
+  const artworkPaths = (projects ?? [])
     .map(p => {
       const idx = p.artwork_url?.indexOf(artworkMarker) ?? -1
       return idx !== -1 ? p.artwork_url.slice(idx + artworkMarker.length) : null
     })
     .filter((p): p is string => !!p)
 
-  // Delete storage files (best-effort — don't block account deletion on storage errors)
+  // Delete storage objects. A storage failure must NOT trap the user in an
+  // undeletable account, so we log loudly (for a later orphan sweep) and press
+  // on — DB-row deletion below is what actually gates the irreversible step.
   if (audioPaths.length > 0) {
-    await supabaseAdmin.storage.from('mf-audio').remove(audioPaths)
+    const { error } = await supabaseAdmin.storage.from('mf-audio').remove(audioPaths)
+    if (error) console.error('[delete-account] mf-audio cleanup failed for', userId, error.message)
   }
   if (artworkPaths.length > 0) {
-    await supabaseAdmin.storage.from('mf-artwork').remove(artworkPaths)
+    const { error } = await supabaseAdmin.storage.from('mf-artwork').remove(artworkPaths)
+    if (error) console.error('[delete-account] mf-artwork cleanup failed for', userId, error.message)
   }
 
-  // Delete DB rows in dependency order
+  // Delete DB rows in dependency order, capturing every error. If ANY row
+  // deletion fails we abort before auth.admin.deleteUser — otherwise the auth
+  // user would be destroyed while PII rows keyed to that id linger as zombies.
+  const dbErrors: string[] = []
+  const del = async (p: PromiseLike<{ error: { message: string } | null }>, label: string) => {
+    const { error } = await p
+    if (error) dbErrors.push(`${label}: ${error.message}`)
+  }
+
   if (versionIds.length > 0) {
-    await supabaseAdmin.from('mb_feedback').delete().in('version_id', versionIds)
+    await del(supabaseAdmin.from('mb_feedback').delete().in('version_id', versionIds), 'mb_feedback')
   }
-
   if (projectIds.length > 0) {
-    await supabaseAdmin.from('mb_activity').delete().in('project_id', projectIds)
-    await supabaseAdmin.from('mb_versions').delete().in('project_id', projectIds)
+    await del(supabaseAdmin.from('mb_activity').delete().in('project_id', projectIds), 'mb_activity')
+    await del(supabaseAdmin.from('mb_versions').delete().in('project_id', projectIds), 'mb_versions')
   }
 
   const { data: collections } = await supabaseAdmin
@@ -78,12 +84,21 @@ export async function POST(request: NextRequest) {
   const collectionIds = (collections ?? []).map(c => c.id)
 
   if (collectionIds.length > 0) {
-    await supabaseAdmin.from('mb_collection_items').delete().in('collection_id', collectionIds)
+    await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', collectionIds), 'mb_collection_items')
   }
 
-  await supabaseAdmin.from('mb_collections').delete().eq('user_id', userId)
-  await supabaseAdmin.from('mb_releases').delete().eq('user_id', userId)
-  await supabaseAdmin.from('mb_projects').delete().eq('user_id', userId)
+  await del(supabaseAdmin.from('mb_collections').delete().eq('user_id', userId), 'mb_collections')
+  await del(supabaseAdmin.from('mb_releases').delete().eq('user_id', userId), 'mb_releases')
+  await del(supabaseAdmin.from('mb_projects').delete().eq('user_id', userId), 'mb_projects')
+
+  if (dbErrors.length > 0) {
+    // Leave the account intact and retryable rather than half-deleting it.
+    console.error('[delete-account] aborting before auth deletion for', userId, dbErrors)
+    return NextResponse.json(
+      { error: 'Failed to delete account data — no changes were finalized. Please try again.' },
+      { status: 500 }
+    )
+  }
 
   // Delete the auth user last (cascades to profiles via FK)
   const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)

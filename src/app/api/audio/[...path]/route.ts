@@ -30,10 +30,15 @@ export async function GET(
 
   let upstream: Response
   try {
-    upstream = await fetch(supabaseUrl, { headers: upstreamHeaders })
+    // Cap the upstream wait at 30s. Without it a stalled Supabase connection can
+    // pin a Railway worker for the full 60s maxDuration, starving other requests.
+    upstream = await fetch(supabaseUrl, {
+      headers: upstreamHeaders,
+      signal: AbortSignal.timeout(30000),
+    })
   } catch {
-    // Network blip talking to Supabase — surface as 502 so the element can retry
-    // rather than throwing a 500 that looks like a hard failure.
+    // Network blip or timeout talking to Supabase — surface as 502 so the element
+    // can retry rather than throwing a 500 that looks like a hard failure.
     return new NextResponse(null, { status: 502 })
   }
 

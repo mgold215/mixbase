@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     .select('*, mb_projects(title, artwork_url)')
     .eq('user_id', userId)
     .order('release_date', { ascending: true, nullsFirst: false })
+    .limit(500)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
