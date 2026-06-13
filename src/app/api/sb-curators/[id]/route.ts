@@ -16,7 +16,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const { id } = await ctx.params
   if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const patch: Record<string, unknown> = {}
   for (const key of EDITABLE) if (key in body) patch[key] = body[key]
   if (Object.keys(patch).length === 0) {

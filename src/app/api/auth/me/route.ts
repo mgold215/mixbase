@@ -33,7 +33,8 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const updates: Record<string, string> = {}
   if (typeof body.artist_name === 'string') updates.artist_name = body.artist_name.trim()
   if (typeof body.display_name === 'string') updates.display_name = body.display_name.trim()
