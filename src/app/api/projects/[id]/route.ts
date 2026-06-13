@@ -14,7 +14,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       .from('mb_versions')
       .select('*, mb_feedback(count)')
       .eq('project_id', id)
-      .order('version_number', { ascending: false }),
+      .order('version_number', { ascending: false })
+      .limit(500),
   ])
 
   if (projectRes.error) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -31,7 +32,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url'] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }

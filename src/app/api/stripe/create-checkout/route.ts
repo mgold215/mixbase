@@ -19,7 +19,9 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { plan } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { plan } = body
   const priceId = PLAN_PRICE_MAP[plan]
   if (!priceId) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
 

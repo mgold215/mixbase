@@ -8,7 +8,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const { current_password, new_password } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { current_password, new_password } = body
 
   if (!current_password || !new_password) {
     return NextResponse.json({ error: 'Both current and new password are required' }, { status: 400 })

@@ -19,7 +19,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many upload requests. Try again later.' }, { status: 429 })
   }
 
-  const { filename, contentType, bucket } = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { filename, contentType, bucket } = body
   if (!filename || typeof filename !== 'string') {
     return NextResponse.json({ error: 'filename required' }, { status: 400 })
   }

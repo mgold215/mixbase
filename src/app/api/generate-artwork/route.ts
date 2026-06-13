@@ -41,7 +41,9 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { project_id, prompt, model = 'flux' } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { project_id, prompt, model = 'flux' } = body
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
