@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { checkAndIncrementUsage } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 
@@ -76,11 +76,18 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // The artwork slot is now reserved (checkAndIncrementUsage incremented it).
+  // Every failure path below must release it, or a provider/config hiccup would
+  // permanently burn the user's monthly quota with nothing to show for it.
+  const refund = () => refundUsage(userId, 'artwork')
+
   const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
   if (!replicateToken) {
+    await refund()
     return NextResponse.json({ error: 'REPLICATE_API_TOKEN not set in environment' }, { status: 500 })
   }
   if (!replicateToken.startsWith('r8_')) {
+    await refund()
     console.error('[generate-artwork] Token looks wrong, starts with:', replicateToken.slice(0, 4))
     return NextResponse.json({ error: `Token format invalid (starts with "${replicateToken.slice(0, 4)}", expected "r8_")` }, { status: 500 })
   }
@@ -101,6 +108,7 @@ export async function POST(request: NextRequest) {
   const prediction = await replicateRes.json()
 
   if (!replicateRes.ok || prediction.error) {
+    await refund()
     console.error('[generate-artwork] Replicate error:', replicateRes.status, JSON.stringify(prediction))
     return NextResponse.json({ error: prediction.detail ?? prediction.error ?? 'Image generation failed' }, { status: 500 })
   }
@@ -112,11 +120,13 @@ export async function POST(request: NextRequest) {
     try {
       outputUrl = await pollPrediction(prediction.urls.get, replicateToken)
     } catch (err) {
+      await refund()
       return NextResponse.json({ error: err instanceof Error ? err.message : 'Generation failed' }, { status: 500 })
     }
   }
 
   if (!outputUrl) {
+    await refund()
     console.error('[generate-artwork] No output. Status:', prediction.status, 'Full:', JSON.stringify(prediction))
     return NextResponse.json({ error: `No image returned (status: ${prediction.status ?? 'unknown'})` }, { status: 500 })
   }
@@ -127,6 +137,7 @@ export async function POST(request: NextRequest) {
   // never has to deal with text already burned into the source.
   const imageRes = await fetch(outputUrl)
   if (!imageRes.ok) {
+    await refund()
     return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })
   }
   const imageBytes = Buffer.from(await imageRes.arrayBuffer())
@@ -145,6 +156,7 @@ export async function POST(request: NextRequest) {
     // ~1 hour and is never persisted (the DB write below only runs on success),
     // so the client would show artwork that 404s on the next reload. Fail loudly
     // so the user retries instead of saving a dead link.
+    await refund()
     console.error('[generate-artwork] Supabase upload error:', uploadError.message)
     return NextResponse.json({ error: 'Failed to save generated image. Please try again.' }, { status: 500 })
   }

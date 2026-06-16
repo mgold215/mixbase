@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { checkAndIncrementUsage } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { videoLimiter } from '@/lib/rate-limit'
 
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
@@ -100,6 +100,11 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // The video slot is now reserved. Video is the most expensive call in the app
+  // and the tightest quota (studio: 10/mo), so every failure path below must hand
+  // the slot back — a Runway error or timeout must not burn a paid generation.
+  const refund = () => refundUsage(userId, 'video')
+
   // Create Runway task
   const createRes = await fetch(`${RUNWAY_BASE}/image_to_video`, {
     method: 'POST',
@@ -118,6 +123,7 @@ export async function POST(req: NextRequest) {
   })
 
   if (!createRes.ok) {
+    await refund()
     const errText = await createRes.text()
     console.error('Runway create error:', createRes.status, errText)
     try {
@@ -155,16 +161,21 @@ export async function POST(req: NextRequest) {
 
     if (pollData.status === 'SUCCEEDED') {
       const videoUrl = pollData.output?.[0]
-      if (!videoUrl) return NextResponse.json({ error: 'No video in Runway response' }, { status: 502 })
+      if (!videoUrl) {
+        await refund()
+        return NextResponse.json({ error: 'No video in Runway response' }, { status: 502 })
+      }
       return NextResponse.json({ videoUrl, model: modelCfg.label })
     }
 
     if (pollData.status === 'FAILED') {
+      await refund()
       const failReason = pollData.failure ?? 'Unknown'
       return NextResponse.json({ error: `Runway task failed: ${failReason}` }, { status: 502 })
     }
     // PENDING or RUNNING — keep polling
   }
 
+  await refund()
   return NextResponse.json({ error: 'Runway generation timed out (5 min)' }, { status: 504 })
 }

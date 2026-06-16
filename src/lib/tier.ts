@@ -88,6 +88,51 @@ export async function checkAndIncrementUsage(
   return { allowed: true, used: used + 1, limit }
 }
 
+// Compensating decrement — releases a generation slot that checkAndIncrementUsage
+// reserved up front, when the external provider (Replicate / Runway) errors,
+// times out, or returns nothing usable.
+//
+// Why reserve-then-refund: the increment runs BEFORE the paid API call so two
+// concurrent generations can't both pass the check on a user's last credit. The
+// cost of that ordering is that an upstream failure would otherwise burn a paid
+// monthly slot with no result — a free user (3 artworks/mo) could be locked out
+// for the month by two hiccups. This hands the slot back.
+//
+// Best-effort and code-only (read-then-write, no decrement RPC needed). It runs
+// only on the rare failure path, where a benign read-modify-write race would at
+// worst under-count by one in the user's favour — strictly better than always
+// burning the slot. A refund failure is logged but never surfaced: the caller
+// already has a failed generation to report. The `current <= 0` guard keeps the
+// counter from ever going negative.
+export async function refundUsage(userId: string, feature: 'artwork' | 'video'): Promise<void> {
+  const month = currentMonth()
+  try {
+    const { data } = await supabaseAdmin
+      .from('mb_usage')
+      .select('artwork_generations, video_generations')
+      .eq('user_id', userId)
+      .eq('month', month)
+      .single()
+    if (!data) return // no usage row → nothing was reserved → nothing to refund
+
+    const current = feature === 'artwork' ? data.artwork_generations : data.video_generations
+    if (current <= 0) return
+
+    const patch = feature === 'artwork'
+      ? { artwork_generations: current - 1 }
+      : { video_generations: current - 1 }
+
+    const { error } = await supabaseAdmin
+      .from('mb_usage')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('month', month)
+    if (error) console.error(`[tier] refundUsage(${feature}) write failed for ${userId}:`, error.message)
+  } catch (err) {
+    console.error(`[tier] refundUsage(${feature}) threw for ${userId}:`, err instanceof Error ? err.message : err)
+  }
+}
+
 // Update subscription tier on a profile. Called by Stripe webhook and Apple IAP verify.
 export async function setSubscriptionTier(
   userId: string,
