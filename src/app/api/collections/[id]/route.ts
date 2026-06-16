@@ -41,6 +41,13 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const updates: Record<string, string> = {}
   if (body.title?.trim()) updates.title = body.title.trim()
   if ('cover_url' in body) updates.cover_url = body.cover_url
+  if (body.type) {
+    const allowedTypes = ['playlist', 'ep', 'album']
+    if (!allowedTypes.includes(body.type)) {
+      return NextResponse.json({ error: `Type must be one of: ${allowedTypes.join(', ')}` }, { status: 400 })
+    }
+    updates.type = body.type
+  }
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })

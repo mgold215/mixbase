@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Check, X, ExternalLink } from 'lucide-react'
+import { Check, X, ExternalLink, Download } from 'lucide-react'
+import { downloadImage } from '@/lib/download'
 
 type Project = { id: string; title: string; artwork_url: string | null }
 type Collection = { id: string; title: string; type: string }
@@ -125,12 +126,22 @@ export default function MediaClient({ projects, collections }: Props) {
                 <p className="text-sm font-medium truncate mb-3" style={{ color: 'var(--text)' }}>{selected.title}</p>
                 <Link
                   href={`/projects/${selected.id}`}
-                  className="flex items-center gap-1.5 text-xs mb-4 transition-colors"
+                  className="flex items-center gap-1.5 text-xs mb-3 transition-colors"
                   style={{ color: 'var(--text-muted)' }}
                 >
                   <ExternalLink size={11} />
                   Open project
                 </Link>
+                {selected.artwork_url && (
+                  <button
+                    onClick={() => downloadImage(selected.artwork_url!, selected.title)}
+                    className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-4 transition-colors"
+                    style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+                  >
+                    <Download size={12} />
+                    Download
+                  </button>
+                )}
 
                 {/* Assign to collection */}
                 {collections.length > 0 && (
