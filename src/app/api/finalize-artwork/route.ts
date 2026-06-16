@@ -207,7 +207,9 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { project_id, artist, guidance } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { project_id, artist, guidance } = body
   if (!isUuid(project_id)) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }

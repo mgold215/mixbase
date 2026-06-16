@@ -17,8 +17,8 @@ export async function GET(request: NextRequest) {
   }
 
   const [shared, mine] = await Promise.all([
-    supabaseAdmin.from('sb_curators').select('*').is('user_id', null),
-    supabaseAdmin.from('sb_curators').select('*').eq('user_id', userId),
+    supabaseAdmin.from('sb_curators').select('*').is('user_id', null).limit(500),
+    supabaseAdmin.from('sb_curators').select('*').eq('user_id', userId).limit(500),
   ])
   if (shared.error) return NextResponse.json({ error: shared.error.message }, { status: 500 })
   if (mine.error) return NextResponse.json({ error: mine.error.message }, { status: 500 })
@@ -40,7 +40,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   if (Array.isArray(body?.rows)) {
     const rows = (body.rows as CuratorInsert[])

@@ -8,7 +8,9 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id } = await ctx.params
-  const { tier, resetUsage } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { tier, resetUsage } = body
 
   if (tier) {
     const VALID_TIERS = ['free', 'pro', 'studio', 'admin']

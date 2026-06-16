@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, type ChangeEvent } from 'react'
-import { Sparkles, Upload, X, Wand2 } from 'lucide-react'
+import { Sparkles, Upload, X, Wand2, Download } from 'lucide-react'
 import Image from 'next/image'
+import { downloadImage } from '@/lib/download'
 
 type Props = {
   projectId: string
@@ -157,6 +158,32 @@ export default function ArtworkGenerator({
           </div>
         )}
       </div>
+
+      {/* Download — generated/source image and the finalized render (with
+          baked-in text) are separate exports. Only shown on the full Artwork
+          tab, not the compact project-header thumbnail. */}
+      {showActions && mode === 'idle' && (sourceUrl || currentFinalized) && (
+        <div className="flex gap-2">
+          {sourceUrl && (
+            <button
+              onClick={() => downloadImage(sourceUrl, `${projectTitle} artwork`)}
+              className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-xl hover:bg-[#2a2a2a] transition-colors"
+            >
+              <Download size={13} />
+              {currentFinalized ? 'Download Original' : 'Download Image'}
+            </button>
+          )}
+          {currentFinalized && (
+            <button
+              onClick={() => downloadImage(currentFinalized, `${projectTitle} finalized`)}
+              className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-xl hover:bg-[#2a2a2a] transition-colors"
+            >
+              <Download size={13} />
+              Download Finalized
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Action buttons */}
       {showActions && mode === 'idle' && (

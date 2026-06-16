@@ -32,7 +32,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { project_id, version_id, curator_id, channel, message, share_url } = body
   if (!isUuid(curator_id)) {
     return NextResponse.json({ error: 'curator_id must be a UUID' }, { status: 400 })

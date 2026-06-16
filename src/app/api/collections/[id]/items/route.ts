@@ -34,7 +34,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { project_id, position } = body
 
   // Validate the id shape before it reaches a DB write.
@@ -107,7 +108,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { items } = body
 
   if (!Array.isArray(items) || items.length === 0) {

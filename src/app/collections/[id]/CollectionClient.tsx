@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 
 type Collection = { id: string; title: string; type: string; cover_url: string | null }
@@ -18,6 +18,7 @@ type CollectionItem = {
 type Project = { id: string; title: string; artwork_url: string | null }
 
 const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
+const TYPES = ['album', 'ep', 'playlist'] as const
 
 type Props = {
   collection: Collection
@@ -35,6 +36,8 @@ export default function CollectionClient({ collection, initialItems, allProjects
   const [coverSearch, setCoverSearch] = useState('')
   const [adding, setAdding] = useState<string | null>(null)
   const [coverUrl, setCoverUrl] = useState(collection.cover_url)
+  const [type, setType] = useState(collection.type)
+  const [showTypePicker, setShowTypePicker] = useState(false)
   const [mediaItems, setMediaItems] = useState<Project[]>([])
   const [loadingMedia, setLoadingMedia] = useState(false)
 
@@ -68,6 +71,20 @@ export default function CollectionClient({ collection, initialItems, allProjects
       setShowCoverPicker(false)
       setCoverSearch('')
     }
+  }
+
+  // ── Change collection type ────────────────────────────────────────────────────
+  async function changeType(newType: string) {
+    setShowTypePicker(false)
+    if (newType === type) return
+    const prev = type
+    setType(newType) // optimistic — roll back if the PATCH fails
+    const res = await fetch(`/api/collections/${collection.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: newType }),
+    })
+    if (!res.ok) setType(prev)
   }
 
   // ── Add / remove tracks ───────────────────────────────────────────────────────
@@ -175,12 +192,34 @@ export default function CollectionClient({ collection, initialItems, allProjects
           </div>
 
           <div className="flex-1 min-w-0">
-            <span
-              className="inline-block text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full mb-1.5"
-              style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
-            >
-              {TYPE_LABEL[collection.type] ?? collection.type}
-            </span>
+            <div className="relative inline-block mb-1.5">
+              <button
+                onClick={() => setShowTypePicker(v => !v)}
+                className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full transition-opacity hover:opacity-80"
+                style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+                title="Change type"
+              >
+                {TYPE_LABEL[type] ?? type}
+                <ChevronDown size={11} />
+              </button>
+              {showTypePicker && (
+                <div
+                  className="absolute left-0 top-full mt-1 z-20 rounded-lg overflow-hidden py-1 min-w-[7rem]"
+                  style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}
+                >
+                  {TYPES.map(t => (
+                    <button
+                      key={t}
+                      onClick={() => changeType(t)}
+                      className="block w-full text-left px-3 py-1.5 text-xs font-medium transition-colors hover:bg-white/5"
+                      style={{ color: t === type ? 'var(--accent)' : 'var(--text)' }}
+                    >
+                      {TYPE_LABEL[t]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <h1 className="text-2xl font-bold leading-tight" style={{ color: 'var(--text)' }}>{collection.title}</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
               {items.length} {items.length === 1 ? 'track' : 'tracks'}
@@ -345,7 +384,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
               <button
                 draggable={false}
                 onClick={() => playTrack(item.project_id)}
-                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
+                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
                 style={{ color: 'var(--accent)' }}
                 title="Play"
               >
@@ -354,7 +393,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
               <Link
                 draggable={false}
                 href={`/projects/${item.project_id}`}
-                className="opacity-0 group-hover:opacity-100 px-2 py-1 rounded-lg text-xs font-medium transition-all"
+                className="hidden sm:inline-block opacity-60 group-hover:opacity-100 px-2 py-1 rounded-lg text-xs font-medium transition-all"
                 style={{ color: 'var(--text-muted)', backgroundColor: 'var(--surface-2)' }}
               >
                 Open
@@ -362,9 +401,9 @@ export default function CollectionClient({ collection, initialItems, allProjects
               <button
                 draggable={false}
                 onClick={() => removeItem(item.id)}
-                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
-                style={{ color: 'var(--text-muted)' }}
-                title="Remove"
+                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
+                style={{ color: '#f87171' }}
+                title="Remove from collection"
               >
                 <X size={14} />
               </button>

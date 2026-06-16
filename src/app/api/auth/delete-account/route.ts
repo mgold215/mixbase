@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 
 // POST /api/auth/delete-account — permanently delete user and all their data
@@ -53,11 +54,24 @@ export async function POST(request: NextRequest) {
   // on — DB-row deletion below is what actually gates the irreversible step.
   if (audioPaths.length > 0) {
     const { error } = await supabaseAdmin.storage.from('mf-audio').remove(audioPaths)
-    if (error) console.error('[delete-account] mf-audio cleanup failed for', userId, error.message)
+    if (error) {
+      console.error('[delete-account] mf-audio cleanup failed for', userId, error.message)
+      // Surface orphaned-object candidates to Sentry so a future sweep can find them.
+      Sentry.captureMessage('delete-account: mf-audio cleanup failed', {
+        level: 'warning',
+        extra: { userId, objectCount: audioPaths.length, error: error.message },
+      })
+    }
   }
   if (artworkPaths.length > 0) {
     const { error } = await supabaseAdmin.storage.from('mf-artwork').remove(artworkPaths)
-    if (error) console.error('[delete-account] mf-artwork cleanup failed for', userId, error.message)
+    if (error) {
+      console.error('[delete-account] mf-artwork cleanup failed for', userId, error.message)
+      Sentry.captureMessage('delete-account: mf-artwork cleanup failed', {
+        level: 'warning',
+        extra: { userId, objectCount: artworkPaths.length, error: error.message },
+      })
+    }
   }
 
   // Delete DB rows in dependency order, capturing every error. If ANY row
@@ -94,6 +108,10 @@ export async function POST(request: NextRequest) {
   if (dbErrors.length > 0) {
     // Leave the account intact and retryable rather than half-deleting it.
     console.error('[delete-account] aborting before auth deletion for', userId, dbErrors)
+    Sentry.captureMessage('delete-account: aborted before auth deletion (partial DB delete)', {
+      level: 'error',
+      extra: { userId, dbErrors },
+    })
     return NextResponse.json(
       { error: 'Failed to delete account data — no changes were finalized. Please try again.' },
       { status: 500 }

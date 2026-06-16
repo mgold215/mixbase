@@ -37,7 +37,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { email, password, tier } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { email, password, tier } = body
   if (!email || !password) return NextResponse.json({ error: 'email and password required' }, { status: 400 })
 
   const VALID_TIERS = ['free', 'pro', 'studio', 'admin']

@@ -17,7 +17,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many signup attempts. Try again later.' }, { status: 429 })
   }
 
-  const { email, password, artist_name } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { email, password, artist_name } = body
 
   if (!email || !password) {
     return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })

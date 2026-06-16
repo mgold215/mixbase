@@ -149,7 +149,9 @@ export async function POST(request: NextRequest) {
   const adminId = await assertAdmin(request)
   if (!adminId) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { messages } = await request.json()
+  const body = await request.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const { messages } = body
 
   if (!Array.isArray(messages) || messages.length > 50) {
     return NextResponse.json({ error: 'Invalid messages' }, { status: 400 })
