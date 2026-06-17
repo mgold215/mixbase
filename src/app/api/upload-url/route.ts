@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { uploadLimiter } from '@/lib/rate-limit'
+import { uploadLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 // Buckets the client is allowed to request a signed upload URL for.
 const ALLOWED_BUCKETS = ['mf-audio', 'mf-artwork'] as const
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   const limit = uploadLimiter.check(userId)
   if (!limit.allowed) {
-    return NextResponse.json({ error: 'Too many upload requests. Try again later.' }, { status: 429 })
+    return NextResponse.json({ error: 'Too many upload requests. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const body = await req.json().catch(() => null)

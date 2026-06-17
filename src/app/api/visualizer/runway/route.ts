@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
-import { videoLimiter } from '@/lib/rate-limit'
+import { videoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
 const RUNWAY_BASE = 'https://api.dev.runwayml.com/v1'
@@ -54,8 +54,9 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
   // Rate limit: 5/hour per user — defence-in-depth alongside the monthly tier gate below.
-  if (!videoLimiter.check(userId).allowed) {
-    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429 })
+  const limit = videoLimiter.check(userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const body = await req.json().catch(() => null)

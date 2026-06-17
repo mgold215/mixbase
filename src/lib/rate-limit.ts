@@ -26,7 +26,7 @@ export function rateLimiter({ windowMs, max }: { windowMs: number; max: number }
   if (interval.unref) interval.unref()
 
   return {
-    check(key: string): { allowed: boolean; remaining: number; resetAt: number } {
+    check(key: string): RateLimitResult {
       const now = Date.now()
       const existing = store.get(key)
 
@@ -34,13 +34,30 @@ export function rateLimiter({ windowMs, max }: { windowMs: number; max: number }
         // New window
         const entry: Entry = { count: 1, resetAt: now + windowMs }
         store.set(key, entry)
-        return { allowed: true, remaining: max - 1, resetAt: entry.resetAt }
+        return { allowed: true, limit: max, remaining: max - 1, resetAt: entry.resetAt }
       }
 
       existing.count++
       const allowed = existing.count <= max
-      return { allowed, remaining: Math.max(0, max - existing.count), resetAt: existing.resetAt }
+      return { allowed, limit: max, remaining: Math.max(0, max - existing.count), resetAt: existing.resetAt }
     },
+  }
+}
+
+// Shape returned by check(). `limit` is the window cap, `remaining` the credits
+// left, `resetAt` the epoch-ms when the window rolls over.
+export type RateLimitResult = { allowed: boolean; limit: number; remaining: number; resetAt: number }
+
+// Standard rate-limit response headers built from a check() result. Spread onto
+// any 429 so clients can back off intelligently instead of hammering blindly:
+//   return NextResponse.json({ error: '…' }, { status: 429, headers: rateLimitHeaders(result) })
+export function rateLimitHeaders(result: RateLimitResult): Record<string, string> {
+  const retryAfterSec = Math.max(0, Math.ceil((result.resetAt - Date.now()) / 1000))
+  return {
+    'Retry-After': String(retryAfterSec),
+    'X-RateLimit-Limit': String(result.limit),
+    'X-RateLimit-Remaining': String(result.remaining),
+    'X-RateLimit-Reset': String(Math.ceil(result.resetAt / 1000)),
   }
 }
 

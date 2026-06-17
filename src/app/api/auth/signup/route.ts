@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { signupLimiter, ipKey } from '@/lib/rate-limit'
+import { signupLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -14,7 +14,7 @@ const COOKIE_OPTS = {
 export async function POST(request: NextRequest) {
   const limit = signupLimiter.check(ipKey(request))
   if (!limit.allowed) {
-    return NextResponse.json({ error: 'Too many signup attempts. Try again later.' }, { status: 429 })
+    return NextResponse.json({ error: 'Too many signup attempts. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const body = await request.json().catch(() => null)

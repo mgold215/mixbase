@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase'
-import { chatLimiter } from '@/lib/rate-limit'
+import { chatLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 // POST /api/chat/summarize-feedback — condense listener feedback for a version
 // into actionable mix notes using Claude.
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   if (!limit.allowed) {
     return NextResponse.json(
       { error: 'Hourly AI request limit reached. Try again later.' },
-      { status: 429 },
+      { status: 429, headers: rateLimitHeaders(limit) },
     )
   }
 

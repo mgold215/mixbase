@@ -36,7 +36,10 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const formData = await request.formData()
+  // Guard the multipart parse — a malformed/empty body otherwise throws an opaque
+  // 500. Mirrors the `request.json().catch(() => null)` guard on JSON routes.
+  const formData = await request.formData().catch(() => null)
+  if (!formData) return NextResponse.json({ error: 'Invalid form data' }, { status: 400 })
   const file = formData.get('file') as File | null
   const projectId = formData.get('project_id') as string
   const type = (formData.get('type') as string) ?? 'audio'  // 'audio' | 'artwork'
