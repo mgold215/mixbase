@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 // GET /api/versions/[id] — get one version with its feedback (owner only)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -7,6 +8,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('mb_versions')
@@ -25,6 +27,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
@@ -76,6 +79,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   // Verify ownership through parent project
   const { data: v } = await supabaseAdmin
