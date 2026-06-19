@@ -215,7 +215,7 @@ export default function ShareClient({ version }: Props) {
         </button>
         {showFeedback && (
           <div className="px-6 pb-8 max-w-lg mx-auto w-full">
-            <FeedbackForm versionId={version.id} />
+            <FeedbackForm versionId={version.id} currentTime={currentTime} />
           </div>
         )}
       </div>

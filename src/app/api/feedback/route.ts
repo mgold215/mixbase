@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { version_id, reviewer_name, rating, comment } = body
+  const { version_id, reviewer_name, rating, comment, timestamp_seconds } = body
 
   if (!version_id || !comment?.trim()) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
@@ -30,6 +30,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Rating must be a whole number from 1 to 5' }, { status: 400 })
   }
 
+  // Optional playback position the listener pinned their comment to (e.g. "the
+  // kick is too loud at 1:32"). Public route — never trust the value: it must be
+  // a finite, non-negative number, stored as whole seconds and capped at 24h so a
+  // bogus value can't push a marker off the end of the scrubber in the artist view.
+  let ts: number | null = null
+  if (timestamp_seconds != null) {
+    if (typeof timestamp_seconds !== 'number' || !Number.isFinite(timestamp_seconds) || timestamp_seconds < 0) {
+      return NextResponse.json({ error: 'timestamp_seconds must be a non-negative number' }, { status: 400 })
+    }
+    ts = Math.min(Math.floor(timestamp_seconds), 86400)
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_feedback')
     .insert({
@@ -37,6 +49,7 @@ export async function POST(request: NextRequest) {
       reviewer_name: reviewer_name?.trim() || 'Anonymous',
       rating: rating || null,
       comment: comment.trim(),
+      timestamp_seconds: ts,
     })
     .select()
     .single()

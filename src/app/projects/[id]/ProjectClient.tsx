@@ -802,7 +802,7 @@ type CurrentMixCardProps = {
   isPlaying: boolean
   seek: (t: number) => void
   togglePlay: () => void
-  playUrl: (url: string, title: string, artist?: string, artwork?: string, label?: string) => void
+  playUrl: (url: string, title: string, artist?: string, artwork?: string, label?: string, startAt?: number) => void
   savedNoteKey: string | null
   summaries: Record<string, string>
   summaryLoading: string | null
@@ -829,6 +829,13 @@ function CurrentMixCard({
     ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
     : null
   const label = version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`
+
+  // Jump the shared player to a timestamped piece of feedback. If this mix is
+  // already playing, seek in place; otherwise start it at that position.
+  const goToTimestamp = (t: number) => {
+    if (isActive) seek(t)
+    else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label, t)
+  }
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -980,7 +987,20 @@ function CurrentMixCard({
               {feedback.map(f => (
                 <div key={f.id} className="rounded-xl px-3 py-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{f.reviewer_name}</span>
+                      {f.timestamp_seconds != null && (
+                        <button
+                          type="button"
+                          onClick={() => goToTimestamp(f.timestamp_seconds!)}
+                          title={`Play from ${formatDuration(f.timestamp_seconds)}`}
+                          className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 hover:bg-[#2dd4bf]/20 rounded-full px-1.5 py-0.5 leading-none transition-colors flex-shrink-0"
+                        >
+                          <Play size={8} className="fill-[#2dd4bf]" />
+                          {formatDuration(f.timestamp_seconds)}
+                        </button>
+                      )}
+                    </div>
                     {f.rating && (
                       <div className="flex gap-0.5">
                         {[1,2,3,4,5].map(s => (
