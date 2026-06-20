@@ -837,6 +837,18 @@ function CurrentMixCard({
     else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label, t)
   }
 
+  // Pinned-feedback markers on the scrubber. Each timestamped comment becomes a
+  // dot on the timeline (orange ≤3★, cyan ≥4★, muted if unrated) — hover for the
+  // note, click to seek. Needs a known duration to place dots, so it's hidden
+  // until the mix is active or we have its stored length.
+  const markerColor = (rating: number | null | undefined) =>
+    rating == null ? 'var(--text-muted)' : rating <= 3 ? '#fb923c' : '#2dd4bf'
+  const markers = displayDuration > 0
+    ? feedback
+        .filter(f => f.timestamp_seconds != null)
+        .map(f => ({ f, pct: Math.min(100, Math.max(0, (f.timestamp_seconds! / displayDuration) * 100)) }))
+    : []
+
   return (
     <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
 
@@ -887,6 +899,17 @@ function CurrentMixCard({
               }}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
+            {markers.map(({ f, pct }) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={e => { e.stopPropagation(); goToTimestamp(f.timestamp_seconds!) }}
+                aria-label={`${f.reviewer_name} at ${formatDuration(f.timestamp_seconds)}: ${f.comment}`}
+                title={`${f.reviewer_name}${f.rating ? ` · ${f.rating}★` : ''} @ ${formatDuration(f.timestamp_seconds)}\n${f.comment}`}
+                className="absolute bottom-0 z-10 w-2 h-2 -translate-x-1/2 rounded-full ring-1 ring-black/40 hover:scale-150 transition-transform cursor-pointer"
+                style={{ left: `${pct}%`, backgroundColor: markerColor(f.rating) }}
+              />
+            ))}
           </div>
           <div className="flex items-center gap-2.5">
             <button
