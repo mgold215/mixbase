@@ -47,7 +47,7 @@ export default function ArtworkGenerator({
   const [finalizing, setFinalizing] = useState(false)
   const [position, setPosition] = useState<Position>('top-left')
   const [size, setSize] = useState<Size>('medium')
-  const [showRule, setShowRule] = useState(false)
+  const [showRule, setShowRule] = useState(true)
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null

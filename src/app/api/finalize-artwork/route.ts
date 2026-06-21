@@ -79,6 +79,19 @@ function textToSvgPaths(
   return { markup: `${strokeParts.join('\n')}\n${fillParts.join('\n')}`, totalW }
 }
 
+// Measure the rendered width of a line at a given size — used to auto-shrink
+// text so it can never overflow the canvas (the "cut off" bug).
+function measureWidth(text: string, fontSize: number, letterSpacing: number): number {
+  const glyphs = FONT.stringToGlyphs(text)
+  const scale = fontSize / FONT.unitsPerEm
+  let w = 0
+  glyphs.forEach((g, i) => {
+    w += (g.advanceWidth ?? 0) * scale
+    if (i < glyphs.length - 1) w += letterSpacing
+  })
+  return w
+}
+
 // ── Build finalized artwork: source pixels untouched, text composited on top ─
 async function buildFinalized(
   imageBuffer: Buffer,
@@ -94,17 +107,29 @@ async function buildFinalized(
   const [vertical, horizontal] = position.split('-') as [Vertical, Align]
   const align = horizontal
   const pad = Math.round(width * 0.05)
+  const maxW = width - pad * 2
+
+  const artistText = artist.toLowerCase()
+  const titleText = title.toUpperCase()
 
   // Typography — small album-overlay scale, multiplied by the chosen size.
-  const sizeMul = size === 'small' ? 0.8 : size === 'large' ? 1.3 : 1.0
-  const artistSize = Math.round(width * 0.026 * sizeMul)
-  const artistLS   = Math.round(artistSize * 0.08)
-  const titleSize  = Math.round(width * 0.045 * sizeMul)
-  const titleLS    = Math.round(titleSize  * 0.04)
-  const ruleH      = showRule ? Math.max(2, Math.round(width * 0.004)) : 0
-  const gapAbove   = showRule ? Math.round(width * 0.014) : Math.round(width * 0.006)
-  const gapBelow   = showRule ? Math.round(width * 0.012) : Math.round(width * 0.004)
-  const totalH     = artistSize + gapAbove + ruleH + gapBelow + titleSize
+  const sizeMul = size === 'small' ? 0.85 : size === 'large' ? 1.2 : 1.0
+  let artistSize = Math.round(width * 0.021 * sizeMul)
+  let titleSize  = Math.round(width * 0.038 * sizeMul)
+
+  // Auto-fit: if a line would exceed the usable width, shrink it to fit so
+  // nothing ever runs off the edge — regardless of title length or alignment.
+  const titleW0 = measureWidth(titleText, titleSize, titleSize * 0.04)
+  if (titleW0 > maxW) titleSize = Math.max(8, Math.floor(titleSize * maxW / titleW0))
+  const artistW0 = measureWidth(artistText, artistSize, artistSize * 0.08)
+  if (artistW0 > maxW) artistSize = Math.max(6, Math.floor(artistSize * maxW / artistW0))
+
+  const artistLS = Math.round(artistSize * 0.08)
+  const titleLS  = Math.round(titleSize  * 0.04)
+  const ruleH    = showRule ? Math.max(2, Math.round(width * 0.0035)) : 0
+  const gapAbove = showRule ? Math.round(width * 0.012) : Math.round(width * 0.006)
+  const gapBelow = showRule ? Math.round(width * 0.010) : Math.round(width * 0.004)
+  const totalH   = artistSize + gapAbove + ruleH + gapBelow + titleSize
 
   // Vertical anchor → top of the text block.
   const blockTop =
@@ -126,10 +151,10 @@ async function buildFinalized(
   const titleStroke  = Math.max(1, Math.round(titleSize * 0.05))
 
   const { markup: artistPaths, totalW: artistW } = textToSvgPaths(
-    artist.toLowerCase(), anchorX, artistY, artistSize, artistLS, align, 'white', 0.95, artistStroke, 0.5
+    artistText, anchorX, artistY, artistSize, artistLS, align, 'white', 0.95, artistStroke, 0.5
   )
   const { markup: titlePaths, totalW: titleW } = textToSvgPaths(
-    title.toUpperCase(), anchorX, titleY, titleSize, titleLS, align, 'white', 1.0, titleStroke, 0.5
+    titleText, anchorX, titleY, titleSize, titleLS, align, 'white', 1.0, titleStroke, 0.5
   )
 
   // Horizontal rule — spans the wider line, aligned to match the text block.
@@ -178,7 +203,8 @@ export async function POST(request: NextRequest) {
   // Deterministic, user-chosen layout — no Vision guesswork.
   const position: Position = POSITIONS.includes(body.position) ? body.position : 'top-left'
   const size: Size = ['small', 'medium', 'large'].includes(body.size) ? body.size : 'medium'
-  const showRule: boolean = body.showRule === true
+  // Divider line on by default — omit only when the client explicitly says false.
+  const showRule: boolean = body.showRule !== false
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
