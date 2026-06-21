@@ -17,15 +17,34 @@ const FONT_BUF = readFileSync(join(process.cwd(), 'src/fonts/FuturaBold.ttf'))
 const FONT_AB  = FONT_BUF.buffer.slice(FONT_BUF.byteOffset, FONT_BUF.byteOffset + FONT_BUF.byteLength)
 const FONT = parseFont(FONT_AB)
 
+type Align = 'left' | 'center' | 'right'
+type Vertical = 'top' | 'middle' | 'bottom'
+type Size = 'small' | 'medium' | 'large'
+
+// `${vertical}-${horizontal}` — a 3×3 anchor grid the user picks from.
+const POSITIONS = [
+  'top-left', 'top-center', 'top-right',
+  'middle-left', 'middle-center', 'middle-right',
+  'bottom-left', 'bottom-center', 'bottom-right',
+] as const
+type Position = (typeof POSITIONS)[number]
+
 // ── Convert text → SVG path data via opentype.js ─────────────────────────────
+// Glyphs are rendered as crisp vector paths. Legibility on busy backgrounds
+// comes from a thin black outline drawn UNDER the white fill (stroke layer
+// first, fill layer on top) — NOT from a raster blur filter, which librsvg
+// rasterizes at the small artist-line size and visibly mangles glyphs.
 function textToSvgPaths(
   text: string,
-  cx: number,
+  anchorX: number,
   baselineY: number,
   fontSize: number,
   letterSpacing: number,
+  align: Align,
   fill: string,
-  fillOpacity: number
+  fillOpacity: number,
+  strokeWidth: number,
+  strokeOpacity: number
 ): { markup: string; totalW: number } {
   const glyphs = FONT.stringToGlyphs(text)
   const scale  = fontSize / FONT.unitsPerEm
@@ -36,88 +55,28 @@ function textToSvgPaths(
     if (i < glyphs.length - 1) totalW += letterSpacing
   })
 
-  let x = cx - totalW / 2
-  const parts: string[] = []
+  let x =
+    align === 'left'  ? anchorX :
+    align === 'right' ? anchorX - totalW :
+                        anchorX - totalW / 2
+
+  const strokeParts: string[] = []
+  const fillParts: string[] = []
   for (const g of glyphs) {
-    const pathObj = g.getPath(x, baselineY, fontSize)
-    const svgEl   = pathObj.toSVG(1) as string
-    const dMatch  = svgEl.match(/d="([^"]+)"/)
-    if (dMatch) {
-      parts.push(`<path d="${dMatch[1]}" fill="${fill}" fill-opacity="${fillOpacity}"/>`)
+    const svgEl = g.getPath(x, baselineY, fontSize).toSVG(1) as string
+    const d = svgEl.match(/d="([^"]+)"/)?.[1]
+    if (d) {
+      if (strokeWidth > 0) {
+        strokeParts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" stroke-linejoin="round"/>`)
+      }
+      fillParts.push(`<path d="${d}" fill="${fill}" fill-opacity="${fillOpacity}"/>`)
     }
     x += (g.advanceWidth ?? 0) * scale + letterSpacing
   }
 
-  return { markup: parts.join('\n'), totalW }
-}
-
-// ── Vision: just text placement, no color grading, no backdrop ───────────────
-// We deliberately do NOT touch the source pixels — no contrast/saturation/
-// brightness/vignette pipeline AND no dark band behind the text. The user paid
-// for the Replicate render and wants those pixels to ship. Legibility comes
-// from per-glyph drop shadows on the text itself, which only darken pixels
-// immediately around each letter.
-type Placement = {
-  textCenterY: number  // 0.10–0.90, vertical center of text block
-  showRule: boolean    // horizontal divider between artist and title
-}
-
-async function pickPlacement(
-  imageUrl: string,
-  guidance?: string
-): Promise<Placement> {
-  // Default: clean bottom placement, always show the rule.
-  // Only call Vision when the user has typed explicit guidance — avoids
-  // unreliable random positioning on unguided clicks.
-  const fallback: Placement = { textCenterY: 0.84, showRule: true }
-
-  const guided = !!guidance && guidance.trim().length > 0
-  if (!guided) return fallback
-
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return fallback
-
-  const promptText = `Pick the best vertical position for the artist + title text overlay on this album cover. Follow the user's instruction: "${guidance!.trim()}"
-
-textCenterY: 0.10–0.90 (vertical center of the two-line text block).
-showRule: true to draw a thin line between artist and title, false to omit it.
-
-Reply with ONLY valid JSON: {"textCenterY": <number>, "showRule": <boolean>}`
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 80,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'url', url: imageUrl } },
-            { type: 'text', text: promptText },
-          ],
-        }],
-      }),
-    })
-
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`)
-    const data = await res.json()
-    const raw = (data.content?.[0]?.text ?? '').trim()
-      .replace(/^```json?\s*/i, '').replace(/\s*```$/i, '')
-    const p = JSON.parse(raw)
-    return {
-      textCenterY: Math.min(0.90, Math.max(0.10, Number(p.textCenterY) || fallback.textCenterY)),
-      showRule:    typeof p.showRule === 'boolean' ? p.showRule : true,
-    }
-  } catch (err) {
-    console.error('[finalize-artwork] Vision error:', err)
-    return fallback
-  }
+  // Stroke layer underneath, fill layer on top — guarantees a clean outline
+  // without relying on paint-order support in librsvg.
+  return { markup: `${strokeParts.join('\n')}\n${fillParts.join('\n')}`, totalW }
 }
 
 // ── Build finalized artwork: source pixels untouched, text composited on top ─
@@ -125,67 +84,69 @@ async function buildFinalized(
   imageBuffer: Buffer,
   title: string,
   artist: string,
-  placement: Placement
+  position: Position,
+  size: Size,
+  showRule: boolean
 ): Promise<Buffer> {
-  // Source pixels go through Sharp untouched — no color grade, no overlay band.
-  // Legibility on busy backgrounds comes from per-glyph drop shadows applied
-  // via SVG filters, which only darken pixels right next to each letter.
   const img = sharp(imageBuffer)
   const { width = 1024, height = 1024 } = await img.metadata()
 
-  const cx = Math.round(width * 0.5)
-  const cy = Math.round(placement.textCenterY * height)
+  const [vertical, horizontal] = position.split('-') as [Vertical, Align]
+  const align = horizontal
+  const pad = Math.round(width * 0.05)
 
-  // Typography — small, album-overlay scale (~3.5% of width for the title).
-  const artistSize = Math.round(width * 0.020)
-  const artistLS   = Math.round(artistSize * 0.10)
-  const titleSize  = Math.round(width * 0.038)
-  const titleLS    = Math.round(titleSize  * 0.06)
-  const ruleH      = placement.showRule ? Math.max(2, Math.round(width * 0.004)) : 0
-  const gapAbove   = placement.showRule ? Math.round(width * 0.016) : Math.round(width * 0.010)
-  const gapBelow   = placement.showRule ? Math.round(width * 0.012) : 0
+  // Typography — small album-overlay scale, multiplied by the chosen size.
+  const sizeMul = size === 'small' ? 0.8 : size === 'large' ? 1.3 : 1.0
+  const artistSize = Math.round(width * 0.026 * sizeMul)
+  const artistLS   = Math.round(artistSize * 0.08)
+  const titleSize  = Math.round(width * 0.045 * sizeMul)
+  const titleLS    = Math.round(titleSize  * 0.04)
+  const ruleH      = showRule ? Math.max(2, Math.round(width * 0.004)) : 0
+  const gapAbove   = showRule ? Math.round(width * 0.014) : Math.round(width * 0.006)
+  const gapBelow   = showRule ? Math.round(width * 0.012) : Math.round(width * 0.004)
   const totalH     = artistSize + gapAbove + ruleH + gapBelow + titleSize
 
-  const artistY = Math.round(cy - totalH / 2 + artistSize)
-  const ruleY   = Math.round(artistY + gapAbove)
-  const titleY  = Math.round(ruleY + ruleH + gapBelow + titleSize)
+  // Vertical anchor → top of the text block.
+  const blockTop =
+    vertical === 'top'    ? pad :
+    vertical === 'bottom' ? height - pad - totalH :
+                            Math.round((height - totalH) / 2)
+
+  const artistY = blockTop + artistSize
+  const ruleY   = artistY + gapAbove
+  const titleY  = ruleY + ruleH + gapBelow + titleSize
+
+  // Horizontal anchor for the chosen alignment.
+  const anchorX =
+    align === 'left'  ? pad :
+    align === 'right' ? width - pad :
+                        Math.round(width / 2)
+
+  const artistStroke = Math.max(1, Math.round(artistSize * 0.05))
+  const titleStroke  = Math.max(1, Math.round(titleSize * 0.05))
 
   const { markup: artistPaths, totalW: artistW } = textToSvgPaths(
-    artist.toLowerCase(), cx, artistY, artistSize, artistLS, 'white', 0.90
+    artist.toLowerCase(), anchorX, artistY, artistSize, artistLS, align, 'white', 0.95, artistStroke, 0.5
   )
   const { markup: titlePaths, totalW: titleW } = textToSvgPaths(
-    title.toUpperCase(), cx, titleY, titleSize, titleLS, 'white', 1.00
+    title.toUpperCase(), anchorX, titleY, titleSize, titleLS, align, 'white', 1.0, titleStroke, 0.5
   )
 
-  // Horizontal rule — spans the wider of artist/title, no blur filter so it stays sharp
+  // Horizontal rule — spans the wider line, aligned to match the text block.
   const ruleW = Math.round(Math.max(artistW, titleW))
-  const ruleX = Math.round(cx - ruleW / 2)
-  const ruleSvg = placement.showRule
+  const ruleX =
+    align === 'left'  ? pad :
+    align === 'right' ? width - pad - ruleW :
+                        Math.round(width / 2 - ruleW / 2)
+  const ruleSvg = showRule
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.9"/>`
     : ''
 
-  // Drop-shadow filters — give white text legibility on any background without
-  // darkening any pixels not adjacent to a glyph. One filter PER LINE, scaled to
-  // that line's size, with an explicit full-canvas userSpaceOnUse region. A
-  // single filter over the whole text group made librsvg rasterize the filter
-  // buffer from the group's large bounding box, which was too low-resolution for
-  // the small artist glyphs and visibly mangled some of them (e.g. the 'm').
-  const artistSigma = Math.max(1, Math.round(artistSize * 0.10))
-  const titleSigma  = Math.max(2, Math.round(titleSize * 0.08))
-  const filterRegion = `filterUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}" color-interpolation-filters="sRGB"`
-
+  // No SVG filters — pure vector paths keep the text razor-sharp at any size.
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="artistShadow" ${filterRegion}>
-          <feDropShadow dx="0" dy="${Math.round(artistSigma * 0.5)}" stdDeviation="${artistSigma}" flood-color="#000" flood-opacity="0.65"/>
-        </filter>
-        <filter id="titleShadow" ${filterRegion}>
-          <feDropShadow dx="0" dy="${Math.round(titleSigma * 0.5)}" stdDeviation="${titleSigma}" flood-color="#000" flood-opacity="0.65"/>
-        </filter>
-      </defs>
-      <g filter="url(#artistShadow)">${artistPaths}</g>
-      <g filter="url(#titleShadow)">${titlePaths}</g>
+      ${artistPaths}
+      ${titlePaths}
       ${ruleSvg}
     </svg>`
   )
@@ -209,15 +170,15 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { project_id, artist, guidance } = body
+  const { project_id, artist } = body
   if (!isUuid(project_id)) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
-  // Trim + cap guidance length so a runaway textarea can't blow Vision tokens
-  const guidanceText: string | undefined =
-    typeof guidance === 'string' && guidance.trim().length > 0
-      ? guidance.trim().slice(0, 400)
-      : undefined
+
+  // Deterministic, user-chosen layout — no Vision guesswork.
+  const position: Position = POSITIONS.includes(body.position) ? body.position : 'top-left'
+  const size: Size = ['small', 'medium', 'large'].includes(body.size) ? body.size : 'medium'
+  const showRule: boolean = body.showRule === true
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
@@ -242,10 +203,9 @@ export async function POST(request: NextRequest) {
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
-  const placement = await pickPlacement(project.artwork_url, guidanceText)
-  console.log('[finalize-artwork] guidance:', guidanceText ?? '(none)', 'placement:', JSON.stringify(placement))
-
-  const finalBuffer = await buildFinalized(imageBuffer, project.title, artist || 'moodmixformat', placement)
+  const finalBuffer = await buildFinalized(
+    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule
+  )
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
   const { data: uploadData, error: uploadError } = await supabase.storage
@@ -272,5 +232,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
   }
 
-  return NextResponse.json({ finalized_artwork_url: finalUrl, placement })
+  return NextResponse.json({ finalized_artwork_url: finalUrl, position, size, showRule })
 }

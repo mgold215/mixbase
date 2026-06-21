@@ -30,6 +30,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   if (!await ownsCollection(id, userId)) {
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
   }
@@ -73,6 +74,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   if (!await ownsCollection(id, userId)) {
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
   }
@@ -104,6 +106,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   if (!await ownsCollection(id, userId)) {
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
   }
@@ -114,6 +117,19 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'items array is required' }, { status: 400 })
+  }
+  // Cap the batch so a client can't fan out an unbounded number of concurrent
+  // writes, and validate each entry: a non-UUID item.id would otherwise reach
+  // the DB and surface a Postgres cast error as an opaque 500.
+  if (items.length > 500) {
+    return NextResponse.json({ error: 'Too many items (max 500)' }, { status: 400 })
+  }
+  const valid = items.every(
+    (item: { id?: unknown; position?: unknown }) =>
+      isUuid(item?.id) && typeof item?.position === 'number' && Number.isFinite(item.position)
+  )
+  if (!valid) {
+    return NextResponse.json({ error: 'Each item needs a valid id and numeric position' }, { status: 400 })
   }
 
   const updates = items.map((item: { id: string; position: number }) =>

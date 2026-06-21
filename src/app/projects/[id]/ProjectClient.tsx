@@ -802,7 +802,7 @@ type CurrentMixCardProps = {
   isPlaying: boolean
   seek: (t: number) => void
   togglePlay: () => void
-  playUrl: (url: string, title: string, artist?: string, artwork?: string, label?: string) => void
+  playUrl: (url: string, title: string, artist?: string, artwork?: string, label?: string, startAt?: number) => void
   savedNoteKey: string | null
   summaries: Record<string, string>
   summaryLoading: string | null
@@ -829,6 +829,25 @@ function CurrentMixCard({
     ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
     : null
   const label = version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`
+
+  // Jump the shared player to a timestamped piece of feedback. If this mix is
+  // already playing, seek in place; otherwise start it at that position.
+  const goToTimestamp = (t: number) => {
+    if (isActive) seek(t)
+    else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label, t)
+  }
+
+  // Pinned-feedback markers on the scrubber. Each timestamped comment becomes a
+  // dot on the timeline (orange ≤3★, cyan ≥4★, muted if unrated) — hover for the
+  // note, click to seek. Needs a known duration to place dots, so it's hidden
+  // until the mix is active or we have its stored length.
+  const markerColor = (rating: number | null | undefined) =>
+    rating == null ? 'var(--text-muted)' : rating <= 3 ? '#fb923c' : '#2dd4bf'
+  const markers = displayDuration > 0
+    ? feedback
+        .filter(f => f.timestamp_seconds != null)
+        .map(f => ({ f, pct: Math.min(100, Math.max(0, (f.timestamp_seconds! / displayDuration) * 100)) }))
+    : []
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -880,6 +899,17 @@ function CurrentMixCard({
               }}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
+            {markers.map(({ f, pct }) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={e => { e.stopPropagation(); goToTimestamp(f.timestamp_seconds!) }}
+                aria-label={`${f.reviewer_name} at ${formatDuration(f.timestamp_seconds)}: ${f.comment}`}
+                title={`${f.reviewer_name}${f.rating ? ` · ${f.rating}★` : ''} @ ${formatDuration(f.timestamp_seconds)}\n${f.comment}`}
+                className="absolute bottom-0 z-10 w-2 h-2 -translate-x-1/2 rounded-full ring-1 ring-black/40 hover:scale-150 transition-transform cursor-pointer"
+                style={{ left: `${pct}%`, backgroundColor: markerColor(f.rating) }}
+              />
+            ))}
           </div>
           <div className="flex items-center gap-2.5">
             <button
@@ -980,7 +1010,20 @@ function CurrentMixCard({
               {feedback.map(f => (
                 <div key={f.id} className="rounded-xl px-3 py-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">{f.reviewer_name}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{f.reviewer_name}</span>
+                      {f.timestamp_seconds != null && (
+                        <button
+                          type="button"
+                          onClick={() => goToTimestamp(f.timestamp_seconds!)}
+                          title={`Play from ${formatDuration(f.timestamp_seconds)}`}
+                          className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 hover:bg-[#2dd4bf]/20 rounded-full px-1.5 py-0.5 leading-none transition-colors flex-shrink-0"
+                        >
+                          <Play size={8} className="fill-[#2dd4bf]" />
+                          {formatDuration(f.timestamp_seconds)}
+                        </button>
+                      )}
+                    </div>
                     {f.rating && (
                       <div className="flex gap-0.5">
                         {[1,2,3,4,5].map(s => (

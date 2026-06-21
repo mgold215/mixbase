@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
-import { artworkLimiter } from '@/lib/rate-limit'
+import { artworkLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   // Rate limit: 10/hour per user (defence-in-depth alongside the monthly tier gate)
   const limit = artworkLimiter.check(userId)
   if (!limit.allowed) {
-    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429 })
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const supabase = await createClient()

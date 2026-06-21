@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { supabaseAdmin } from '@/lib/supabase'
-import { chatLimiter } from '@/lib/rate-limit'
+import { supabaseAdmin, formatDuration } from '@/lib/supabase'
+import { chatLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 // POST /api/chat/summarize-feedback — condense listener feedback for a version
 // into actionable mix notes using Claude.
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   if (!limit.allowed) {
     return NextResponse.json(
       { error: 'Hourly AI request limit reached. Try again later.' },
-      { status: 429 },
+      { status: 429, headers: rateLimitHeaders(limit) },
     )
   }
 
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
   const { data: feedback, error: fErr } = await supabaseAdmin
     .from('mb_feedback')
-    .select('reviewer_name, rating, comment, created_at')
+    .select('reviewer_name, rating, comment, created_at, timestamp_seconds')
     .eq('version_id', version_id)
     .order('created_at', { ascending: true })
 
@@ -71,15 +71,22 @@ export async function POST(request: NextRequest) {
   const feedbackBlock = feedback
     .map((f, i) => {
       const stars = f.rating ? ` (${f.rating}/5 stars)` : ''
-      return `${i + 1}. ${f.reviewer_name}${stars}: ${f.comment ?? ''}`
+      // Surface the pinned moment so the model can cluster notes by section.
+      const at = f.timestamp_seconds != null ? ` [@ ${formatDuration(f.timestamp_seconds)}]` : ''
+      return `${i + 1}. ${f.reviewer_name}${stars}${at}: ${f.comment ?? ''}`
     })
     .join('\n')
+
+  const pinnedCount = feedback.filter(f => f.timestamp_seconds != null).length
 
   const userMessage = [
     `Project: ${project.title}`,
     project.genre ? `Genre: ${project.genre}` : null,
     project.bpm ? `BPM: ${project.bpm}` : null,
     `Version under review: ${versionLabel}`,
+    pinnedCount > 0
+      ? `Note: ${pinnedCount} of ${feedback.length} comments are pinned to a specific moment, shown as [@ m:ss].`
+      : null,
     '',
     `Listener feedback (${feedback.length} ${feedback.length === 1 ? 'comment' : 'comments'}):`,
     feedbackBlock,
@@ -89,19 +96,21 @@ export async function POST(request: NextRequest) {
 
   const systemPrompt = `You are an A&R assistant helping music producers digest listener feedback on works-in-progress. You receive a project's metadata and a list of listener comments on a single mix version. Your job is to condense the feedback into actionable mix notes.
 
+Some comments are pinned to a specific moment in the mix, shown as [@ m:ss] (e.g. [@ 1:32]) — that is the exact point the listener was reacting to. Use these timestamps to localize feedback: when several listeners pin notes to nearby moments, cluster them and cite the time or range (e.g. "Around 1:30, several listeners flag the vocal"). In Themes and Suggested next steps, append the relevant timestamp(s) in parentheses whenever the underlying feedback was pinned to a moment (e.g. "Vocals sit too low in the second drop (around 1:30)"). Never invent timestamps for comments that have none.
+
 Always respond in this exact Markdown structure, and nothing else:
 
 ## Summary
 One or two sentences on the overall reception.
 
 ## Themes
-- 3 to 5 bullet points capturing recurring themes across multiple listeners. Each bullet should be a concrete observation a producer can act on (e.g. "Vocals sit too low in the chorus" rather than "people didn't love the vocals"). If only one listener mentioned something, only include it if it's specific and actionable.
+- 3 to 5 bullet points capturing recurring themes across multiple listeners. Each bullet should be a concrete observation a producer can act on (e.g. "Vocals sit too low in the chorus" rather than "people didn't love the vocals"). If only one listener mentioned something, only include it if it's specific and actionable. Append pinned timestamps where they apply.
 
 ## Praised
 - Bullet points of what's working. Pull direct phrasing where it's vivid.
 
 ## Suggested next steps
-- 2 to 4 bullet points of concrete production actions, ordered by impact. Each should be specific (e.g. "Pull the kick down 1-2 dB in the second drop" or "Try a brighter master") rather than generic.
+- 2 to 4 bullet points of concrete production actions, ordered by impact. Each should be specific (e.g. "Pull the kick down 1-2 dB in the second drop" or "Try a brighter master") rather than generic. Reference the moment (m:ss) when the feedback was pinned to one.
 
 If the feedback is too sparse, contradictory, or vague to support a section, write "_Not enough signal._" under that heading instead of inventing content. Never fabricate listener quotes.`
 

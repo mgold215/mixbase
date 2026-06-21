@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const collectionRes = await supabaseAdmin
     .from('mb_collections')
@@ -36,6 +38,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const updates: Record<string, string> = {}
@@ -70,6 +73,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const { error } = await supabaseAdmin
     .from('mb_collections')

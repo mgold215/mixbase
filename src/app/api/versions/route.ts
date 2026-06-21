@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 // POST /api/versions — create a new version under a project (user must own the project)
 export async function POST(request: NextRequest) {
@@ -16,6 +17,9 @@ export async function POST(request: NextRequest) {
 
   if (!project_id || !audio_url) {
     return NextResponse.json({ error: 'project_id and audio_url are required' }, { status: 400 })
+  }
+  if (!isUuid(project_id)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
 
   // Verify the project belongs to this user before creating a version under it

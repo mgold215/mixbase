@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isUuid } from '@/lib/validators'
 
 // GET /api/projects/[id] — get one project with its versions (must belong to the user)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -7,6 +8,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const [projectRes, versionsRes] = await Promise.all([
     supabaseAdmin.from('mb_projects').select('*').eq('id', id).eq('user_id', userId).single(),
@@ -32,6 +34,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
@@ -63,6 +66,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await ctx.params
+  if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const { error } = await supabaseAdmin
     .from('mb_projects')

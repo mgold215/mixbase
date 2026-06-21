@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { sbWriteLimiter } from '@/lib/rate-limit'
+import { sbWriteLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 
 // GET — the user's submission log (newest first).
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const limit = sbWriteLimiter.check(userId)
   if (!limit.allowed) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const body = await request.json().catch(() => null)

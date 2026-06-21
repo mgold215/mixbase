@@ -5,6 +5,18 @@ import { Sparkles, Upload, X, Wand2, Download } from 'lucide-react'
 import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
 
+type Position =
+  | 'top-left' | 'top-center' | 'top-right'
+  | 'middle-left' | 'middle-center' | 'middle-right'
+  | 'bottom-left' | 'bottom-center' | 'bottom-right'
+type Size = 'small' | 'medium' | 'large'
+
+const POSITION_GRID: Position[] = [
+  'top-left', 'top-center', 'top-right',
+  'middle-left', 'middle-center', 'middle-right',
+  'bottom-left', 'bottom-center', 'bottom-right',
+]
+
 type Props = {
   projectId: string
   projectTitle: string
@@ -33,7 +45,9 @@ export default function ArtworkGenerator({
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
-  const [guidance, setGuidance] = useState('')
+  const [position, setPosition] = useState<Position>('top-left')
+  const [size, setSize] = useState<Size>('medium')
+  const [showRule, setShowRule] = useState(false)
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null
@@ -52,7 +66,9 @@ export default function ArtworkGenerator({
       body: JSON.stringify({
         project_id: projectId,
         artist: 'moodmixformat',
-        guidance: guidance.trim() || undefined,
+        position,
+        size,
+        showRule,
       }),
     })
     const data = await res.json()
@@ -212,14 +228,61 @@ export default function ArtworkGenerator({
       {/* Finalize button + guidance — gated on showFinalize so the project
           header thumbnail doesn't expose this heavy action. */}
       {showFinalize && mode === 'idle' && previewUrl && (
-        <div className="space-y-2">
-          <textarea
-            value={guidance}
-            onChange={e => setGuidance(e.target.value)}
-            rows={2}
-            placeholder="Optional notes for placement (e.g. &quot;put text at the top&quot;, &quot;avoid the cassette&quot;, &quot;keep it minimal&quot;)"
-            className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
-          />
+        <div className="space-y-2.5">
+          {/* Placement — 3×3 anchor grid */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text placement</p>
+            <div className="grid grid-cols-3 gap-1 w-28">
+              {POSITION_GRID.map(pos => {
+                const active = position === pos
+                const [v, h] = pos.split('-')
+                const justify = h === 'left' ? 'justify-start' : h === 'right' ? 'justify-end' : 'justify-center'
+                const align = v === 'top' ? 'items-start' : v === 'bottom' ? 'items-end' : 'items-center'
+                return (
+                  <button
+                    key={pos}
+                    onClick={() => setPosition(pos)}
+                    title={pos.replace('-', ' ')}
+                    className={`aspect-square rounded-md border flex ${justify} ${align} p-1 transition-colors ${
+                      active ? 'border-[#2dd4bf] bg-[#2dd4bf]/15' : 'border-[#2a2a2a] bg-[#0f0f0f] hover:border-[#444]'
+                    }`}
+                  >
+                    <span className={`block w-1.5 h-1.5 rounded-full ${active ? 'bg-[#2dd4bf]' : 'bg-[#555]'}`} />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Size */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Size</p>
+            <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
+              {(['small', 'medium', 'large'] as Size[]).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSize(s)}
+                  className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg capitalize transition-colors ${
+                    size === s ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Divider line toggle */}
+          <button
+            onClick={() => setShowRule(v => !v)}
+            className="flex items-center gap-2 text-[11px] text-[#999] hover:text-white transition-colors"
+          >
+            <span className={`w-8 h-4 rounded-full relative transition-colors ${showRule ? 'bg-[#2dd4bf]' : 'bg-[#2a2a2a]'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${showRule ? 'left-4' : 'left-0.5'}`} />
+            </span>
+            Divider line between name &amp; title
+          </button>
+
           <button
             onClick={handleFinalize}
             disabled={finalizing}

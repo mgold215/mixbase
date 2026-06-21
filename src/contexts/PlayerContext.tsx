@@ -34,8 +34,10 @@ type PlayerCtx = {
    *  player pushes its filtered/sorted list here so every surface follows one queue. */
   setQueue: (projectIds: string[]) => void
   playTrack: (projectId: string) => void
-  /** Play any URL through the shared audio element (shows in mini player) */
-  playUrl: (url: string, title: string, artist?: string, artworkUrl?: string, versionLabel?: string) => void
+  /** Play any URL through the shared audio element (shows in mini player).
+   *  Pass startAt (seconds) to begin playback at a position — e.g. jumping to a
+   *  timestamped piece of feedback on a track that isn't the active one yet. */
+  playUrl: (url: string, title: string, artist?: string, artworkUrl?: string, versionLabel?: string, startAt?: number) => void
   pause: () => void
   togglePlay: () => void
   seek: (time: number) => void
@@ -510,14 +512,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     attemptPlay()
   }, [tracks, currentProjectId, volume, attemptPlay])
 
-  const playUrl = useCallback((url: string, title: string, artist = 'mixBASE', artworkUrl?: string, versionLabel = '') => {
+  const playUrl = useCallback((url: string, title: string, artist = 'mixBASE', artworkUrl?: string, versionLabel = '', startAt?: number) => {
     const audio = audioRef.current
     if (!audio) return
+    const seekTo = startAt != null && startAt > 0 ? startAt : null
     if (currentUrl !== url || currentProjectId !== null) {
-      pendingSeekRef.current = null
+      // Switching source: defer the seek to 'loadedmetadata' — setting currentTime
+      // before the media is seekable is a no-op (same path as restore-position).
+      pendingSeekRef.current = seekTo
       audio.src = url
-      setCurrentTime(0)
+      setCurrentTime(seekTo ?? 0)
       setDuration(0)
+    } else if (seekTo != null) {
+      // Same source already loaded — seek immediately.
+      try { audio.currentTime = seekTo } catch { /* not seekable yet */ }
     }
     setCurrentUrl(url)
     setCurrentProjectId(null)
