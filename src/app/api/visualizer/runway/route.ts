@@ -94,6 +94,10 @@ export async function POST(req: NextRequest) {
   // Placed after input validation but before the paid Runway call so a bad request
   // never consumes quota. Mirrors generate-artwork's gate.
   const gate = await checkAndIncrementUsage(userId, 'video')
+  if (gate.error) {
+    // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
+    return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })
+  }
   if (!gate.allowed) {
     return NextResponse.json(
       { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },

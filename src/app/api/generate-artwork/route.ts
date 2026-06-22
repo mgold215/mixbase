@@ -69,6 +69,10 @@ export async function POST(request: NextRequest) {
 
   // Gate: check monthly artwork limit before hitting Replicate
   const gate = await checkAndIncrementUsage(userId, 'artwork')
+  if (gate.error) {
+    // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
+    return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })
+  }
   if (!gate.allowed) {
     return NextResponse.json(
       { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },
@@ -176,7 +180,13 @@ export async function POST(request: NextRequest) {
     .eq('id', project_id)
     .eq('user_id', userId) // defense-in-depth: scope the write to the owner
   if (dbError) {
+    // The image uploaded fine but the URL didn't persist — the next page load
+    // would show stale artwork. Hand the reserved slot back and fail loudly so
+    // the user retries instead of silently losing a paid generation. Mirrors
+    // every other failure path above and finalize-artwork's dbError handling.
+    await refund()
     console.error('[generate-artwork] DB update error:', dbError.message)
+    return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
   }
 
   return NextResponse.json({ artwork_url: artworkUrl })
