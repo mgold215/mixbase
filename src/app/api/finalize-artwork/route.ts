@@ -114,17 +114,17 @@ async function buildFinalized(
 
   // Typography — small album-overlay scale, multiplied by the chosen size.
   const sizeMul = size === 'small' ? 0.85 : size === 'large' ? 1.2 : 1.0
-  let artistSize = Math.round(width * 0.021 * sizeMul)
+  let artistSize = Math.round(width * 0.023 * sizeMul)
   let titleSize  = Math.round(width * 0.038 * sizeMul)
 
   // Auto-fit: if a line would exceed the usable width, shrink it to fit so
   // nothing ever runs off the edge — regardless of title length or alignment.
   const titleW0 = measureWidth(titleText, titleSize, titleSize * 0.04)
   if (titleW0 > maxW) titleSize = Math.max(8, Math.floor(titleSize * maxW / titleW0))
-  const artistW0 = measureWidth(artistText, artistSize, artistSize * 0.08)
+  const artistW0 = measureWidth(artistText, artistSize, artistSize * 0.12)
   if (artistW0 > maxW) artistSize = Math.max(6, Math.floor(artistSize * maxW / artistW0))
 
-  const artistLS = Math.round(artistSize * 0.08)
+  const artistLS = Math.round(artistSize * 0.12)
   const titleLS  = Math.round(titleSize  * 0.04)
   const ruleH    = showRule ? Math.max(2, Math.round(width * 0.0035)) : 0
   const gapAbove = showRule ? Math.round(width * 0.012) : Math.round(width * 0.006)
@@ -147,11 +147,13 @@ async function buildFinalized(
     align === 'right' ? width - pad :
                         Math.round(width / 2)
 
-  const artistStroke = Math.max(1, Math.round(artistSize * 0.05))
-  const titleStroke  = Math.max(1, Math.round(titleSize * 0.05))
+  // No outline on the small artist line — at this size the stroke closes up
+  // the narrow counters of letters like 'm', collapsing them to read as 'rn'.
+  // The big title keeps a light outline (wide counters, needs legibility).
+  const titleStroke = Math.max(1, Math.round(titleSize * 0.05))
 
   const { markup: artistPaths, totalW: artistW } = textToSvgPaths(
-    artistText, anchorX, artistY, artistSize, artistLS, align, 'white', 0.95, artistStroke, 0.5
+    artistText, anchorX, artistY, artistSize, artistLS, align, 'white', 1.0, 0, 0
   )
   const { markup: titlePaths, totalW: titleW } = textToSvgPaths(
     titleText, anchorX, titleY, titleSize, titleLS, align, 'white', 1.0, titleStroke, 0.5

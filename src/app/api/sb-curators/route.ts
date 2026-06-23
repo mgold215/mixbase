@@ -44,6 +44,13 @@ export async function POST(request: NextRequest) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   if (Array.isArray(body?.rows)) {
+    // Cap the batch: one POST counts as a single rate-limit token, so an
+    // unbounded array would let a caller insert tens of thousands of curator
+    // rows per request and sidestep the per-request limiter. 500 matches the
+    // collection reorder-batch cap.
+    if (body.rows.length > 500) {
+      return NextResponse.json({ error: 'Too many rows (max 500 per import)' }, { status: 400 })
+    }
     const rows = (body.rows as CuratorInsert[])
       .filter((r) => r.name?.trim())
       .map((r) => ({ ...r, user_id: userId }))

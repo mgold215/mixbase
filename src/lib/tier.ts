@@ -67,7 +67,7 @@ export async function getMonthUsage(userId: string): Promise<{ artworkGeneration
 export async function checkAndIncrementUsage(
   userId: string,
   feature: 'artwork' | 'video'
-): Promise<{ allowed: boolean; used: number; limit: number }> {
+): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean }> {
   const [profile, usage] = await Promise.all([
     getUserProfile(userId),
     getMonthUsage(userId),
@@ -83,7 +83,17 @@ export async function checkAndIncrementUsage(
   }
 
   const rpcName = feature === 'artwork' ? 'increment_artwork_usage' : 'increment_video_usage'
-  await supabaseAdmin.rpc(rpcName, { p_user_id: userId, p_month: currentMonth() })
+  const { error: rpcError } = await supabaseAdmin.rpc(rpcName, { p_user_id: userId, p_month: currentMonth() })
+  if (rpcError) {
+    // The slot could NOT be reserved. Returning allowed:true here would let the
+    // paid generation proceed while the counter stays put — so a persistent RPC
+    // failure (dropped function, DB outage) would silently hand out unlimited
+    // free generations, a revenue leak. Fail closed instead, and flag it as a
+    // transient error (distinct from a real quota hit) so the caller can return
+    // a retryable 503 rather than a misleading "limit reached".
+    console.error(`[tier] ${rpcName} failed for ${userId}:`, rpcError.message)
+    return { allowed: false, used, limit, error: true }
+  }
 
   return { allowed: true, used: used + 1, limit }
 }
