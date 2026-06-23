@@ -20,8 +20,25 @@ const FONT = parseFont(FONT_AB)
 type Align = 'left' | 'center' | 'right'
 type Vertical = 'top' | 'middle' | 'bottom'
 type Size = 'small' | 'medium' | 'large'
-type Filter = 'none' | 'darken' | 'scrim' | 'vignette'
-const FILTERS: Filter[] = ['none', 'darken', 'scrim', 'vignette']
+type Filter = 'none' | 'warm' | 'golden' | 'sepia' | 'cool' | 'icy' | 'vivid' | 'mono'
+const FILTERS: Filter[] = ['none', 'warm', 'golden', 'sepia', 'cool', 'icy', 'vivid', 'mono']
+
+// Whole-image color grade. recomb scales the RGB channels (diagonal matrix) for
+// warm/cool casts that keep the photo's own colors; modulate boosts saturation;
+// grayscale for B&W; sepia uses the classic recomb matrix. removeAlpha guards
+// recomb, which needs a 3-channel image.
+function applyFilter(img: sharp.Sharp, filter: Filter): sharp.Sharp {
+  switch (filter) {
+    case 'warm':   return img.removeAlpha().recomb([[1.12, 0, 0], [0, 1.04, 0], [0, 0, 0.88]])
+    case 'golden': return img.removeAlpha().recomb([[1.20, 0, 0], [0, 1.05, 0], [0, 0, 0.80]]).modulate({ saturation: 1.1 })
+    case 'sepia':  return img.removeAlpha().recomb([[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]])
+    case 'cool':   return img.removeAlpha().recomb([[0.88, 0, 0], [0, 1.00, 0], [0, 0, 1.15]])
+    case 'icy':    return img.removeAlpha().recomb([[0.82, 0, 0], [0, 0.98, 0], [0, 0, 1.22]]).modulate({ saturation: 1.05 })
+    case 'vivid':  return img.modulate({ saturation: 1.45 })
+    case 'mono':   return img.grayscale()
+    default:       return img
+  }
+}
 
 // `${vertical}-${horizontal}` — a 3×3 anchor grid the user picks from.
 const POSITIONS = [
@@ -174,34 +191,13 @@ async function buildFinalized(
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.9"/>`
     : ''
 
-  // Optional legibility filter — keeps the photo, just adds contrast behind the
-  // text. 'darken' dims the whole image; 'scrim' lays a soft gradient over the
-  // text's half; 'vignette' darkens the edges/corners.
-  if (filter === 'darken') img = img.modulate({ brightness: 0.62 })
+  // Color grade the whole photo (text is composited on top afterwards, so it
+  // stays clean white). Channel scaling via recomb gives warm/cool casts that
+  // preserve the image's own colors; modulate/grayscale handle vivid and B&W.
+  img = applyFilter(img, filter)
 
-  let overlayDefs = ''
-  let overlayRect = ''
-  if (filter === 'scrim') {
-    if (vertical === 'top') {
-      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.62"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient>`
-      overlayRect = `<rect x="0" y="0" width="${width}" height="${Math.round(height * 0.5)}" fill="url(#sc)"/>`
-    } else if (vertical === 'bottom') {
-      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.62"/></linearGradient>`
-      overlayRect = `<rect x="0" y="${Math.round(height * 0.5)}" width="${width}" height="${Math.round(height * 0.5)}" fill="url(#sc)"/>`
-    } else {
-      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0"/><stop offset="50%" stop-color="#000" stop-opacity="0.58"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient>`
-      overlayRect = `<rect x="0" y="${Math.round(height * 0.22)}" width="${width}" height="${Math.round(height * 0.56)}" fill="url(#sc)"/>`
-    }
-  } else if (filter === 'vignette') {
-    overlayDefs = `<radialGradient id="vg" cx="50%" cy="50%" r="75%"><stop offset="45%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.6"/></radialGradient>`
-    overlayRect = `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#vg)"/>`
-  }
-
-  // Overlay (if any) sits under the text; text paths stay razor-sharp.
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      ${overlayDefs ? `<defs>${overlayDefs}</defs>` : ''}
-      ${overlayRect}
       ${artistPaths}
       ${titlePaths}
       ${ruleSvg}
