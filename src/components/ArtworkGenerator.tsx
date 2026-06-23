@@ -10,12 +10,16 @@ type Position =
   | 'middle-left' | 'middle-center' | 'middle-right'
   | 'bottom-left' | 'bottom-center' | 'bottom-right'
 type Size = 'small' | 'medium' | 'large'
-type Filter = 'none' | 'darken' | 'scrim' | 'vignette'
+type Filter = 'none' | 'warm' | 'golden' | 'sepia' | 'cool' | 'icy' | 'vivid' | 'mono'
 const FILTER_LABELS: { value: Filter; label: string }[] = [
   { value: 'none', label: 'None' },
-  { value: 'darken', label: 'Darken' },
-  { value: 'scrim', label: 'Scrim' },
-  { value: 'vignette', label: 'Vignette' },
+  { value: 'warm', label: 'Warm' },
+  { value: 'golden', label: 'Golden' },
+  { value: 'sepia', label: 'Sepia' },
+  { value: 'cool', label: 'Cool' },
+  { value: 'icy', label: 'Icy' },
+  { value: 'vivid', label: 'Vivid' },
+  { value: 'mono', label: 'B&W' },
 ]
 
 const POSITION_GRID: Position[] = [
@@ -281,16 +285,18 @@ export default function ArtworkGenerator({
             </div>
           </div>
 
-          {/* Filter — legibility treatments that keep the photo */}
+          {/* Filter — whole-image color grades */}
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Filter</p>
-            <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
+            <div className="grid grid-cols-4 gap-1">
               {FILTER_LABELS.map(f => (
                 <button
                   key={f.value}
                   onClick={() => setFilter(f.value)}
-                  className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
-                    filter === f.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
+                  className={`py-1.5 text-[10px] font-medium rounded-lg border transition-colors ${
+                    filter === f.value
+                      ? 'bg-[#2dd4bf]/20 text-[#2dd4bf] border-[#2dd4bf]/40'
+                      : 'text-[#777] border-[#222] bg-[#0f0f0f] hover:text-[#aaa]'
                   }`}
                 >
                   {f.label}
