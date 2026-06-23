@@ -20,6 +20,8 @@ const FONT = parseFont(FONT_AB)
 type Align = 'left' | 'center' | 'right'
 type Vertical = 'top' | 'middle' | 'bottom'
 type Size = 'small' | 'medium' | 'large'
+type Filter = 'none' | 'darken' | 'scrim' | 'vignette'
+const FILTERS: Filter[] = ['none', 'darken', 'scrim', 'vignette']
 
 // `${vertical}-${horizontal}` — a 3×3 anchor grid the user picks from.
 const POSITIONS = [
@@ -99,9 +101,10 @@ async function buildFinalized(
   artist: string,
   position: Position,
   size: Size,
-  showRule: boolean
+  showRule: boolean,
+  filter: Filter
 ): Promise<Buffer> {
-  const img = sharp(imageBuffer)
+  let img = sharp(imageBuffer)
   const { width = 1024, height = 1024 } = await img.metadata()
 
   const [vertical, horizontal] = position.split('-') as [Vertical, Align]
@@ -141,10 +144,15 @@ async function buildFinalized(
   const ruleY   = artistY + gapAbove
   const titleY  = ruleY + ruleH + gapBelow + titleSize
 
-  // Horizontal anchor for the chosen alignment.
-  const anchorX =
-    align === 'left'  ? pad :
-    align === 'right' ? width - pad :
+  // The 3×3 grid positions the text BLOCK (in a corner/edge). Inside the block
+  // both lines and the rule are always centered on the block's center, so a
+  // short title stays centered under the line regardless of chosen position.
+  const artistW = measureWidth(artistText, artistSize, artistLS)
+  const titleW  = measureWidth(titleText, titleSize, titleLS)
+  const blockW  = Math.max(artistW, titleW)
+  const blockCenterX =
+    align === 'left'  ? Math.round(pad + blockW / 2) :
+    align === 'right' ? Math.round(width - pad - blockW / 2) :
                         Math.round(width / 2)
 
   // No outline on the small artist line — at this size the stroke closes up
@@ -152,26 +160,48 @@ async function buildFinalized(
   // The big title keeps a light outline (wide counters, needs legibility).
   const titleStroke = Math.max(1, Math.round(titleSize * 0.05))
 
-  const { markup: artistPaths, totalW: artistW } = textToSvgPaths(
-    artistText, anchorX, artistY, artistSize, artistLS, align, 'white', 1.0, 0, 0
+  const { markup: artistPaths } = textToSvgPaths(
+    artistText, blockCenterX, artistY, artistSize, artistLS, 'center', 'white', 1.0, 0, 0
   )
-  const { markup: titlePaths, totalW: titleW } = textToSvgPaths(
-    titleText, anchorX, titleY, titleSize, titleLS, align, 'white', 1.0, titleStroke, 0.5
+  const { markup: titlePaths } = textToSvgPaths(
+    titleText, blockCenterX, titleY, titleSize, titleLS, 'center', 'white', 1.0, titleStroke, 0.5
   )
 
-  // Horizontal rule — spans the wider line, aligned to match the text block.
-  const ruleW = Math.round(Math.max(artistW, titleW))
-  const ruleX =
-    align === 'left'  ? pad :
-    align === 'right' ? width - pad - ruleW :
-                        Math.round(width / 2 - ruleW / 2)
+  // Horizontal rule — spans the block width, centered on the block.
+  const ruleW = Math.round(blockW)
+  const ruleX = Math.round(blockCenterX - ruleW / 2)
   const ruleSvg = showRule
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.9"/>`
     : ''
 
-  // No SVG filters — pure vector paths keep the text razor-sharp at any size.
+  // Optional legibility filter — keeps the photo, just adds contrast behind the
+  // text. 'darken' dims the whole image; 'scrim' lays a soft gradient over the
+  // text's half; 'vignette' darkens the edges/corners.
+  if (filter === 'darken') img = img.modulate({ brightness: 0.62 })
+
+  let overlayDefs = ''
+  let overlayRect = ''
+  if (filter === 'scrim') {
+    if (vertical === 'top') {
+      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.62"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient>`
+      overlayRect = `<rect x="0" y="0" width="${width}" height="${Math.round(height * 0.5)}" fill="url(#sc)"/>`
+    } else if (vertical === 'bottom') {
+      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.62"/></linearGradient>`
+      overlayRect = `<rect x="0" y="${Math.round(height * 0.5)}" width="${width}" height="${Math.round(height * 0.5)}" fill="url(#sc)"/>`
+    } else {
+      overlayDefs = `<linearGradient id="sc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0"/><stop offset="50%" stop-color="#000" stop-opacity="0.58"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient>`
+      overlayRect = `<rect x="0" y="${Math.round(height * 0.22)}" width="${width}" height="${Math.round(height * 0.56)}" fill="url(#sc)"/>`
+    }
+  } else if (filter === 'vignette') {
+    overlayDefs = `<radialGradient id="vg" cx="50%" cy="50%" r="75%"><stop offset="45%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.6"/></radialGradient>`
+    overlayRect = `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#vg)"/>`
+  }
+
+  // Overlay (if any) sits under the text; text paths stay razor-sharp.
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      ${overlayDefs ? `<defs>${overlayDefs}</defs>` : ''}
+      ${overlayRect}
       ${artistPaths}
       ${titlePaths}
       ${ruleSvg}
@@ -207,6 +237,7 @@ export async function POST(request: NextRequest) {
   const size: Size = ['small', 'medium', 'large'].includes(body.size) ? body.size : 'medium'
   // Divider line on by default — omit only when the client explicitly says false.
   const showRule: boolean = body.showRule !== false
+  const filter: Filter = FILTERS.includes(body.filter) ? body.filter : 'none'
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
@@ -232,7 +263,7 @@ export async function POST(request: NextRequest) {
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
   const finalBuffer = await buildFinalized(
-    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule
+    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule, filter
   )
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
@@ -260,5 +291,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
   }
 
-  return NextResponse.json({ finalized_artwork_url: finalUrl, position, size, showRule })
+  return NextResponse.json({ finalized_artwork_url: finalUrl, position, size, showRule, filter })
 }

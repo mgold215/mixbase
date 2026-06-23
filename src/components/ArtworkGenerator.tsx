@@ -10,6 +10,13 @@ type Position =
   | 'middle-left' | 'middle-center' | 'middle-right'
   | 'bottom-left' | 'bottom-center' | 'bottom-right'
 type Size = 'small' | 'medium' | 'large'
+type Filter = 'none' | 'darken' | 'scrim' | 'vignette'
+const FILTER_LABELS: { value: Filter; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'darken', label: 'Darken' },
+  { value: 'scrim', label: 'Scrim' },
+  { value: 'vignette', label: 'Vignette' },
+]
 
 const POSITION_GRID: Position[] = [
   'top-left', 'top-center', 'top-right',
@@ -48,6 +55,7 @@ export default function ArtworkGenerator({
   const [position, setPosition] = useState<Position>('top-left')
   const [size, setSize] = useState<Size>('medium')
   const [showRule, setShowRule] = useState(true)
+  const [filter, setFilter] = useState<Filter>('none')
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null
@@ -69,6 +77,7 @@ export default function ArtworkGenerator({
         position,
         size,
         showRule,
+        filter,
       }),
     })
     const data = await res.json()
@@ -267,6 +276,24 @@ export default function ArtworkGenerator({
                   }`}
                 >
                   {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Filter — legibility treatments that keep the photo */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Filter</p>
+            <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
+              {FILTER_LABELS.map(f => (
+                <button
+                  key={f.value}
+                  onClick={() => setFilter(f.value)}
+                  className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
+                    filter === f.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
+                  }`}
+                >
+                  {f.label}
                 </button>
               ))}
             </div>
