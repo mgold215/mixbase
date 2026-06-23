@@ -8,11 +8,12 @@ import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { buildPunchList } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
-  Sparkles, History, X,
+  Sparkles, History, X, ClipboardList,
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -837,6 +838,28 @@ function CurrentMixCard({
     else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label, t)
   }
 
+  // Export feedback as a Markdown "punch list" (timestamped notes first, ordered
+  // by their moment in the track) the musician can paste straight into a DAW
+  // session or a doc. Copy to clipboard, falling back to a file download where
+  // the Clipboard API is unavailable (e.g. some webview / non-secure contexts).
+  const [copiedPunch, setCopiedPunch] = useState(false)
+  const copyPunchList = async () => {
+    const md = buildPunchList(`${projectTitle} — ${label}`, feedback)
+    try {
+      await navigator.clipboard.writeText(md)
+      setCopiedPunch(true)
+      setTimeout(() => setCopiedPunch(false), 2000)
+    } catch {
+      const blob = new Blob([md], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${label} — punch list.md`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   // Pinned-feedback markers on the scrubber. Each timestamped comment becomes a
   // dot on the timeline (orange ≤3★, cyan ≥4★, muted if unrated) — hover for the
   // note, click to seek. Needs a known duration to place dots, so it's hidden
@@ -987,14 +1010,24 @@ function CurrentMixCard({
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] text-[var(--text-muted)]">Feedback</span>
-              <button
-                onClick={() => onSummarizeFeedback(version.id)}
-                disabled={summaryLoading === version.id}
-                className="flex items-center gap-1 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 transition-colors"
-              >
-                <Sparkles size={10} />
-                {summaryLoading === version.id ? 'Summarizing…' : summaries[version.id] ? 'Re-summarize' : 'Summarize with AI'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={copyPunchList}
+                  title="Copy feedback as a timestamp-ordered punch list"
+                  className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                >
+                  {copiedPunch ? <Check size={10} /> : <ClipboardList size={10} />}
+                  {copiedPunch ? 'Copied!' : 'Punch list'}
+                </button>
+                <button
+                  onClick={() => onSummarizeFeedback(version.id)}
+                  disabled={summaryLoading === version.id}
+                  className="flex items-center gap-1 text-[11px] text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 transition-colors"
+                >
+                  <Sparkles size={10} />
+                  {summaryLoading === version.id ? 'Summarizing…' : summaries[version.id] ? 'Re-summarize' : 'Summarize with AI'}
+                </button>
+              </div>
             </div>
             {summaryError[version.id] && <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>}
             {summaries[version.id] && (
