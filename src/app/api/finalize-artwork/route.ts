@@ -25,15 +25,22 @@ const FILTERS: Filter[] = ['none', 'warm', 'golden', 'sepia', 'cool', 'icy', 'vi
 
 // Whole-image color grade. recomb scales the RGB channels (diagonal matrix) for
 // warm/cool casts that keep the photo's own colors; modulate boosts saturation;
-// grayscale for B&W; sepia uses the classic recomb matrix. removeAlpha guards
-// recomb, which needs a 3-channel image.
+// grayscale for B&W; sepia uses the classic recomb matrix.
+//
+// recomb needs a 3-channel image, so the cast filters flatten alpha first.
+// flatten() composites transparent pixels onto FLATTEN_BG — we must NOT use
+// removeAlpha(), which only drops the channel and would expose whatever RGB was
+// hidden under transparent pixels in an uploaded PNG/WebP/GIF. Black matches the
+// background Sharp's JPEG encoder flattens to on the none/vivid/mono paths, so
+// transparent artwork renders identically regardless of filter.
+const FLATTEN_BG = { r: 0, g: 0, b: 0 }
 function applyFilter(img: sharp.Sharp, filter: Filter): sharp.Sharp {
   switch (filter) {
-    case 'warm':   return img.removeAlpha().recomb([[1.12, 0, 0], [0, 1.04, 0], [0, 0, 0.88]])
-    case 'golden': return img.removeAlpha().recomb([[1.20, 0, 0], [0, 1.05, 0], [0, 0, 0.80]]).modulate({ saturation: 1.1 })
-    case 'sepia':  return img.removeAlpha().recomb([[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]])
-    case 'cool':   return img.removeAlpha().recomb([[0.88, 0, 0], [0, 1.00, 0], [0, 0, 1.15]])
-    case 'icy':    return img.removeAlpha().recomb([[0.82, 0, 0], [0, 0.98, 0], [0, 0, 1.22]]).modulate({ saturation: 1.05 })
+    case 'warm':   return img.flatten({ background: FLATTEN_BG }).recomb([[1.12, 0, 0], [0, 1.04, 0], [0, 0, 0.88]])
+    case 'golden': return img.flatten({ background: FLATTEN_BG }).recomb([[1.20, 0, 0], [0, 1.05, 0], [0, 0, 0.80]]).modulate({ saturation: 1.1 })
+    case 'sepia':  return img.flatten({ background: FLATTEN_BG }).recomb([[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]])
+    case 'cool':   return img.flatten({ background: FLATTEN_BG }).recomb([[0.88, 0, 0], [0, 1.00, 0], [0, 0, 1.15]])
+    case 'icy':    return img.flatten({ background: FLATTEN_BG }).recomb([[0.82, 0, 0], [0, 0.98, 0], [0, 0, 1.22]]).modulate({ saturation: 1.05 })
     case 'vivid':  return img.modulate({ saturation: 1.45 })
     case 'mono':   return img.grayscale()
     default:       return img
