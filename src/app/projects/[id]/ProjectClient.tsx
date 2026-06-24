@@ -8,12 +8,12 @@ import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
-import { buildPunchList } from '@/lib/punch-list'
+import { buildPunchList, buildSummaryExport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
-  Sparkles, History, X, ClipboardList,
+  Sparkles, History, X, ClipboardList, Copy,
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -860,6 +860,29 @@ function CurrentMixCard({
     }
   }
 
+  // Export the AI feedback summary as Markdown so the model's read of the room
+  // can leave the app (session doc, message to a collaborator, release notes).
+  // Same copy-to-clipboard → file-download fallback as the punch list above.
+  const [copiedSummary, setCopiedSummary] = useState(false)
+  const copySummary = async () => {
+    const summary = summaries[version.id]
+    if (!summary) return
+    const md = buildSummaryExport(`${projectTitle} — ${label}`, summary, feedback)
+    try {
+      await navigator.clipboard.writeText(md)
+      setCopiedSummary(true)
+      setTimeout(() => setCopiedSummary(false), 2000)
+    } catch {
+      const blob = new Blob([md], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${label} — AI summary.md`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   // Pinned-feedback markers on the scrubber. Each timestamped comment becomes a
   // dot on the timeline (orange ≤3★, cyan ≥4★, muted if unrated) — hover for the
   // note, click to seek. Needs a known duration to place dots, so it's hidden
@@ -1032,9 +1055,19 @@ function CurrentMixCard({
             {summaryError[version.id] && <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>}
             {summaries[version.id] && (
               <div className="rounded-xl p-3 mb-2" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf22' }}>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Sparkles size={10} className="text-[#2dd4bf]" />
-                  <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={10} className="text-[#2dd4bf]" />
+                    <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                  </div>
+                  <button
+                    onClick={copySummary}
+                    title="Copy the AI summary as Markdown"
+                    className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  >
+                    {copiedSummary ? <Check size={10} /> : <Copy size={10} />}
+                    {copiedSummary ? 'Copied!' : 'Copy'}
+                  </button>
                 </div>
                 <SummaryView markdown={summaries[version.id]} />
               </div>
