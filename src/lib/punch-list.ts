@@ -34,6 +34,28 @@ function contextLine(feedback: Feedback[]): string {
   return avg ? `${count} · avg ★ ${avg}` : count
 }
 
+// Build the checklist body — a "## Timestamped" block (notes pinned to a moment,
+// earliest first) followed by a "## General" block (un-pinned notes, oldest
+// first). Returns the Markdown lines with no document heading/context, so both
+// the standalone punch list and the combined mix report can drop it in.
+function punchSections(feedback: Feedback[]): string[] {
+  const timestamped = feedback
+    .filter(f => f.timestamp_seconds != null)
+    .sort((a, b) => a.timestamp_seconds! - b.timestamp_seconds!)
+  const general = feedback
+    .filter(f => f.timestamp_seconds == null)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  const out: string[] = []
+  if (timestamped.length) {
+    out.push('## Timestamped', ...timestamped.map(line), '')
+  }
+  if (general.length) {
+    out.push('## General', ...general.map(line), '')
+  }
+  return out
+}
+
 /**
  * Turn a version's listener feedback into a Markdown "punch list" a musician can
  * paste straight into their DAW notes, a doc, or a message. Timestamped notes
@@ -45,22 +67,7 @@ function contextLine(feedback: Feedback[]): string {
  * Pure and dependency-free so it can be unit-tested and reused server-side.
  */
 export function buildPunchList(heading: string, feedback: Feedback[]): string {
-  const timestamped = feedback
-    .filter(f => f.timestamp_seconds != null)
-    .sort((a, b) => a.timestamp_seconds! - b.timestamp_seconds!)
-  const general = feedback
-    .filter(f => f.timestamp_seconds == null)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at))
-
-  const out: string[] = [`# ${heading} — feedback punch list`, '', contextLine(feedback), '']
-
-  if (timestamped.length) {
-    out.push('## Timestamped', ...timestamped.map(line), '')
-  }
-  if (general.length) {
-    out.push('## General', ...general.map(line), '')
-  }
-
+  const out: string[] = [`# ${heading} — feedback punch list`, '', contextLine(feedback), '', ...punchSections(feedback)]
   return out.join('\n').trimEnd() + '\n'
 }
 
@@ -77,5 +84,27 @@ export function buildPunchList(heading: string, feedback: Feedback[]): string {
  */
 export function buildSummaryExport(heading: string, summary: string, feedback: Feedback[]): string {
   const out: string[] = [`# ${heading} — AI feedback summary`, '', contextLine(feedback), '', summary.trim()]
+  return out.join('\n').trimEnd() + '\n'
+}
+
+/**
+ * Build one combined "mix report" — the AI summary (the model's read of the
+ * room) followed by the full timestamped punch list (the concrete to-dos) — as a
+ * single Markdown document. This is what a musician actually wants to carry into
+ * a session or hand a collaborator: the narrative and the checklist together,
+ * under one heading with one shared context line. The "## AI summary" section is
+ * omitted when no summary has been generated, so the report degrades to a plain
+ * punch list rather than emitting an empty section.
+ *
+ * Reuses the same context line and checklist sections as the two single-purpose
+ * exports, so all three read as a matching set. Pure and dependency-free.
+ */
+export function buildMixReport(heading: string, summary: string, feedback: Feedback[]): string {
+  const out: string[] = [`# ${heading} — mix report`, '', contextLine(feedback), '']
+  const trimmed = summary.trim()
+  if (trimmed) {
+    out.push('## AI summary', '', trimmed, '')
+  }
+  out.push(...punchSections(feedback))
   return out.join('\n').trimEnd() + '\n'
 }
