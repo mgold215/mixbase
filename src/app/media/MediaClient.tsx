@@ -1,10 +1,13 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Check, X, ExternalLink, Download } from 'lucide-react'
+import { Check, X, ExternalLink, Download, Film } from 'lucide-react'
 import { downloadImage } from '@/lib/download'
+
+const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
 type Project = { id: string; title: string; artwork_url: string | null }
 type Collection = { id: string; title: string; type: string }
@@ -20,6 +23,7 @@ export default function MediaClient({ projects, collections }: Props) {
   const [selected, setSelected] = useState<Project | null>(null)
   const [assigning, setAssigning] = useState(false)
   const [assigned, setAssigned] = useState<string | null>(null)
+  const [visualizing, setVisualizing] = useState<Project | null>(null)
 
   async function assignToCollection(collectionId: string) {
     if (!selected?.artwork_url) return
@@ -133,14 +137,24 @@ export default function MediaClient({ projects, collections }: Props) {
                   Open project
                 </Link>
                 {selected.artwork_url && (
-                  <button
-                    onClick={() => downloadImage(selected.artwork_url!, selected.title)}
-                    className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-4 transition-colors"
-                    style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
-                  >
-                    <Download size={12} />
-                    Download
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setVisualizing(selected)}
+                      className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-2 transition-colors"
+                      style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                    >
+                      <Film size={12} />
+                      Make visualizer
+                    </button>
+                    <button
+                      onClick={() => downloadImage(selected.artwork_url!, selected.title)}
+                      className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-4 transition-colors"
+                      style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+                    >
+                      <Download size={12} />
+                      Download
+                    </button>
+                  </>
                 )}
 
                 {/* Assign to collection */}
@@ -196,6 +210,46 @@ export default function MediaClient({ projects, collections }: Props) {
           )}
         </div>
       </div>
+
+      {/* Visualizer modal — animate the selected photo into a video */}
+      {visualizing && visualizing.artwork_url && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+          onClick={() => setVisualizing(null)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl my-8"
+            style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div
+              className="flex items-center justify-between px-5 py-3 sticky top-0 rounded-t-2xl"
+              style={{ backgroundColor: 'var(--bg-page)', borderBottom: '1px solid var(--surface-2)' }}
+            >
+              <div className="flex items-center gap-2">
+                <Film size={16} style={{ color: 'var(--accent)' }} />
+                <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Make Visualizer</p>
+              </div>
+              <button
+                onClick={() => setVisualizing(null)}
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+                style={{ color: 'var(--text-muted)' }}
+                aria-label="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="p-5">
+              <Visualizer
+                projectTitle={visualizing.title}
+                artworkUrl={visualizing.artwork_url}
+                onSwitchToArtwork={() => setVisualizing(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
