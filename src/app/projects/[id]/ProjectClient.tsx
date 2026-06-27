@@ -8,12 +8,12 @@ import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
-import { buildPunchList } from '@/lib/punch-list'
+import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
-  Sparkles, History, X, ClipboardList,
+  Sparkles, History, X, ClipboardList, Copy, FileText,
 } from 'lucide-react'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
@@ -838,27 +838,51 @@ function CurrentMixCard({
     else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label, t)
   }
 
-  // Export feedback as a Markdown "punch list" (timestamped notes first, ordered
-  // by their moment in the track) the musician can paste straight into a DAW
-  // session or a doc. Copy to clipboard, falling back to a file download where
-  // the Clipboard API is unavailable (e.g. some webview / non-secure contexts).
-  const [copiedPunch, setCopiedPunch] = useState(false)
-  const copyPunchList = async () => {
-    const md = buildPunchList(`${projectTitle} — ${label}`, feedback)
+  // Copy Markdown to the clipboard, flashing a "Copied!" confirmation; where the
+  // Clipboard API is unavailable (some webviews / non-secure contexts) fall back
+  // to downloading it as a .md file so the export still works inside the iOS
+  // wrapper. Shared by all three feedback exports below.
+  const copyMarkdown = async (md: string, filename: string, onCopied: () => void) => {
     try {
       await navigator.clipboard.writeText(md)
-      setCopiedPunch(true)
-      setTimeout(() => setCopiedPunch(false), 2000)
+      onCopied()
     } catch {
       const blob = new Blob([md], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${label} — punch list.md`
+      a.download = filename
       a.click()
       URL.revokeObjectURL(url)
     }
   }
+  const flash = (set: (v: boolean) => void) => () => {
+    set(true)
+    setTimeout(() => set(false), 2000)
+  }
+
+  // Export feedback as a Markdown "punch list" (timestamped notes first, ordered
+  // by their moment in the track) the musician can paste straight into a DAW
+  // session or a doc.
+  const [copiedPunch, setCopiedPunch] = useState(false)
+  const copyPunchList = () =>
+    copyMarkdown(buildPunchList(`${projectTitle} — ${label}`, feedback), `${label} — punch list.md`, flash(setCopiedPunch))
+
+  // Export the AI feedback summary as Markdown so the model's read of the room
+  // can leave the app (session doc, message to a collaborator, release notes).
+  const [copiedSummary, setCopiedSummary] = useState(false)
+  const copySummary = () => {
+    const summary = summaries[version.id]
+    if (!summary) return
+    copyMarkdown(buildSummaryExport(`${projectTitle} — ${label}`, summary, feedback), `${label} — AI summary.md`, flash(setCopiedSummary))
+  }
+
+  // Export the combined "mix report" — AI summary + punch list in one document —
+  // the single thing a musician carries into a session or hands a collaborator.
+  // Degrades to a plain punch list when no summary has been generated yet.
+  const [copiedReport, setCopiedReport] = useState(false)
+  const copyMixReport = () =>
+    copyMarkdown(buildMixReport(`${projectTitle} — ${label}`, summaries[version.id] ?? '', feedback), `${label} — mix report.md`, flash(setCopiedReport))
 
   // Pinned-feedback markers on the scrubber. Each timestamped comment becomes a
   // dot on the timeline (orange ≤3★, cyan ≥4★, muted if unrated) — hover for the
@@ -1019,6 +1043,16 @@ function CurrentMixCard({
                   {copiedPunch ? <Check size={10} /> : <ClipboardList size={10} />}
                   {copiedPunch ? 'Copied!' : 'Punch list'}
                 </button>
+                {summaries[version.id] && (
+                  <button
+                    onClick={copyMixReport}
+                    title="Copy the AI summary and punch list together as one mix report"
+                    className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  >
+                    {copiedReport ? <Check size={10} /> : <FileText size={10} />}
+                    {copiedReport ? 'Copied!' : 'Mix report'}
+                  </button>
+                )}
                 <button
                   onClick={() => onSummarizeFeedback(version.id)}
                   disabled={summaryLoading === version.id}
@@ -1032,9 +1066,19 @@ function CurrentMixCard({
             {summaryError[version.id] && <p className="text-xs text-red-400 mb-2">{summaryError[version.id]}</p>}
             {summaries[version.id] && (
               <div className="rounded-xl p-3 mb-2" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid #2dd4bf22' }}>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Sparkles size={10} className="text-[#2dd4bf]" />
-                  <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={10} className="text-[#2dd4bf]" />
+                    <span className="text-[10px] uppercase tracking-wide text-[#2dd4bf]">AI Summary</span>
+                  </div>
+                  <button
+                    onClick={copySummary}
+                    title="Copy the AI summary as Markdown"
+                    className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  >
+                    {copiedSummary ? <Check size={10} /> : <Copy size={10} />}
+                    {copiedSummary ? 'Copied!' : 'Copy'}
+                  </button>
                 </div>
                 <SummaryView markdown={summaries[version.id]} />
               </div>

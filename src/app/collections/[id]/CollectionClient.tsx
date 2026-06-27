@@ -4,8 +4,9 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
 
 type Collection = { id: string; title: string; type: string; cover_url: string | null }
 type CollectionItem = {
@@ -17,7 +18,9 @@ type CollectionItem = {
 }
 type Project = { id: string; title: string; artwork_url: string | null }
 
-const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
+// User-facing type labels live in collection-export.ts so the pill and the
+// exported document can't drift apart.
+const TYPE_LABEL = COLLECTION_TYPE_LABEL
 const TYPES = ['album', 'ep', 'playlist'] as const
 
 type Props = {
@@ -152,6 +155,33 @@ export default function CollectionClient({ collection, initialItems, allProjects
     router.push('/collections')
   }
 
+  // ── Export tracklist as Markdown ──────────────────────────────────────────────
+  // Copies the collection's ordered tracklist as one Markdown doc (heading +
+  // track count + numbered tracks) so it can leave the app — release notes, a
+  // distributor submission, a message to a collaborator. Mirrors the feedback /
+  // release-plan exports: clipboard first, falling back to a .md download where
+  // the Clipboard API is unavailable (iOS wrapper / non-secure contexts).
+  const [exported, setExported] = useState(false)
+  async function exportTracklist() {
+    const md = buildCollectionExport(
+      { title: collection.title, type },
+      items.map(i => ({ title: i.mb_projects?.title ?? null, genre: i.mb_projects?.genre })),
+    )
+    const filename = `${collection.title} — tracklist.md`
+    try {
+      await navigator.clipboard.writeText(md)
+      setExported(true)
+      setTimeout(() => setExported(false), 2000)
+    } catch {
+      const url = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   const filteredMedia = mediaItems.filter(m =>
     !coverSearch.trim() || m.title.toLowerCase().includes(coverSearch.toLowerCase())
   )
@@ -235,6 +265,16 @@ export default function CollectionClient({ collection, initialItems, allProjects
               >
                 <Play size={14} fill="currentColor" />
                 <span className="hidden sm:inline">Play All</span>
+              </button>
+            )}
+            {items.length > 0 && (
+              <button
+                onClick={exportTracklist}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: exported ? 'var(--accent)' : 'var(--text-muted)' }}
+                title={exported ? 'Copied!' : 'Export tracklist as Markdown'}
+              >
+                {exported ? <Check size={16} /> : <FileText size={16} />}
               </button>
             )}
             <button

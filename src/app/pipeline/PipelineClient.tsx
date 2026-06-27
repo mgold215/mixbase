@@ -3,8 +3,9 @@
 import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check } from 'lucide-react'
 import { displayArtworkUrl, type Release } from '@/lib/supabase'
+import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan } from '@/lib/release-plan'
 
 type ReleaseWithProject = Release & {
   mb_projects: { title: string; artwork_url: string | null; finalized_artwork_url: string | null } | null
@@ -17,32 +18,6 @@ type Props = {
   versions: VersionLite[]
 }
 
-const CHECKLIST_ITEMS = [
-  { key: 'mixing_done', label: 'Mixing done' },
-  { key: 'mastering_done', label: 'Mastering done' },
-  { key: 'artwork_ready', label: 'Artwork ready' },
-  { key: 'press_release_done', label: 'Pre-save link live' },
-  { key: 'dsp_submitted', label: 'DistroKid submitted' },
-  { key: 'social_posts_done', label: 'Social posts scheduled' },
-] as const
-
-// Post-launch campaign steps — reuses dsp_* DB columns, no migration needed
-const POST_LAUNCH_ITEMS = [
-  { key: 'dsp_spotify',     label: 'Brazil Showcase launched', hint: '$100 · launch day' },
-  { key: 'dsp_apple_music', label: 'US Showcase launched',     hint: '$100 · launch day' },
-  { key: 'dsp_youtube',     label: 'Canvas uploaded to Spotify', hint: '+15% saves' },
-  { key: 'dsp_tidal',       label: 'Save rate ≥6%? Add Marquee', hint: '$100 · check T+48h' },
-  { key: 'dsp_soundcloud',  label: 'Curator emails sent',      hint: 'email-agents' },
-  { key: 'dsp_amazon',      label: 'Meta ad live',             hint: 'Hypeddit · evergreen' },
-  { key: 'dsp_bandcamp',    label: 'Release Radar fired?',     hint: 'check T+7' },
-] as const
-
-function completionPercent(release: Release): number {
-  const allItems = [...CHECKLIST_ITEMS, ...POST_LAUNCH_ITEMS]
-  const checks = allItems.filter(c => release[c.key as keyof Release]).length
-  return Math.round((checks / allItems.length) * 100)
-}
-
 function daysUntil(dateStr: string | null): string | null {
   if (!dateStr) return null
   const diff = new Date(dateStr).getTime() - Date.now()
@@ -53,6 +28,24 @@ function daysUntil(dateStr: string | null): string | null {
   return `${days} days`
 }
 
+// Copy text to the clipboard, falling back to a .md file download where the
+// Clipboard API is unavailable (some webviews / non-secure contexts) so the
+// export still works inside the iOS wrapper. Mirrors ProjectClient's helper.
+async function copyMarkdown(md: string, filename: string, onCopied: () => void) {
+  try {
+    await navigator.clipboard.writeText(md)
+    onCopied()
+  } catch {
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+}
+
 export default function PipelineClient({ initialReleases, projects, versions }: Props) {
   const [releases, setReleases] = useState(initialReleases)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -60,6 +53,10 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   const [form, setForm] = useState({ title: '', release_date: '', project_id: '', final_version_id: '', genre: '', label: '', isrc: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Which release just had its plan copied — drives the per-card "Copied!" flash.
+  // Held in the parent (not ReleaseCard) because ReleaseCard is recreated on every
+  // render, so local state there would reset whenever the board re-renders.
+  const [copiedPlanId, setCopiedPlanId] = useState<string | null>(null)
 
   function setField(field: string, value: string) {
     setForm(prev => {
@@ -153,8 +150,22 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
 
   function ReleaseCard({ release }: { release: ReleaseWithProject }) {
     const isExpanded = expandedId === release.id
-    const pct = completionPercent(release)
+    const pct = releaseCompletionPercent(release)
     const countdown = daysUntil(release.release_date)
+    const copiedPlan = copiedPlanId === release.id
+
+    // Export the whole release plan — checklist state, date, metadata, notes —
+    // as one Markdown doc the musician can paste into a distributor checklist,
+    // a collaborator message, or release notes.
+    const copyPlan = () =>
+      copyMarkdown(
+        buildReleasePlan(release, release.mb_projects?.title ?? null),
+        `${release.title} — release plan.md`,
+        () => {
+          setCopiedPlanId(release.id)
+          setTimeout(() => setCopiedPlanId(prev => (prev === release.id ? null : prev)), 2000)
+        },
+      )
 
     return (
       <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -243,7 +254,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               <div>
                 <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Pre-Launch</p>
                 <div className="space-y-2">
-                  {CHECKLIST_ITEMS.map(item => (
+                  {PRE_LAUNCH_ITEMS.map(item => (
                     <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
                       <input
                         type="checkbox"
@@ -263,7 +274,7 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               <div>
                 <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Launch Campaign</p>
                 <div className="space-y-2">
-                  {POST_LAUNCH_ITEMS.map(item => (
+                  {LAUNCH_CAMPAIGN_ITEMS.map(item => (
                     <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
                       <input
                         type="checkbox"
@@ -296,7 +307,14 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               {release.isrc && <span>ISRC: {release.isrc}</span>}
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-4">
+              <button
+                onClick={copyPlan}
+                className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+              >
+                {copiedPlan ? <Check size={12} /> : <ClipboardList size={12} />}
+                {copiedPlan ? 'Copied!' : 'Copy plan'}
+              </button>
               <button
                 onClick={() => deleteRelease(release.id)}
                 className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
