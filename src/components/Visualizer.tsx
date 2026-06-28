@@ -510,12 +510,13 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           <textarea
             value={aiPrompt}
             onChange={e => setAiPrompt(e.target.value)}
-            placeholder="e.g. Particles dissolving outward from center, liquid ripple distortion, neon light trails pulsing to a beat"
+            placeholder="e.g. Camera slowly pushes in, particles drift outward from the center, light flickers and pulses, clouds roll across the sky"
             rows={3}
+            maxLength={1000}
             className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none resize-none transition-colors"
             style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)', color: 'var(--text)' }}
           />
-          <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Leave blank for a default cinematic drift. Be specific — describe motion, not style.</p>
+          <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Describe <strong>only how things move</strong> — camera moves, what drifts, pulses, or flows. The artwork already sets the scene, so style words (&ldquo;moody&rdquo;, &ldquo;cinematic&rdquo;) are ignored, and it can&rsquo;t add things that aren&rsquo;t in the image. Leave blank for a slow push-in.</p>
         </div>
 
         <button
