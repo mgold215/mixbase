@@ -50,7 +50,7 @@ export default function ArtworkGenerator({
   showActions = true,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
-  const [prompt, setPrompt] = useState(`architectural photograph of a real glass and exposed concrete structure, board-formed concrete with natural texture and imperfections, floor-to-ceiling glass with accurate reflections and refractions, soft natural daylight, realistic materials and weathering, shot on a 35mm full-frame camera with a wide-angle lens, shallow depth of field, true-to-life color grading, photorealistic, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
+  const [prompt, setPrompt] = useState(`architectural photograph of a giant retro tape cassette built into a real glass and exposed concrete structure, the cassette fused into board-formed concrete with natural texture and imperfections, floor-to-ceiling glass walls with accurate reflections and refractions, monumental brutalist forms, soft natural daylight, realistic materials and weathering, shot on a 35mm full-frame camera with a wide-angle lens, shallow depth of field, true-to-life color grading, photorealistic, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
   const [uploading, setUploading] = useState(false)
