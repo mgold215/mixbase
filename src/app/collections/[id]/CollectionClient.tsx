@@ -47,6 +47,17 @@ export default function CollectionClient({ collection, initialItems, allProjects
   // Drag-to-reorder state
   const dragItem = useRef<number | null>(null)
   const dragOver = useRef<number | null>(null)
+  // Snapshot of the order before a drag started, so we can roll back if the
+  // reorder PATCH fails (otherwise the UI keeps the new order while the DB
+  // keeps the old one — a silent desync that only shows up on reload).
+  const preDragOrder = useRef<CollectionItem[] | null>(null)
+
+  // Transient error toast for failed mutations.
+  const [error, setError] = useState<string | null>(null)
+  function flashError(msg: string) {
+    setError(msg)
+    setTimeout(() => setError(null), 4000)
+  }
 
   const inCollection = new Set(items.map(i => i.project_id))
   const available = allProjects.filter(
@@ -119,6 +130,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
   function onDragStart(e: React.DragEvent, idx: number) {
     dragItem.current = idx
+    preDragOrder.current = items  // snapshot the pre-drag order for rollback
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', '')
   }
@@ -139,13 +151,22 @@ export default function CollectionClient({ collection, initialItems, allProjects
   async function onDragEnd() {
     dragItem.current = null
     dragOver.current = null
-    // Persist new order to API
+    const snapshot = preDragOrder.current
+    preDragOrder.current = null
+    // Persist new order to API; roll back to the pre-drag order if it fails so
+    // the UI never silently diverges from the saved order.
     const reordered = items.map((item, i) => ({ id: item.id, position: i }))
-    await fetch(`/api/collections/${collection.id}/items`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: reordered }),
-    })
+    try {
+      const res = await fetch(`/api/collections/${collection.id}/items`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: reordered }),
+      })
+      if (!res.ok) throw new Error('reorder failed')
+    } catch {
+      if (snapshot) setItems(snapshot)
+      flashError('Could not save the new track order — reverted.')
+    }
   }
 
   // ── Delete collection ─────────────────────────────────────────────────────────
@@ -188,6 +209,15 @@ export default function CollectionClient({ collection, initialItems, allProjects
 
   return (
     <div className="min-h-screen pb-36 md:pb-12" style={{ backgroundColor: 'var(--bg-page)' }}>
+      {error && (
+        <div
+          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
+          style={{ backgroundColor: 'var(--surface)', color: '#f87171', border: '1px solid var(--surface-2)' }}
+          role="alert"
+        >
+          {error}
+        </div>
+      )}
       <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-16 sm:pt-20">
 
         {/* Header */}
