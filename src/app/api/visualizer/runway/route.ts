@@ -88,7 +88,12 @@ export async function POST(req: NextRequest) {
     ? ratio
     : modelCfg.ratios.includes('720:1280') ? '720:1280' : modelCfg.ratios[0]
 
-  const promptText = customPrompt?.trim() || 'Slow cinematic drift, subtle atmospheric shimmer, ambient light play, looping, no text, no faces'
+  // Runway image-to-video adheres best when the text describes MOTION ONLY — the
+  // image already defines the scene/style. Style/atmosphere keywords dilute the
+  // signal and read as "the prompt was ignored", so the default is motion-first.
+  // The API also rejects promptText over 1000 chars, so clamp to avoid a silent
+  // create failure on long pastes.
+  const promptText = (customPrompt?.trim() || 'Slow cinematic camera push-in with gentle parallax, subtle continuous motion throughout the scene, smooth seamless loop').slice(0, 1000)
 
   // Monthly tier gate — enforces the per-plan video quota (free/pro: 0, studio: 10).
   // Placed after input validation but before the paid Runway call so a bad request
