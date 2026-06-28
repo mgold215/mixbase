@@ -57,6 +57,13 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   // Held in the parent (not ReleaseCard) because ReleaseCard is recreated on every
   // render, so local state there would reset whenever the board re-renders.
   const [copiedPlanId, setCopiedPlanId] = useState<string | null>(null)
+  // Transient error toast for failed mutations (date edit, delete) so they
+  // don't fail silently and leave the UI out of sync with the DB.
+  const [actionError, setActionError] = useState<string | null>(null)
+  function flashError(msg: string) {
+    setActionError(msg)
+    setTimeout(() => setActionError(null), 4000)
+  }
 
   function setField(field: string, value: string) {
     setForm(prev => {
@@ -118,18 +125,33 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
 
   async function updateReleaseDate(releaseId: string, value: string) {
     const next = value || null
+    // Snapshot the current date so we can roll back if the PATCH fails.
+    const prevDate = releases.find(r => r.id === releaseId)?.release_date ?? null
     setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, release_date: next } : r))
-    await fetch(`/api/releases/${releaseId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ release_date: next }),
-    })
+    try {
+      const res = await fetch(`/api/releases/${releaseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ release_date: next }),
+      })
+      if (!res.ok) throw new Error('update failed')
+    } catch {
+      setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, release_date: prevDate } : r))
+      flashError('Could not update the release date — reverted.')
+    }
   }
 
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release?')) return
-    await fetch(`/api/releases/${id}`, { method: 'DELETE' })
-    setReleases(prev => prev.filter(r => r.id !== id))
+    // Only drop the release from the UI once the server confirms the delete,
+    // so a failed request doesn't make it look deleted when it still exists.
+    try {
+      const res = await fetch(`/api/releases/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('delete failed')
+      setReleases(prev => prev.filter(r => r.id !== id))
+    } catch {
+      flashError('Could not delete the release — please try again.')
+    }
   }
 
   // Separate upcoming vs past, then order each group chronologically.
@@ -331,6 +353,15 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
+      {actionError && (
+        <div
+          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
+          style={{ backgroundColor: 'var(--surface)', color: '#f87171', border: '1px solid var(--surface-2)' }}
+          role="alert"
+        >
+          {actionError}
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
