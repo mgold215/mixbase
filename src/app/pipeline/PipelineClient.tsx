@@ -5,7 +5,14 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check } from 'lucide-react'
 import { displayArtworkUrl, type Release } from '@/lib/supabase'
-import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan } from '@/lib/release-plan'
+import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, type ReleaseStatusKey } from '@/lib/release-plan'
+
+// Tailwind classes for each release-status badge tone.
+const STATUS_TONE: Record<ReleaseStatusKey, string> = {
+  ready: 'text-emerald-400 bg-emerald-400/10',
+  'at-risk': 'text-red-400 bg-red-400/10',
+  'due-soon': 'text-amber-400 bg-amber-400/10',
+}
 
 type ReleaseWithProject = Release & {
   mb_projects: { title: string; artwork_url: string | null; finalized_artwork_url: string | null } | null
@@ -157,7 +164,11 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   // Separate upcoming vs past, then order each group chronologically.
   // Upcoming: nearest first, undated releases at the end.
   // Past: most recent first, so the latest release sits at the top.
-  const todayMs = new Date().setHours(0, 0, 0, 0)
+  const now = new Date()
+  const todayMs = now.setHours(0, 0, 0, 0)
+  // Local calendar date as YYYY-MM-DD, fed to the pure getReleaseStatus() so the
+  // "At risk / Due soon / Ready" judgment matches the user's own notion of today.
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const upcoming = releases
     .filter(r => !r.release_date || new Date(r.release_date).getTime() >= todayMs)
     .sort((a, b) => {
@@ -174,6 +185,8 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     const isExpanded = expandedId === release.id
     const pct = releaseCompletionPercent(release)
     const countdown = daysUntil(release.release_date)
+    // Readiness judgment (At risk / Due soon / Ready) — null when nothing to flag.
+    const status = getReleaseStatus(release, todayStr)
     const copiedPlan = copiedPlanId === release.id
 
     // Export the whole release plan — checklist state, date, metadata, notes —
@@ -224,6 +237,13 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Readiness status — only rendered when there's something to flag */}
+            {status && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_TONE[status.key]}`}>
+                {status.label}
+              </span>
+            )}
+
             {/* Countdown */}
             {countdown && (
               <span className={`text-xs px-2 py-0.5 rounded-full ${
