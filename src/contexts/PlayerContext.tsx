@@ -427,6 +427,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => md.removeEventListener('devicechange', onDeviceChange)
   }, [resumeIfIntended])
 
+  // ── iOS route-change watchdog (AirPods out → back in) ──────────────────────
+  // iOS Safari/PWA does NOT fire `devicechange` (the effect above is a no-op there) and
+  // does NOT fire visibilitychange/pageshow for an audio-output route change while the
+  // screen stays locked — e.g. taking AirPods out and putting them back in. iOS pauses (or
+  // wedges the output of) the <audio> element with no DOM event to recover from, so nothing
+  // resumes when the route returns; meanwhile the lock-screen clock keeps ticking because
+  // iOS extrapolates position from the last setPositionState + playbackState='playing'.
+  // Poll on a short interval and re-assert playback whenever the user still intends to play.
+  // resumeIfIntended is gated on playIntentRef and only acts on a paused element / suspended
+  // context, so a deliberate pause is never overridden and healthy playback is untouched.
+  useEffect(() => {
+    const id = setInterval(() => { if (playIntentRef.current) resumeIfIntended() }, 2000)
+    return () => clearInterval(id)
+  }, [resumeIfIntended])
+
   // ── EQ chain ─────────────────────────────────────────────────────────────────
   const ensureAudioChain = useCallback(() => {
     if (audioCtxRef.current || !audioRef.current) return
@@ -641,8 +656,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     set('previoustrack', () => prev())
     set('nexttrack',     () => next())
     set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
-    set('seekbackward',  (d) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - (d.seekOffset ?? 10)) })
-    set('seekforward',   (d) => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + (d.seekOffset ?? 10)) })
+    // Deliberately DON'T register seekforward/seekbackward. When those handlers are present
+    // iOS shows ±10s skip buttons on the lock screen and hides the next/previous-track
+    // transport. Leaving them unset (null) makes iOS render next/previous-track instead,
+    // which is what we want for a track-based player. 'seekto' still powers the scrubber.
+    set('seekforward',   null)
+    set('seekbackward',  null)
     return () => {
       ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
         .forEach(a => set(a, null))
