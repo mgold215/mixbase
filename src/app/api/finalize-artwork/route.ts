@@ -191,11 +191,28 @@ async function buildFinalized(
     titleText, blockCenterX, titleY, titleSize, titleLS, 'center', 'white', 1.0, titleStroke, 0.5
   )
 
+  // Soft dark halo behind the white text. White-on-light backgrounds (sky,
+  // concrete) made the small artist line dissolve — counters of 'o'/'a' blended
+  // into the photo and it read as garbled. A blurred dark copy underneath adds
+  // contrast on ANY background without a hard stroke (which closes up the narrow
+  // counters at the small artist size). Rendered as separate #000 copies wrapped
+  // in a Gaussian-blur group, painted before the crisp white fill on top.
+  const { markup: artistShadow } = textToSvgPaths(
+    artistText, blockCenterX, artistY, artistSize, artistLS, 'center', '#000', 0.85, 0, 0
+  )
+  const { markup: titleShadow } = textToSvgPaths(
+    titleText, blockCenterX, titleY, titleSize, titleLS, 'center', '#000', 0.85, 0, 0
+  )
+  const shadowBlur = Math.max(1.5, width * 0.0022)
+
   // Horizontal rule — spans the block width, centered on the block.
   const ruleW = Math.round(blockW)
   const ruleX = Math.round(blockCenterX - ruleW / 2)
   const ruleSvg = showRule
     ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="white" fill-opacity="0.9"/>`
+    : ''
+  const ruleShadow = showRule
+    ? `<rect x="${ruleX}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="#000" fill-opacity="0.85"/>`
     : ''
 
   // Color grade the whole photo (text is composited on top afterwards, so it
@@ -205,6 +222,16 @@ async function buildFinalized(
 
   const textSvg = Buffer.from(
     `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="textShadow" filterUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}">
+          <feGaussianBlur stdDeviation="${shadowBlur}"/>
+        </filter>
+      </defs>
+      <g filter="url(#textShadow)">
+        ${artistShadow}
+        ${titleShadow}
+        ${ruleShadow}
+      </g>
       ${artistPaths}
       ${titlePaths}
       ${ruleSvg}
