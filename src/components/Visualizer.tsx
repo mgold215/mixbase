@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
-import { Download, Film, Sparkles } from 'lucide-react'
+import { Download, Film, Sparkles, Check } from 'lucide-react'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
 type Effect = 'kenburns' | 'breathe' | 'glitch'
@@ -27,9 +27,14 @@ type Props = {
   projectTitle: string
   artworkUrl: string | null
   onSwitchToArtwork: () => void
+  // When set, generated videos are persisted to the Media library against this
+  // project. Omitted in contexts with no backing project (none currently).
+  projectId?: string
 }
 
-export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork }: Props) {
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
+export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
   const [effect, setEffect] = useState<Effect>('kenburns')
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle')
@@ -40,6 +45,8 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [aiVideoUrl, setAiVideoUrl] = useState<string | null>(null)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiModelLabel, setAiModelLabel] = useState('')
+  const [freeSave, setFreeSave] = useState<SaveStatus>('idle')
+  const [aiSaved, setAiSaved] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
 
@@ -94,6 +101,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setProgress(0)
     setVideoUrl(null)
     setErrorMsg('')
+    setFreeSave('idle')
 
     const cfg = FORMAT_CONFIG[format]
 
@@ -254,6 +262,26 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     })
     setStatus('done')
     setProgress(100)
+
+    // Persist to the Media library so it's findable later (not just a throwaway
+    // blob: URL). Playback above is instant from the local blob; this runs after.
+    void saveFreeToMedia(blob, format, effect)
+  }
+
+  async function saveFreeToMedia(blob: Blob, fmt: Format, eff: Effect) {
+    if (!projectId) return
+    setFreeSave('saving')
+    try {
+      const fd = new FormData()
+      fd.append('file', blob, 'visualizer.webm')
+      fd.append('projectId', projectId)
+      fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECT_CONFIG[eff].label}`)
+      if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
+      const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
+      setFreeSave(res.ok ? 'saved' : 'error')
+    } catch {
+      setFreeSave('error')
+    }
   }
 
   async function generateAI() {
@@ -261,6 +289,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setAiStatus('generating')
     setAiVideoUrl(null)
     setAiModelLabel('')
+    setAiSaved(false)
     setErrorMsg('')
 
     try {
@@ -273,6 +302,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           duration: selectedDuration,
           ratio: selectedRatio || undefined,
           promptText: aiPrompt.trim() || undefined,
+          projectId,
         }),
       })
 
@@ -292,6 +322,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       const data = await res.json()
       setAiVideoUrl(data.videoUrl)
       setAiModelLabel(data.model || currentModel?.label || '')
+      setAiSaved(!!data.saved)
       setAiStatus('done')
     } catch {
       setAiStatus('error')
@@ -313,6 +344,8 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setVideoUrl(null)
     setAiStatus('idle')
     setAiVideoUrl(null)
+    setFreeSave('idle')
+    setAiSaved(false)
     setErrorMsg('')
   }
 
@@ -428,8 +461,17 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         {status === 'done' && videoUrl && (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
             <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-            <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
-              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{cfg.label} · {cfg.width}×{cfg.height} · WebM</span>
+            <div className="p-3 flex justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
+              <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                {cfg.label} · {cfg.width}×{cfg.height} · WebM
+                {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
+                {freeSave === 'saved' && (
+                  <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                    <Check size={11} strokeWidth={3} /> Saved to Media
+                  </span>
+                )}
+                {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
+              </span>
               <button
                 onClick={() => download(videoUrl, 'free')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -532,7 +574,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         {/* AI video result */}
         {aiStatus === 'done' && aiVideoUrl && (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-            <p className="text-xs px-3 pt-2" style={{ color: 'var(--text-muted)' }}>AI Generated · {aiModelLabel}</p>
+            <p className="text-xs px-3 pt-2 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+              AI Generated · {aiModelLabel}
+              {aiSaved && (
+                <span className="flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                  <Check size={11} strokeWidth={3} /> Saved to Media
+                </span>
+              )}
+            </p>
             <video src={aiVideoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
             <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>

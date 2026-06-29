@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { videoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
+import { isUuid } from '@/lib/validators'
+
+// Runway's slower models (Veo) can take minutes; the poll loop below allows up
+// to ~5 min, so give the route room beyond the platform default.
+export const maxDuration = 300
 
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
 const RUNWAY_BASE = 'https://api.dev.runwayml.com/v1'
@@ -61,7 +67,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { imageUrl, promptText: customPrompt, model: requestedModel, duration, ratio } = body
+  const { imageUrl, promptText: customPrompt, model: requestedModel, duration, ratio, projectId } = body
 
   if (!imageUrl) {
     return NextResponse.json({ error: 'imageUrl is required' }, { status: 400 })
@@ -170,12 +176,46 @@ export async function POST(req: NextRequest) {
     const pollData = await pollRes.json()
 
     if (pollData.status === 'SUCCEEDED') {
-      const videoUrl = pollData.output?.[0]
-      if (!videoUrl) {
+      const runwayUrl = pollData.output?.[0]
+      if (!runwayUrl) {
         await refund()
         return NextResponse.json({ error: 'No video in Runway response' }, { status: 502 })
       }
-      return NextResponse.json({ videoUrl, model: modelCfg.label })
+
+      // Runway-hosted URLs expire within hours, so persist the bytes to mf-video
+      // and index the result — that's what makes it findable in the Media library.
+      // If anything in the persistence path fails, fall back to the transient URL
+      // so the user still sees the video they paid for.
+      let videoUrl = runwayUrl
+      let saved = false
+      let visualizerId: string | null = null
+      if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
+        try {
+          const vidRes = await fetch(runwayUrl)
+          if (vidRes.ok) {
+            const bytes = Buffer.from(await vidRes.arrayBuffer())
+            const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
+            const stored = await storeVisualizer({
+              userId,
+              projectId,
+              bytes,
+              contentType,
+              kind: 'ai',
+              title: `${modelCfg.label} · ${runwayDuration}s`,
+              sourceImageUrl: imageUrl,
+            })
+            if (stored) {
+              videoUrl = stored.video_url
+              visualizerId = stored.id || null
+              saved = true
+            }
+          }
+        } catch (e) {
+          console.error('[runway] persist to Media failed:', e)
+        }
+      }
+
+      return NextResponse.json({ videoUrl, model: modelCfg.label, saved, visualizerId })
     }
 
     if (pollData.status === 'FAILED') {
