@@ -85,6 +85,11 @@ class AudioService: ObservableObject {
     /// Guards against kicking off more than one lazy queue load at a time.
     private var loadingQueue = false
 
+    /// True when playback was active as an output device (AirPods/headphones) disappeared,
+    /// so we can auto-resume when it reconnects. Kept separate from `playIntent` because the
+    /// route-loss pause clears that — without this flag, reinserting AirPods wouldn't resume.
+    private var resumeOnDeviceReconnect = false
+
     // Stores the time-observer reference so we can clean it up later
     private var timeObserver: Any?
 
@@ -119,6 +124,15 @@ class AudioService: ObservableObject {
         NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .sink { [weak self] notification in
                 self?.handleInterruption(notification)
+            }
+            .store(in: &cancellables)
+
+        // Output-route changes (AirPods/headphones in or out). Without this, pulling AirPods
+        // out and putting them back in left playback paused while the lock screen kept
+        // ticking — iOS pauses our AVPlayer on disconnect but nothing resumed on reconnect.
+        NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
+            .sink { [weak self] notification in
+                self?.handleRouteChange(notification)
             }
             .store(in: &cancellables)
     }
@@ -552,6 +566,37 @@ class AudioService: ObservableObject {
                 if options.contains(.shouldResume) {
                     resume()
                 }
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
+    // MARK: - Route Change Handling (AirPods out → back in)
+
+    /// React to audio output route changes so playback survives unplugging/reconnecting
+    /// AirPods or headphones.
+    private func handleRouteChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue)
+        else { return }
+
+        switch reason {
+        case .oldDeviceUnavailable:
+            // The output device (AirPods/headphones) was removed. iOS has already paused our
+            // AVPlayer and rerouted to the speaker. Remember we were playing so we can resume
+            // when it returns, then pause cleanly so audio doesn't blast out of the speaker.
+            resumeOnDeviceReconnect = playIntent || isPlaying
+            pause()
+
+        case .newDeviceAvailable:
+            // An output device connected. If playback was active when the previous one
+            // dropped, resume — this is the "put AirPods back in and nothing played" fix.
+            if resumeOnDeviceReconnect {
+                resumeOnDeviceReconnect = false
+                resume()
             }
 
         @unknown default:
