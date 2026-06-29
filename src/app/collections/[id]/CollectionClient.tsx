@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
 
@@ -43,6 +43,12 @@ export default function CollectionClient({ collection, initialItems, allProjects
   const [showTypePicker, setShowTypePicker] = useState(false)
   const [mediaItems, setMediaItems] = useState<Project[]>([])
   const [loadingMedia, setLoadingMedia] = useState(false)
+  // In-modal cover generation
+  const [coverGenMode, setCoverGenMode] = useState(false)
+  const [coverPrompt, setCoverPrompt] = useState('')
+  const [coverModel, setCoverModel] = useState<'flux' | 'imagen'>('flux')
+  const [generatingCover, setGeneratingCover] = useState(false)
+  const [coverError, setCoverError] = useState('')
 
   // Drag-to-reorder state
   const dragItem = useRef<number | null>(null)
@@ -68,10 +74,20 @@ export default function CollectionClient({ collection, initialItems, allProjects
   // ── Cover picker ─────────────────────────────────────────────────────────────
   async function openCoverPicker() {
     setShowCoverPicker(true)
+    if (!coverPrompt) {
+      setCoverPrompt(`album cover art for "${collection.title}", cinematic, high detail, no text`)
+    }
     setLoadingMedia(true)
     const res = await fetch('/api/media')
     if (res.ok) setMediaItems(await res.json())
     setLoadingMedia(false)
+  }
+
+  function closeCoverPicker() {
+    setShowCoverPicker(false)
+    setCoverSearch('')
+    setCoverGenMode(false)
+    setCoverError('')
   }
 
   async function setCover(url: string | null) {
@@ -82,9 +98,29 @@ export default function CollectionClient({ collection, initialItems, allProjects
     })
     if (res.ok) {
       setCoverUrl(url)
-      setShowCoverPicker(false)
-      setCoverSearch('')
+      closeCoverPicker()
     }
+  }
+
+  // Generate a brand-new cover (not tied to any project) — the API uploads it
+  // and sets cover_url server-side; we just reflect it and close.
+  async function generateCover() {
+    if (!coverPrompt.trim() || generatingCover) return
+    setGeneratingCover(true)
+    setCoverError('')
+    const res = await fetch('/api/generate-artwork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collection_id: collection.id, prompt: coverPrompt.trim(), model: coverModel }),
+    })
+    const data = await res.json()
+    if (res.ok && data.artwork_url) {
+      setCoverUrl(data.artwork_url)
+      closeCoverPicker()
+    } else {
+      setCoverError(data.error ?? 'Generation failed. Try again.')
+    }
+    setGeneratingCover(false)
   }
 
   // ── Change collection type ────────────────────────────────────────────────────
@@ -318,77 +354,137 @@ export default function CollectionClient({ collection, initialItems, allProjects
           </div>
         </div>
 
-        {/* Cover picker panel */}
+        {/* Cover picker modal */}
         {showCoverPicker && (
           <div
-            className="mb-5 rounded-xl overflow-hidden"
-            style={{ border: '1px solid var(--surface-2)' }}
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+            onClick={e => { if (e.target === e.currentTarget) closeCoverPicker() }}
           >
             <div
-              className="flex items-center gap-2 px-3 py-2.5"
-              style={{ backgroundColor: 'var(--surface)' }}
+              className="w-full sm:max-w-2xl max-h-[88vh] sm:max-h-[82vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col"
+              style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}
             >
-              <Search size={14} style={{ color: 'var(--text-muted)' }} />
-              <input
-                autoFocus
-                type="text"
-                value={coverSearch}
-                onChange={e => setCoverSearch(e.target.value)}
-                placeholder="Search artwork…"
-                className="flex-1 bg-transparent text-sm outline-none"
-                style={{ color: 'var(--text)' }}
-              />
-              {coverUrl && (
-                <button
-                  onClick={() => setCover(null)}
-                  className="text-xs px-2 py-1 rounded-md mr-1 transition-colors"
-                  style={{ color: '#f87171' }}
-                >
-                  Remove cover
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0" style={{ borderColor: 'var(--surface-2)' }}>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Choose cover</h3>
+                <button onClick={closeCoverPicker} className="p-1 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
+                  <X size={18} />
                 </button>
-              )}
-              <button
-                onClick={() => { setShowCoverPicker(false); setCoverSearch('') }}
-                className="text-xs px-2 py-1 rounded-md transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                Cancel
-              </button>
-            </div>
-            {loadingMedia ? (
-              <div className="px-4 py-6 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
-                Loading…
               </div>
-            ) : (
-              <div
-                className="grid grid-cols-4 sm:grid-cols-6 gap-1 p-2 max-h-52 overflow-y-auto"
-                style={{ backgroundColor: 'var(--surface)' }}
-              >
-                {filteredMedia.map(m => (
+
+              {/* Toolbar */}
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b flex-shrink-0" style={{ borderColor: 'var(--surface-2)' }}>
+                <Search size={14} style={{ color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  value={coverSearch}
+                  onChange={e => setCoverSearch(e.target.value)}
+                  placeholder="Search artwork…"
+                  className="flex-1 bg-transparent text-sm outline-none min-w-0"
+                  style={{ color: 'var(--text)' }}
+                />
+                {coverUrl && (
                   <button
-                    key={m.id}
-                    onClick={() => setCover(m.artwork_url)}
-                    className="relative aspect-square rounded-lg overflow-hidden group transition-transform hover:scale-105"
-                    style={{ backgroundColor: 'var(--surface-2)' }}
-                    title={m.title}
+                    onClick={() => setCover(null)}
+                    className="text-xs px-2 py-1 rounded-md transition-colors flex-shrink-0"
+                    style={{ color: '#f87171' }}
                   >
-                    {m.artwork_url && (
-                      <Image src={m.artwork_url} alt={m.title} fill className="object-cover" unoptimized />
-                    )}
-                    {coverUrl === m.artwork_url && (
-                      <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'var(--accent)', opacity: 0.7 }}>
-                        <span className="text-white text-lg font-bold">✓</span>
-                      </div>
+                    Remove
+                  </button>
+                )}
+                <button
+                  onClick={() => setCoverGenMode(v => !v)}
+                  className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                  style={coverGenMode
+                    ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
+                    : { backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+                >
+                  <Sparkles size={13} />
+                  Generate
+                </button>
+              </div>
+
+              {/* Generate panel */}
+              {coverGenMode && (
+                <div className="px-4 py-3 border-b flex-shrink-0 space-y-2" style={{ borderColor: 'var(--surface-2)' }}>
+                  <div className="flex gap-1 p-0.5 rounded-xl" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    {(['flux', 'imagen'] as const).map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setCoverModel(m)}
+                        className="flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors"
+                        style={coverModel === m
+                          ? { backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }
+                          : { color: 'var(--text-muted)' }}
+                      >
+                        {m === 'flux' ? 'Flux 2 Pro' : 'Imagen 4'}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={coverPrompt}
+                    onChange={e => setCoverPrompt(e.target.value)}
+                    rows={3}
+                    placeholder="Describe the cover…"
+                    className="w-full rounded-xl px-3 py-2 text-xs outline-none resize-none"
+                    style={{ backgroundColor: 'var(--bg-page)', color: 'var(--text)', border: '1px solid var(--surface-2)' }}
+                  />
+                  {coverError && <p className="text-xs" style={{ color: '#f87171' }}>{coverError}</p>}
+                  <button
+                    onClick={generateCover}
+                    disabled={generatingCover || !coverPrompt.trim()}
+                    className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-xl transition-colors disabled:opacity-40"
+                    style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                  >
+                    {generatingCover ? (
+                      <><span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />Generating…</>
+                    ) : (
+                      <><Sparkles size={13} />Generate cover</>
                     )}
                   </button>
-                ))}
-                {filteredMedia.length === 0 && (
-                  <p className="col-span-6 py-4 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
-                    No artwork found.
+                </div>
+              )}
+
+              {/* Grid */}
+              <div className="flex-1 overflow-y-auto p-3">
+                {loadingMedia ? (
+                  <div className="py-10 text-sm text-center" style={{ color: 'var(--text-muted)' }}>Loading…</div>
+                ) : filteredMedia.length === 0 ? (
+                  <p className="py-10 text-sm text-center" style={{ color: 'var(--text-muted)' }}>
+                    {coverSearch ? 'No artwork found.' : 'No generated artwork yet — use Generate above.'}
                   </p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {filteredMedia.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={() => m.artwork_url && setCover(m.artwork_url)}
+                        className="relative aspect-square rounded-lg overflow-hidden group transition-transform hover:scale-[1.03]"
+                        style={{
+                          backgroundColor: 'var(--surface-2)',
+                          outline: coverUrl === m.artwork_url ? '2px solid var(--accent)' : '2px solid transparent',
+                          outlineOffset: 2,
+                        }}
+                        title={m.title}
+                      >
+                        {m.artwork_url && (
+                          <Image src={m.artwork_url} alt={m.title} fill className="object-cover" unoptimized />
+                        )}
+                        <div className="absolute inset-0 bg-black/60 flex items-end p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <p className="text-[10px] text-white font-medium leading-tight text-left line-clamp-2">{m.title}</p>
+                        </div>
+                        {coverUrl === m.artwork_url && (
+                          <div className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--accent)' }}>
+                            <span className="text-black text-xs font-bold">✓</span>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -426,52 +522,48 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 {idx + 1}
               </span>
 
-              {/* Artwork */}
-              <div
-                className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 relative"
-                style={{ backgroundColor: 'var(--surface-2)' }}
+              {/* Artwork + title — tap to open the song's project page */}
+              <Link
+                draggable={false}
+                href={`/projects/${item.project_id}`}
+                className="flex items-center gap-3 flex-1 min-w-0 group/open"
               >
-                {item.mb_projects?.artwork_url ? (
-                  <Image src={item.mb_projects.artwork_url} alt="" fill className="object-cover" unoptimized />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <Music size={14} style={{ color: 'var(--surface-3)' }} />
-                  </div>
-                )}
-              </div>
+                <div
+                  className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 relative"
+                  style={{ backgroundColor: 'var(--surface-2)' }}
+                >
+                  {item.mb_projects?.artwork_url ? (
+                    <Image src={item.mb_projects.artwork_url} alt="" fill className="object-cover" unoptimized />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Music size={14} style={{ color: 'var(--surface-3)' }} />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate transition-colors group-hover/open:text-[var(--accent)]" style={{ color: 'var(--text)' }}>
+                    {item.mb_projects?.title ?? 'Untitled'}
+                  </p>
+                  {item.mb_projects?.genre && (
+                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{item.mb_projects.genre}</p>
+                  )}
+                </div>
+              </Link>
 
-              {/* Title + genre */}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate" style={{ color: 'var(--text)' }}>
-                  {item.mb_projects?.title ?? 'Untitled'}
-                </p>
-                {item.mb_projects?.genre && (
-                  <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{item.mb_projects.genre}</p>
-                )}
-              </div>
-
-              {/* Hover actions — draggable={false} prevents the row's drag from swallowing clicks */}
+              {/* Actions — draggable={false} prevents the row's drag from swallowing clicks */}
               <button
                 draggable={false}
                 onClick={() => playTrack(item.project_id)}
-                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
+                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all flex-shrink-0"
                 style={{ color: 'var(--accent)' }}
                 title="Play"
               >
                 <Play size={14} fill="currentColor" />
               </button>
-              <Link
-                draggable={false}
-                href={`/projects/${item.project_id}`}
-                className="hidden sm:inline-block opacity-60 group-hover:opacity-100 px-2 py-1 rounded-lg text-xs font-medium transition-all"
-                style={{ color: 'var(--text-muted)', backgroundColor: 'var(--surface-2)' }}
-              >
-                Open
-              </Link>
               <button
                 draggable={false}
                 onClick={() => removeItem(item.id)}
-                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all"
+                className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all flex-shrink-0"
                 style={{ color: '#f87171' }}
                 title="Remove from collection"
               >

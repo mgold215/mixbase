@@ -43,28 +43,36 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { project_id, prompt, model = 'flux' } = body
+  const { project_id, collection_id, prompt, model = 'flux' } = body
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
   }
 
-  // Reject malformed project ids before they reach a storage key or DB write.
-  if (!isUuid(project_id)) {
-    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
+  // Two targets: a project's artwork, or a collection's cover. Exactly one id.
+  const isCollection = !!collection_id
+  const targetId: string = isCollection ? collection_id : project_id
+
+  // Reject malformed ids before they reach a storage key or DB write.
+  if (!isUuid(targetId)) {
+    return NextResponse.json(
+      { error: `Valid ${isCollection ? 'collection_id' : 'project_id'} is required` },
+      { status: 400 }
+    )
   }
 
-  // Ownership check: the artwork write below targets this project, so confirm
-  // the caller actually owns it. Without this, an authenticated user could
-  // overwrite another user's project artwork by passing their project_id (IDOR).
+  // Ownership check: the write below targets this row, so confirm the caller
+  // owns it. Without this an authenticated user could overwrite another user's
+  // artwork/cover by passing their id (IDOR).
+  const ownerTable = isCollection ? 'mb_collections' : 'mb_projects'
   const { data: ownerRow, error: ownerErr } = await supabaseAdmin
-    .from('mb_projects')
+    .from(ownerTable)
     .select('id')
-    .eq('id', project_id)
+    .eq('id', targetId)
     .eq('user_id', userId)
     .single()
   if (ownerErr || !ownerRow) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    return NextResponse.json({ error: `${isCollection ? 'Collection' : 'Project'} not found` }, { status: 404 })
   }
 
   // Gate: check monthly artwork limit before hitting Replicate
@@ -150,7 +158,7 @@ export async function POST(request: NextRequest) {
     : contentType.includes('png') ? 'png'
     : 'jpg'
 
-  const filename = `${project_id}/ai-${Date.now()}.${extension}`
+  const filename = `${isCollection ? `covers/${targetId}` : targetId}/ai-${Date.now()}.${extension}`
   const { data: uploadData, error: uploadError } = await supabase.storage
     .from('mf-artwork')
     .upload(filename, imageBytes, { contentType, upsert: false })
@@ -168,17 +176,24 @@ export async function POST(request: NextRequest) {
   const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
-  // New source artwork — drop any prior finalized render so the next Finalize
-  // pass starts from this fresh source instead of stacking onto stale output.
-  const { error: dbError } = await supabaseAdmin
-    .from('mb_projects')
-    .update({
-      artwork_url: artworkUrl,
-      finalized_artwork_url: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', project_id)
-    .eq('user_id', userId) // defense-in-depth: scope the write to the owner
+  // Persist the URL. For a collection we just set its cover; for a project we
+  // set the new source artwork and drop any prior finalized render so the next
+  // Finalize pass starts from this fresh source instead of stacking on stale output.
+  const { error: dbError } = isCollection
+    ? await supabaseAdmin
+        .from('mb_collections')
+        .update({ cover_url: artworkUrl, updated_at: new Date().toISOString() })
+        .eq('id', targetId)
+        .eq('user_id', userId)
+    : await supabaseAdmin
+        .from('mb_projects')
+        .update({
+          artwork_url: artworkUrl,
+          finalized_artwork_url: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetId)
+        .eq('user_id', userId) // defense-in-depth: scope the write to the owner
   if (dbError) {
     // The image uploaded fine but the URL didn't persist — the next page load
     // would show stale artwork. Hand the reserved slot back and fail loudly so
