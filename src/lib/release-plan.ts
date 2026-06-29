@@ -54,6 +54,61 @@ export function releaseCompletionPercent(release: Release): number {
   return Math.round((done / items.length) * 100)
 }
 
+// Parse a YYYY-MM-DD string to a UTC-midnight millisecond value, or null if
+// blank/malformed. Date.UTC reads no clock, so this stays pure and testable.
+function ymdUtc(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+}
+
+// Whole-day difference from `todayStr` to `dateStr` (positive = future), or null
+// if either side is blank/malformed. Both parsed on the same UTC calendar basis.
+function daysUntilDate(todayStr: string, dateStr: string | null): number | null {
+  const a = ymdUtc(todayStr)
+  const b = ymdUtc(dateStr)
+  if (a === null || b === null) return null
+  return Math.round((b - a) / 86_400_000)
+}
+
+// At-a-glance health of a release relative to its target date. Returns null when
+// there's nothing actionable to flag, so the board only shows a badge when it
+// carries signal (avoids badge-on-everything noise).
+export type ReleaseStatusKey = 'ready' | 'at-risk' | 'due-soon'
+export type ReleaseStatus = { key: ReleaseStatusKey; label: string }
+
+/**
+ * Decide whether a release needs attention, given today's date as a
+ * `YYYY-MM-DD` string (injected so this stays pure and unit-testable — the
+ * caller passes the real local date).
+ *
+ * Only the PRE_LAUNCH checklist counts toward "ready" — those are the steps
+ * that must be true before a track can go out; the launch-campaign items are
+ * post-release promo and don't gate readiness.
+ *
+ *   - pre-launch complete (and not already shipped) → "Ready"
+ *   - date is today or past + pre-launch incomplete → "At risk"  (the drop date
+ *     arrived and the track isn't ready — the one state that always needs action)
+ *   - within the next 7 days + pre-launch incomplete → "Due soon"
+ *   - everything else (comfortably future, undated, or already-shipped) → null
+ *     (the countdown + progress bar already tell that story)
+ */
+export function getReleaseStatus(release: Release, todayStr: string): ReleaseStatus | null {
+  const days = daysUntilDate(todayStr, release.release_date)
+  const preLaunchDone = PRE_LAUNCH_ITEMS.every(i => release[i.key])
+
+  // Everything needed to ship is done — only worth a badge if it hasn't gone out
+  // yet (a past, completed release is just "Released", which the countdown owns).
+  if (preLaunchDone) return days !== null && days < 0 ? null : { key: 'ready', label: 'Ready' }
+
+  // Incomplete from here. Undated releases can't be assessed on timing.
+  if (days === null) return null
+  if (days <= 0) return { key: 'at-risk', label: 'At risk' } // drop date here/passed, not ready
+  if (days <= 7) return { key: 'due-soon', label: 'Due soon' }
+  return null
+}
+
 // One Markdown checklist line: "- [x] Mixing done" / "- [ ] Meta ad live (Hypeddit · evergreen)".
 function line(release: Release, item: ChecklistItem): string {
   const box = release[item.key] ? 'x' : ' '
