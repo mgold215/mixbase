@@ -1,29 +1,54 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Check, X, ExternalLink, Download, Film } from 'lucide-react'
+import { Check, X, ExternalLink, Download, Film, Trash2 } from 'lucide-react'
 import { downloadImage } from '@/lib/download'
 
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
 type Project = { id: string; title: string; artwork_url: string | null }
 type Collection = { id: string; title: string; type: string }
+type VisualizerItem = {
+  id: string
+  title: string | null
+  video_url: string
+  project_id: string | null
+  kind: string
+  created_at: string
+}
 
 type Props = {
   projects: Project[]
   collections: Collection[]
+  visualizers: VisualizerItem[]
 }
 
 const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
 
-export default function MediaClient({ projects, collections }: Props) {
+export default function MediaClient({ projects, collections, visualizers }: Props) {
+  const router = useRouter()
   const [selected, setSelected] = useState<Project | null>(null)
   const [assigning, setAssigning] = useState(false)
   const [assigned, setAssigned] = useState<string | null>(null)
   const [visualizing, setVisualizing] = useState<Project | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  async function deleteVisualizer(id: string) {
+    setDeleting(id)
+    const res = await fetch(`/api/visualizer/${id}`, { method: 'DELETE' })
+    if (res.ok) router.refresh()
+    setDeleting(null)
+  }
+
+  // Pull in any newly generated video after the modal closes.
+  function closeVisualizer() {
+    setVisualizing(null)
+    router.refresh()
+  }
 
   async function assignToCollection(collectionId: string) {
     if (!selected?.artwork_url) return
@@ -61,13 +86,83 @@ export default function MediaClient({ projects, collections }: Props) {
         <div className="pt-4 mb-6">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Media Library</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-            All generated artwork — click any image to assign it to a track or collection.
+            All generated artwork and visualizers — click any image to assign it, or make a video from it.
           </p>
         </div>
+
+        {/* Visualizers — generated video loops (free renders + Runway AI) */}
+        {visualizers.length > 0 && (
+          <div className="mb-10">
+            <h2 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+              Visualizers
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {visualizers.map(v => (
+                <div
+                  key={v.id}
+                  className="rounded-xl overflow-hidden"
+                  style={{ border: '1px solid var(--surface-2)', backgroundColor: 'var(--surface)' }}
+                >
+                  <video
+                    src={v.video_url}
+                    controls
+                    loop
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="w-full aspect-square object-cover bg-black"
+                  />
+                  <div className="p-2.5">
+                    <p className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
+                      {v.title || 'Visualizer'}
+                    </p>
+                    <p className="text-[10px] mb-2" style={{ color: 'var(--text-muted)' }}>
+                      {v.kind === 'ai' ? 'AI' : 'Free'}
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => downloadImage(v.video_url, v.title || 'visualizer')}
+                        className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium py-1.5 rounded-lg transition-colors"
+                        style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+                      >
+                        <Download size={11} />
+                        Download
+                      </button>
+                      {v.project_id && (
+                        <Link
+                          href={`/projects/${v.project_id}`}
+                          className="flex items-center justify-center px-2 py-1.5 rounded-lg transition-colors"
+                          style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)' }}
+                          aria-label="Open project"
+                        >
+                          <ExternalLink size={12} />
+                        </Link>
+                      )}
+                      <button
+                        onClick={() => deleteVisualizer(v.id)}
+                        disabled={deleting === v.id}
+                        className="flex items-center justify-center px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--surface-2)', color: '#f87171' }}
+                        aria-label="Delete visualizer"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-6">
           {/* Grid */}
           <div className="flex-1 min-w-0">
+            {visualizers.length > 0 && projects.length > 0 && (
+              <h2 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                Artwork
+              </h2>
+            )}
             {projects.length === 0 ? (
               <p className="py-16 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                 No artwork yet. Generate some from a project page.
@@ -216,7 +311,7 @@ export default function MediaClient({ projects, collections }: Props) {
         <div
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
           style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
-          onClick={() => setVisualizing(null)}
+          onClick={closeVisualizer}
         >
           <div
             className="w-full max-w-2xl rounded-2xl my-8"
@@ -232,7 +327,7 @@ export default function MediaClient({ projects, collections }: Props) {
                 <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Make Visualizer</p>
               </div>
               <button
-                onClick={() => setVisualizing(null)}
+                onClick={closeVisualizer}
                 className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
                 style={{ color: 'var(--text-muted)' }}
                 aria-label="Close"
@@ -242,9 +337,10 @@ export default function MediaClient({ projects, collections }: Props) {
             </div>
             <div className="p-5">
               <Visualizer
+                projectId={visualizing.id}
                 projectTitle={visualizing.title}
                 artworkUrl={visualizing.artwork_url}
-                onSwitchToArtwork={() => setVisualizing(null)}
+                onSwitchToArtwork={closeVisualizer}
               />
             </div>
           </div>

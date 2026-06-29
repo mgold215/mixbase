@@ -11,7 +11,7 @@ export default async function MediaPage() {
   // Media tab is the user's image library — only originals belong here.
   // Finalized renders (text overlay baked into the bitmap) are derived
   // outputs and intentionally excluded.
-  const [projectsRes, collectionsRes] = await Promise.all([
+  const [projectsRes, collectionsRes, visualizersRes] = await Promise.all([
     supabaseAdmin
       .from('mb_projects')
       .select('id, title, artwork_url')
@@ -23,6 +23,13 @@ export default async function MediaPage() {
       .select('id, title, type')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false }),
+    // Generated video loops (free canvas renders + Runway AI), newest first.
+    supabaseAdmin
+      .from('mb_visualizers')
+      .select('id, title, video_url, project_id, kind, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(500),
   ])
 
   return (
@@ -31,6 +38,7 @@ export default async function MediaPage() {
       <MediaClient
         projects={projectsRes.data ?? []}
         collections={collectionsRes.data ?? []}
+        visualizers={visualizersRes.data ?? []}
       />
     </>
   )
