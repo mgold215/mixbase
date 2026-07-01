@@ -109,6 +109,47 @@ export function getReleaseStatus(release: Release, todayStr: string): ReleaseSta
   return null
 }
 
+// A quick-pick release date: the label shown on the chip, the YYYY-MM-DD value it
+// writes, and a friendly "Jul 10, 2026" rendering for the tooltip.
+export type DatePreset = { label: string; date: string; friendly: string }
+
+// Advance a UTC-midnight ms value to the next Friday on or after it. Friday is
+// weekday 5 (Sun = 0). Pure — operates only on the passed ms, reads no clock.
+function nextFriday(ms: number): number {
+  const add = (5 - new Date(ms).getUTCDay() + 7) % 7 // 0 when already a Friday
+  return ms + add * 86_400_000
+}
+
+// Render a UTC-midnight ms value back to the YYYY-MM-DD column format.
+function toYmd(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+/**
+ * Friday-anchored quick-pick release dates, given today as a YYYY-MM-DD string
+ * (injected so this stays pure and unit-testable). Music releases conventionally
+ * drop on a Friday and DSP playlist pitching wants a few weeks' lead, so every
+ * option lands on a Friday — the label says how far out, and `friendly` shows the
+ * resolved calendar date so the choice is never ambiguous. Returns [] on a
+ * malformed today string.
+ */
+export function releaseDatePresets(todayStr: string): DatePreset[] {
+  const today = ymdUtc(todayStr)
+  if (today === null) return []
+  const thisFri = nextFriday(today)
+  return [
+    { label: 'This Friday', off: 0 },
+    { label: 'Next Friday', off: 7 },
+    { label: 'In 2 weeks', off: 14 },
+    { label: 'In 4 weeks', off: 28 },
+    { label: 'In 6 weeks', off: 42 },
+  ].map(({ label, off }) => {
+    const date = toYmd(thisFri + off * 86_400_000)
+    return { label, date, friendly: formatDate(date) ?? date }
+  })
+}
+
 // One Markdown checklist line: "- [x] Mixing done" / "- [ ] Meta ad live (Hypeddit · evergreen)".
 function line(release: Release, item: ChecklistItem): string {
   const box = release[item.key] ? 'x' : ' '
