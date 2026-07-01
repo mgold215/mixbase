@@ -42,6 +42,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
+  // ?? null: prod rows can predate the 015 migration (column self-heals on first write)
+  const [visualizer, setVisualizer] = useState(project.visualizer_url ?? null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -83,6 +85,11 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   function handleFinalizedUpdated(url: string | null) {
     setFinalizedArtwork(url)
+    syncAfterMutation()
+  }
+
+  function handleVisualizerUpdated(url: string | null) {
+    setVisualizer(url)
     syncAfterMutation()
   }
 
@@ -738,6 +745,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             projectId={project.id}
             projectTitle={project.title}
             artworkUrl={artwork}
+            visualizerUrl={visualizer}
+            onVisualizerUpdated={handleVisualizerUpdated}
             onSwitchToArtwork={() => switchTab('artwork')}
           />
         )}

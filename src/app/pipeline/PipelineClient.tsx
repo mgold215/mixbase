@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check } from 'lucide-react'
 import { displayArtworkUrl, type Release } from '@/lib/supabase'
-import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, type ReleaseStatusKey } from '@/lib/release-plan'
+import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, type ReleaseStatusKey } from '@/lib/release-plan'
 
 // Tailwind classes for each release-status badge tone.
 const STATUS_TONE: Record<ReleaseStatusKey, string> = {
@@ -277,18 +277,41 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
         {isExpanded && (
           <div className="px-4 pb-5 pt-2 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
             {/* Release date — editable inline so undated releases can be scheduled later */}
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Release Date</label>
-              <input
-                type="date"
-                value={release.release_date ?? ''}
-                onChange={e => updateReleaseDate(release.id, e.target.value)}
-                className="rounded-xl px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
-                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-              />
-              {!release.release_date && (
-                <span className="text-xs text-[var(--text-muted)]">Set a date to organize this release</span>
-              )}
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Release Date</label>
+                <input
+                  type="date"
+                  value={release.release_date ?? ''}
+                  onChange={e => updateReleaseDate(release.id, e.target.value)}
+                  className="rounded-xl px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+                {!release.release_date && (
+                  <span className="text-xs text-[var(--text-muted)]">Set a date to organize this release</span>
+                )}
+              </div>
+              {/* Quick-pick Friday release dates — drops conventionally land on a
+                  Friday and DSP playlist pitching wants a few weeks' lead. Each
+                  writes through the same hardened updateReleaseDate() (snapshot →
+                  PATCH → revert + toast on failure). */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {releaseDatePresets(todayStr).map(p => {
+                  const active = release.release_date === p.date
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => updateReleaseDate(release.id, p.date)}
+                      title={p.friendly}
+                      className={`rounded-full px-2.5 py-1 text-xs transition-colors ${active ? 'text-[#2dd4bf] bg-[#2dd4bf]/10' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+                      style={{ border: '1px solid var(--border)' }}
+                    >
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-6">

@@ -330,6 +330,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       title: customMeta.title,
       artist: customMeta.artist,
       artwork_url: customMeta.artwork_url,
+      visualizer_url: null,
       audio_url: currentUrl,
       status: 'WIP',
       version: customMeta.versionLabel,

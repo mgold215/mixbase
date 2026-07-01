@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
+import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 
 // GET /api/projects/[id] — get one project with its versions (must belong to the user)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -38,7 +39,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
-  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url'] as const
+  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url'] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
@@ -48,13 +49,38 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   // null it out so the next Finalize starts from the new source.
   if ('artwork_url' in body) patch.finalized_artwork_url = null
 
-  const { data, error } = await supabaseAdmin
+  // The project visualizer is rendered as a <video> across the app, so only
+  // accept a video the user actually generated (an mb_visualizers row they
+  // own — any of their projects, matching how artwork can be reassigned), or
+  // null to clear it.
+  if ('visualizer_url' in body && body.visualizer_url !== null) {
+    if (typeof body.visualizer_url !== 'string') {
+      return NextResponse.json({ error: 'Invalid visualizer_url' }, { status: 400 })
+    }
+    const { data: viz } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('video_url', body.visualizer_url)
+      .limit(1)
+      .maybeSingle()
+    if (!viz) return NextResponse.json({ error: 'Unknown visualizer video' }, { status: 400 })
+  }
+
+  const runUpdate = () => supabaseAdmin
     .from('mb_projects')
     .update(patch)
     .eq('id', id)
     .eq('user_id', userId)
     .select()
     .single()
+
+  let { data, error } = await runUpdate()
+
+  // Deploys can beat the 015 migration to production — heal the column and retry.
+  if (error && 'visualizer_url' in patch && isMissingVisualizerColumn(error) && await ensureProjectVisualizerColumn()) {
+    ({ data, error } = await runUpdate())
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)

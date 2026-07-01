@@ -20,6 +20,7 @@ export type Project = {
   title: string
   artwork_url: string | null
   finalized_artwork_url: string | null
+  visualizer_url: string | null
   genre: string | null
   bpm: number | null
   key_signature: string | null
