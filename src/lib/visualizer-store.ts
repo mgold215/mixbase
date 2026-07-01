@@ -31,9 +31,11 @@ export type StoreVisualizerArgs = {
 
 export type StoredVisualizer = { id: string; video_url: string }
 
-// Upload a generated visualizer and index it. Returns null when the upload
-// itself fails (caller decides how to degrade); if only the DB insert fails the
-// bytes are still stored, so the public URL is returned with an empty id.
+// Upload a generated visualizer and index it. Returns null when EITHER the
+// upload or the DB insert fails — both are genuine "not saved" outcomes, so the
+// caller surfaces the failure to the user. (An earlier version returned the URL
+// with an empty id on a DB-insert failure; callers read that as success and told
+// the user "saved" while the row never landed in Media and the bytes leaked.)
 export async function storeVisualizer(args: StoreVisualizerArgs): Promise<StoredVisualizer | null> {
   const { userId, projectId, bytes, contentType, kind, title, sourceImageUrl } = args
 
@@ -66,10 +68,12 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
     .select('id')
     .single()
   if (dbError || !row) {
-    // Bytes are saved but unindexed — still hand back the URL so the user sees
-    // their video; the row is what Media reads, so log loudly for follow-up.
+    // The row is what Media reads, so an un-indexed object is invisible and would
+    // leak forever. Best-effort delete the just-uploaded bytes, then report the
+    // failure (return null) so the caller can tell the user it didn't save.
     console.error('[visualizer-store] db insert error:', dbError?.message)
-    return { id: '', video_url: videoUrl }
+    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([uploadData.path]).catch(() => {})
+    return null
   }
 
   return { id: row.id as string, video_url: videoUrl }

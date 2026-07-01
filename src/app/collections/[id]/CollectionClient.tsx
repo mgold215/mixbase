@@ -78,9 +78,16 @@ export default function CollectionClient({ collection, initialItems, allProjects
       setCoverPrompt(`album cover art for "${collection.title}", cinematic, high detail, no text`)
     }
     setLoadingMedia(true)
-    const res = await fetch('/api/media')
-    if (res.ok) setMediaItems(await res.json())
-    setLoadingMedia(false)
+    // Always reset the loading flag, even if the fetch rejects (e.g. the device
+    // drops connectivity) — otherwise the grid stays stuck on "Loading…".
+    try {
+      const res = await fetch('/api/media')
+      if (res.ok) setMediaItems(await res.json())
+    } catch {
+      // leave mediaItems as-is; the grid shows its empty/"no artwork" state
+    } finally {
+      setLoadingMedia(false)
+    }
   }
 
   function closeCoverPicker() {
@@ -99,6 +106,8 @@ export default function CollectionClient({ collection, initialItems, allProjects
     if (res.ok) {
       setCoverUrl(url)
       closeCoverPicker()
+    } else {
+      flashError('Could not update the cover — try again.')
     }
   }
 
@@ -108,19 +117,27 @@ export default function CollectionClient({ collection, initialItems, allProjects
     if (!coverPrompt.trim() || generatingCover) return
     setGeneratingCover(true)
     setCoverError('')
-    const res = await fetch('/api/generate-artwork', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ collection_id: collection.id, prompt: coverPrompt.trim(), model: coverModel }),
-    })
-    const data = await res.json()
-    if (res.ok && data.artwork_url) {
-      setCoverUrl(data.artwork_url)
-      closeCoverPicker()
-    } else {
-      setCoverError(data.error ?? 'Generation failed. Try again.')
+    // Guard the JSON parse: a gateway error (e.g. a Railway 502 during a deploy)
+    // returns an HTML body, so res.json() would throw. Without the try/finally
+    // the spinner would stay stuck "Generating…" forever, forcing a modal close.
+    try {
+      const res = await fetch('/api/generate-artwork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collection_id: collection.id, prompt: coverPrompt.trim(), model: coverModel }),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.artwork_url) {
+        setCoverUrl(data.artwork_url)
+        closeCoverPicker()
+      } else {
+        setCoverError(data?.error ?? 'Generation failed. Try again.')
+      }
+    } catch {
+      setCoverError('Network error. Try again.')
+    } finally {
+      setGeneratingCover(false)
     }
-    setGeneratingCover(false)
   }
 
   // ── Change collection type ────────────────────────────────────────────────────
@@ -208,8 +225,15 @@ export default function CollectionClient({ collection, initialItems, allProjects
   // ── Delete collection ─────────────────────────────────────────────────────────
   async function deleteCollection() {
     if (!confirm(`Delete "${collection.title}"? This can't be undone.`)) return
-    await fetch(`/api/collections/${collection.id}`, { method: 'DELETE' })
-    router.push('/collections')
+    // Only navigate away once the delete actually succeeds — otherwise the user
+    // is redirected to /collections while the collection still exists, and it
+    // reappears in the list as if nothing happened.
+    const res = await fetch(`/api/collections/${collection.id}`, { method: 'DELETE' }).catch(() => null)
+    if (res?.ok) {
+      router.push('/collections')
+    } else {
+      flashError('Could not delete the collection — try again.')
+    }
   }
 
   // ── Export tracklist as Markdown ──────────────────────────────────────────────
