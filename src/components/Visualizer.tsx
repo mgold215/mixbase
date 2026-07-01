@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
-import { Download, Film, Sparkles, Check } from 'lucide-react'
+import { Download, Film, Sparkles, Check, MonitorPlay, X } from 'lucide-react'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
 type Effect = 'kenburns' | 'breathe' | 'glitch'
@@ -30,11 +30,16 @@ type Props = {
   // When set, generated videos are persisted to the Media library against this
   // project. Omitted in contexts with no backing project (none currently).
   projectId?: string
+  // The project's pinned visualizer (mb_projects.visualizer_url) — the video
+  // that loops in the player while this track plays, Spotify-Canvas style.
+  // Wired on the project page; the Media modal omits it.
+  visualizerUrl?: string | null
+  onVisualizerUpdated?: (url: string | null) => void
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
-export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId }: Props) {
+export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
   const [effect, setEffect] = useState<Effect>('kenburns')
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle')
@@ -46,7 +51,13 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiModelLabel, setAiModelLabel] = useState('')
   const [freeSave, setFreeSave] = useState<SaveStatus>('idle')
+  // Persisted mf-video URL of the last free render — the blob: URL plays
+  // locally, but only the stored URL can be pinned as the project visualizer.
+  const [freeSavedUrl, setFreeSavedUrl] = useState<string | null>(null)
   const [aiSaved, setAiSaved] = useState(false)
+  const [projectViz, setProjectViz] = useState(visualizerUrl ?? null)
+  const [settingViz, setSettingViz] = useState(false)
+  const [vizError, setVizError] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
 
@@ -102,6 +113,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setVideoUrl(null)
     setErrorMsg('')
     setFreeSave('idle')
+    setFreeSavedUrl(null)
 
     const cfg = FORMAT_CONFIG[format]
 
@@ -278,9 +290,37 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECT_CONFIG[eff].label}`)
       if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
       const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
-      setFreeSave(res.ok ? 'saved' : 'error')
+      if (res.ok) {
+        const data = await res.json().catch(() => null) as { video_url?: string } | null
+        setFreeSavedUrl(data?.video_url ?? null)
+        setFreeSave('saved')
+      } else {
+        setFreeSave('error')
+      }
     } catch {
       setFreeSave('error')
+    }
+  }
+
+  // Pin (or clear) the project's visualizer — the video the player loops while
+  // this track plays. Persists via the project PATCH so it survives reloads.
+  async function setProjectVisualizer(url: string | null) {
+    if (!projectId || settingViz) return
+    setSettingViz(true)
+    setVizError('')
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visualizer_url: url }),
+      })
+      if (!res.ok) throw new Error()
+      setProjectViz(url)
+      onVisualizerUpdated?.(url)
+    } catch {
+      setVizError('Could not update the project visualizer. Try again.')
+    } finally {
+      setSettingViz(false)
     }
   }
 
@@ -345,6 +385,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setAiStatus('idle')
     setAiVideoUrl(null)
     setFreeSave('idle')
+    setFreeSavedUrl(null)
     setAiSaved(false)
     setErrorMsg('')
   }
@@ -355,18 +396,57 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }, [videoUrl])
 
+  // ── Project Visualizer section — the video pinned to this project. Shown on
+  // the project page (where onVisualizerUpdated is wired); rendered even before
+  // any artwork exists so a previously set visualizer never disappears.
+  const projectVizSection = projectId && onVisualizerUpdated ? (
+    <div className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+      <div className="flex items-center gap-2">
+        <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
+        <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizer</p>
+      </div>
+      {projectViz ? (
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
+          <video src={projectViz} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+          <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              Loops in the player while this track plays — like a Spotify Canvas.
+            </span>
+            <button
+              onClick={() => setProjectVisualizer(null)}
+              disabled={settingViz}
+              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+              style={{ backgroundColor: 'var(--surface-2)', color: '#f87171' }}
+            >
+              <X size={14} />
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          None set. Generate a video below and tap &ldquo;Set as Project Visualizer&rdquo; — it will loop in the player while this track plays, like a Spotify Canvas.
+        </p>
+      )}
+      {vizError && <p className="text-sm" style={{ color: '#f87171' }}>{vizError}</p>}
+    </div>
+  ) : null
+
   if (!artworkUrl) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
-        <Film size={40} style={{ color: 'var(--surface-3)' }} />
-        <p style={{ color: 'var(--text-muted)' }}>No artwork yet. Generate artwork first.</p>
-        <button
-          onClick={onSwitchToArtwork}
-          className="text-sm px-4 py-2 rounded-xl transition-colors"
-          style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
-        >
-          Go to Artwork tab
-        </button>
+      <div className="max-w-2xl space-y-6">
+        {projectVizSection}
+        <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
+          <Film size={40} style={{ color: 'var(--surface-3)' }} />
+          <p style={{ color: 'var(--text-muted)' }}>No artwork yet. Generate artwork first.</p>
+          <button
+            onClick={onSwitchToArtwork}
+            className="text-sm px-4 py-2 rounded-xl transition-colors"
+            style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+          >
+            Go to Artwork tab
+          </button>
+        </div>
       </div>
     )
   }
@@ -378,10 +458,34 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
     : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
 
+  // "Set as Project Visualizer" affordance for a persisted mf-video URL — only
+  // where the project page wired the callback, and only once the video is saved.
+  const pinButton = (url: string | null) => {
+    if (!projectId || !onVisualizerUpdated || !url) return null
+    if (projectViz === url) return (
+      <span className="flex items-center gap-1 text-sm font-medium flex-shrink-0" style={{ color: 'var(--accent)' }}>
+        <Check size={13} strokeWidth={3} /> Project Visualizer
+      </span>
+    )
+    return (
+      <button
+        onClick={() => setProjectVisualizer(url)}
+        disabled={settingViz}
+        className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+        style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+      >
+        <MonitorPlay size={14} />
+        {settingViz ? 'Setting…' : 'Set as Project Visualizer'}
+      </button>
+    )
+  }
+
   return (
     <div className="max-w-2xl space-y-6">
       {/* Hidden canvas used for frame rendering */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+      {projectVizSection}
 
       {/* Artwork preview */}
       <div className="flex items-center gap-4">
@@ -461,7 +565,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         {status === 'done' && videoUrl && (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
             <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-            <div className="p-3 flex justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
                 {cfg.label} · {cfg.width}×{cfg.height} · WebM
                 {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
@@ -472,6 +576,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                 )}
                 {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
               </span>
+              {freeSave === 'saved' && pinButton(freeSavedUrl)}
               <button
                 onClick={() => download(videoUrl, 'free')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -583,8 +688,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               )}
             </p>
             <video src={aiVideoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-            <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>
+              {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
+              {aiSaved && pinButton(aiVideoUrl)}
               <button
                 onClick={() => download(aiVideoUrl, 'ai')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"

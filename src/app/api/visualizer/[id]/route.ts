@@ -34,5 +34,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     .eq('user_id', userId)
   if (delErr) return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })
 
+  // Un-pin the video from any project that had it as its visualizer — the
+  // bytes are gone, so a stale pointer would leave the player looping a 404.
+  // Best-effort: on pre-015 schemas there's nothing to un-pin.
+  await supabaseAdmin
+    .from('mb_projects')
+    .update({ visualizer_url: null })
+    .eq('user_id', userId)
+    .eq('visualizer_url', row.video_url as string)
+    .then(({ error: unpinErr }) => {
+      if (unpinErr && !unpinErr.message?.includes('visualizer_url')) {
+        console.error('[visualizer delete] un-pin failed:', unpinErr.message)
+      }
+    })
+
   return NextResponse.json({ deleted: true })
 }

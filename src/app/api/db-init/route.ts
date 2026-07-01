@@ -124,6 +124,10 @@ where share_token is null;
 
 create index if not exists idx_projects_share_token on mb_projects(share_token);
 
+-- Migration 015: project visualizer (Spotify-Canvas style video pinned to a project)
+alter table mb_projects
+  add column if not exists visualizer_url text;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

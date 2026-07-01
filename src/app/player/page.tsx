@@ -86,9 +86,21 @@ function PlayerPage() {
 
   // Refs
   const analysisAbortRef = useRef<AbortController | null>(null)
+  const vizVideoRef = useRef<HTMLVideoElement | null>(null)
 
   // current = whatever the shared audio engine is playing right now
   const current = currentTrack
+
+  // ── Project visualizer (Spotify-Canvas style) ─────────────────────────────
+  // Keep the muted video loop in step with the audio: canvas runs while the
+  // track plays, freezes on pause. play() can reject (autoplay policy before
+  // first gesture) — the video just sits on its first frame, which is fine.
+  useEffect(() => {
+    const v = vizVideoRef.current
+    if (!v) return
+    if (isPlaying) v.play().catch(() => {})
+    else v.pause()
+  }, [isPlaying, current?.visualizer_url])
 
   // ── Sort + search (uses tracks from context) ──────────────────────────────
   useEffect(() => {
@@ -390,6 +402,22 @@ function PlayerPage() {
                 <div className="absolute inset-0 bg-[#111] flex items-center justify-center">
                   <Music size={80} className="text-[#222]" />
                 </div>
+              )}
+              {/* Project visualizer — loops over the artwork while the track plays
+                  (artwork stays underneath as the instant frame while the video loads).
+                  Keyed by URL so switching tracks swaps the element cleanly. */}
+              {current.visualizer_url && (
+                <video
+                  key={current.visualizer_url}
+                  ref={vizVideoRef}
+                  src={current.visualizer_url}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload="auto"
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
               )}
               {/* Bottom gradient + track info + waveform overlay */}
               {status && (
