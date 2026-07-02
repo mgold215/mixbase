@@ -112,7 +112,10 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // /api/auth (login) needs exact match — /api/auth/me etc. must be protected
+  // '/' is the public landing page — exact match only, never a PUBLIC_PATHS
+  // prefix (startsWith('/') would make every route public)
   if (
+    pathname === '/' ||
     pathname === '/api/auth' ||
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
