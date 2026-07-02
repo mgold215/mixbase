@@ -193,91 +193,103 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       })
     }
 
-    // Set up MediaRecorder
-    const stream = canvas.captureStream(FPS)
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm'
-    const recorder = new MediaRecorder(stream, { mimeType })
-    const chunks: Blob[] = []
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+    // Set up MediaRecorder + run the frame loop. Any throw in here — a tainted
+    // canvas SecurityError (artwork served without CORS headers), captureStream
+    // being unavailable, or an unsupported codec — must reset the button, not
+    // leave it stuck on "Rendering…" forever. Happy path is unchanged (the catch
+    // only runs on a real throw). Matches the try/finally-resets-loading pattern.
+    try {
+      const stream = canvas.captureStream(FPS)
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm'
+      const recorder = new MediaRecorder(stream, { mimeType })
+      const chunks: Blob[] = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-    const blobReady = new Promise<Blob>(resolve => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
-    })
+      const blobReady = new Promise<Blob>(resolve => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+      })
 
-    recorder.start()
+      recorder.start()
 
-    // Cover-fit dimensions (constant across frames)
-    const imgAspect = img.width / img.height
-    const canvasAspect = W / H
-    let drawW: number, drawH: number
-    if (imgAspect > canvasAspect) {
-      drawH = H; drawW = H * imgAspect
-    } else {
-      drawW = W; drawH = W / imgAspect
-    }
+      // Cover-fit dimensions (constant across frames)
+      const imgAspect = img.width / img.height
+      const canvasAspect = W / H
+      let drawW: number, drawH: number
+      if (imgAspect > canvasAspect) {
+        drawH = H; drawW = H * imgAspect
+      } else {
+        drawW = W; drawH = W / imgAspect
+      }
 
-    for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
-      const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
-      const { scale, panX, panY } = getMotion(t)
+      for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
+        const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
+        const { scale, panX, panY } = getMotion(t)
 
-      ctx.clearRect(0, 0, W, H)
-      ctx.save()
-      ctx.translate(W / 2 + panX, H / 2 + panY)
-      ctx.scale(scale, scale)
+        ctx.clearRect(0, 0, W, H)
+        ctx.save()
+        ctx.translate(W / 2 + panX, H / 2 + panY)
+        ctx.scale(scale, scale)
 
-      ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
 
-      // Glitch overlay: horizontal slice offsets + chromatic flash
-      if (effect === 'glitch' && glitchFrames.has(frame)) {
-        const numSlices = 2 + Math.floor(Math.random() * 3)
-        for (let s = 0; s < numSlices; s++) {
-          const sliceY  = (Math.random() - 0.5) * drawH
-          const sliceH  = 5 + Math.random() * 18
-          const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
-          const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
-          const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
-          if (srcH > 1) {
-            ctx.drawImage(img, 0, srcY, img.width, srcH,
-              -drawW / 2 + offsetX, sliceY, drawW, sliceH)
+        // Glitch overlay: horizontal slice offsets + chromatic flash
+        if (effect === 'glitch' && glitchFrames.has(frame)) {
+          const numSlices = 2 + Math.floor(Math.random() * 3)
+          for (let s = 0; s < numSlices; s++) {
+            const sliceY  = (Math.random() - 0.5) * drawH
+            const sliceH  = 5 + Math.random() * 18
+            const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
+            const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
+            const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
+            if (srcH > 1) {
+              ctx.drawImage(img, 0, srcY, img.width, srcH,
+                -drawW / 2 + offsetX, sliceY, drawW, sliceH)
+            }
           }
+          // Chromatic aberration flash
+          ctx.globalAlpha = 0.1 + Math.random() * 0.12
+          ctx.globalCompositeOperation = 'screen'
+          ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
+          ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.globalAlpha = 1
         }
-        // Chromatic aberration flash
-        ctx.globalAlpha = 0.1 + Math.random() * 0.12
-        ctx.globalCompositeOperation = 'screen'
-        ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
-        ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.globalAlpha = 1
+
+        ctx.restore()
+
+        setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
+
+        if (cancelledRef.current) {
+          recorder.stop()
+          return
+        }
+
+        // Pace each frame to real-time so MediaRecorder captures correct duration
+        await new Promise(r => setTimeout(r, 1000 / FPS))
       }
 
-      ctx.restore()
+      recorder.stop()
+      const blob = await blobReady
+      const url = URL.createObjectURL(blob)
+      setVideoUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return url
+      })
+      setStatus('done')
+      setProgress(100)
 
-      setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
-
-      if (cancelledRef.current) {
-        recorder.stop()
-        return
+      // Persist to the Media library so it's findable later (not just a throwaway
+      // blob: URL). Playback above is instant from the local blob; this runs after.
+      void saveFreeToMedia(blob, format, effect)
+    } catch {
+      // Don't clobber a deliberate cancel (resetFormat/unmount) with an error.
+      if (!cancelledRef.current) {
+        setStatus('error')
+        setErrorMsg('Video rendering failed in this browser. Try Chrome or Firefox, or a different image.')
       }
-
-      // Pace each frame to real-time so MediaRecorder captures correct duration
-      await new Promise(r => setTimeout(r, 1000 / FPS))
     }
-
-    recorder.stop()
-    const blob = await blobReady
-    const url = URL.createObjectURL(blob)
-    setVideoUrl(prev => {
-      if (prev) URL.revokeObjectURL(prev)
-      return url
-    })
-    setStatus('done')
-    setProgress(100)
-
-    // Persist to the Media library so it's findable later (not just a throwaway
-    // blob: URL). Playback above is instant from the local blob; this runs after.
-    void saveFreeToMedia(blob, format, effect)
   }
 
   async function saveFreeToMedia(blob: Blob, fmt: Format, eff: Effect) {
@@ -395,6 +407,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       if (videoUrl) URL.revokeObjectURL(videoUrl)
     }
   }, [videoUrl])
+
+  // If the component unmounts mid-render (e.g. the Media modal is closed while a
+  // free render is in flight), signal the frame loop to stop so it doesn't keep
+  // drawing + recording on a dead instance and leak a blob URL the revoke effect
+  // above can no longer catch. Empty deps → runs only on unmount.
+  useEffect(() => {
+    return () => { cancelledRef.current = true }
+  }, [])
 
   // ── Project Visualizer section — the video pinned to this project. Shown on
   // the project page (where onVisualizerUpdated is wired); rendered even before

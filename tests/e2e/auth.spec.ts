@@ -1,16 +1,20 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Authentication', () => {
-  test('redirects unauthenticated visitors to login', async ({ browser }) => {
+  test('landing page is public, dashboard stays gated', async ({ browser }) => {
     // Fresh context — no stored auth
     const ctx = await browser.newContext({ storageState: undefined })
     const page = await ctx.newPage()
 
+    // '/' serves the public landing page — no redirect
     await page.goto('/')
-    // App should redirect to /login when no session cookie
-    await expect(page).toHaveURL(/\/login/)
-    await expect(page.getByText('mixBASE')).toBeVisible()
+    await expect(page).toHaveURL(/\/$/)
     await expect(page.getByText('ROUGH-TO-RELEASE')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Start free' }).first()).toBeVisible()
+
+    // Protected routes still bounce to /login without a session cookie
+    await page.goto('/dashboard')
+    await expect(page).toHaveURL(/\/login/)
 
     await ctx.close()
   })
