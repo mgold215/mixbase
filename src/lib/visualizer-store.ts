@@ -24,7 +24,9 @@ export type StoreVisualizerArgs = {
   projectId: string
   bytes: Buffer | Uint8Array
   contentType: string
-  kind: 'free' | 'ai'
+  // 'free'/'ai' are visualizer loops; 'youtube'/'shorts' are the finished
+  // full-length videos the video finalizer renders from those loops.
+  kind: 'free' | 'ai' | 'youtube' | 'shorts'
   title: string
   sourceImageUrl?: string | null
 }

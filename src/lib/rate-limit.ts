@@ -79,6 +79,10 @@ export const videoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 })
 // Upload-url: 30 per hour per user — generous but blocks hammering
 export const uploadLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// Final video renders (YouTube/Shorts): 6 per hour per user — each render pins
+// a CPU core for minutes, so this is server protection more than cost control.
+export const finalVideoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 6 })
+
 // Feedback: 20 per hour per IP — public endpoint, stops spam
 export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 

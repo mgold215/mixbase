@@ -4,6 +4,7 @@ import { useState, type ChangeEvent } from 'react'
 import { Sparkles, Upload, X, Wand2, Download } from 'lucide-react'
 import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
+import { TEXT_COLORS } from '@/lib/text-colors'
 
 type Position =
   | 'top-left' | 'top-center' | 'top-right'
@@ -20,19 +21,6 @@ const FILTER_LABELS: { value: Filter; label: string }[] = [
   { value: 'icy', label: 'Icy' },
   { value: 'vivid', label: 'Vivid' },
   { value: 'mono', label: 'B&W' },
-]
-
-// Preset text colors — white first (the default). Any custom #RRGGBB is also
-// accepted via the picker; the server validates and falls back to white.
-const TEXT_COLORS: { value: string; label: string }[] = [
-  { value: '#FFFFFF', label: 'White' },
-  { value: '#000000', label: 'Black' },
-  { value: '#F5EFE0', label: 'Cream' },
-  { value: '#D4AF37', label: 'Gold' },
-  { value: '#E03A3E', label: 'Red' },
-  { value: '#2DD4BF', label: 'Teal' },
-  { value: '#F472B6', label: 'Pink' },
-  { value: '#60A5FA', label: 'Blue' },
 ]
 
 const POSITION_GRID: Position[] = [
