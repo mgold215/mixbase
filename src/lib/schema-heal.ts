@@ -44,3 +44,38 @@ async function runAlter(): Promise<boolean> {
 export function isMissingVisualizerColumn(error: { message?: string } | null): boolean {
   return !!error?.message?.includes('visualizer_url')
 }
+
+// ── mf-video bucket size limit (migration 016) ──────────────────────────────
+// Final YouTube videos exceed the bucket's original 50 MB cap. The limit must
+// be raised via direct SQL — the Storage API clamps updateBucket to the
+// project's 500 MB global ceiling and silently downgrades (same gotcha as
+// mf-audio). Memoized like the column heal; runs before large uploads.
+
+const BUCKET_SQL = "update storage.buckets set file_size_limit = 524288000 where id = 'mf-video' and (file_size_limit is null or file_size_limit < 524288000);"
+
+let bucketEnsured: Promise<boolean> | null = null
+
+export function ensureVideoBucketLimit(): Promise<boolean> {
+  if (!bucketEnsured) {
+    bucketEnsured = runQuery(BUCKET_SQL, 'mf-video bucket limit')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) bucketEnsured = null
+        return ok
+      })
+  }
+  return bucketEnsured
+}
+
+async function runQuery(sql: string, label: string): Promise<boolean> {
+  const token = process.env.SUPABASE_MANAGEMENT_TOKEN
+  if (!token) return false
+  const ref = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
+  const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: sql }),
+  })
+  if (!res.ok) console.error(`[schema-heal] ${label} SQL failed:`, res.status, await res.text().catch(() => ''))
+  return res.ok
+}

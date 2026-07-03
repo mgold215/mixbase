@@ -89,17 +89,23 @@ async function renderLine(text: string, pxSize: number, letterSpacingPx: number,
   return { buf, w: m.width ?? 1, h: m.height ?? 1 }
 }
 
-// ── Build finalized artwork: source pixels untouched, text composited on top ─
-export async function buildFinalized(
-  imageBuffer: Buffer,
+// ── Text overlay: the artist/rule/title lockup as one transparent PNG ────────
+// The exact same lockup the finalized artwork bakes in, flattened (halo under
+// glyphs) so other renderers — the video finalizer's flashing title cards —
+// composite the identical design with a single overlay. `width` is the canvas
+// the type scale is derived from (text sizes are fractions of it); `margin` is
+// the transparent halo padding around the text block, so placement math can
+// anchor the block itself rather than the padded bitmap.
+export type TextOverlay = { png: Buffer; width: number; height: number; margin: number }
+
+export async function buildTextOverlay(
   title: string,
   artist: string,
-  position: Position,
+  width: number,
   size: Size,
   showRule: boolean,
-  filter: Filter,
   color: string = DEFAULT_TEXT_COLOR
-): Promise<Buffer> {
+): Promise<TextOverlay> {
   if (!isHexColor(color)) color = DEFAULT_TEXT_COLOR
   const textRgb = hexToRgb(color)
   // Legibility halo contrasts with the text: dark glow behind light text,
@@ -108,11 +114,6 @@ export async function buildFinalized(
   const luminance = (0.2126 * textRgb.r + 0.7152 * textRgb.g + 0.0722 * textRgb.b) / 255
   const haloRgb = luminance < 0.5 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 }
 
-  let img = sharp(imageBuffer)
-  const { width = 1024, height = 1024 } = await img.metadata()
-
-  const [vertical, horizontal] = position.split('-') as [Vertical, Align]
-  const align = horizontal
   const pad = Math.round(width * 0.05)
   const maxW = width - pad * 2
 
@@ -179,16 +180,6 @@ export async function buildFinalized(
   const totalH = Math.max(1, Math.round(Rh / R))
   const blockNative = await sharp(blockR).resize(blockW, totalH, { kernel: 'lanczos3' }).png().toBuffer()
 
-  // Vertical anchor → top of the text block; horizontal anchor → its left edge.
-  const blockTop =
-    vertical === 'top'    ? pad :
-    vertical === 'bottom' ? height - pad - totalH :
-                            Math.round((height - totalH) / 2)
-  const blockLeft =
-    align === 'left'  ? pad :
-    align === 'right' ? width - pad - blockW :
-                        Math.round((width - blockW) / 2)
-
   // Soft contrasting halo behind the text so it stays legible on light/busy
   // backgrounds (sky, concrete). Pad the block first so the blurred glow isn't
   // clipped at the block's edge.
@@ -206,6 +197,51 @@ export async function buildFinalized(
     .joinChannel(blurredAlpha)
     .png().toBuffer()
 
+  // Flatten halo + glyphs into one layer. "Over" is associative, so compositing
+  // this single PNG onto a photo is pixel-identical to layering halo then text.
+  const png = await sharp({ create: { width: pw, height: ph, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([
+      { input: halo, top: 0, left: 0, blend: 'over' },
+      { input: padded, top: 0, left: 0, blend: 'over' },
+    ])
+    .png().toBuffer()
+
+  return { png, width: pw, height: ph, margin: M }
+}
+
+// ── Build finalized artwork: source pixels untouched, text composited on top ─
+export async function buildFinalized(
+  imageBuffer: Buffer,
+  title: string,
+  artist: string,
+  position: Position,
+  size: Size,
+  showRule: boolean,
+  filter: Filter,
+  color: string = DEFAULT_TEXT_COLOR
+): Promise<Buffer> {
+  let img = sharp(imageBuffer)
+  const { width = 1024, height = 1024 } = await img.metadata()
+
+  const [vertical, horizontal] = position.split('-') as [Vertical, Align]
+  const align = horizontal
+  const pad = Math.round(width * 0.05)
+
+  const overlay = await buildTextOverlay(title, artist, width, size, showRule, color)
+  const M = overlay.margin
+  const blockW = overlay.width - 2 * M
+  const totalH = overlay.height - 2 * M
+
+  // Vertical anchor → top of the text block; horizontal anchor → its left edge.
+  const blockTop =
+    vertical === 'top'    ? pad :
+    vertical === 'bottom' ? height - pad - totalH :
+                            Math.round((height - totalH) / 2)
+  const blockLeft =
+    align === 'left'  ? pad :
+    align === 'right' ? width - pad - blockW :
+                        Math.round((width - blockW) / 2)
+
   // Color grade the whole photo (text composited on top afterwards stays clean).
   img = applyFilter(img, filter)
 
@@ -214,10 +250,7 @@ export async function buildFinalized(
 
   // Output JPEG at high quality with 4:4:4 chroma — preserves saturated edges.
   return img
-    .composite([
-      { input: halo, top: compTop, left: compLeft, blend: 'over' },
-      { input: padded, top: compTop, left: compLeft, blend: 'over' },
-    ])
+    .composite([{ input: overlay.png, top: compTop, left: compLeft, blend: 'over' }])
     .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
     .toBuffer()
 }
