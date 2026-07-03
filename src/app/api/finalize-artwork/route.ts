@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
-import { buildFinalized, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
+import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
   // Divider line on by default — omit only when the client explicitly says false.
   const showRule: boolean = body.showRule !== false
   const filter: Filter = FILTERS.includes(body.filter) ? body.filter : 'none'
+  const color: string = isHexColor(body.color) ? body.color : DEFAULT_TEXT_COLOR
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
   const finalBuffer = await buildFinalized(
-    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule, filter
+    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule, filter, color
   )
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
@@ -82,5 +83,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
   }
 
-  return NextResponse.json({ finalized_artwork_url: finalUrl, position, size, showRule, filter })
+  return NextResponse.json({ finalized_artwork_url: finalUrl, position, size, showRule, filter, color })
 }

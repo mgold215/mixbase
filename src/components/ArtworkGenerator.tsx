@@ -22,6 +22,19 @@ const FILTER_LABELS: { value: Filter; label: string }[] = [
   { value: 'mono', label: 'B&W' },
 ]
 
+// Preset text colors — white first (the default). Any custom #RRGGBB is also
+// accepted via the picker; the server validates and falls back to white.
+const TEXT_COLORS: { value: string; label: string }[] = [
+  { value: '#FFFFFF', label: 'White' },
+  { value: '#000000', label: 'Black' },
+  { value: '#F5EFE0', label: 'Cream' },
+  { value: '#D4AF37', label: 'Gold' },
+  { value: '#E03A3E', label: 'Red' },
+  { value: '#2DD4BF', label: 'Teal' },
+  { value: '#F472B6', label: 'Pink' },
+  { value: '#60A5FA', label: 'Blue' },
+]
+
 const POSITION_GRID: Position[] = [
   'top-left', 'top-center', 'top-right',
   'middle-left', 'middle-center', 'middle-right',
@@ -60,6 +73,7 @@ export default function ArtworkGenerator({
   const [size, setSize] = useState<Size>('medium')
   const [showRule, setShowRule] = useState(true)
   const [filter, setFilter] = useState<Filter>('none')
+  const [color, setColor] = useState('#FFFFFF')
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null
@@ -82,6 +96,7 @@ export default function ArtworkGenerator({
         size,
         showRule,
         filter,
+        color,
       }),
     })
     const data = await res.json()
@@ -302,6 +317,46 @@ export default function ArtworkGenerator({
                   {f.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Text color — preset swatches + free picker, white by default */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text color</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {TEXT_COLORS.map(c => {
+                const active = color.toUpperCase() === c.value
+                return (
+                  <button
+                    key={c.value}
+                    onClick={() => setColor(c.value)}
+                    title={c.label}
+                    aria-label={`Text color ${c.label}`}
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${
+                      active ? 'border-[#2dd4bf] scale-110' : 'border-[#333] hover:border-[#555]'
+                    }`}
+                    style={{ backgroundColor: c.value }}
+                  />
+                )
+              })}
+              <label
+                title="Custom color"
+                className={`relative w-7 h-7 rounded-full border-2 cursor-pointer overflow-hidden transition-all ${
+                  TEXT_COLORS.some(c => c.value === color.toUpperCase())
+                    ? 'border-[#333] hover:border-[#555]'
+                    : 'border-[#2dd4bf] scale-110'
+                }`}
+                style={{ background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }}
+              >
+                <input
+                  type="color"
+                  value={color}
+                  onChange={e => setColor(e.target.value.toUpperCase())}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  aria-label="Custom text color"
+                />
+              </label>
+              <span className="text-[10px] text-[#666] font-mono ml-1">{color.toUpperCase()}</span>
             </div>
           </div>
 
