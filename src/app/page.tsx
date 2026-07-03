@@ -3,10 +3,30 @@ import { cookies } from 'next/headers'
 import { Upload, PlayCircle, Send, ClipboardList, Sparkles, Film } from 'lucide-react'
 import { TIER_PRICES, TIER_LIMITS } from '@/lib/tier'
 
+const LANDING_TITLE = 'mixBASE — Rough-to-release. Version control for music.'
+const LANDING_DESCRIPTION =
+  'Versioned audio uploads, timestamped feedback via share links, a release pipeline, AI cover art and visualizers — one home for your mixes from rough to release.'
+
 export const metadata = {
-  title: 'mixBASE — Rough-to-release. Version control for music.',
-  description:
-    'Versioned audio uploads, timestamped feedback via share links, a release pipeline, AI cover art and visualizers — one home for your mixes from rough to release.',
+  title: LANDING_TITLE,
+  description: LANDING_DESCRIPTION,
+  alternates: { canonical: '/' },
+  // Page-specific share-preview copy (overrides the site defaults in layout.tsx
+  // for the most-shared URL — the marketing landing page).
+  openGraph: {
+    type: 'website',
+    siteName: 'mixBASE',
+    title: LANDING_TITLE,
+    description: LANDING_DESCRIPTION,
+    url: '/',
+    images: [{ url: '/icons/icon-512.png', width: 512, height: 512, alt: 'mixBASE' }],
+  },
+  twitter: {
+    card: 'summary',
+    title: LANDING_TITLE,
+    description: LANDING_DESCRIPTION,
+    images: ['/icons/icon-512.png'],
+  },
 }
 
 const FEATURES = [
