@@ -102,7 +102,36 @@ function countBright(data, channels, min = 230) {
   check(`all ${FILTERS.length} filters render`, filterOk === FILTERS.length, `${filterOk}/${FILTERS.length}`)
 }
 
-// ── 5. Overlong title auto-shrinks instead of overflowing ───────────────────
+// ── 5. Color selector: chosen color is what gets baked in ───────────────────
+{
+  // Black text on a white source: dark glyph pixels must appear (the adaptive
+  // halo is white here, so any near-black pixels can only be glyphs).
+  const white = await makeSource({ r: 255, g: 255, b: 255 })
+  const outBlack = await buildFinalized(white, 'PLAY', 'moodmixformat', 'bottom-center', 'medium', false, 'none', '#000000')
+  const { data: bd, info: bi } = await rawPixels(outBlack)
+  let dark = 0
+  for (let i = 0; i < bd.length; i += bi.channels) {
+    if (bd[i] <= 25 && bd[i + 1] <= 25 && bd[i + 2] <= 25) dark++
+  }
+  check('black color renders dark glyphs on white source', dark > 2000, `${dark} near-black px`)
+
+  // Red text on black: red-dominant pixels, and near-white must be ~none.
+  const black = await makeSource({ r: 0, g: 0, b: 0 })
+  const outRed = await buildFinalized(black, 'PLAY', 'moodmixformat', 'bottom-center', 'medium', false, 'none', '#E03A3E')
+  const { data: rd, info: ri } = await rawPixels(outRed)
+  let red = 0
+  for (let i = 0; i < rd.length; i += ri.channels) {
+    if (rd[i] >= 180 && rd[i + 1] < 100 && rd[i + 2] < 100) red++
+  }
+  check('red color renders red glyphs', red > 2000, `${red} red px`)
+
+  // Invalid color falls back to white — never black, never a crash.
+  const outBad = await buildFinalized(black, 'PLAY', 'moodmixformat', 'bottom-center', 'medium', false, 'none', 'not-a-color')
+  const { data: wd, info: wi } = await rawPixels(outBad)
+  check('invalid color falls back to WHITE', countBright(wd, wi.channels) > 2000)
+}
+
+// ── 6. Overlong title auto-shrinks instead of overflowing ───────────────────
 {
   const black = await makeSource({ r: 0, g: 0, b: 0 })
   const long = 'AN EXTREMELY LONG TITLE THAT WOULD DEFINITELY OVERFLOW THE IMAGE WIDTH WITHOUT AUTO SHRINK'
