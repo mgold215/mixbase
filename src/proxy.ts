@@ -42,6 +42,11 @@ const PUBLIC_PATHS = [
   '/sw.js',
   '/manifest.json',
   '/icons/',
+  // SEO file-convention routes — crawlers fetch these cookie-less, so they
+  // must bypass the auth gate or they'd 307 → /login and the site would look
+  // un-indexable.
+  '/robots.txt',
+  '/sitemap.xml',
 ]
 
 const COOKIE_OPTS = {
