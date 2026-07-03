@@ -60,7 +60,9 @@ async function renderLine(text: string, pxSize: number, letterSpacingPx: number)
   // letter_spacing is in Pango units (1024 per point); at dpi 72 one point is
   // one pixel, so px × 1024 gives the right tracking. Scale everything by R.
   const ls = Math.max(0, Math.round(letterSpacingPx * R * 1024))
-  const markup = `<span letter_spacing="${ls}">${escapeMarkup(text)}</span>`
+  // foreground is mandatory: with rgba output Pango's default fill is BLACK,
+  // so omitting it bakes near-invisible black text onto dark artwork.
+  const markup = `<span foreground="#FFFFFF" letter_spacing="${ls}">${escapeMarkup(text)}</span>`
   const buf = await sharp({
     text: {
       text: markup,
