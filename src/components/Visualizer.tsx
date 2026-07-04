@@ -39,6 +39,17 @@ type Props = {
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
+// A saved loop from the user's library (mb_visualizers) — any project.
+type LibraryItem = {
+  id: string
+  video_url: string
+  title: string | null
+  kind: 'free' | 'ai'
+  project_id: string | null
+  source_image_url: string | null
+  created_at: string
+}
+
 export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
   const [effect, setEffect] = useState<Effect>('kenburns')
@@ -58,6 +69,11 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [projectViz, setProjectViz] = useState(visualizerUrl ?? null)
   const [settingViz, setSettingViz] = useState(false)
   const [vizError, setVizError] = useState('')
+  // "Choose from Media" picker — pin any previously generated loop, from any project.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [library, setLibrary] = useState<LibraryItem[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
 
@@ -314,6 +330,29 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }
 
+  // Open the library picker and load every saved loop the user owns. Loading
+  // flag resets in finally so a network reject can't strand the spinner.
+  async function openPicker() {
+    setPickerOpen(true)
+    setLibraryError('')
+    setLibraryLoading(true)
+    try {
+      const res = await fetch('/api/visualizer')
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !Array.isArray(data)) throw new Error()
+      setLibrary(data)
+    } catch {
+      setLibraryError('Could not load your visualizers. Try again.')
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+
+  async function pickFromLibrary(item: LibraryItem) {
+    await setProjectVisualizer(item.video_url)
+    setPickerOpen(false)
+  }
+
   // Pin (or clear) the project's visualizer — the video the player loops while
   // this track plays. Persists via the project PATCH so it survives reloads.
   async function setProjectVisualizer(url: string | null) {
@@ -421,9 +460,20 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   // any artwork exists so a previously set visualizer never disappears.
   const projectVizSection = projectId && onVisualizerUpdated ? (
     <div className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
-      <div className="flex items-center gap-2">
-        <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
-        <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizer</p>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizer</p>
+        </div>
+        <button
+          onClick={openPicker}
+          disabled={settingViz}
+          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+          style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+        >
+          <Film size={14} />
+          Choose from Media
+        </button>
       </div>
       {projectViz ? (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
@@ -445,10 +495,83 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         </div>
       ) : (
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          None set. Generate a video below and tap &ldquo;Set as Project Visualizer&rdquo; — it will loop in the player while this track plays, like a Spotify Canvas.
+          None set. Pick a previously generated video with &ldquo;Choose from Media&rdquo;, or generate one below —
+          it will loop in the player while this track plays, like a Spotify Canvas.
         </p>
       )}
       {vizError && <p className="text-sm" style={{ color: '#f87171' }}>{vizError}</p>}
+
+      {/* Library picker — every saved loop the user owns, any project */}
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={e => { if (e.target === e.currentTarget) setPickerOpen(false) }}
+        >
+          <div className="w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', maxHeight: '85dvh' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Choose a visualizer</h3>
+              <button onClick={() => setPickerOpen(false)} aria-label="Close" className="transition-colors" style={{ color: 'var(--text-muted)' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto overscroll-contain">
+              {libraryLoading ? (
+                <p className="text-sm text-center py-10" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+              ) : libraryError ? (
+                <p className="text-sm text-center py-10" style={{ color: '#f87171' }}>{libraryError}</p>
+              ) : library.length === 0 ? (
+                <p className="text-sm text-center py-10" style={{ color: 'var(--text-muted)' }}>
+                  No saved visualizers yet — generate one below and it will appear here.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {library.map(item => {
+                    const isCurrent = projectViz === item.video_url
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => pickFromLibrary(item)}
+                        disabled={settingViz}
+                        className="text-left rounded-xl overflow-hidden transition-all disabled:opacity-50"
+                        style={{
+                          border: isCurrent ? '2px solid var(--accent)' : '1px solid var(--surface-2)',
+                          backgroundColor: 'var(--bg-page)',
+                        }}
+                      >
+                        <video
+                          src={item.video_url}
+                          poster={item.source_image_url ?? undefined}
+                          muted
+                          playsInline
+                          loop
+                          autoPlay
+                          preload="metadata"
+                          className="w-full aspect-square object-cover bg-black"
+                        />
+                        <div className="px-2.5 py-2">
+                          <p className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
+                            {item.title ?? (item.kind === 'ai' ? 'AI visualizer' : 'Visualizer')}
+                          </p>
+                          <p className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                            {isCurrent ? (
+                              <span className="flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                                <Check size={10} strokeWidth={3} /> Current
+                              </span>
+                            ) : (
+                              new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                            )}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   ) : null
 
