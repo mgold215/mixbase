@@ -95,6 +95,9 @@ export async function POST(request: NextRequest) {
     clipSeconds,
   })
   if (!started.ok) {
+    // No render actually started, so give back the rate-limit credit consumed
+    // above — a busy signal shouldn't burn one of the user's hourly slots.
+    finalVideoLimiter.rollback(userId)
     return started.code === 'user_busy'
       ? NextResponse.json({ error: 'A render is already running — wait for it to finish', job_id: started.existing?.id }, { status: 409 })
       : NextResponse.json({ error: 'Server is busy rendering other videos — try again in a few minutes' }, { status: 503 })
