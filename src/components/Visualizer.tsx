@@ -39,16 +39,19 @@ type Props = {
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
-// A saved loop from the user's library (mb_visualizers) — any project.
+// A saved video from the user's library (mb_visualizers) — any project, any
+// kind: canvas loops, Runway AI, and finished YouTube/Shorts renders.
 type LibraryItem = {
   id: string
   video_url: string
   title: string | null
-  kind: 'free' | 'ai'
+  kind: string
   project_id: string | null
   source_image_url: string | null
   created_at: string
 }
+
+const KIND_LABEL: Record<string, string> = { ai: 'AI', free: 'Free', youtube: 'YouTube', shorts: 'Shorts' }
 
 export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
@@ -551,7 +554,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                         />
                         <div className="px-2.5 py-2">
                           <p className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
-                            {item.title ?? (item.kind === 'ai' ? 'AI visualizer' : 'Visualizer')}
+                            {item.title ?? 'Visualizer'}
                           </p>
                           <p className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                             {isCurrent ? (
@@ -559,7 +562,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                                 <Check size={10} strokeWidth={3} /> Current
                               </span>
                             ) : (
-                              new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                              `${KIND_LABEL[item.kind] ?? 'Video'} · ${new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                             )}
                           </p>
                         </div>
