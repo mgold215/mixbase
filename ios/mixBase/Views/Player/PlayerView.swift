@@ -1,4 +1,22 @@
 import SwiftUI
+import AVKit
+
+// MARK: - AirPlayRoutePicker
+// The native output-device picker (HomePod, Sonos, AirPods, car…). Wrapping
+// AVRoutePickerView is the supported way to offer AirPlay from inside the app —
+// routing itself is handled by the audio session (see AudioService).
+struct AirPlayRoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.prioritizesVideoDevices = false
+        view.backgroundColor = .clear
+        view.tintColor = UIColor(red: 0xF0 / 255, green: 0xF0 / 255, blue: 0xF0 / 255, alpha: 1)
+        view.activeTintColor = UIColor(red: 0x2D / 255, green: 0xD4 / 255, blue: 0xBF / 255, alpha: 1)
+        return view
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
 
 // MARK: - PlayerView
 // A focused "Now Playing" screen — nothing else competes for attention.
@@ -38,6 +56,10 @@ struct PlayerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    AirPlayRoutePicker()
+                        .frame(width: 28, height: 28)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showQueue = true }) {
                         Image(systemName: "list.bullet")
