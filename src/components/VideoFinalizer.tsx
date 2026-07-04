@@ -102,26 +102,33 @@ export default function VideoFinalizer({
     const startSec = format === 'shorts' && audioDurationSec
       ? (shortStart === 'hook' ? Math.round(audioDurationSec * 0.3) : shortStart === 'middle' ? Math.round(audioDurationSec * 0.5) : 0)
       : 0
-    const res = await fetch('/api/finalize-video', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        format,
-        artist: 'moodmixformat',
-        color,
-        ...(format === 'shorts' ? { clip_seconds: shortLen, start_sec: startSec } : {}),
-      }),
-    })
-    const data = await res.json().catch(() => null)
-    if (res.ok && data?.job_id) {
-      setJobs(j => ({ ...j, [format]: { jobId: data.job_id, status: 'rendering', progress: 0, stage: 'Starting' } }))
-      pollJob(format, data.job_id)
-    } else if (res.status === 409 && data?.job_id) {
-      // A render is already going (e.g. tab reopened) — reattach to it.
-      pollJob(format, data.job_id)
-    } else {
-      setErrors(e => ({ ...e, [format]: data?.error ?? 'Could not start the render.' }))
+    try {
+      const res = await fetch('/api/finalize-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          format,
+          artist: 'moodmixformat',
+          color,
+          ...(format === 'shorts' ? { clip_seconds: shortLen, start_sec: startSec } : {}),
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.job_id) {
+        setJobs(j => ({ ...j, [format]: { jobId: data.job_id, status: 'rendering', progress: 0, stage: 'Starting' } }))
+        pollJob(format, data.job_id)
+      } else if (res.status === 409 && data?.job_id) {
+        // A render is already going (e.g. tab reopened) — reattach to it.
+        pollJob(format, data.job_id)
+      } else {
+        setErrors(e => ({ ...e, [format]: data?.error ?? 'Could not start the render.' }))
+      }
+    } catch {
+      // The POST never reached the server (offline, DNS blip, connection reset).
+      // Without this the async click handler's rejection is swallowed and the
+      // button silently does nothing — surface it so the user can retry.
+      setErrors(e => ({ ...e, [format]: 'Could not reach the server. Check your connection and try again.' }))
     }
   }
 

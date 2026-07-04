@@ -41,6 +41,15 @@ export function rateLimiter({ windowMs, max }: { windowMs: number; max: number }
       const allowed = existing.count <= max
       return { allowed, limit: max, remaining: Math.max(0, max - existing.count), resetAt: existing.resetAt }
     },
+
+    // Give back a credit consumed by a prior check() whose work never actually
+    // ran (e.g. the request was rejected downstream before doing anything). The
+    // window should count work performed, not rejected attempts. No-op if the
+    // window has already rolled over or the count is already at zero.
+    rollback(key: string) {
+      const entry = store.get(key)
+      if (entry && Date.now() < entry.resetAt && entry.count > 0) entry.count--
+    },
   }
 }
 
