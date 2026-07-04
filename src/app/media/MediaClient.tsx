@@ -28,6 +28,7 @@ type Props = {
 }
 
 const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
+const KIND_LABEL: Record<string, string> = { ai: 'AI', free: 'Free', youtube: 'YouTube', shorts: 'Shorts' }
 
 export default function MediaClient({ projects, collections, visualizers }: Props) {
   const router = useRouter()
@@ -117,7 +118,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                       {v.title || 'Visualizer'}
                     </p>
                     <p className="text-[10px] mb-2" style={{ color: 'var(--text-muted)' }}>
-                      {v.kind === 'ai' ? 'AI' : 'Free'}
+                      {KIND_LABEL[v.kind] ?? 'Video'}
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button
