@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { cookies } from 'next/headers'
-import { Upload, PlayCircle, Send, ClipboardList, Sparkles, Film } from 'lucide-react'
+import { Upload, Star, Send, ClipboardList, Sparkles, Film } from 'lucide-react'
 import { TIER_PRICES, TIER_LIMITS } from '@/lib/tier'
 
 const LANDING_TITLE = 'mixBASE — Rough-to-release. Version control for music.'
@@ -36,9 +36,9 @@ const FEATURES = [
     body: 'Every bounce lives under one project — WAV, MP3, FLAC and more, up to 2 GB per file with resumable uploads. Never hunt through "final_final_v3" folders again.',
   },
   {
-    icon: PlayCircle,
-    title: 'A/B compare & waveform player',
-    body: 'Flip between any two versions instantly and audition your mixes in a full-screen waveform player that actually seeks.',
+    icon: Star,
+    title: 'Label & curator pitching',
+    body: 'Pitch playlists, labels, blogs and radio from a built-in curator directory — message templates auto-fill your private listening link, and a tracker logs every pitch, status and response rate.',
   },
   {
     icon: Send,
@@ -47,8 +47,8 @@ const FEATURES = [
   },
   {
     icon: ClipboardList,
-    title: 'Release pipeline',
-    body: 'A checklist board for every release: mixing, mastering, artwork, DSP submission, socials. See what ships next at a glance.',
+    title: 'Release pipeline & Spotify launch',
+    body: 'A checklist board for every release: mixing, mastering, artwork, DSP submission, pre-save, Spotify Canvas, Marquee and ad campaigns — plus editorial pitching via Spotify for Artists.',
   },
   {
     icon: Sparkles,
@@ -58,14 +58,14 @@ const FEATURES = [
   {
     icon: Film,
     title: 'AI visualizer video',
-    body: 'Turn your artwork into a moving visualizer — a Canvas-style loop that plays behind your track in the player.',
+    body: 'Turn your artwork into a moving visualizer — a Canvas-style loop that plays behind your track in the full-screen waveform player.',
   },
 ]
 
 const STEPS = [
   { n: '01', title: 'Upload a rough', body: 'Start a project and drop in your first bounce. Each new mix stacks as a version, not a new file mess.' },
-  { n: '02', title: 'Share & compare', body: 'Send share links for timestamped feedback, A/B versions side by side, and keep notes where the music is.' },
-  { n: '03', title: 'Release', body: 'Work the pipeline checklist, generate artwork and visualizers, and walk the track out the door.' },
+  { n: '02', title: 'Share for feedback', body: 'Send share links for timestamped feedback and keep notes where the music is.' },
+  { n: '03', title: 'Release', body: 'Work the pipeline checklist, pitch curators and labels, generate artwork and visualizers, and walk the track out the door.' },
 ]
 
 export default async function Home() {
@@ -79,7 +79,7 @@ export default async function Home() {
       perks: [
         'Unlimited projects, versions & share links',
         `${TIER_LIMITS.free.artworkGenerations} AI artworks / month`,
-        'A/B compare & waveform player',
+        'Curator & label pitch tracker',
         'Release pipeline & collections',
       ],
     },
@@ -157,7 +157,7 @@ export default async function Home() {
             Version control for your music
           </h1>
           <p className="text-base sm:text-lg mt-4 max-w-xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
-            One home for every mix — upload roughs, collect timestamped feedback, compare versions, and track each song all the way to release day.
+            One home for every mix — upload roughs, collect timestamped feedback, pitch curators and labels, and track each song all the way to release day.
           </p>
           <div className="flex items-center justify-center gap-3 mt-8">
             {authed ? (
