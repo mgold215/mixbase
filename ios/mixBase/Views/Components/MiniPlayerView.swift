@@ -94,20 +94,37 @@ struct MiniPlayerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        // Dark background with a subtle top border line
-        .background(
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(hex: "#2dd4bf").opacity(0.15))
-                    .frame(height: 0.5) // Thin top border
-                Rectangle()
-                    .fill(Color(hex: "#161616"))
+        .background(Color(hex: "#161616"))
+        // A live playback progress line runs along the very top edge of the bar, so you
+        // always see how far into the track you are without opening the full player.
+        .overlay(alignment: .top) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color(hex: "#f0f0f0").opacity(0.08))
+                    Rectangle()
+                        .fill(Color(hex: "#2dd4bf"))
+                        .frame(width: geo.size.width * progress)
+                }
             }
-        )
-        // Tapping the bar (not the button) navigates to full player
+            .frame(height: 2)
+        }
+        // Tap OR swipe up on the bar (not the transport buttons) opens the full player.
         .contentShape(Rectangle())
         .onTapGesture {
             onTap()
         }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    if value.translation.height < -30 { onTap() }
+                }
+        )
+    }
+
+    // Current playback position as a 0…1 fraction for the top progress line.
+    private var progress: CGFloat {
+        guard audioService.duration > 0 else { return 0 }
+        return CGFloat(audioService.currentTime / audioService.duration)
     }
 }
