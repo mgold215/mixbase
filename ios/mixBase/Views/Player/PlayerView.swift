@@ -131,6 +131,11 @@ struct PlayerView: View {
             .task {
                 await seedQueueIfNeeded()
             }
+            // Opening the Player always leads with the queue — the list of songs
+            // to choose from. Dismiss it (Done) to see the Now Playing screen.
+            .onAppear {
+                showQueue = true
+            }
             .sheet(isPresented: $showQueue) {
                 QueueSheet(isLoading: isLoading)
             }
@@ -529,7 +534,7 @@ struct QueueSheet: View {
                     .scrollContentBackground(.hidden)
                 }
             }
-            .navigationTitle("Up Next")
+            .navigationTitle("Queue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -548,7 +553,11 @@ struct QueueSheet: View {
     // MARK: - Queue Row
     @ViewBuilder
     private func queueRow(item: QueueItem) -> some View {
-        Button(action: { audioService.play(item: item) }) {
+        // Choosing a song starts it and closes the queue, revealing Now Playing.
+        Button(action: {
+            audioService.play(item: item)
+            dismiss()
+        }) {
             HStack(spacing: 12) {
                 ZStack {
                     if let artworkUrl = item.artworkUrl,
