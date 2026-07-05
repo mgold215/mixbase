@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { Download, Film, Sparkles, Check, MonitorPlay, X } from 'lucide-react'
+import { visualizerKindLabel } from '@/lib/visualizer-kinds'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
 type Effect = 'kenburns' | 'breathe' | 'glitch'
@@ -50,8 +51,6 @@ type LibraryItem = {
   source_image_url: string | null
   created_at: string
 }
-
-const KIND_LABEL: Record<string, string> = { ai: 'AI', free: 'Free', youtube: 'YouTube', shorts: 'Shorts' }
 
 export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
@@ -562,7 +561,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                                 <Check size={10} strokeWidth={3} /> Current
                               </span>
                             ) : (
-                              `${KIND_LABEL[item.kind] ?? 'Video'} · ${new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                              `${visualizerKindLabel(item.kind)} · ${new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                             )}
                           </p>
                         </div>

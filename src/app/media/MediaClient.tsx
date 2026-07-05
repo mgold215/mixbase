@@ -7,6 +7,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Check, X, ExternalLink, Download, Film, Trash2 } from 'lucide-react'
 import { downloadImage } from '@/lib/download'
+import { visualizerKindLabel, availableKinds, filterByKind } from '@/lib/visualizer-kinds'
 
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
 
@@ -28,7 +29,6 @@ type Props = {
 }
 
 const TYPE_LABEL: Record<string, string> = { album: 'Album', ep: 'EP', playlist: 'Playlist' }
-const KIND_LABEL: Record<string, string> = { ai: 'AI', free: 'Free', youtube: 'YouTube', shorts: 'Shorts' }
 
 export default function MediaClient({ projects, collections, visualizers }: Props) {
   const router = useRouter()
@@ -37,6 +37,15 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
   const [assigned, setAssigned] = useState<string | null>(null)
   const [visualizing, setVisualizing] = useState<Project | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [kindFilter, setKindFilter] = useState('all')
+
+  // Kinds actually in the library, for the filter chips. Only worth showing
+  // when there's more than one kind to choose between.
+  const kinds = availableKinds(visualizers)
+  // If the active filter's last video was just deleted (its chip is gone),
+  // fall back to "all" so the grid never strands on an empty, chip-less filter.
+  const activeKind = kindFilter !== 'all' && !kinds.includes(kindFilter) ? 'all' : kindFilter
+  const shownVisualizers = filterByKind(visualizers, activeKind)
 
   async function deleteVisualizer(id: string) {
     setDeleting(id)
@@ -91,14 +100,38 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
           </p>
         </div>
 
-        {/* Visualizers — generated video loops (free renders + Runway AI) */}
+        {/* Visualizers — every saved video the user owns (canvas + AI loops,
+            plus finished YouTube/Shorts renders since PR #42) */}
         {visualizers.length > 0 && (
           <div className="mb-10">
             <h2 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
               Visualizers
             </h2>
+            {/* Kind filter — only when there's more than one kind to sort */}
+            {kinds.length > 1 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {(['all', ...kinds]).map(k => {
+                  const isActive = activeKind === k
+                  const count = k === 'all' ? visualizers.length : visualizers.filter(v => v.kind === k).length
+                  return (
+                    <button
+                      key={k}
+                      onClick={() => setKindFilter(k)}
+                      className="text-xs px-3 py-1 rounded-full border transition-colors"
+                      style={{
+                        borderColor: isActive ? 'var(--accent)' : 'var(--border)',
+                        backgroundColor: isActive ? 'var(--accent)' : 'transparent',
+                        color: isActive ? 'var(--bg-page)' : 'var(--text-muted)',
+                      }}
+                    >
+                      {k === 'all' ? 'All' : visualizerKindLabel(k)} <span className="opacity-70">{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {visualizers.map(v => (
+              {shownVisualizers.map(v => (
                 <div
                   key={v.id}
                   className="rounded-xl overflow-hidden"
@@ -118,7 +151,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                       {v.title || 'Visualizer'}
                     </p>
                     <p className="text-[10px] mb-2" style={{ color: 'var(--text-muted)' }}>
-                      {KIND_LABEL[v.kind] ?? 'Video'}
+                      {visualizerKindLabel(v.kind)}
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button
