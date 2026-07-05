@@ -36,6 +36,7 @@ struct HomeView: View {
             ZStack {
                 Color(hex: "#080808")
                     .ignoresSafeArea()
+                ambientBackdrop
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
@@ -82,6 +83,10 @@ struct HomeView: View {
                     }
                     .padding(.top, 16)
                 }
+                // Pull down to refresh projects, releases and activity.
+                .refreshable {
+                    await loadDashboardData()
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -105,6 +110,39 @@ struct HomeView: View {
 
     private var mixingCount: Int {
         projects.filter { $0.genre != nil }.count
+    }
+
+    // MARK: - Ambient Backdrop
+    // Soft, blurred artwork of the current track glows behind the whole home feed
+    // (matching the Now Playing screen) so Home feels alive when music is playing.
+    @ViewBuilder
+    private var ambientBackdrop: some View {
+        if let artworkUrl = audioService.currentArtworkUrl,
+           let url = URL(string: artworkUrl) {
+            GeometryReader { geo in
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height * 0.6)
+                        .clipped()
+                        .blur(radius: 80)
+                        .opacity(0.4)
+                } placeholder: {
+                    Color.clear
+                }
+            }
+            .ignoresSafeArea()
+            .overlay(
+                LinearGradient(
+                    colors: [Color(hex: "#080808").opacity(0.4), Color(hex: "#080808")],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+                .ignoresSafeArea()
+            )
+            .animation(.easeInOut(duration: 0.6), value: audioService.currentArtworkUrl)
+        }
     }
 
     // MARK: - Now Playing Card
@@ -163,8 +201,13 @@ struct HomeView: View {
             .frame(height: 4)
         }
         .padding(16)
-        .background(Color(hex: "#111111"))
+        .background(Color(hex: "#111111").opacity(0.85))
         .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(hex: "#2dd4bf").opacity(0.25), lineWidth: 1)
+        )
+        .shadow(color: Color(hex: "#2dd4bf").opacity(0.18), radius: 16, y: 6)
         .contentShape(Rectangle())
         .onTapGesture { selectedTab = 2 }  // Open the Player tab
     }

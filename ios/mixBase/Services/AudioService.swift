@@ -182,6 +182,17 @@ class AudioService: ObservableObject {
         queue = items
     }
 
+    /// Reorder the queue — drag-to-reorder in the "Up Next" sheet. next()/prev() and
+    /// auto-advance read `queue` directly, so playback immediately follows the new order.
+    func moveQueueItems(fromOffsets: IndexSet, toOffset: Int) {
+        queue.move(fromOffsets: fromOffsets, toOffset: toOffset)
+    }
+
+    /// Remove tracks from the queue — swipe-to-delete in the "Up Next" sheet.
+    func removeQueueItems(atOffsets: IndexSet) {
+        queue.remove(atOffsets: atOffsets)
+    }
+
     /// Convenience: play a queue item.
     func play(item: QueueItem) {
         play(version: item.version, trackName: item.trackName, artworkUrl: item.artworkUrl)
