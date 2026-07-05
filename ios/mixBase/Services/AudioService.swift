@@ -37,8 +37,21 @@ class AudioService: ObservableObject {
 
     // MARK: - Published Properties
 
-    /// The audio player instance (nil when nothing is loaded)
-    private var player: AVPlayer?
+    /// The single long-lived audio player. One instance for the app's whole lifetime,
+    /// with tracks swapped via replaceCurrentItem(with:) — tearing down and recreating
+    /// the player mid-AirPlay dropped the HomePod/Sonos route and playback fell back to
+    /// the phone on every track change.
+    private let player: AVPlayer = {
+        let player = AVPlayer()
+        // Let AVPlayer buffer/recover from stalls on its own instead of dying silently.
+        player.automaticallyWaitsToMinimizeStalling = true
+        // "External playback" is AVPlayer's *video* AirPlay mode (Apple TV rendering).
+        // For audio-only content it ties the AirPlay route to the player item, so route
+        // selection could bounce back to the phone. Off, audio routes through the shared
+        // audio session, which persists across item changes and app player instances.
+        player.allowsExternalPlayback = false
+        return player
+    }()
 
     /// Which version is currently loaded in the player
     @Published var currentVersion: Version?
@@ -111,14 +124,25 @@ class AudioService: ObservableObject {
 
     // MARK: - Audio Session Configuration
 
-    /// Tell iOS this app plays audio (not just UI sounds).
+    /// Tell iOS this app plays audio (not just UI sounds). The category is set ONCE here —
+    /// re-applying it on every play/resume silently reset the output route to the phone
+    /// speaker, which is what kicked AirPlay (HomePod/Sonos) playback back to the phone.
+    /// The session is NOT activated here: activation happens lazily on first play, so
+    /// merely opening the app doesn't cut off whatever the user is listening to.
     func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+            // AirPlay 2 long-form audio: the buffered, route-persistent pathway that
+            // Music/Podcasts use for HomePod and other AirPlay 2 speakers.
+            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
         } catch {
-            print("AudioService: Failed to configure audio session: \(error)")
+            // Long-form can be rejected on some OS/route combinations — plain playback
+            // still supports AirPlay, just via the realtime pathway.
+            do {
+                try session.setCategory(.playback, mode: .default)
+            } catch {
+                print("AudioService: Failed to configure audio session: \(error)")
+            }
         }
 
         NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
@@ -137,16 +161,15 @@ class AudioService: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// Re-activate the audio session right before we play. iOS deactivates the session
+    /// (Re)activate the audio session right before we play. iOS deactivates the session
     /// after interruptions (calls, notification sounds, other apps) — which happen often
     /// while the phone is locked — and AVPlayer will then report `.playing` while routing
-    /// no audio out. Re-asserting the category + active state keeps lock-screen playback
-    /// truthful: if it's "playing", sound is actually coming out.
+    /// no audio out. Only `setActive` is called: the category persists across
+    /// interruptions, and re-setting it here is what used to reset the output route and
+    /// kick AirPlay playback back to the phone.
     private func activateSession() {
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
+            try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("AudioService: Failed to (re)activate audio session: \(error)")
         }
@@ -157,6 +180,17 @@ class AudioService: ObservableObject {
     /// Replace the active queue (e.g. the player screen's filtered/sorted order).
     func setQueue(_ items: [QueueItem]) {
         queue = items
+    }
+
+    /// Reorder the queue — drag-to-reorder in the "Up Next" sheet. next()/prev() and
+    /// auto-advance read `queue` directly, so playback immediately follows the new order.
+    func moveQueueItems(fromOffsets: IndexSet, toOffset: Int) {
+        queue.move(fromOffsets: fromOffsets, toOffset: toOffset)
+    }
+
+    /// Remove tracks from the queue — swipe-to-delete in the "Up Next" sheet.
+    func removeQueueItems(atOffsets: IndexSet) {
+        queue.remove(atOffsets: atOffsets)
     }
 
     /// Convenience: play a queue item.
@@ -179,10 +213,6 @@ class AudioService: ObservableObject {
         playerCancellables.removeAll()
 
         let playerItem = AVPlayerItem(url: url)
-        let newPlayer = AVPlayer(playerItem: playerItem)
-        // Let AVPlayer buffer/recover from stalls on its own instead of dying silently.
-        newPlayer.automaticallyWaitsToMinimizeStalling = true
-        player = newPlayer
 
         currentVersion = version
         if let trackName = trackName { currentTrackName = trackName }
@@ -199,10 +229,13 @@ class AudioService: ObservableObject {
         // Make sure the session is live before playing — otherwise (e.g. after an
         // interruption while locked) the player reports playing but emits no sound.
         activateSession()
-        newPlayer.play()
+        // Swap the item on the persistent player — keeps the current output route
+        // (AirPlay/Bluetooth) alive across track and version changes.
+        player.replaceCurrentItem(with: playerItem)
+        player.play()
         updateNowPlayingInfo()
         addTimeObserver()
-        observePlayer(newPlayer, item: playerItem)
+        observePlayer(player, item: playerItem)
 
         // If playback started from a surface that never set a queue (Home, project detail),
         // load one in the background so skip + auto-advance work from any tab right away.
@@ -271,10 +304,13 @@ class AudioService: ObservableObject {
             .store(in: &playerCancellables)
     }
 
-    /// Pause playback
-    func pause() {
+    /// Pause playback. A user-initiated pause also cancels any pending "resume when the
+    /// output device reconnects", so pausing after AirPods dropped can't blast audio
+    /// later; system-initiated pauses (route loss, interruptions) preserve that flag.
+    func pause(userInitiated: Bool = true) {
         playIntent = false
-        player?.pause()
+        if userInitiated { resumeOnDeviceReconnect = false }
+        player.pause()
         isPlaying = false
         buffering = false
         updateNowPlayingInfo()
@@ -282,10 +318,10 @@ class AudioService: ObservableObject {
 
     /// Resume playback from where it was paused
     func resume() {
-        guard player != nil else { return }
+        guard player.currentItem != nil else { return }
         playIntent = true
         activateSession()
-        player?.play()
+        player.play()
         isPlaying = true
         updateNowPlayingInfo()
     }
@@ -302,7 +338,7 @@ class AudioService: ObservableObject {
     /// Jump to a specific time in the track (in seconds)
     func seek(to time: Double) {
         let cmTime = CMTime(seconds: time, preferredTimescale: 600)
-        player?.seek(to: cmTime) { [weak self] _ in
+        player.seek(to: cmTime) { [weak self] _ in
             self?.currentTime = time
         }
     }
@@ -422,6 +458,20 @@ class AudioService: ObservableObject {
         info[MPMediaItemPropertyTitle] = currentTrackName ?? "mixBase"
         info[MPMediaItemPropertyArtist] = artistName.isEmpty ? "mixBase" : artistName
 
+        // Explicit media type + non-live flag: Bluetooth AVRCP head units (Tesla, car
+        // stereos) and AirPlay receivers use these to decide whether to show a scrubber
+        // and track metadata at all.
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+        info[MPNowPlayingInfoPropertyIsLiveStream] = false
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+
+        // Surface the mix version where the "album" line shows (lock screen, car display).
+        if let version = currentVersion {
+            var album = "v\(version.versionNumber)"
+            if let label = version.label, !label.isEmpty { album += " · \(label)" }
+            info[MPMediaItemPropertyAlbumTitle] = album
+        }
+
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
@@ -522,7 +572,7 @@ class AudioService: ObservableObject {
 
     private func addTimeObserver() {
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
-        timeObserver = player?.addPeriodicTimeObserver(
+        timeObserver = player.addPeriodicTimeObserver(
             forInterval: interval,
             queue: .main
         ) { [weak self] time in
@@ -543,7 +593,7 @@ class AudioService: ObservableObject {
 
     private func removeTimeObserver() {
         if let observer = timeObserver {
-            player?.removeTimeObserver(observer)
+            player.removeTimeObserver(observer)
             timeObserver = nil
         }
     }
@@ -558,7 +608,8 @@ class AudioService: ObservableObject {
 
         switch type {
         case .began:
-            pause()
+            // System interruption — keep any pending route-reconnect resume alive.
+            pause(userInitiated: false)
 
         case .ended:
             if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
@@ -585,11 +636,20 @@ class AudioService: ObservableObject {
 
         switch reason {
         case .oldDeviceUnavailable:
-            // The output device (AirPods/headphones) was removed. iOS has already paused our
-            // AVPlayer and rerouted to the speaker. Remember we were playing so we can resume
-            // when it returns, then pause cleanly so audio doesn't blast out of the speaker.
-            resumeOnDeviceReconnect = playIntent || isPlaying
-            pause()
+            // An output device disappeared. Only react if what we lost was an external
+            // output (AirPods, Bluetooth/car, AirPlay speaker) — a route change whose
+            // previous route was already the built-in speaker needs no pause.
+            let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            let lostExternalOutput = previousRoute?.outputs.contains { output in
+                output.portType != .builtInSpeaker && output.portType != .builtInReceiver
+            } ?? true
+            guard lostExternalOutput else { return }
+            // iOS has already paused our AVPlayer and rerouted to the speaker. Remember we
+            // were playing so we can resume when the device returns, then pause cleanly so
+            // audio doesn't blast out of the speaker.
+            let wasPlaying = playIntent || isPlaying
+            pause(userInitiated: false)
+            resumeOnDeviceReconnect = wasPlaying
 
         case .newDeviceAvailable:
             // An output device connected. If playback was active when the previous one

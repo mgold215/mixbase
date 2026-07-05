@@ -28,6 +28,7 @@ const CHECKLIST_ITEMS = [
 ]
 
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
+const VideoFinalizer = dynamic(() => import('@/components/VideoFinalizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
 
@@ -42,6 +43,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
+  // ?? null: prod rows can predate the 015 migration (column self-heals on first write)
+  const [visualizer, setVisualizer] = useState(project.visualizer_url ?? null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -86,15 +89,20 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     syncAfterMutation()
   }
 
+  function handleVisualizerUpdated(url: string | null) {
+    setVisualizer(url)
+    syncAfterMutation()
+  }
+
   // Tab state — persists in URL hash
-  const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer'>(() => {
+  const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer' | 'video'>(() => {
     if (typeof window === 'undefined') return 'versions'
     const hash = window.location.hash.replace('#', '')
-    if (hash === 'artwork' || hash === 'visualizer') return hash
+    if (hash === 'artwork' || hash === 'visualizer' || hash === 'video') return hash
     return 'versions'
   })
 
-  function switchTab(tab: 'versions' | 'artwork' | 'visualizer') {
+  function switchTab(tab: 'versions' | 'artwork' | 'visualizer' | 'video') {
     setActiveTab(tab)
     if (typeof window !== 'undefined') {
       history.replaceState(null, '', `#${tab}`)
@@ -549,7 +557,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
         {/* Tab bar */}
         <div className="flex gap-1 mb-6 border-b" style={{ borderColor: 'var(--surface-2)' }}>
-          {(['versions', 'artwork', 'visualizer'] as const).map(tab => (
+          {(['versions', 'artwork', 'visualizer', 'video'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => switchTab(tab)}
@@ -560,7 +568,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 marginBottom: '-1px',
               }}
             >
-              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : 'Song Info'}
+              {tab === 'artwork' ? 'Artwork' : tab === 'visualizer' ? 'Visualizer' : tab === 'video' ? 'Video' : 'Song Info'}
             </button>
           ))}
         </div>
@@ -738,7 +746,20 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             projectId={project.id}
             projectTitle={project.title}
             artworkUrl={artwork}
+            visualizerUrl={visualizer}
+            onVisualizerUpdated={handleVisualizerUpdated}
             onSwitchToArtwork={() => switchTab('artwork')}
+          />
+        )}
+
+        {/* Tab content — Video (finished YouTube / Shorts renders) */}
+        {activeTab === 'video' && (
+          <VideoFinalizer
+            projectId={project.id}
+            visualizerUrl={visualizer}
+            hasAudio={versions.length > 0}
+            audioDurationSec={versions[0]?.duration_seconds ?? null}
+            onSwitchToVisualizer={() => switchTab('visualizer')}
           />
         )}
 

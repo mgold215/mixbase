@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 
 export type Track = {
   id: string
@@ -8,6 +9,8 @@ export type Track = {
   title: string
   artist: string
   artwork_url: string | null
+  /** Project visualizer video (Spotify-Canvas style) — loops in the player while the track plays */
+  visualizer_url: string | null
   audio_url: string
   status: string
   version: string
@@ -56,18 +59,30 @@ export async function GET(request: NextRequest) {
 
   await ensureShareTokens(userId)
 
-  const [versionsResult, profileResult] = await Promise.all([
-    supabaseAdmin
-      .from('mb_versions')
-      .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, key_signature, bpm, user_id, share_token)')
-      .eq('mb_projects.user_id', userId)
-      .order('version_number', { ascending: false }),
+  const selectVersions = (withVisualizer: boolean) => supabaseAdmin
+    .from('mb_versions')
+    .select(`id, project_id, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
+    .eq('mb_projects.user_id', userId)
+    .order('version_number', { ascending: false })
+
+  const [initialVersionsResult, profileResult] = await Promise.all([
+    selectVersions(true),
     supabaseAdmin
       .from('profiles')
       .select('artist_name')
       .eq('id', userId)
       .single(),
   ])
+  let versionsResult = initialVersionsResult
+
+  // Deploys can beat the 015 migration to production, and PostgREST rejects the
+  // whole select when one column is missing — never let that take down the
+  // player. Heal the column and retry; if healing isn't possible, serve tracks
+  // without visualizers.
+  if (versionsResult.error && isMissingVisualizerColumn(versionsResult.error)) {
+    const healed = await ensureProjectVisualizerColumn()
+    versionsResult = await selectVersions(healed)
+  }
 
   if (versionsResult.error) return NextResponse.json({ error: versionsResult.error.message }, { status: 500 })
 
@@ -82,7 +97,7 @@ export async function GET(request: NextRequest) {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; key_signature?: string | null; bpm?: number | null; share_token?: string | null }
+    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; visualizer_url?: string | null; key_signature?: string | null; bpm?: number | null; share_token?: string | null }
     const projectTitle: string = p?.title ?? 'Unknown'
     return {
       id: v.id,
@@ -92,6 +107,7 @@ export async function GET(request: NextRequest) {
       title: projectTitle,
       artist: artistName,
       artwork_url: p?.finalized_artwork_url ?? p?.artwork_url ?? null,
+      visualizer_url: p?.visualizer_url ?? null,
       audio_url: v.audio_url,
       status: v.status ?? 'WIP',
       version: v.label || `v${v.version_number}`,

@@ -41,6 +41,15 @@ export function rateLimiter({ windowMs, max }: { windowMs: number; max: number }
       const allowed = existing.count <= max
       return { allowed, limit: max, remaining: Math.max(0, max - existing.count), resetAt: existing.resetAt }
     },
+
+    // Give back a credit consumed by a prior check() whose work never actually
+    // ran (e.g. the request was rejected downstream before doing anything). The
+    // window should count work performed, not rejected attempts. No-op if the
+    // window has already rolled over or the count is already at zero.
+    rollback(key: string) {
+      const entry = store.get(key)
+      if (entry && Date.now() < entry.resetAt && entry.count > 0) entry.count--
+    },
   }
 }
 
@@ -78,6 +87,10 @@ export const videoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 })
 
 // Upload-url: 30 per hour per user — generous but blocks hammering
 export const uploadLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
+
+// Final video renders (YouTube/Shorts): 6 per hour per user — each render pins
+// a CPU core for minutes, so this is server protection more than cost control.
+export const finalVideoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 6 })
 
 // Feedback: 20 per hour per IP — public endpoint, stops spam
 export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })

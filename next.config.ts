@@ -32,9 +32,19 @@ const nextConfig: NextConfig = {
   // Bundle Futura Bold .ttf into the finalize-artwork route's deploy.
   // Next's tracer doesn't follow dynamic readFileSync(process.cwd()...), so without
   // this the font goes missing on Railway and the route throws at module load.
+  // finalize-video additionally needs the ffmpeg/ffprobe binaries traced.
   outputFileTracingIncludes: {
     '/api/finalize-artwork': ['./src/fonts/**/*.ttf'],
+    '/api/finalize-video': [
+      './src/fonts/**/*.ttf',
+      './node_modules/@ffmpeg-installer/**',
+      './node_modules/@ffprobe-installer/**',
+    ],
   },
+
+  // Keep the ffmpeg binary wrappers unbundled — their exported paths resolve
+  // relative to node_modules at runtime and break if the bundler inlines them.
+  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', '@ffprobe-installer/ffprobe'],
 
   // Apply security headers to every response
   async headers() {

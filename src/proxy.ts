@@ -42,6 +42,11 @@ const PUBLIC_PATHS = [
   '/sw.js',
   '/manifest.json',
   '/icons/',
+  // SEO file-convention routes — crawlers fetch these cookie-less, so they
+  // must bypass the auth gate or they'd 307 → /login and the site would look
+  // un-indexable.
+  '/robots.txt',
+  '/sitemap.xml',
 ]
 
 const COOKIE_OPTS = {
@@ -112,7 +117,10 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // /api/auth (login) needs exact match — /api/auth/me etc. must be protected
+  // '/' is the public landing page — exact match only, never a PUBLIC_PATHS
+  // prefix (startsWith('/') would make every route public)
   if (
+    pathname === '/' ||
     pathname === '/api/auth' ||
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||

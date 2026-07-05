@@ -1,21 +1,89 @@
 import SwiftUI
+import AVKit
+
+// MARK: - AirPlayRoutePicker
+// The native output-device picker (HomePod, Sonos, AirPods, car…). Wrapping
+// AVRoutePickerView is the supported way to offer AirPlay from inside the app —
+// routing itself is handled by the audio session (see AudioService).
+struct AirPlayRoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.prioritizesVideoDevices = false
+        view.backgroundColor = .clear
+        view.tintColor = UIColor(red: 0xF0 / 255, green: 0xF0 / 255, blue: 0xF0 / 255, alpha: 1)
+        view.activeTintColor = UIColor(red: 0x2D / 255, green: 0xD4 / 255, blue: 0xBF / 255, alpha: 1)
+        return view
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+// MARK: - WaveformScrubber
+// A stylized waveform-style progress bar. Each track gets its own stable set of
+// bar heights derived deterministically from its version id, so it *looks* like
+// an audio waveform without decoding the file on-device. Bars up to the current
+// position glow teal; the rest sit dim. Dragging anywhere seeks.
+struct WaveformScrubber: View {
+    let progress: CGFloat            // 0…1 playback position
+    let seed: UUID                   // stable per-track shape
+    let onSeek: (CGFloat) -> Void    // fraction 0…1
+
+    private let barCount = 56
+
+    var body: some View {
+        GeometryReader { geo in
+            let heights = Self.samples(for: seed, count: barCount)
+            let spacing: CGFloat = 3
+            let barWidth = max(1.5, (geo.size.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+
+            HStack(alignment: .center, spacing: spacing) {
+                ForEach(0..<barCount, id: \.self) { i in
+                    let filled = CGFloat(i) / CGFloat(barCount) <= progress
+                    Capsule()
+                        .fill(filled
+                              ? AnyShapeStyle(LinearGradient(
+                                    colors: [Color(hex: "#2dd4bf"), Color(hex: "#2dd4bf").opacity(0.6)],
+                                    startPoint: .top, endPoint: .bottom))
+                              : AnyShapeStyle(Color(hex: "#f0f0f0").opacity(0.14)))
+                        .frame(width: barWidth,
+                               height: max(3, geo.size.height * heights[i]))
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let fraction = max(0, min(1, value.location.x / geo.size.width))
+                        onSeek(fraction)
+                    }
+            )
+        }
+        .frame(height: 44)
+    }
+
+    // Deterministic bar heights (0.2…1.0) from the 16 bytes of the track's UUID —
+    // stable across launches so a track's waveform never "jumps around".
+    static func samples(for id: UUID, count: Int) -> [CGFloat] {
+        let bytes = withUnsafeBytes(of: id.uuid) { Array($0) }
+        return (0..<count).map { i in
+            let a = Int(bytes[i % 16])
+            let b = Int(bytes[(i * 7 + 3) % 16])
+            let raw = CGFloat((a ^ (b << 1)) & 0xFF) / 255.0
+            return 0.2 + 0.8 * pow(raw, 0.7)
+        }
+    }
+}
 
 // MARK: - PlayerView
-// A focused "Now Playing" screen — nothing else competes for attention.
-//   • When a track is loaded: large artwork, title/version/status, a seekable
-//     waveform, transport controls, and a version switcher.
-//   • When nothing is loaded: a simple empty state that opens the queue.
-// Browsing all tracks lives in a dedicated "Up Next" queue sheet (toolbar
-// button), so the player itself stays a single, uncluttered surface instead of
-// a player stacked on top of a long scrolling list.
-
+// A focused "Now Playing" screen. The track's artwork bleeds into a soft, blurred
+// ambient backdrop so the whole surface feels alive instead of flat black. Below
+// the artwork: title/version, a waveform scrubber, and transport controls. Share
+// and the editable "Up Next" queue live in the nav bar so the surface stays clean.
 struct PlayerView: View {
 
     @EnvironmentObject var audioService: AudioService
 
-    // All projects with their latest version. Powers the queue sheet + seeds the
-    // shared playback queue in AudioService (which owns next/prev/loop/shuffle now).
-    @State private var trackList: [TrackItem] = []
     @State private var allVersions: [Version] = []
     @State private var isLoading = true
 
@@ -25,8 +93,9 @@ struct PlayerView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(hex: "#080808")
-                    .ignoresSafeArea()
+                // Base + ambient artwork backdrop
+                Color(hex: "#080808").ignoresSafeArea()
+                ambientBackdrop
 
                 if let version = audioService.currentVersion {
                     nowPlayingScreen(version: version)
@@ -38,6 +107,20 @@ struct PlayerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    AirPlayRoutePicker()
+                        .frame(width: 28, height: 28)
+                }
+                // Share the current track's private listening link.
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if audioService.currentVersion != nil {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                    }
+                }
+                // Open the editable "Up Next" queue.
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showQueue = true }) {
                         Image(systemName: "list.bullet")
@@ -46,40 +129,65 @@ struct PlayerView: View {
                 }
             }
             .task {
-                await loadAllTracks()
+                await seedQueueIfNeeded()
             }
             .sheet(isPresented: $showQueue) {
-                QueueSheet(
-                    trackList: trackList,
-                    isLoading: isLoading,
-                    onSelect: { item in
-                        audioService.play(
-                            version: item.latestVersion,
-                            trackName: item.project.title,
-                            artworkUrl: item.project.artworkUrl
-                        )
-                        showQueue = false
-                    }
-                )
+                QueueSheet(isLoading: isLoading)
             }
         }
     }
 
+    // MARK: - Ambient Backdrop
+    // Blurred, over-scaled artwork behind everything, faded into black. The screen
+    // takes on the colour of whatever is playing, like Apple Music / Spotify.
+    @ViewBuilder
+    private var ambientBackdrop: some View {
+        if let artworkUrl = audioService.currentArtworkUrl,
+           let url = URL(string: artworkUrl) {
+            GeometryReader { geo in
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .blur(radius: 70)
+                        .opacity(0.55)
+                } placeholder: {
+                    Color.clear
+                }
+            }
+            .ignoresSafeArea()
+            .overlay(
+                LinearGradient(
+                    colors: [
+                        Color(hex: "#080808").opacity(0.35),
+                        Color(hex: "#080808").opacity(0.85),
+                        Color(hex: "#080808")
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            )
+            .animation(.easeInOut(duration: 0.6), value: audioService.currentArtworkUrl)
+        }
+    }
+
     // MARK: - Now Playing Screen
-    // Vertically balanced: artwork up top, info + transport anchored below.
     @ViewBuilder
     private func nowPlayingScreen(version: Version) -> some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
 
-            // Artwork — large, centered, with a soft shadow
+            // Artwork — large, centered, with a soft teal glow
             artworkImage
-                .padding(.horizontal, 48)
+                .padding(.horizontal, 44)
 
-            Spacer(minLength: 24)
+            Spacer(minLength: 30)
 
             // Track title + version info
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 Text(audioService.currentTrackName ?? "Unknown Track")
                     .font(.title2)
                     .fontWeight(.bold)
@@ -88,7 +196,7 @@ struct PlayerView: View {
 
                 HStack(spacing: 6) {
                     Text("v\(version.versionNumber)")
-                        .fontWeight(.medium)
+                        .fontWeight(.semibold)
                     if let label = version.label, !label.isEmpty {
                         Text("· \(label)")
                     }
@@ -102,34 +210,51 @@ struct PlayerView: View {
             // Version switcher pills (only when there's more than one version)
             if allVersions.count > 1 {
                 versionSwitcher
-                    .padding(.top, 16)
+                    .padding(.top, 14)
             }
 
-            Spacer(minLength: 24)
+            Spacer(minLength: 28)
 
-            // Seekable waveform + time
+            // Waveform scrubber + time
             VStack(spacing: 6) {
-                waveformBar
+                WaveformScrubber(
+                    progress: playbackProgress,
+                    seed: version.id,
+                    onSeek: { fraction in
+                        audioService.seek(to: Double(fraction) * audioService.duration)
+                    }
+                )
                 HStack {
                     Text(formatTime(audioService.currentTime))
                     Spacer()
                     Text("-\(formatTime(max(0, audioService.duration - audioService.currentTime)))")
                 }
                 .font(.caption2)
-                .foregroundColor(.gray)
+                .foregroundColor(Color(hex: "#f0f0f0").opacity(0.5))
             }
             .padding(.horizontal, 28)
 
             // Transport controls
             playbackControls
-                .padding(.top, 24)
+                .padding(.top, 26)
 
-            Spacer(minLength: 40)
+            Spacer(minLength: 44)
         }
         // Reload versions when the playing project changes (for the switcher)
         .task(id: version.projectId) {
             await loadVersionsForCurrentProject(projectId: version.projectId)
         }
+    }
+
+    // The private listening link for the current version, matching the web app's
+    // /share/<token> route. Falls back to the mixBase site if a track has no token.
+    private var shareURL: URL {
+        if let token = audioService.currentVersion?.shareToken,
+           !token.isEmpty,
+           let url = URL(string: "https://mixbase.app/share/\(token)") {
+            return url
+        }
+        return URL(string: "https://mixbase.app")!
     }
 
     // MARK: - Empty State
@@ -150,7 +275,7 @@ struct PlayerView: View {
             Button(action: { showQueue = true }) {
                 HStack(spacing: 8) {
                     Image(systemName: "list.bullet")
-                    Text("Browse Tracks")
+                    Text("Open Queue")
                         .fontWeight(.semibold)
                 }
                 .foregroundColor(Color(hex: "#080808"))
@@ -174,8 +299,9 @@ struct PlayerView: View {
                 } placeholder: {
                     artworkPlaceholder
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .shadow(color: Color(hex: "#2dd4bf").opacity(0.25), radius: 30, y: 10)
+                .shadow(color: .black.opacity(0.6), radius: 24, y: 16)
             } else {
                 artworkPlaceholder
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
@@ -184,7 +310,7 @@ struct PlayerView: View {
     }
 
     private var artworkPlaceholder: some View {
-        RoundedRectangle(cornerRadius: 16)
+        RoundedRectangle(cornerRadius: 20)
             .fill(
                 LinearGradient(
                     colors: [Color(hex: "#1a1a1a"), Color(hex: "#111111")],
@@ -198,39 +324,6 @@ struct PlayerView: View {
                     .font(.system(size: 48))
                     .foregroundColor(.gray.opacity(0.3))
             )
-    }
-
-    // MARK: - Waveform / Progress Bar
-    private var waveformBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(hex: "#222222"))
-
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(hex: "#2dd4bf").opacity(0.8),
-                                Color(hex: "#2dd4bf").opacity(0.4)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: geo.size.width * playbackProgress)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let fraction = max(0, min(1, value.location.x / geo.size.width))
-                        let newTime = Double(fraction) * audioService.duration
-                        audioService.seek(to: newTime)
-                    }
-            )
-        }
-        .frame(height: 8)
     }
 
     // MARK: - Playback Controls
@@ -260,9 +353,10 @@ struct PlayerView: View {
                             .foregroundColor(Color(hex: "#080808"))
                     }
                 }
-                .frame(width: 64, height: 64)
+                .frame(width: 68, height: 68)
                 .background(Color(hex: "#2dd4bf"))
                 .clipShape(Circle())
+                .shadow(color: Color(hex: "#2dd4bf").opacity(0.4), radius: 16, y: 4)
             }
 
             Button(action: { audioService.next() }) {
@@ -305,7 +399,7 @@ struct PlayerView: View {
                             .background(
                                 isCurrentVersion(version)
                                     ? Color(hex: "#2dd4bf")
-                                    : Color(hex: "#222222")
+                                    : Color(hex: "#f0f0f0").opacity(0.08)
                             )
                             .clipShape(Capsule())
                     }
@@ -344,38 +438,31 @@ struct PlayerView: View {
 
     // MARK: - Data Loading
 
-    // Load all projects + their latest versions, then publish them as the shared queue
-    // so next/prev/auto-advance (which live in AudioService) follow this order on every tab.
-    private func loadAllTracks() async {
+    // Seed the shared queue with every project's latest version — but only if the
+    // queue is empty, so we never clobber a queue the user has reordered or trimmed
+    // when they revisit the Player.
+    private func seedQueueIfNeeded() async {
         isLoading = true
+        defer { isLoading = false }
+        guard audioService.queue.isEmpty else { return }
         do {
             let projects = try await SupabaseService.shared.fetchProjects()
-            var items: [TrackItem] = []
-
+            var items: [QueueItem] = []
             for project in projects {
                 let versions = try await SupabaseService.shared.fetchVersions(projectId: project.id)
                 if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
-                    items.append(TrackItem(
-                        project: project,
-                        latestVersion: latest,
-                        versionCount: versions.count
+                    items.append(QueueItem(
+                        projectId: project.id,
+                        version: latest,
+                        trackName: project.title,
+                        artworkUrl: project.artworkUrl
                     ))
                 }
             }
-
-            trackList = items
-            audioService.setQueue(items.map {
-                QueueItem(
-                    projectId: $0.project.id,
-                    version: $0.latestVersion,
-                    trackName: $0.project.title,
-                    artworkUrl: $0.project.artworkUrl
-                )
-            })
+            if audioService.queue.isEmpty { audioService.setQueue(items) }
         } catch {
-            print("PlayerView: Failed to load tracks — \(error.localizedDescription)")
+            print("PlayerView: Failed to seed queue — \(error.localizedDescription)")
         }
-        isLoading = false
     }
 
     // Load versions for the currently playing project (for version switcher)
@@ -389,72 +476,57 @@ struct PlayerView: View {
 }
 
 // MARK: - QueueSheet
-// "Up Next" — a searchable list of every track. Tapping one plays it and
-// dismisses the sheet. This keeps browsing out of the main player surface.
+// "Up Next" — the real, editable playback queue. Drag rows to reorder, swipe to
+// remove, tap to jump straight to a track. Edits write through to AudioService,
+// so next/prev and auto-advance immediately follow the queue you curate.
 struct QueueSheet: View {
 
     @EnvironmentObject var audioService: AudioService
     @Environment(\.dismiss) private var dismiss
 
-    let trackList: [TrackItem]
     let isLoading: Bool
-    let onSelect: (TrackItem) -> Void
-
-    @State private var searchText = ""
-
-    private var filteredTrackList: [TrackItem] {
-        if searchText.isEmpty { return trackList }
-        return trackList.filter {
-            $0.project.title.localizedCaseInsensitiveContains(searchText) ||
-            ($0.project.genre?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
-    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color(hex: "#080808").ignoresSafeArea()
 
-                if isLoading {
+                if isLoading && audioService.queue.isEmpty {
                     ProgressView()
                         .tint(Color(hex: "#2dd4bf"))
-                } else if trackList.isEmpty {
+                } else if audioService.queue.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "music.note.list")
                             .font(.system(size: 36))
                             .foregroundColor(.gray.opacity(0.3))
-                        Text("No tracks yet")
+                        Text("Queue is empty")
                             .font(.subheadline)
                             .foregroundColor(.gray)
                     }
                 } else {
-                    ScrollView {
-                        // Search bar
-                        HStack {
-                            Image(systemName: "magnifyingglass")
+                    List {
+                        Section {
+                            ForEach(audioService.queue) { item in
+                                queueRow(item: item)
+                                    .listRowBackground(Color.clear)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparatorTint(Color(hex: "#f0f0f0").opacity(0.06))
+                            }
+                            .onMove { offsets, dest in
+                                audioService.moveQueueItems(fromOffsets: offsets, toOffset: dest)
+                            }
+                            .onDelete { offsets in
+                                audioService.removeQueueItems(atOffsets: offsets)
+                            }
+                        } header: {
+                            Text("\(audioService.queue.count) tracks · drag to reorder, swipe to remove")
+                                .font(.caption2)
                                 .foregroundColor(.gray)
-                            TextField("Search tracks...", text: $searchText)
-                                .foregroundColor(Color(hex: "#f0f0f0"))
-                            if !searchText.isEmpty {
-                                Button(action: { searchText = "" }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.gray)
-                                }
-                            }
+                                .textCase(nil)
                         }
-                        .padding(8)
-                        .background(Color(hex: "#111111"))
-                        .cornerRadius(8)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-
-                        LazyVStack(spacing: 2) {
-                            ForEach(filteredTrackList) { item in
-                                trackRow(item: item)
-                            }
-                        }
-                        .padding(.top, 4)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
             .navigationTitle("Up Next")
@@ -465,17 +537,21 @@ struct QueueSheet: View {
                     Button("Done") { dismiss() }
                         .foregroundColor(Color(hex: "#2dd4bf"))
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    EditButton()
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                }
             }
         }
     }
 
-    // MARK: - Track Row
+    // MARK: - Queue Row
     @ViewBuilder
-    private func trackRow(item: TrackItem) -> some View {
-        Button(action: { onSelect(item) }) {
+    private func queueRow(item: QueueItem) -> some View {
+        Button(action: { audioService.play(item: item) }) {
             HStack(spacing: 12) {
                 ZStack {
-                    if let artworkUrl = item.project.artworkUrl,
+                    if let artworkUrl = item.artworkUrl,
                        let url = URL(string: artworkUrl) {
                         AsyncImage(url: url) { image in
                             image.resizable().aspectRatio(contentMode: .fill)
@@ -483,12 +559,12 @@ struct QueueSheet: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(Color(hex: "#1a1a1a"))
                         }
-                        .frame(width: 50, height: 50)
+                        .frame(width: 48, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     } else {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color(hex: "#1a1a1a"))
-                            .frame(width: 50, height: 50)
+                            .frame(width: 48, height: 48)
                             .overlay(
                                 Image(systemName: "music.note")
                                     .foregroundColor(.gray.opacity(0.4))
@@ -499,7 +575,7 @@ struct QueueSheet: View {
                     if isCurrentlyPlaying(item) {
                         Circle()
                             .fill(Color(hex: "#2dd4bf").opacity(0.85))
-                            .frame(width: 28, height: 28)
+                            .frame(width: 26, height: 26)
                             .overlay(
                                 Image(systemName: audioService.isPlaying ? "waveform" : "pause.fill")
                                     .font(.system(size: 10))
@@ -509,7 +585,7 @@ struct QueueSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.project.title)
+                    Text(item.trackName)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(
@@ -519,47 +595,23 @@ struct QueueSheet: View {
                         )
                         .lineLimit(1)
 
-                    HStack(spacing: 6) {
-                        Text("v\(item.latestVersion.versionNumber)")
-                        if let genre = item.project.genre {
-                            Text(genre)
-                        }
-                        if let bpm = item.project.bpm {
-                            Text("\(bpm) BPM")
-                                .foregroundColor(.gray.opacity(0.6))
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundColor(.gray)
+                    Text("v\(item.version.versionNumber)\(item.version.label.map { " · \($0)" } ?? "")")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
                 }
 
                 Spacer()
 
-                StatusBadge(status: item.latestVersion.status)
+                StatusBadge(status: item.version.status)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
-            .background(
-                isCurrentlyPlaying(item)
-                    ? Color(hex: "#2dd4bf").opacity(0.05)
-                    : Color.clear
-            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private func isCurrentlyPlaying(_ item: TrackItem) -> Bool {
+    private func isCurrentlyPlaying(_ item: QueueItem) -> Bool {
         guard let current = audioService.currentVersion else { return false }
-        return current.projectId == item.project.id
+        return current.projectId == item.projectId
     }
-}
-
-// MARK: - TrackItem
-// A helper struct that pairs a project with its latest version for the track list.
-struct TrackItem: Identifiable {
-    let project: Project
-    let latestVersion: Version
-    let versionCount: Int
-
-    var id: UUID { project.id }
 }

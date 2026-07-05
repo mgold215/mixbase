@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
-import { Download, Film, Sparkles, Check } from 'lucide-react'
+import { Download, Film, Sparkles, Check, MonitorPlay, X } from 'lucide-react'
+import { visualizerKindLabel } from '@/lib/visualizer-kinds'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
 type Effect = 'kenburns' | 'breathe' | 'glitch'
@@ -30,11 +31,28 @@ type Props = {
   // When set, generated videos are persisted to the Media library against this
   // project. Omitted in contexts with no backing project (none currently).
   projectId?: string
+  // The project's pinned visualizer (mb_projects.visualizer_url) — the video
+  // that loops in the player while this track plays, Spotify-Canvas style.
+  // Wired on the project page; the Media modal omits it.
+  visualizerUrl?: string | null
+  onVisualizerUpdated?: (url: string | null) => void
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
-export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId }: Props) {
+// A saved video from the user's library (mb_visualizers) — any project, any
+// kind: canvas loops, Runway AI, and finished YouTube/Shorts renders.
+type LibraryItem = {
+  id: string
+  video_url: string
+  title: string | null
+  kind: string
+  project_id: string | null
+  source_image_url: string | null
+  created_at: string
+}
+
+export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
   const [effect, setEffect] = useState<Effect>('kenburns')
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle')
@@ -46,7 +64,18 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiModelLabel, setAiModelLabel] = useState('')
   const [freeSave, setFreeSave] = useState<SaveStatus>('idle')
+  // Persisted mf-video URL of the last free render — the blob: URL plays
+  // locally, but only the stored URL can be pinned as the project visualizer.
+  const [freeSavedUrl, setFreeSavedUrl] = useState<string | null>(null)
   const [aiSaved, setAiSaved] = useState(false)
+  const [projectViz, setProjectViz] = useState(visualizerUrl ?? null)
+  const [settingViz, setSettingViz] = useState(false)
+  const [vizError, setVizError] = useState('')
+  // "Choose from Media" picker — pin any previously generated loop, from any project.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [library, setLibrary] = useState<LibraryItem[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
 
@@ -102,6 +131,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setVideoUrl(null)
     setErrorMsg('')
     setFreeSave('idle')
+    setFreeSavedUrl(null)
 
     const cfg = FORMAT_CONFIG[format]
 
@@ -181,91 +211,103 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       })
     }
 
-    // Set up MediaRecorder
-    const stream = canvas.captureStream(FPS)
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm'
-    const recorder = new MediaRecorder(stream, { mimeType })
-    const chunks: Blob[] = []
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+    // Set up MediaRecorder + run the frame loop. Any throw in here — a tainted
+    // canvas SecurityError (artwork served without CORS headers), captureStream
+    // being unavailable, or an unsupported codec — must reset the button, not
+    // leave it stuck on "Rendering…" forever. Happy path is unchanged (the catch
+    // only runs on a real throw). Matches the try/finally-resets-loading pattern.
+    try {
+      const stream = canvas.captureStream(FPS)
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm'
+      const recorder = new MediaRecorder(stream, { mimeType })
+      const chunks: Blob[] = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-    const blobReady = new Promise<Blob>(resolve => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
-    })
+      const blobReady = new Promise<Blob>(resolve => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+      })
 
-    recorder.start()
+      recorder.start()
 
-    // Cover-fit dimensions (constant across frames)
-    const imgAspect = img.width / img.height
-    const canvasAspect = W / H
-    let drawW: number, drawH: number
-    if (imgAspect > canvasAspect) {
-      drawH = H; drawW = H * imgAspect
-    } else {
-      drawW = W; drawH = W / imgAspect
-    }
+      // Cover-fit dimensions (constant across frames)
+      const imgAspect = img.width / img.height
+      const canvasAspect = W / H
+      let drawW: number, drawH: number
+      if (imgAspect > canvasAspect) {
+        drawH = H; drawW = H * imgAspect
+      } else {
+        drawW = W; drawH = W / imgAspect
+      }
 
-    for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
-      const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
-      const { scale, panX, panY } = getMotion(t)
+      for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
+        const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
+        const { scale, panX, panY } = getMotion(t)
 
-      ctx.clearRect(0, 0, W, H)
-      ctx.save()
-      ctx.translate(W / 2 + panX, H / 2 + panY)
-      ctx.scale(scale, scale)
+        ctx.clearRect(0, 0, W, H)
+        ctx.save()
+        ctx.translate(W / 2 + panX, H / 2 + panY)
+        ctx.scale(scale, scale)
 
-      ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
 
-      // Glitch overlay: horizontal slice offsets + chromatic flash
-      if (effect === 'glitch' && glitchFrames.has(frame)) {
-        const numSlices = 2 + Math.floor(Math.random() * 3)
-        for (let s = 0; s < numSlices; s++) {
-          const sliceY  = (Math.random() - 0.5) * drawH
-          const sliceH  = 5 + Math.random() * 18
-          const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
-          const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
-          const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
-          if (srcH > 1) {
-            ctx.drawImage(img, 0, srcY, img.width, srcH,
-              -drawW / 2 + offsetX, sliceY, drawW, sliceH)
+        // Glitch overlay: horizontal slice offsets + chromatic flash
+        if (effect === 'glitch' && glitchFrames.has(frame)) {
+          const numSlices = 2 + Math.floor(Math.random() * 3)
+          for (let s = 0; s < numSlices; s++) {
+            const sliceY  = (Math.random() - 0.5) * drawH
+            const sliceH  = 5 + Math.random() * 18
+            const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
+            const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
+            const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
+            if (srcH > 1) {
+              ctx.drawImage(img, 0, srcY, img.width, srcH,
+                -drawW / 2 + offsetX, sliceY, drawW, sliceH)
+            }
           }
+          // Chromatic aberration flash
+          ctx.globalAlpha = 0.1 + Math.random() * 0.12
+          ctx.globalCompositeOperation = 'screen'
+          ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
+          ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.globalAlpha = 1
         }
-        // Chromatic aberration flash
-        ctx.globalAlpha = 0.1 + Math.random() * 0.12
-        ctx.globalCompositeOperation = 'screen'
-        ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
-        ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.globalAlpha = 1
+
+        ctx.restore()
+
+        setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
+
+        if (cancelledRef.current) {
+          recorder.stop()
+          return
+        }
+
+        // Pace each frame to real-time so MediaRecorder captures correct duration
+        await new Promise(r => setTimeout(r, 1000 / FPS))
       }
 
-      ctx.restore()
+      recorder.stop()
+      const blob = await blobReady
+      const url = URL.createObjectURL(blob)
+      setVideoUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return url
+      })
+      setStatus('done')
+      setProgress(100)
 
-      setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
-
-      if (cancelledRef.current) {
-        recorder.stop()
-        return
+      // Persist to the Media library so it's findable later (not just a throwaway
+      // blob: URL). Playback above is instant from the local blob; this runs after.
+      void saveFreeToMedia(blob, format, effect)
+    } catch {
+      // Don't clobber a deliberate cancel (resetFormat/unmount) with an error.
+      if (!cancelledRef.current) {
+        setStatus('error')
+        setErrorMsg('Video rendering failed in this browser. Try Chrome or Firefox, or a different image.')
       }
-
-      // Pace each frame to real-time so MediaRecorder captures correct duration
-      await new Promise(r => setTimeout(r, 1000 / FPS))
     }
-
-    recorder.stop()
-    const blob = await blobReady
-    const url = URL.createObjectURL(blob)
-    setVideoUrl(prev => {
-      if (prev) URL.revokeObjectURL(prev)
-      return url
-    })
-    setStatus('done')
-    setProgress(100)
-
-    // Persist to the Media library so it's findable later (not just a throwaway
-    // blob: URL). Playback above is instant from the local blob; this runs after.
-    void saveFreeToMedia(blob, format, effect)
   }
 
   async function saveFreeToMedia(blob: Blob, fmt: Format, eff: Effect) {
@@ -278,9 +320,60 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECT_CONFIG[eff].label}`)
       if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
       const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
-      setFreeSave(res.ok ? 'saved' : 'error')
+      if (res.ok) {
+        const data = await res.json().catch(() => null) as { video_url?: string } | null
+        setFreeSavedUrl(data?.video_url ?? null)
+        setFreeSave('saved')
+      } else {
+        setFreeSave('error')
+      }
     } catch {
       setFreeSave('error')
+    }
+  }
+
+  // Open the library picker and load every saved loop the user owns. Loading
+  // flag resets in finally so a network reject can't strand the spinner.
+  async function openPicker() {
+    setPickerOpen(true)
+    setLibraryError('')
+    setLibraryLoading(true)
+    try {
+      const res = await fetch('/api/visualizer')
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !Array.isArray(data)) throw new Error()
+      setLibrary(data)
+    } catch {
+      setLibraryError('Could not load your visualizers. Try again.')
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+
+  async function pickFromLibrary(item: LibraryItem) {
+    await setProjectVisualizer(item.video_url)
+    setPickerOpen(false)
+  }
+
+  // Pin (or clear) the project's visualizer — the video the player loops while
+  // this track plays. Persists via the project PATCH so it survives reloads.
+  async function setProjectVisualizer(url: string | null) {
+    if (!projectId || settingViz) return
+    setSettingViz(true)
+    setVizError('')
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visualizer_url: url }),
+      })
+      if (!res.ok) throw new Error()
+      setProjectViz(url)
+      onVisualizerUpdated?.(url)
+    } catch {
+      setVizError('Could not update the project visualizer. Try again.')
+    } finally {
+      setSettingViz(false)
     }
   }
 
@@ -345,6 +438,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     setAiStatus('idle')
     setAiVideoUrl(null)
     setFreeSave('idle')
+    setFreeSavedUrl(null)
     setAiSaved(false)
     setErrorMsg('')
   }
@@ -355,18 +449,149 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }, [videoUrl])
 
+  // If the component unmounts mid-render (e.g. the Media modal is closed while a
+  // free render is in flight), signal the frame loop to stop so it doesn't keep
+  // drawing + recording on a dead instance and leak a blob URL the revoke effect
+  // above can no longer catch. Empty deps → runs only on unmount.
+  useEffect(() => {
+    return () => { cancelledRef.current = true }
+  }, [])
+
+  // ── Project Visualizer section — the video pinned to this project. Shown on
+  // the project page (where onVisualizerUpdated is wired); rendered even before
+  // any artwork exists so a previously set visualizer never disappears.
+  const projectVizSection = projectId && onVisualizerUpdated ? (
+    <div className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizer</p>
+        </div>
+        <button
+          onClick={openPicker}
+          disabled={settingViz}
+          className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+          style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+        >
+          <Film size={14} />
+          Choose from Media
+        </button>
+      </div>
+      {projectViz ? (
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
+          <video src={projectViz} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+          <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              Loops in the player while this track plays — like a Spotify Canvas.
+            </span>
+            <button
+              onClick={() => setProjectVisualizer(null)}
+              disabled={settingViz}
+              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+              style={{ backgroundColor: 'var(--surface-2)', color: '#f87171' }}
+            >
+              <X size={14} />
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          None set. Pick a previously generated video with &ldquo;Choose from Media&rdquo;, or generate one below —
+          it will loop in the player while this track plays, like a Spotify Canvas.
+        </p>
+      )}
+      {vizError && <p className="text-sm" style={{ color: '#f87171' }}>{vizError}</p>}
+
+      {/* Library picker — every saved loop the user owns, any project */}
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={e => { if (e.target === e.currentTarget) setPickerOpen(false) }}
+        >
+          <div className="w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', maxHeight: '85dvh' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Choose a visualizer</h3>
+              <button onClick={() => setPickerOpen(false)} aria-label="Close" className="transition-colors" style={{ color: 'var(--text-muted)' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto overscroll-contain">
+              {libraryLoading ? (
+                <p className="text-sm text-center py-10" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+              ) : libraryError ? (
+                <p className="text-sm text-center py-10" style={{ color: '#f87171' }}>{libraryError}</p>
+              ) : library.length === 0 ? (
+                <p className="text-sm text-center py-10" style={{ color: 'var(--text-muted)' }}>
+                  No saved visualizers yet — generate one below and it will appear here.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {library.map(item => {
+                    const isCurrent = projectViz === item.video_url
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => pickFromLibrary(item)}
+                        disabled={settingViz}
+                        className="text-left rounded-xl overflow-hidden transition-all disabled:opacity-50"
+                        style={{
+                          border: isCurrent ? '2px solid var(--accent)' : '1px solid var(--surface-2)',
+                          backgroundColor: 'var(--bg-page)',
+                        }}
+                      >
+                        <video
+                          src={item.video_url}
+                          poster={item.source_image_url ?? undefined}
+                          muted
+                          playsInline
+                          loop
+                          autoPlay
+                          preload="metadata"
+                          className="w-full aspect-square object-cover bg-black"
+                        />
+                        <div className="px-2.5 py-2">
+                          <p className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
+                            {item.title ?? 'Visualizer'}
+                          </p>
+                          <p className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                            {isCurrent ? (
+                              <span className="flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+                                <Check size={10} strokeWidth={3} /> Current
+                              </span>
+                            ) : (
+                              `${visualizerKindLabel(item.kind)} · ${new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                            )}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null
+
   if (!artworkUrl) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
-        <Film size={40} style={{ color: 'var(--surface-3)' }} />
-        <p style={{ color: 'var(--text-muted)' }}>No artwork yet. Generate artwork first.</p>
-        <button
-          onClick={onSwitchToArtwork}
-          className="text-sm px-4 py-2 rounded-xl transition-colors"
-          style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
-        >
-          Go to Artwork tab
-        </button>
+      <div className="max-w-2xl space-y-6">
+        {projectVizSection}
+        <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
+          <Film size={40} style={{ color: 'var(--surface-3)' }} />
+          <p style={{ color: 'var(--text-muted)' }}>No artwork yet. Generate artwork first.</p>
+          <button
+            onClick={onSwitchToArtwork}
+            className="text-sm px-4 py-2 rounded-xl transition-colors"
+            style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+          >
+            Go to Artwork tab
+          </button>
+        </div>
       </div>
     )
   }
@@ -378,10 +603,34 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
     : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
 
+  // "Set as Project Visualizer" affordance for a persisted mf-video URL — only
+  // where the project page wired the callback, and only once the video is saved.
+  const pinButton = (url: string | null) => {
+    if (!projectId || !onVisualizerUpdated || !url) return null
+    if (projectViz === url) return (
+      <span className="flex items-center gap-1 text-sm font-medium flex-shrink-0" style={{ color: 'var(--accent)' }}>
+        <Check size={13} strokeWidth={3} /> Project Visualizer
+      </span>
+    )
+    return (
+      <button
+        onClick={() => setProjectVisualizer(url)}
+        disabled={settingViz}
+        className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+        style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+      >
+        <MonitorPlay size={14} />
+        {settingViz ? 'Setting…' : 'Set as Project Visualizer'}
+      </button>
+    )
+  }
+
   return (
     <div className="max-w-2xl space-y-6">
       {/* Hidden canvas used for frame rendering */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+      {projectVizSection}
 
       {/* Artwork preview */}
       <div className="flex items-center gap-4">
@@ -461,7 +710,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         {status === 'done' && videoUrl && (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
             <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-            <div className="p-3 flex justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
                 {cfg.label} · {cfg.width}×{cfg.height} · WebM
                 {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
@@ -472,6 +721,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                 )}
                 {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
               </span>
+              {freeSave === 'saved' && pinButton(freeSavedUrl)}
               <button
                 onClick={() => download(videoUrl, 'free')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -583,8 +833,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               )}
             </p>
             <video src={aiVideoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
-            <div className="p-3 flex justify-between items-center" style={{ backgroundColor: 'var(--bg-page)' }}>
+            <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>
+              {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
+              {aiSaved && pinButton(aiVideoUrl)}
               <button
                 onClick={() => download(aiVideoUrl, 'ai')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"

@@ -49,7 +49,7 @@ export default function SupportPage() {
 
         {/* Header */}
         <div className="mb-10">
-          <Link href="/dashboard" className="text-sm hover:underline" style={{ color: 'var(--accent)' }}>
+          <Link href="/" className="text-sm hover:underline" style={{ color: 'var(--accent)' }}>
             ← Back to mixBase
           </Link>
           <h1 className="text-3xl font-bold mt-4" style={{ fontFamily: 'var(--font-bebas)' }}>
