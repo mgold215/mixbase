@@ -134,7 +134,7 @@ class AudioService: ObservableObject {
         do {
             // AirPlay 2 long-form audio: the buffered, route-persistent pathway that
             // Music/Podcasts use for HomePod and other AirPlay 2 speakers.
-            try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
+            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
         } catch {
             // Long-form can be rejected on some OS/route combinations — plain playback
             // still supports AirPlay, just via the realtime pathway.
