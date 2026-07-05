@@ -6,7 +6,6 @@ import SwiftUI
 struct ContentView: View {
 
     @EnvironmentObject var authService: AuthService
-    @EnvironmentObject var audioService: AudioService
 
     @State private var selectedTab = 0
 
@@ -20,44 +19,34 @@ struct ContentView: View {
 
     // MARK: - Main Tab View
     private var mainTabView: some View {
-        ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                HomeView(selectedTab: $selectedTab)
-                    .tabItem { Image(systemName: "house"); Text("Home") }
-                    .tag(0)
+        TabView(selection: $selectedTab) {
+            HomeView(selectedTab: $selectedTab)
+                .tabItem { Image(systemName: "house"); Text("Home") }
+                .tag(0)
 
-                ProjectsView()
-                    .tabItem { Image(systemName: "square.grid.2x2"); Text("Projects") }
-                    .tag(1)
+            ProjectsView()
+                .tabItem { Image(systemName: "square.grid.2x2"); Text("Projects") }
+                .tag(1)
 
-                PlayerView()
-                    .tabItem { Image(systemName: "play.circle"); Text("Player") }
-                    .tag(2)
+            PlayerView()
+                .tabItem { Image(systemName: "play.circle"); Text("Player") }
+                .tag(2)
 
-                SubmitView()
-                    .tabItem { Image(systemName: "paperplane"); Text("Submit") }
-                    .tag(3)
+            SubmitView()
+                .tabItem { Image(systemName: "paperplane"); Text("Submit") }
+                .tag(3)
 
-                PipelineView()
-                    .tabItem { Image(systemName: "checklist"); Text("Pipeline") }
-                    .tag(4)
-            }
-            .tint(Color(hex: "#2dd4bf"))
-            .onAppear {
-                let appearance = UITabBarAppearance()
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = UIColor(Color(hex: "#0a0a0a"))
-                UITabBar.appearance().standardAppearance = appearance
-                UITabBar.appearance().scrollEdgeAppearance = appearance
-            }
-
-            if audioService.currentVersion != nil {
-                VStack(spacing: 0) {
-                    Spacer()
-                    MiniPlayerView(onTap: { selectedTab = 2 })
-                        .padding(.bottom, 49)
-                }
-            }
+            PipelineView()
+                .tabItem { Image(systemName: "checklist"); Text("Pipeline") }
+                .tag(4)
+        }
+        .tint(Color(hex: "#2dd4bf"))
+        .onAppear {
+            let appearance = UITabBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = UIColor(Color(hex: "#0a0a0a"))
+            UITabBar.appearance().standardAppearance = appearance
+            UITabBar.appearance().scrollEdgeAppearance = appearance
         }
     }
 }

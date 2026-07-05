@@ -61,7 +61,6 @@
 		A1000000B2 /* SignUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000B2; };
 
 		/* Views - Components */
-		A1000000A0 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A0; };
 		A1000000A1 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A1; };
 		A1000000A2 /* StatCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000A2; };
 
@@ -107,7 +106,6 @@
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B1000000D0 /* SubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmitView.swift; sourceTree = "<group>"; };
-		B1000000A0 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		B1000000A2 /* StatCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCard.swift; sourceTree = "<group>"; };
 		B1000000B1 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
@@ -291,7 +289,6 @@
 		E100000026 /* Components */ = {
 			isa = PBXGroup;
 			children = (
-				B1000000A0 /* MiniPlayerView.swift */,
 				B1000000A1 /* StatusBadge.swift */,
 				B1000000A2 /* StatCard.swift */,
 			);
@@ -412,7 +409,6 @@
 				A100000071 /* ReleaseDetailView.swift in Sources */,
 				A100000080 /* ArtworkGeneratorView.swift in Sources */,
 				A100000090 /* SettingsView.swift in Sources */,
-				A1000000A0 /* MiniPlayerView.swift in Sources */,
 				A1000000A1 /* StatusBadge.swift in Sources */,
 				A1000000A2 /* StatCard.swift in Sources */,
 				A100000023 /* AuthService.swift in Sources */,
