@@ -11,23 +11,24 @@
 
 ## Executive summary & Go / No‑Go
 
-**Recommendation: NO‑GO until (a) one production security env‑var is set and (b) production is re‑verified for three write‑path features.**
+**Recommendation: NO‑GO until one production security env‑var is set — but that is the only hard production blocker, and it's a 5‑minute fix.**
 
 The app itself is genuinely strong. Signup/login, versioned uploads (small and large/resumable), audio playback, the share‑link + timestamped‑feedback loop, AI artwork generation, collections, the release pipeline, the curator‑pitch tool, mobile/PWA, and the admin panel all work and feel polished. Cross‑user data isolation is solid, production is healthy, and all security headers are present.
 
-Two things block sign‑off:
+**One real production blocker:** a P0 security misconfiguration — `SUPABASE_JWT_SECRET` is unset — **confirmed on production** (and staging) via boot logs. It's a 5‑minute env‑var fix.
 
-1. **A P0 security misconfiguration** (`SUPABASE_JWT_SECRET` unset) that is confirmed on **both** environments and is a 5‑minute fix.
-2. **An environment caveat** (below): staging's Supabase **service‑role key is invalid**, which broke three write‑path features *during this test* (account deletion, AI visualizer save, profile‑name edit). Existing production data proves the underlying **code works**, so these are most likely a staging‑only config problem — **but that must be confirmed on production**, because if production's key is also stale, three real features (including the App‑Store‑required account deletion) are broken for live users.
+**Three "bugs" I hit were staging‑only and do NOT affect production** (verified — see the Environment Caveat). Staging's Supabase **service‑role key is invalid**, so its server admin client runs as anon and RLS blocked account deletion, visualizer save, and profile‑name edit *during this test*. Production's service‑role client was **independently verified healthy** (a full service‑role‑gated TUS upload succeeded on prod, and there are **zero** RLS‑violation errors across 28 h of real prod traffic), so those three features work for live users. The action items there are to (a) fix staging's key so staging is a faithful pre‑prod gate, and (b) add a one‑line error log to the delete‑account route.
+
+The remaining genuine product gaps — **no password recovery** and an **unwired upgrade/monetization path** — are decisions, not outages.
 
 | Severity | Count | Gate |
 |---|---|---|
-| **P0 — blocker** | 1 | Must fix before PRC sign‑off |
-| **P1 — must‑fix / must‑verify** | 4 | Fix / confirm before launch |
+| **P0 — blocker (prod)** | 1 | Must fix before PRC sign‑off |
+| **P1 — product gaps + staging config** | 4 | Address before launch |
 | **P2 — important** | 6 | Fix in the launch window |
 | **P3 — polish** | ~13 | Backlog |
 
-**Path to GO:** set `SUPABASE_JWT_SECRET` on both Railway services (P0); confirm `SUPABASE_SERVICE_ROLE_KEY` on **production** is the current valid key and re‑test account‑deletion / visualizer / name‑edit there; add the missing error logging to the delete‑account route; and decide on the password‑recovery and monetization gaps. Then it's a GO.
+**Path to GO:** set `SUPABASE_JWT_SECRET` on both Railway services (P0 — the only prod blocker); fix staging's `SUPABASE_SERVICE_ROLE_KEY` so staging mirrors prod; add the missing error log to the delete‑account route; and decide on the password‑recovery and monetization gaps. Then it's a GO.
 
 ---
 
@@ -45,7 +46,9 @@ On **staging**, that fallback is active — `supabaseAdmin` is effectively runni
 - **It manufactured three of the "bugs" I hit** (P1‑1, P1‑2, P2‑1 below). The code is fine — production already contains data these paths created (2 saved visualizers from 2026‑07‑02; 3 profiles with artist names), proving the writes work when the key is valid.
 - **It means staging was not a faithful mirror of production during this pass.** Using staging as the PRC gate is only safe once its secrets match prod. This is a **process risk** worth fixing regardless of the specific features.
 
-**Fix:** set a valid `SUPABASE_SERVICE_ROLE_KEY` (and `SUPABASE_JWT_SECRET`) on the **staging** Railway service from the current `mmf-agents` keys, and **confirm production's `SUPABASE_SERVICE_ROLE_KEY` is also current** (a key rotation could have left prod stale too).
+**Production was checked and is NOT affected.** Prod's service‑role client was verified healthy two ways: (1) a service‑role‑gated **TUS upload succeeded on production** in the last 24 h (`POST /api/tus` → 201 + chunk writes → 204 — this path 500s if the key is unset and is rejected if it's invalid), and (2) **zero** `violates row-level security policy` errors across the full ~28 h production deployment window despite real traffic. So account deletion, visualizer save, and profile‑name edit work for live users. *(Nuance: prod's SERVICE_ROLE_KEY warning being absent only proves the var is populated — the functional TUS + zero‑RLS‑error evidence is what proves it's valid.)*
+
+**Fix:** set a valid `SUPABASE_SERVICE_ROLE_KEY` on the **staging** Railway service from the current `mmf-agents` keys so staging stops silently degrading to anon and can serve as a faithful PRC gate. (Production also needs `SUPABASE_JWT_SECRET` — see P0‑1 — but that is a separate variable and a separate problem.)
 
 ---
 
@@ -63,20 +66,20 @@ On **staging**, that fallback is active — `supabaseAdmin` is effectively runni
 
 ---
 
-## P1 — Must‑fix / must‑verify before launch
+## P1 — Product gaps + staging config (address before launch)
 
-> **P1‑1, P1‑2 and P2‑1 share the staging service‑role root cause above.** They are listed at their user‑facing severity, but the fix for all three is the same env‑var correction (plus, for deletion, an added log line). **The real action item is to verify production is not in the same state.**
+> **P1‑1, P1‑2 and P2‑1 share the staging service‑role root cause above and were verified NOT to reproduce on production.** They are listed at their user‑facing severity for completeness; the remedy is fixing staging's key (so the PRC gate is trustworthy) plus one code‑quality follow‑up on the delete route. **P1‑3 and P1‑4 are independent, genuine product gaps.**
 
-### P1‑1 · "Delete Account" returns 500 (App‑Store + GDPR relevant) — verify on prod
-`/profile → Delete Account` (type‑DELETE‑to‑confirm) → **"Failed to delete account."** `POST /api/auth/delete-account` → **500** `{"error":"Failed to delete account"}`; the account is not deleted.
-**Root cause (from source + logs):** the route deletes storage + DB rows, then calls the GoTrue admin `auth.admin.deleteUser()` (`src/app/api/auth/delete-account/route.ts:122‑124`) — which **requires** the service‑role key. On staging (anon), that call fails and its error is **discarded** (no `console.error`/Sentry, unlike the route's other failure paths), so it silently 500s. Two fixes:
-1. Ensure production's service‑role key is valid, then **re‑test deletion on production** — Apple requires working in‑app account deletion (Guideline 5.1.1(v)); GDPR requires erasure.
-2. **Code bug regardless:** `delete-account/route.ts:124` should log/Sentry‑capture the `deleteUser` error like the other branches do, so this failure isn't invisible.
+### P1‑1 · "Delete Account" 500 on staging (App‑Store + GDPR relevant) — production verified working
+`/profile → Delete Account` (type‑DELETE‑to‑confirm) → **"Failed to delete account"** on **staging**. `POST /api/auth/delete-account` → **500** `{"error":"Failed to delete account"}`.
+**Root cause (from source + logs):** the route deletes storage + DB rows, then calls the GoTrue admin `auth.admin.deleteUser()` (`src/app/api/auth/delete-account/route.ts:122‑124`), which **requires** the service‑role key. On staging (anon) that call fails and its error is **discarded** (no `console.error`/Sentry, unlike the route's other failure paths), so it silently 500s. Production's service‑role key is valid (verified), so **deletion works for live users** — but two things still matter:
+1. **App‑Store readiness:** Apple requires working in‑app account deletion (Guideline 5.1.1(v)); before submitting, confirm it end‑to‑end on production with a throwaway account (it was only exercised on staging here).
+2. **Code bug regardless of environment:** `delete-account/route.ts:124` should log/Sentry‑capture the `deleteUser` error like the route's other branches do, so a real deletion failure isn't invisible next time.
 
-### P1‑2 · AI Visualizer "Save" returns 500 — verify on prod
-The free canvas visualizer renders and previews, but saving → **"Save failed."** `POST /api/visualizer/save` → **500** `{"error":"Failed to save visualizer"}`. Verbatim staging log: `new row violates row-level security policy for table "mb_visualizers"` at the DB insert in `src/lib/visualizer-store.ts:60‑76` (the WebM **does** upload to `mf-video` first). Same staging service‑role root cause. **Two follow‑ups:**
-1. Confirm/repair production's service‑role key and re‑test the save.
-2. **Brittleness note:** `mb_visualizers` has RLS **enabled with zero policies** (deny‑all), so this feature relies *entirely* on the service‑role bypass — the moment the key degrades, it breaks with no fallback. Consider an explicit insert policy or a clearer failure. **Also:** a failed save leaves an **orphaned file** in `mf-video` (this test left one 1.2 MB WebM, since removed) — worth a cleanup‑on‑failure.
+### P1‑2 · AI Visualizer "Save" 500 on staging — production verified working
+The free canvas visualizer renders and previews, but saving → **"Save failed"** on **staging**. `POST /api/visualizer/save` → **500**. Verbatim staging log: `new row violates row-level security policy for table "mb_visualizers"` at the DB insert in `src/lib/visualizer-store.ts:60‑76` (the WebM **does** upload to `mf-video` first). Same staging service‑role root cause; production has 2 successfully‑saved visualizers and a healthy service‑role client, so it works in prod. **Two follow‑ups:**
+1. **Brittleness note:** `mb_visualizers` has RLS **enabled with zero policies** (deny‑all), so this feature relies *entirely* on the service‑role bypass — the moment the key degrades (as on staging), it breaks with no fallback. Consider an explicit insert policy.
+2. A failed save leaves an **orphaned file** in `mf-video` (this test left one 1.2 MB WebM, since removed) — add cleanup‑on‑failure.
 
 ### P1‑3 · No password‑recovery ("Forgot password?") flow *(independent of the env issue)*
 The login page has **no** "Forgot password?" link and there's no email‑recovery route — only an authenticated change‑password. A user who forgets their password is permanently locked out. Compounded by signup not verifying the email (P3), a mistyped signup email becomes an unrecoverable account. **Fix:** add a Supabase reset flow (`resetPasswordForEmail` → recovery page).
@@ -88,7 +91,7 @@ Pricing is advertised (Free / Pro $8.99 / Studio $19.99) and tier limits are enf
 
 ## P2 — Important (fix in the launch window)
 
-- **P2‑1 · Editing the Artist/Producer name silently fails (staging service‑role root cause).** `/profile` → Save does nothing (reverts on reload); `PATCH /api/auth/me` → **500** `new row violates row-level security policy for table "profiles"`, and **no error is shown to the user**. Same fix as P1‑1/P1‑2 (valid service‑role key) — plus surface the error in the UI. **Downstream effect:** the Submit tool's pitch text reads *"I'm moodmixformat … — Matt (moodmixformat)"* for every user because the name never reaches the `profiles` row it reads from (the QA account, name "QA Tester", got the developer's default). Re‑verify pitch attribution once the write path is fixed on prod.
+- **P2‑1 · Editing the Artist/Producer name silently fails on staging (service‑role root cause; prod healthy).** `/profile` → Save does nothing (reverts on reload); `PATCH /api/auth/me` → **500** `new row violates row-level security policy for table "profiles"`, and **no error is shown to the user**. Same staging root cause as P1‑1/P1‑2 (prod has 3 profiles with artist names set, so it works in prod). Regardless: **surface the error in the UI** so a genuine save failure isn't silent. **Downstream on staging:** the Submit tool's pitch text read *"I'm moodmixformat … — Matt (moodmixformat)"* for the QA account (name "QA Tester") because the name never reached the `profiles` row the pitch reads from — a symptom of the same failure. Spot‑check pitch attribution on production.
 - **P2‑2 · Large uploads don't refresh the version list.** After a big file finishes via the resumable path the UI shows "Done!" but the version list/mix count don't update until a manual reload — a user can think it failed and re‑upload. (The small‑file path is fine because it navigates to the new project.) *Fix:* re‑fetch versions after the chunked upload resolves.
 - **P2‑3 · Large‑WAV audio streaming is fragile.** Streaming a 60 MB WAV threw a recoverable `net::ERR_HTTP2_PROTOCOL_ERROR` (Supabase returned a full‑file `Content-Range` to a partial request); the browser recovered and playback/seeking worked. But production logs independently show the same path can hard‑fail at the proxy's 30 s upstream timeout ("failed to pipe response / TimeoutError"). Usually fine, occasionally times out on slow/cold‑cache paths. *Consider:* warm‑up/retry or a "large file" hint.
 - **P2‑4 · No branded 404 / error pages.** Invalid share tokens and unknown routes render the **default** Next.js "404: This page could not be found." There is no `not-found.tsx` or `error.tsx`. Off‑brand for a customer‑facing product.
@@ -127,7 +130,9 @@ Pricing is advertised (Free / Pro $8.99 / Studio $19.99) and tier limits are enf
 
 ## Manual‑test / must‑verify checklist
 
-- [ ] **Production config parity (highest priority):** confirm `SUPABASE_SERVICE_ROLE_KEY` **and** `SUPABASE_JWT_SECRET` are the current valid `mmf-agents` values on **both** Railway services, then re‑test **account deletion, visualizer save, and profile‑name edit on production**.
+- [ ] **P0:** set `SUPABASE_JWT_SECRET` on **both** Railway services (confirmed missing on production) and redeploy.
+- [ ] **Fix staging's `SUPABASE_SERVICE_ROLE_KEY`** so staging stops running as anon and becomes a faithful PRC gate. *(Production's service‑role key was verified valid — no action needed there.)*
+- [ ] Before App‑Store submission, run **account deletion end‑to‑end on production** once (throwaway account) — it was only exercised on staging here.
 - [ ] Also confirm `ANTHROPIC_API_KEY`, `REPLICATE_API_TOKEN`, `RUNWAY_API_KEY`, and Stripe secrets on **production** specifically.
 - [ ] **Real iOS device** (iPhone 15 Pro Max): background audio, lock‑screen/Media Session controls, interruption recovery in the installed PWA / native wrapper (not emulable).
 - [ ] **Apple & Google OAuth** round‑trip (buttons render and initiate; a full round‑trip needs real provider accounts).
