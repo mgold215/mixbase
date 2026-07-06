@@ -35,9 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22: finalize-test / video-test import the real .ts renderer modules
+      # directly and rely on Node's native TypeScript type-stripping, which is
+      # default-on in Node 22+ but absent in Node 20 (ERR_UNKNOWN_FILE_EXTENSION).
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci
