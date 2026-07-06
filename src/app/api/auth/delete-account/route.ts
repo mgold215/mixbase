@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
+
+// Pull the storage object path out of a Supabase public URL for a given bucket.
+function storagePathFromUrl(url: string | null | undefined, bucket: string): string | null {
+  if (!url) return null
+  const marker = `/storage/v1/object/public/${bucket}/`
+  const idx = url.indexOf(marker)
+  return idx !== -1 ? url.slice(idx + marker.length) : null
+}
 
 // POST /api/auth/delete-account — permanently delete user and all their data
 // Deletes storage files first (GDPR), then DB rows, then the auth user.
@@ -10,11 +19,38 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  // Gather projects (with artwork_url) and version IDs before deleting anything.
-  // Folding artwork_url into this select avoids a second full projects scan.
+  // Cancel any active Stripe subscription FIRST — once profiles is deleted the
+  // stripe_subscription_id is gone and the webhook can never reconcile, so a
+  // deleted account would keep getting billed. Cancellation must never block the
+  // deletion: log and continue on any error, and treat an already-cancelled sub
+  // (resource_missing) as success.
+  const { data: billing } = await supabaseAdmin
+    .from('profiles')
+    .select('stripe_subscription_id')
+    .eq('id', userId)
+    .single()
+  const subscriptionId = billing?.stripe_subscription_id
+  if (subscriptionId && process.env.STRIPE_SECRET_KEY) {
+    try {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+      await stripe.subscriptions.cancel(subscriptionId)
+    } catch (err) {
+      const code = (err as { code?: string })?.code
+      if (code !== 'resource_missing') {
+        console.error('[delete-account] Stripe cancel failed for', userId, err instanceof Error ? err.message : err)
+        Sentry.captureMessage('delete-account: Stripe subscription cancel failed', {
+          level: 'warning',
+          extra: { userId, subscriptionId, error: err instanceof Error ? err.message : String(err) },
+        })
+      }
+    }
+  }
+
+  // Gather projects (with both artwork URLs) and version IDs before deleting
+  // anything. Folding the URLs into this select avoids a second full scan.
   const { data: projects } = await supabaseAdmin
     .from('mb_projects')
-    .select('id, artwork_url')
+    .select('id, artwork_url, finalized_artwork_url')
     .eq('user_id', userId)
 
   const projectIds = (projects ?? []).map(p => p.id)
@@ -41,12 +77,24 @@ export async function POST(request: NextRequest) {
       .filter((p): p is string => !!p)
   }
 
-  const artworkMarker = '/storage/v1/object/public/mf-artwork/'
+  // Both the generated source artwork and the finalized (text lockup) render live
+  // in mf-artwork — collect both so neither is orphaned.
   const artworkPaths = (projects ?? [])
-    .map(p => {
-      const idx = p.artwork_url?.indexOf(artworkMarker) ?? -1
-      return idx !== -1 ? p.artwork_url.slice(idx + artworkMarker.length) : null
-    })
+    .flatMap(p => [
+      storagePathFromUrl(p.artwork_url, 'mf-artwork'),
+      storagePathFromUrl(p.finalized_artwork_url, 'mf-artwork'),
+    ])
+    .filter((p): p is string => !!p)
+
+  // Visualizers (free canvas + AI + finished YouTube/Shorts) are keyed by
+  // user_id and stored in mf-video. They were previously never cleaned up,
+  // leaving orphaned rows and bytes after a GDPR delete.
+  const { data: visualizers } = await supabaseAdmin
+    .from('mb_visualizers')
+    .select('id, video_url')
+    .eq('user_id', userId)
+  const videoPaths = (visualizers ?? [])
+    .map(v => storagePathFromUrl(v.video_url, 'mf-video'))
     .filter((p): p is string => !!p)
 
   // Delete storage objects. A storage failure must NOT trap the user in an
@@ -73,6 +121,16 @@ export async function POST(request: NextRequest) {
       })
     }
   }
+  if (videoPaths.length > 0) {
+    const { error } = await supabaseAdmin.storage.from('mf-video').remove(videoPaths)
+    if (error) {
+      console.error('[delete-account] mf-video cleanup failed for', userId, error.message)
+      Sentry.captureMessage('delete-account: mf-video cleanup failed', {
+        level: 'warning',
+        extra: { userId, objectCount: videoPaths.length, error: error.message },
+      })
+    }
+  }
 
   // Delete DB rows in dependency order, capturing every error. If ANY row
   // deletion fails we abort before auth.admin.deleteUser — otherwise the auth
@@ -90,6 +148,8 @@ export async function POST(request: NextRequest) {
     await del(supabaseAdmin.from('mb_activity').delete().in('project_id', projectIds), 'mb_activity')
     await del(supabaseAdmin.from('mb_versions').delete().in('project_id', projectIds), 'mb_versions')
   }
+  // Visualizers are keyed by user_id (not project) — delete by owner.
+  await del(supabaseAdmin.from('mb_visualizers').delete().eq('user_id', userId), 'mb_visualizers')
 
   const { data: collections } = await supabaseAdmin
     .from('mb_collections')
