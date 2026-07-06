@@ -39,8 +39,11 @@ Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so br
 - `mf-audio` — audio files, public read, 2 GB limit (set via SQL, not API)
 - `mf-artwork` — artwork images, public read, 50 MB limit
 
-## PWA + iOS Wrapper
-Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. There is a native iOS app wrapper in `ios/` (Xcode project).
+## PWA + native iOS app
+Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWebApp` metadata in `layout.tsx`. The `ios/` directory is a **fully native SwiftUI app** (not a WebView wrapper): it talks to Supabase PostgREST directly and has its own native `AVPlayer` audio engine (`ios/mixBase/Services/`). It can also call the web app's authenticated API routes using `Authorization: Bearer <supabase-access-token>` (the middleware in `src/proxy.ts` accepts Bearer tokens as well as the session cookie).
+
+## Upload auth
+`/api/tus` and `/api/tus/[uploadId]` are **authenticated** (not in `PUBLIC_PATHS`): they proxy to Supabase Storage with the service-role key, so the POST validates session + project ownership + bucket allow-list before creating a session. The web client uploads through them; the iOS app uploads directly to Supabase and does not use these routes.
 
 # Application Pages & Features
 - `/dashboard` — Project grid with stats, activity feed

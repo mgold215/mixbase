@@ -97,8 +97,12 @@ Use Figma, Sketch, or Canva to add text overlays on the dark (#0d0b08) backgroun
 
 Apple requires a `PrivacyInfo.xcprivacy` file for any app using certain APIs.
 
-- [ ] **[YOU]** In Xcode, add a new file: File → New → File → Privacy Manifest (`PrivacyInfo.xcprivacy`)
-- [ ] **[YOU]** Declare:
+- [x] **DONE** — `ios/mixBase/PrivacyInfo.xcprivacy` exists and is now referenced
+  by the app target's Resources build phase in `project.pbxproj` (it was on disk
+  but not bundled before, so Apple would not have read it). The declared
+  contents match the reference below.
+
+Reference contents:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -136,8 +140,20 @@ Apple requires a `PrivacyInfo.xcprivacy` file for any app using certain APIs.
 
 Verify these keys are present in `ios/mixBase/Info.plist` (add if missing):
 
-- [ ] `NSPhotoLibraryUsageDescription` — "mixBase needs photo library access to let you choose cover art for your projects."
+- [x] `NSPhotoLibraryUsageDescription` — present in `ios/mixBase/Info.plist`.
 - [ ] `NSMicrophoneUsageDescription` — "mixBase needs microphone access to record audio directly into a project." *(add if you plan to add recording)*
+
+---
+
+## 7b. No paid API keys in the binary
+
+- [ ] **[YOU]** Confirm `ios/mixBase/Utilities/Config.swift` ships with
+  `replicateAPIKey` and `anthropicAPIKey` **empty** in the archived build. These
+  are paid, extractable-from-the-IPA secrets. Run AI generation server-side
+  instead: call the web app's `POST /api/generate-artwork` /
+  `POST /api/visualizer/runway` with the user's Supabase access token in an
+  `Authorization: Bearer <token>` header (the middleware accepts Bearer tokens).
+  The Supabase anon key in the same file is fine to embed — it is public.
 
 ---
 

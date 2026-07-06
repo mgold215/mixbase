@@ -2,9 +2,15 @@ import Foundation
 
 // MARK: - Config
 // Central place for all API keys and configuration values.
-// Sensitive keys (Replicate, Anthropic) should be set here for local builds,
-// but for App Store distribution consider fetching them from a remote config
-// endpoint so they are not embedded in the binary.
+//
+// ⚠️ App Store distribution: the Replicate and Anthropic keys below MUST stay
+// empty in any build you archive. They are paid, extractable-from-the-IPA
+// secrets — shipping them in the binary is a security and cost liability.
+// Instead, run AI generation server-side: call the web app's authenticated
+// routes (POST /api/generate-artwork, POST /api/visualizer/runway) with the
+// user's Supabase access token in an `Authorization: Bearer <token>` header.
+// The middleware accepts Bearer tokens, and the keys + per-tier limits live on
+// the server where they belong. Only fill these in for throwaway local builds.
 
 struct Config {
 
