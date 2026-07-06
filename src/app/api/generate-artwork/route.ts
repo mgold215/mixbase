@@ -96,12 +96,15 @@ export async function POST(request: NextRequest) {
   const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
   if (!replicateToken) {
     await refund()
-    return NextResponse.json({ error: 'REPLICATE_API_TOKEN not set in environment' }, { status: 500 })
+    console.error('[generate-artwork] REPLICATE_API_TOKEN is not set')
+    return NextResponse.json({ error: 'AI artwork generation is temporarily unavailable.' }, { status: 503 })
   }
   if (!replicateToken.startsWith('r8_')) {
     await refund()
+    // Keep the diagnostic detail in the server log only — never echo token
+    // characteristics back to the client.
     console.error('[generate-artwork] Token looks wrong, starts with:', replicateToken.slice(0, 4))
-    return NextResponse.json({ error: `Token format invalid (starts with "${replicateToken.slice(0, 4)}", expected "r8_")` }, { status: 500 })
+    return NextResponse.json({ error: 'AI artwork generation is temporarily unavailable.' }, { status: 503 })
   }
 
   const endpoint = MODEL_ENDPOINTS[model] ?? MODEL_ENDPOINTS.flux

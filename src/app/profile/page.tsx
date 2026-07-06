@@ -13,6 +13,7 @@ export default function ProfilePage() {
   const [savedArtistName, setSavedArtistName] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [profileError, setProfileError] = useState('')
   const [loading, setLoading] = useState(true)
   const [showDelete, setShowDelete] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState('')
@@ -42,6 +43,7 @@ export default function ProfilePage() {
 
   async function handleSaveProfile() {
     setSaving(true)
+    setProfileError('')
     const res = await fetch('/api/auth/me', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -52,6 +54,9 @@ export default function ProfilePage() {
       setSavedArtistName(artistName)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+    } else {
+      const body = await res.json().catch(() => ({}))
+      setProfileError(body.error ?? "Couldn't save your name. Please try again.")
     }
   }
 
@@ -159,6 +164,7 @@ export default function ProfilePage() {
                       {saved ? <Check size={14} /> : saving ? 'Saving...' : 'Save'}
                     </button>
                   </div>
+                  {profileError && <p className="text-xs text-red-400 mt-2">{profileError}</p>}
                 </div>
               </div>
             </div>

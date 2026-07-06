@@ -681,6 +681,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 type="file"
                 accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
                 className="sr-only"
+                aria-label="Upload a new mix audio file"
                 onChange={handleFileSelect}
               />
             </div>
@@ -1115,6 +1116,7 @@ function CurrentMixCard({
                 defaultValue={version[field] ?? ''}
                 onBlur={e => onUpdateNotes(version.id, field, e.target.value)}
                 placeholder={field === 'private_notes' ? 'Your notes…' : 'Visible to listeners…'}
+                aria-label={field === 'private_notes' ? 'Private notes' : 'Public notes'}
                 rows={2}
                 className="w-full rounded-lg px-3 py-2 text-xs text-[var(--text)] focus:outline-none resize-none"
                 style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}

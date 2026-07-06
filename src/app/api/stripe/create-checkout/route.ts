@@ -36,7 +36,10 @@ export async function POST(request: NextRequest) {
     customer_email: user.email,
     client_reference_id: userId,
     success_url: `${origin}/profile?subscribed=1`,
-    cancel_url: `${origin}/upgrade`,
+    // Cancelled checkout returns to a page that exists. There is no /upgrade page
+    // yet (monetization is parked), so send them back to their account rather
+    // than a 404. Repoint this at /upgrade when that page ships.
+    cancel_url: `${origin}/profile`,
     subscription_data: { metadata: { userId } },
   })
 

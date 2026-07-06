@@ -178,9 +178,17 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Delete the auth user last (cascades to profiles via FK)
+  // Delete the auth user last (cascades to profiles via FK). Log + Sentry the
+  // failure like every branch above — this was the one 500 path that returned
+  // silently, which made a real deletion failure (e.g. an invalid service-role
+  // key downgrading admin calls to anon) invisible in the logs.
   const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
   if (error) {
+    console.error('[delete-account] auth.admin.deleteUser failed for', userId, error.message)
+    Sentry.captureMessage('delete-account: auth.admin.deleteUser failed', {
+      level: 'error',
+      extra: { userId, error: error.message },
+    })
     return NextResponse.json({ error: 'Failed to delete account' }, { status: 500 })
   }
 

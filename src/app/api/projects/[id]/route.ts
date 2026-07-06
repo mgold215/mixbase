@@ -74,13 +74,16 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     if (!viz) return NextResponse.json({ error: 'Unknown visualizer video' }, { status: 400 })
   }
 
+  // maybeSingle (not single) so updating a project the caller doesn't own — or
+  // one that doesn't exist — matches 0 rows and returns data:null / error:null
+  // instead of a PostgREST "no rows" error we'd otherwise surface as a 500.
   const runUpdate = () => supabaseAdmin
     .from('mb_projects')
     .update(patch)
     .eq('id', id)
     .eq('user_id', userId)
     .select()
-    .single()
+    .maybeSingle()
 
   let { data, error } = await runUpdate()
 
@@ -90,6 +93,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   return NextResponse.json(data)
 }
 
