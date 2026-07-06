@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 
 // GET /api/projects/[id] — get one project with its versions (must belong to the user)
@@ -46,8 +46,15 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   // Replacing the source artwork invalidates any prior finalized render —
-  // null it out so the next Finalize starts from the new source.
-  if ('artwork_url' in body) patch.finalized_artwork_url = null
+  // null it out so the next Finalize starts from the new source. The source is
+  // fetched server-side by /api/finalize-artwork, so only accept a Supabase
+  // Storage URL (its sole legitimate shape) or null to clear it.
+  if ('artwork_url' in body) {
+    if (body.artwork_url !== null && !isSupabaseStorageUrl(body.artwork_url)) {
+      return NextResponse.json({ error: 'artwork_url must be a Supabase storage URL' }, { status: 400 })
+    }
+    patch.finalized_artwork_url = null
+  }
 
   // The project visualizer is rendered as a <video> across the app, so only
   // accept a video the user actually generated (an mb_visualizers row they

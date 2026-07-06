@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 
 // POST /api/versions — create a new version under a project (user must own the project)
 export async function POST(request: NextRequest) {
@@ -20,6 +20,11 @@ export async function POST(request: NextRequest) {
   }
   if (!isUuid(project_id)) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
+  }
+  // audio_url is fetched server-side later (finalize-video), so reject anything
+  // that isn't a Supabase Storage URL at the write site — bad data never lands.
+  if (!isSupabaseStorageUrl(audio_url)) {
+    return NextResponse.json({ error: 'audio_url must be a Supabase storage URL' }, { status: 400 })
   }
 
   // Verify the project belongs to this user before creating a version under it

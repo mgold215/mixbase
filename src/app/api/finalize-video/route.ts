@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { finalVideoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
 import { startVideoJob, getVideoJob } from '@/lib/video-jobs'
@@ -80,6 +80,14 @@ export async function POST(request: NextRequest) {
   }
   if (format === 'youtube' && (version.duration_seconds ?? 0) > MAX_SONG_SECONDS) {
     return NextResponse.json({ error: `Songs over ${MAX_SONG_SECONDS / 60} minutes aren't supported yet` }, { status: 400 })
+  }
+
+  // SSRF guard: the render job fetches both URLs server-side, so refuse anything
+  // that isn't a Supabase Storage URL (their only legitimate shape). Belt-and-
+  // suspenders alongside the write-site checks in /api/versions and PATCH
+  // /api/projects — this also covers any row written before those checks existed.
+  if (!isSupabaseStorageUrl(project.visualizer_url) || !isSupabaseStorageUrl(version.audio_url)) {
+    return NextResponse.json({ error: 'Media source is not a valid storage URL' }, { status: 400 })
   }
 
   const started = startVideoJob({

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
 
 export const runtime = 'nodejs'
@@ -49,6 +49,12 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createClient()
+
+  // SSRF guard: the source is fetched server-side, so refuse anything that isn't
+  // a Supabase Storage URL (the only shape artwork_url legitimately takes).
+  if (!isSupabaseStorageUrl(project.artwork_url)) {
+    return NextResponse.json({ error: 'Artwork source is not a valid storage URL' }, { status: 400 })
+  }
 
   const imageRes = await fetch(project.artwork_url)
   if (!imageRes.ok) return NextResponse.json({ error: 'Could not fetch artwork' }, { status: 400 })
