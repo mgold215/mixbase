@@ -11,6 +11,7 @@ import {
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
+import { copyToClipboard } from '@/lib/clipboard'
 import Nav from '@/components/Nav'
 import { usePlayer } from '@/contexts/PlayerContext'
 
@@ -206,10 +207,12 @@ function PlayerPage() {
   const handleShare = useCallback(() => {
     if (!current?.share_token) return
     const url = `${window.location.origin}/share/${current.share_token}`
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }).catch(() => {})
+    copyToClipboard(url).then(ok => {
+      if (ok) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
+    })
   }, [current])
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0

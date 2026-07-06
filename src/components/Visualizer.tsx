@@ -21,6 +21,11 @@ const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: numb
   story:   { label: 'Story',          width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
 }
 
+// The free canvas render draws at 1/4 scale for browser performance, so the
+// output is a quarter of the format's nominal resolution. Kept here so the render
+// and the result label agree (the label used to advertise the full resolution).
+const RENDER_SCALE = 0.25
+
 type RatioOption = { value: string; label: string }
 type RunwayModel = { id: string; label: string; durations: number[]; ratios: RatioOption[] }
 
@@ -136,9 +141,8 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     const cfg = FORMAT_CONFIG[format]
 
     // Render at 1/4 scale for browser performance; output is still valid video
-    const SCALE = 0.25
-    const W = cfg.width * SCALE
-    const H = cfg.height * SCALE
+    const W = cfg.width * RENDER_SCALE
+    const H = cfg.height * RENDER_SCALE
     const FPS = 30
     const TOTAL_FRAMES = cfg.duration * FPS
 
@@ -423,10 +427,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }
 
-  function download(url: string, suffix: string) {
+  function download(url: string, suffix: string, ext: 'webm' | 'mp4') {
     const a = document.createElement('a')
     a.href = url
-    a.download = `${projectTitle.replace(/\s+/g, '-').toLowerCase()}-${format}-${suffix}.webm`
+    a.download = `${projectTitle.replace(/\s+/g, '-').toLowerCase()}-${format}-${suffix}.${ext}`
     a.click()
   }
 
@@ -712,7 +716,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
             <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
             <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                {cfg.label} · {cfg.width}×{cfg.height} · WebM
+                {cfg.label} · {Math.round(cfg.width * RENDER_SCALE)}×{Math.round(cfg.height * RENDER_SCALE)} · WebM
                 {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
                 {freeSave === 'saved' && (
                   <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--accent)' }}>
@@ -723,7 +727,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               </span>
               {freeSave === 'saved' && pinButton(freeSavedUrl)}
               <button
-                onClick={() => download(videoUrl, 'free')}
+                onClick={() => download(videoUrl, 'free', 'webm')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
               >
@@ -838,7 +842,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
               {aiSaved && pinButton(aiVideoUrl)}
               <button
-                onClick={() => download(aiVideoUrl, 'ai')}
+                onClick={() => download(aiVideoUrl, 'ai', 'mp4')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
               >

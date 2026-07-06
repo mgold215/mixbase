@@ -10,6 +10,7 @@ import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
+import { copyToClipboard } from '@/lib/clipboard'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
@@ -67,6 +68,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [deletingProject, setDeletingProject] = useState(false)
+  // Transient error toast so failed mutations surface instead of silently
+  // no-op'ing and leaving the UI out of sync with the DB.
+  const [actionError, setActionError] = useState<string | null>(null)
+  function flashError(msg: string) {
+    setActionError(msg)
+    setTimeout(() => setActionError(null), 4000)
+  }
   const router = useRouter()
 
   const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, refreshTracks } = usePlayer()
@@ -115,50 +123,77 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     return candidate > current ? v.status : best
   }, 'WIP' as string)
 
-  function copyShareLink() {
+  async function copyShareLink() {
     if (!project.share_token) return
     const url = `${window.location.origin}/share/${project.share_token}`
-    navigator.clipboard.writeText(url)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    // copyToClipboard tries the async API then a hidden-textarea fallback, so we
+    // only flash "Copied!" when the text actually made it to the clipboard.
+    if (await copyToClipboard(url)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      flashError('Could not copy the link — long-press to copy it manually.')
+    }
   }
 
   async function deleteProject() {
     if (!confirm('Delete this project and all its mixes? This cannot be undone.')) return
     setDeletingProject(true)
-    const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
-    if (res.ok) {
-      refreshTracks()
-      if (inModal) router.back()
-      else router.push('/dashboard')
-      router.refresh()
-    } else {
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        refreshTracks()
+        if (inModal) router.back()
+        else router.push('/dashboard')
+        router.refresh()
+      } else {
+        setDeletingProject(false)
+        flashError('Could not delete the project — please try again.')
+      }
+    } catch {
       setDeletingProject(false)
+      flashError('Could not delete the project — check your connection.')
     }
   }
 
   async function updateStatus(versionId: string, newStatus: Version['status']) {
-    const res = await fetch(`/api/versions/${versionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    })
-    if (res.ok) {
-      setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: newStatus } : v))
-      syncAfterMutation()
+    const prevStatus = versions.find(v => v.id === versionId)?.status
+    // Optimistic — revert on failure so the badge can't lie about the DB.
+    setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: newStatus } : v))
+    try {
+      const res = await fetch(`/api/versions/${versionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (res.ok) {
+        syncAfterMutation()
+      } else {
+        if (prevStatus) setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: prevStatus } : v))
+        flashError('Could not update the status — reverted.')
+      }
+    } catch {
+      if (prevStatus) setVersions(prev => prev.map(v => v.id === versionId ? { ...v, status: prevStatus } : v))
+      flashError('Could not update the status — check your connection.')
     }
   }
 
   async function updateNotes(versionId: string, field: 'private_notes' | 'public_notes', value: string) {
-    const res = await fetch(`/api/versions/${versionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value }),
-    })
-    if (res.ok) {
-      const key = `${versionId}-${field}`
-      setSavedNoteKey(key)
-      setTimeout(() => setSavedNoteKey(null), 2000)
+    try {
+      const res = await fetch(`/api/versions/${versionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (res.ok) {
+        const key = `${versionId}-${field}`
+        setSavedNoteKey(key)
+        setTimeout(() => setSavedNoteKey(null), 2000)
+      } else {
+        flashError('Notes did not save — please retry before leaving the page.')
+      }
+    } catch {
+      flashError('Notes did not save — check your connection and retry.')
     }
   }
 
@@ -357,25 +392,32 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   async function restoreVersion(archivedVersion: VersionWithFeedback) {
     setRestoring(true)
-    const res = await fetch('/api/versions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: project.id,
-        audio_url: archivedVersion.audio_url,
-        audio_filename: archivedVersion.audio_filename,
-        duration_seconds: archivedVersion.duration_seconds,
-        file_size_bytes: archivedVersion.file_size_bytes,
-        label: archivedVersion.label,
-      }),
-    })
-    const newVersion = await res.json()
-    if (res.ok) {
-      setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
-      setArchivedOpen(false)
-      syncAfterMutation()
+    try {
+      const res = await fetch('/api/versions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: project.id,
+          audio_url: archivedVersion.audio_url,
+          audio_filename: archivedVersion.audio_filename,
+          duration_seconds: archivedVersion.duration_seconds,
+          file_size_bytes: archivedVersion.file_size_bytes,
+          label: archivedVersion.label,
+        }),
+      })
+      if (res.ok) {
+        const newVersion = await res.json()
+        setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
+        setArchivedOpen(false)
+        syncAfterMutation()
+      } else {
+        flashError('Could not restore that mix — please try again.')
+      }
+    } catch {
+      flashError('Could not restore that mix — check your connection.')
+    } finally {
+      setRestoring(false)
     }
-    setRestoring(false)
   }
 
   async function summarizeFeedback(versionId: string) {
@@ -401,48 +443,69 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   }
 
   async function saveProject() {
-    const res = await fetch(`/api/projects/${project.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: projectForm.title.trim() || project.title,
-        genre: projectForm.genre.trim() || null,
-        bpm: projectForm.bpm ? parseInt(projectForm.bpm) : null,
-        key_signature: projectForm.key_signature.trim() || null,
-      }),
-    })
-    if (res.ok) {
-      setProjectSaved(true)
-      setEditingProject(false)
-      setTimeout(() => setProjectSaved(false), 2000)
-      syncAfterMutation()
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: projectForm.title.trim() || project.title,
+          genre: projectForm.genre.trim() || null,
+          bpm: projectForm.bpm ? parseInt(projectForm.bpm) : null,
+          key_signature: projectForm.key_signature.trim() || null,
+        }),
+      })
+      if (res.ok) {
+        setProjectSaved(true)
+        setEditingProject(false)
+        setTimeout(() => setProjectSaved(false), 2000)
+        syncAfterMutation()
+      } else {
+        flashError('Could not save project details — please try again.')
+      }
+    } catch {
+      flashError('Could not save project details — check your connection.')
     }
   }
 
   async function startRelease() {
     setStartingRelease(true)
-    const res = await fetch('/api/releases', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: projectForm.title || project.title, project_id: project.id }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      setRelease(data)
-      syncAfterMutation()
+    try {
+      const res = await fetch('/api/releases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: projectForm.title || project.title, project_id: project.id }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setRelease(data)
+        syncAfterMutation()
+      } else {
+        flashError('Could not start the release — please try again.')
+      }
+    } catch {
+      flashError('Could not start the release — check your connection.')
+    } finally {
+      setStartingRelease(false)
     }
-    setStartingRelease(false)
   }
 
   async function toggleReleaseCheck(field: string, current: boolean) {
     if (!release) return
-    const res = await fetch(`/api/releases/${release.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: !current }),
-    })
-    if (res.ok) {
-      setRelease(prev => prev ? { ...prev, [field]: !current } : prev)
+    // Optimistic toggle with rollback so the checkbox reflects the DB truth.
+    setRelease(prev => prev ? { ...prev, [field]: !current } : prev)
+    try {
+      const res = await fetch(`/api/releases/${release.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: !current }),
+      })
+      if (!res.ok) {
+        setRelease(prev => prev ? { ...prev, [field]: current } : prev)
+        flashError('Could not update the checklist — reverted.')
+      }
+    } catch {
+      setRelease(prev => prev ? { ...prev, [field]: current } : prev)
+      flashError('Could not update the checklist — check your connection.')
     }
   }
 
@@ -456,6 +519,15 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   return (
     <div className={inModal ? '' : 'pt-14'}>
+      {actionError && (
+        <div
+          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
+          style={{ backgroundColor: 'var(--surface)', color: '#f87171', border: '1px solid var(--surface-2)' }}
+          role="alert"
+        >
+          {actionError}
+        </div>
+      )}
       <div className={inModal ? 'max-w-4xl mx-auto px-5 sm:px-6 py-6 pb-16' : 'max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10'}>
         {!inModal && (
           <Link href="/dashboard" className="flex items-center gap-2 text-[var(--text-muted)] hover:text-[var(--text)] text-sm mb-6 transition-colors w-fit">

@@ -18,10 +18,19 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { project_id, artist } = body
+  const { project_id } = body
   if (!isUuid(project_id)) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
+
+  // Artist name is derived from the signed-in user's profile, never the request
+  // body — otherwise every finalized image was stamped with a hardcoded handle.
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('artist_name')
+    .eq('id', userId)
+    .single()
+  const artist = (profile?.artist_name?.trim() || 'mixBase')
 
   // Deterministic, user-chosen layout — no Vision guesswork.
   const position: Position = POSITIONS.includes(body.position) ? body.position : 'top-left'
@@ -61,7 +70,7 @@ export async function POST(request: NextRequest) {
   const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
 
   const finalBuffer = await buildFinalized(
-    imageBuffer, project.title, artist || 'moodmixformat', position, size, showRule, filter, color
+    imageBuffer, project.title, artist, position, size, showRule, filter, color
   )
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`

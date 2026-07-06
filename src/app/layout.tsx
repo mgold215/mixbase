@@ -53,9 +53,16 @@ export const viewport: Viewport = {
   themeColor: "#0d0b08",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // Zoom is intentionally left enabled (no maximumScale / userScalable:false):
+  // disabling it fails WCAG 1.4.4 (Resize Text) and is an accessibility blocker.
+  // iOS auto-zoom-on-focus is prevented by keeping form controls at ≥16px
+  // (see globals.css), not by locking the viewport.
 };
+
+// Runs before first paint to set data-theme from the saved preference, so
+// light-mode users don't get a dark flash on every load (ThemeContext otherwise
+// only applies the attribute in a post-hydration effect).
+const themeInitScript = `(function(){try{var t=localStorage.getItem('mixbase-theme');if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
 
 export default function RootLayout({
   children,
@@ -66,6 +73,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`h-full ${jost.variable} ${bebasNeue.variable} ${spaceMono.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="min-h-full" style={{ backgroundColor: "var(--bg-page)", color: "var(--text)" }}>
         <ThemeProvider>
           <PlayerProvider>

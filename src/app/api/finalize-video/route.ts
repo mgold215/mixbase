@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
-  const { project_id, artist } = body
+  const { project_id } = body
   if (!isUuid(project_id)) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
@@ -67,6 +67,15 @@ export async function POST(request: NextRequest) {
   if (!project.title) {
     return NextResponse.json({ error: 'Project title is required' }, { status: 400 })
   }
+
+  // Artist name comes from the user's profile, not the request body — otherwise
+  // every rendered video was stamped with a hardcoded handle.
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('artist_name')
+    .eq('id', userId)
+    .single()
+  const artist = (profile?.artist_name?.trim() || 'mixBase').slice(0, 80)
 
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
@@ -96,7 +105,7 @@ export async function POST(request: NextRequest) {
     visualizerUrl: project.visualizer_url,
     audioUrl: version.audio_url,
     title: project.title,
-    artist: typeof artist === 'string' && artist.trim() ? artist.trim().slice(0, 80) : 'moodmixformat',
+    artist,
     format,
     color,
     startSec,
