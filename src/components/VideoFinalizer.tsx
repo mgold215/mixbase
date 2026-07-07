@@ -109,7 +109,6 @@ export default function VideoFinalizer({
         body: JSON.stringify({
           project_id: projectId,
           format,
-          artist: 'moodmixformat',
           color,
           ...(format === 'shorts' ? { clip_seconds: shortLen, start_sec: startSec } : {}),
         }),

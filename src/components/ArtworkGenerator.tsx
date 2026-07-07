@@ -79,7 +79,6 @@ export default function ArtworkGenerator({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: projectId,
-        artist: 'moodmixformat',
         position,
         size,
         showRule,

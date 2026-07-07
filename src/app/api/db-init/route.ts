@@ -213,6 +213,42 @@ create policy "users_read_feedback" on mb_feedback
 create policy "users_own_activity" on mb_activity
   using (project_id in (select id from mb_projects where user_id = auth.uid()))
   with check (project_id in (select id from mb_projects where user_id = auth.uid()));
+
+-- Migration 017: atomic usage metering + unique version numbers
+create or replace function public.try_increment_usage(
+  p_user_id uuid, p_month text, p_feature text, p_limit int
+) returns table(allowed boolean, used int)
+language plpgsql security definer set search_path = public as $$
+declare v_used int;
+begin
+  insert into public.mb_usage (user_id, month, artwork_generations, video_generations, updated_at)
+  values (p_user_id, p_month, 0, 0, now())
+  on conflict (user_id, month) do nothing;
+  select case when p_feature = 'artwork' then artwork_generations else video_generations end
+    into v_used from public.mb_usage
+   where user_id = p_user_id and month = p_month for update;
+  if v_used >= p_limit then allowed := false; used := v_used; return next; return; end if;
+  if p_feature = 'artwork' then
+    update public.mb_usage set artwork_generations = artwork_generations + 1, updated_at = now()
+     where user_id = p_user_id and month = p_month;
+  else
+    update public.mb_usage set video_generations = video_generations + 1, updated_at = now()
+     where user_id = p_user_id and month = p_month;
+  end if;
+  allowed := true; used := v_used + 1; return next;
+end; $$;
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from anon, authenticated;
+
+with ranked as (
+  select id, row_number() over (
+    partition by project_id order by version_number asc, created_at asc, id asc
+  ) as rn from public.mb_versions
+)
+update public.mb_versions v set version_number = ranked.rn
+  from ranked where v.id = ranked.id and v.version_number <> ranked.rn;
+
+create unique index if not exists mb_versions_project_version_uidx
+  on public.mb_versions (project_id, version_number);
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.

@@ -48,10 +48,19 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
   const shownVisualizers = filterByKind(visualizers, activeKind)
 
   async function deleteVisualizer(id: string) {
+    // Deleting removes the video and unpins it from any project — confirm first,
+    // matching the confirmation on project/collection/release deletes.
+    if (!confirm('Delete this visualizer? It will be removed from any project it is pinned to. This cannot be undone.')) return
     setDeleting(id)
-    const res = await fetch(`/api/visualizer/${id}`, { method: 'DELETE' })
-    if (res.ok) router.refresh()
-    setDeleting(null)
+    try {
+      const res = await fetch(`/api/visualizer/${id}`, { method: 'DELETE' })
+      if (res.ok) router.refresh()
+      else alert('Could not delete the visualizer — please try again.')
+    } catch {
+      alert('Could not delete the visualizer — check your connection.')
+    } finally {
+      setDeleting(null)
+    }
   }
 
   // Pull in any newly generated video after the modal closes.

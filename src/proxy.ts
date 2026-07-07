@@ -11,10 +11,13 @@ import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
 // auth-bypass risk. Set SUPABASE_JWT_SECRET (Supabase → Settings → API → JWT
 // Secret) on every deployment to close it.
 const JWT_KEY = makeJwtKey(process.env.SUPABASE_JWT_SECRET)
+const IS_PROD = process.env.NODE_ENV === 'production'
 if (!JWT_KEY) {
   console.warn(
-    '[proxy] SUPABASE_JWT_SECRET is not set — access tokens are NOT signature-verified. ' +
-      'Set this env var to verify JWTs and close an authentication-bypass risk.',
+    '[proxy] SUPABASE_JWT_SECRET is not set — access tokens cannot be signature-verified locally. ' +
+      (IS_PROD
+        ? 'Falling back to a Supabase getUser() round-trip per request (slower). Set this env var to close the gap.'
+        : 'Dev fallback: tokens are decoded WITHOUT signature verification (auth-bypass risk). Set this env var.'),
   )
 }
 
@@ -36,7 +39,9 @@ const PUBLIC_PATHS = [
   '/api/artwork', // public mf-artwork proxy — iOS lock-screen fetches it cookie-less
   '/api/health',
   '/api/db-init',
-  '/api/tus',
+  // NOTE: /api/tus is intentionally NOT public. It proxies to Supabase Storage
+  // with the service-role key; leaving it unauthenticated allowed anonymous
+  // arbitrary upload/overwrite. It now requires a session (see api/tus routes).
   '/api/stripe/webhook', // Stripe posts without user cookies; signature-verified internally
   // PWA static assets — must load logged-out or service-worker install breaks
   '/sw.js',
@@ -78,12 +83,34 @@ function setSessionCookies(
 }
 
 function clearAndRedirect(request: NextRequest) {
-  const res = NextResponse.redirect(new URL('/login', request.url))
+  // API callers (fetch/XHR, the iOS app, tus-js-client) can't follow a 307 to an
+  // HTML /login page — a replayed request there returns 405 and surfaces as an
+  // opaque upload/API failure. Return a clean 401 JSON for /api/* instead, and
+  // reserve the redirect for real page navigations.
+  const { pathname } = request.nextUrl
+  const res = pathname.startsWith('/api/')
+    ? NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    : NextResponse.redirect(new URL('/login', request.url))
   res.cookies.delete('sb-access-token')
   res.cookies.delete('sb-refresh-token')
   res.cookies.delete('sb-authed')
   res.cookies.delete('sb-expires-at')
   return res
+}
+
+// Fail-closed verification when no local JWT secret is configured in production:
+// validate the token against Supabase directly rather than trusting an unsigned
+// decode. Returns the verified user id, or null if the token is invalid or
+// Supabase is unreachable (caller then treats it as unauthenticated — never
+// trusts unverified claims).
+async function verifyViaNetwork(token: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabaseAdmin.auth.getUser(token)
+    if (error || !data.user) return null
+    return data.user.id
+  } catch {
+    return null
+  }
 }
 
 async function withAdminCheck(
@@ -116,6 +143,14 @@ async function withAdminCheck(
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // Strip any client-supplied X-User-Id up front. Routes read identity from this
+  // header only, so a spoofed value must never reach them. Every downstream
+  // NextResponse.next() below is built from this cleaned header set — including
+  // the public-path branch, which previously passed inbound headers through
+  // untouched (a latent spoofing vector for any future public route).
+  const baseHeaders = new Headers(request.headers)
+  baseHeaders.delete('x-user-id')
+
   // /api/auth (login) needs exact match — /api/auth/me etc. must be protected
   // '/' is the public landing page — exact match only, never a PUBLIC_PATHS
   // prefix (startsWith('/') would make every route public)
@@ -126,10 +161,17 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
   ) {
-    return NextResponse.next()
+    return NextResponse.next({ request: { headers: baseHeaders } })
   }
 
-  const accessToken = request.cookies.get('sb-access-token')?.value
+  // Accept a Bearer access token as an alternative to the session cookie so the
+  // native iOS app can call server routes (e.g. to run AI generation server-side
+  // where paid API keys + tier limits live, instead of embedding keys in the
+  // binary). Bearer tokens are verified by the exact same path as cookies below,
+  // so a forged Bearer is rejected identically.
+  const authHeader = request.headers.get('authorization')
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null
+  const accessToken = request.cookies.get('sb-access-token')?.value ?? bearerToken ?? undefined
   const refreshToken = request.cookies.get('sb-refresh-token')?.value
 
   // ── Fast path: verify JWT signature locally — no network call ─────────────
@@ -142,14 +184,25 @@ export async function proxy(request: NextRequest) {
   let tokenExpired = false
 
   if (accessToken) {
-    const check = await verifyAccessToken(accessToken, JWT_KEY)
-    userId = check.userId
-    tokenExpired = check.expired
+    if (JWT_KEY || !IS_PROD) {
+      // Local signature verification (or, in dev without a secret, legacy decode).
+      const check = await verifyAccessToken(accessToken, JWT_KEY)
+      userId = check.userId
+      tokenExpired = check.expired
+    } else {
+      // Production without a JWT secret: fail closed. Verify against Supabase
+      // instead of trusting an unsigned decode. A failure (invalid token or
+      // Supabase unreachable) yields null → treated as unauthenticated, never
+      // trusted. This is a safety net; the fix is to set SUPABASE_JWT_SECRET.
+      const networkUserId = await verifyViaNetwork(accessToken)
+      userId = networkUserId
+      tokenExpired = networkUserId === null
+    }
   }
 
   if (accessToken && !tokenExpired && userId) {
     // Token is present and not expired — inject user ID and pass through
-    const requestHeaders = new Headers(request.headers)
+    const requestHeaders = new Headers(baseHeaders)
     requestHeaders.set('X-User-Id', userId)
     return withAdminCheck(request, userId, requestHeaders)
   }
@@ -170,7 +223,7 @@ export async function proxy(request: NextRequest) {
 
     if (!refreshError && refreshed.session) {
       const expiresAt = refreshed.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
-      const requestHeaders = new Headers(request.headers)
+      const requestHeaders = new Headers(baseHeaders)
       requestHeaders.set('X-User-Id', refreshed.session.user.id)
       const res = await withAdminCheck(request, refreshed.session.user.id, requestHeaders)
       setSessionCookies(res, refreshed.session.access_token, refreshed.session.refresh_token, expiresAt)
@@ -192,7 +245,7 @@ export async function proxy(request: NextRequest) {
         : NextResponse.redirect(new URL('/dashboard', request.url))
     }
     if (userId) {
-      const requestHeaders = new Headers(request.headers)
+      const requestHeaders = new Headers(baseHeaders)
       requestHeaders.set('X-User-Id', userId)
       return NextResponse.next({ request: { headers: requestHeaders } })
     }

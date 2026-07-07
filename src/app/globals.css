@@ -94,3 +94,14 @@ body {
 
 /* Smooth transitions on interactive elements */
 button, a { transition: all 0.15s ease; }
+
+/* Keep text inputs at ≥16px on small screens. iOS Safari auto-zooms when a
+   focused field is under 16px; now that pinch-zoom is enabled (WCAG 1.4.4) this
+   prevents the jarring focus-zoom without locking the viewport. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

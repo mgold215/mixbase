@@ -67,6 +67,75 @@ export function ensureVideoBucketLimit(): Promise<boolean> {
   return bucketEnsured
 }
 
+// ── Migration 017: race-safe usage RPC + unique version numbers ─────────────
+// A deploy can reach production before migration 017 runs. tier.ts calls
+// try_increment_usage on every AI generation and versions/route.ts relies on the
+// unique (project_id, version_number) index for its retry loop; both heal here
+// on the specific "function/relation missing" failure, using the same Management
+// API channel db-init uses. Memoized per process; no-op without a Mgmt token.
+
+const USAGE_RPC_SQL = `
+create or replace function public.try_increment_usage(
+  p_user_id uuid, p_month text, p_feature text, p_limit int
+) returns table(allowed boolean, used int)
+language plpgsql security definer set search_path = public as $$
+declare v_used int;
+begin
+  insert into public.mb_usage (user_id, month, artwork_generations, video_generations, updated_at)
+  values (p_user_id, p_month, 0, 0, now())
+  on conflict (user_id, month) do nothing;
+  select case when p_feature = 'artwork' then artwork_generations else video_generations end
+    into v_used from public.mb_usage
+   where user_id = p_user_id and month = p_month for update;
+  if v_used >= p_limit then allowed := false; used := v_used; return next; return; end if;
+  if p_feature = 'artwork' then
+    update public.mb_usage set artwork_generations = artwork_generations + 1, updated_at = now()
+     where user_id = p_user_id and month = p_month;
+  else
+    update public.mb_usage set video_generations = video_generations + 1, updated_at = now()
+     where user_id = p_user_id and month = p_month;
+  end if;
+  allowed := true; used := v_used + 1; return next;
+end; $$;
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from anon, authenticated;`
+
+let usageRpcEnsured: Promise<boolean> | null = null
+
+export function ensureUsageRpc(): Promise<boolean> {
+  if (!usageRpcEnsured) {
+    usageRpcEnsured = runQuery(USAGE_RPC_SQL, 'try_increment_usage RPC')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) usageRpcEnsured = null
+        return ok
+      })
+  }
+  return usageRpcEnsured
+}
+
+/** True when a PostgREST error is the missing-function failure ensureUsageRpc heals. */
+export function isMissingUsageRpc(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST202' || !!error?.message?.includes('try_increment_usage')
+}
+
+const VERSION_INDEX_SQL = `
+create unique index if not exists mb_versions_project_version_uidx
+  on public.mb_versions (project_id, version_number);`
+
+let versionIndexEnsured: Promise<boolean> | null = null
+
+export function ensureVersionUniqueIndex(): Promise<boolean> {
+  if (!versionIndexEnsured) {
+    versionIndexEnsured = runQuery(VERSION_INDEX_SQL, 'mb_versions unique index')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) versionIndexEnsured = null
+        return ok
+      })
+  }
+  return versionIndexEnsured
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false

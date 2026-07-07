@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# mixBase
 
-## Getting Started
+Rough-to-release version control for music. Musicians upload mix versions, gather
+timestamped feedback via public share links, generate cover artwork and looping
+visualizers, render finished YouTube/Shorts videos, and run a release checklist —
+across a Next.js web app and a native SwiftUI iOS app.
 
-First, run the development server:
+- **Prod:** https://mixbase.app · **Staging:** https://mixbase-staging.up.railway.app
+- **Stack:** Next.js 16 (App Router, React 19) · Supabase (Postgres + Auth + Storage) ·
+  Railway (hosting) · Stripe (billing) · Replicate / Runway / Anthropic (AI) · Sentry
+
+## Architecture notes
+
+- **Auth:** middleware (`src/proxy.ts`) verifies the `sb-access-token` JWT locally
+  against `SUPABASE_JWT_SECRET`, refreshes when expired, and injects `X-User-Id`.
+  Routes read identity from that header only — never from the request body. A
+  `Authorization: Bearer <token>` header is also accepted (for the iOS app).
+- **Uploads never route file bytes through Railway** (its proxy truncates bodies
+  over 10 MB). Files ≤50 MB use a signed URL direct to Supabase; larger files use
+  TUS chunked upload through `/api/tus` (8 MB chunks). Both paths are authenticated.
+- **Audio** is served through `/api/audio/[...path]` so Range requests work
+  (seeking/duration). Always wrap Supabase audio URLs with `audioProxyUrl()`.
+- **iOS** (`ios/`) is a fully native SwiftUI app with its own `AVPlayer` engine — not
+  a WebView wrapper. **macOS** (`macos/`) is an internal infra-monitoring dashboard.
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev            # http://localhost:3000
+npm run lint           # must pass before every push
+npm run build          # must pass before every push
+npm test               # renderer + JWT smoke tests (no network/secrets needed)
+npm run test:e2e       # Playwright (targets staging by default; BASE_URL to override)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Node ≥ 20.9 (`.nvmrc` pins 20). Copy `.env.example` to `.env.local` and fill in
+the required variables.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Key environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Admin DB/auth/storage access (bypasses RLS) |
+| `SUPABASE_JWT_SECRET` | staging+prod | Local JWT signature verification (auth-bypass risk if unset) |
+| `NEXT_PUBLIC_SUPABASE_URL` / `..._ANON_KEY` | yes | Client Supabase access |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs | if billing | Subscriptions |
+| `ANTHROPIC_API_KEY` / `REPLICATE_API_TOKEN` / `RUNWAY_API_KEY` | optional | AI features |
+| `SUPABASE_MANAGEMENT_TOKEN` | optional | Runtime schema self-heal + `/api/db-init` |
+| `NEXT_PUBLIC_SENTRY_DSN` | optional | Error monitoring (not a secret) |
 
-## Learn More
+See `.env.example` for the full list.
 
-To learn more about Next.js, take a look at the following resources:
+## Deploying
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`main` is production and is branch-protected. The path to prod is a PR from `tst`
+merged once the **Build & Lint** and **Secret Scanning** checks are green:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+git push origin tst
+# open a PR tst → main and merge when required checks pass (deploys prod)
+```
 
-## Deploy on Vercel
+Database changes ship as files in `supabase/migrations/` and, where they must
+survive a deploy that races the migration, as idempotent runtime self-heals in
+`src/lib/schema-heal.ts` (also mirrored into `/api/db-init`).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Testing
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm test` runs `scripts/verify-token-test.mjs`, `scripts/finalize-test.mjs`, and
+  `scripts/video-test.mjs` — self-contained, exercising the real JWT-verify,
+  artwork (sharp + opentype), and video (bundled ffmpeg) code paths.
+- `scripts/test-upload.mjs <url>` and `scripts/test-infra.mjs <url> <email> <pass>`
+  smoke-test a deployed instance.

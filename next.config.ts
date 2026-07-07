@@ -1,6 +1,26 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
+// Supabase origin the browser talks to (storage public URLs, direct signed-URL
+// PUTs). Derived from the env so CSP follows the project if it is ever
+// re-pointed, instead of being hardcoded in three directives.
+const SUPABASE_ORIGIN = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co').origin
+  } catch {
+    return 'https://mdefkqaawrusoaojstpq.supabase.co'
+  }
+})()
+
+// Next.js needs 'unsafe-eval' for its dev-mode React refresh runtime, but the
+// production bundle does not. Keeping it out of prod meaningfully tightens the
+// XSS surface. 'unsafe-inline' is still required for Next's inline bootstrap
+// scripts and the pre-paint theme script.
+const scriptSrc =
+  process.env.NODE_ENV === 'production'
+    ? "script-src 'self' 'unsafe-inline'"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+
 const securityHeaders = [
   // Prevent the app being embedded in iframes — stops clickjacking
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
@@ -17,11 +37,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js requires unsafe-inline/eval for dev
+      scriptSrc,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://mdefkqaawrusoaojstpq.supabase.co https://*.replicate.delivery https://replicate.delivery",
-      "media-src 'self' blob: https://mdefkqaawrusoaojstpq.supabase.co https://*.runwayml.com https://*.cloudfront.net",
-      "connect-src 'self' https://mdefkqaawrusoaojstpq.supabase.co https://api.replicate.com",
+      `img-src 'self' data: blob: ${SUPABASE_ORIGIN} https://*.replicate.delivery https://replicate.delivery`,
+      `media-src 'self' blob: ${SUPABASE_ORIGIN} https://*.runwayml.com https://*.cloudfront.net https://*.replicate.delivery`,
+      `connect-src 'self' ${SUPABASE_ORIGIN} https://api.replicate.com`,
       "font-src 'self'",
       "frame-ancestors 'self'",
     ].join('; '),

@@ -3,6 +3,7 @@
 // All functions use supabaseAdmin (service-role key), bypassing RLS — server-side only.
 
 import { supabaseAdmin } from './supabase'
+import { ensureUsageRpc, isMissingUsageRpc } from './schema-heal'
 
 export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
 
@@ -68,33 +69,59 @@ export async function checkAndIncrementUsage(
   userId: string,
   feature: 'artwork' | 'video'
 ): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean }> {
-  const [profile, usage] = await Promise.all([
-    getUserProfile(userId),
-    getMonthUsage(userId),
-  ])
-
+  const profile = await getUserProfile(userId)
   const tier = profile.subscription_tier
   const limits = TIER_LIMITS[tier]
   const limit = feature === 'artwork' ? limits.artworkGenerations : limits.videoGenerations
-  const used  = feature === 'artwork' ? usage.artworkGenerations  : usage.videoGenerations
+  const month = currentMonth()
 
-  if (used >= limit) {
-    return { allowed: false, used, limit }
+  // Zero-limit feature (e.g. free/pro video) — reject without touching the DB.
+  if (limit <= 0) return { allowed: false, used: 0, limit }
+
+  // Atomic reserve: try_increment_usage takes a row lock so the limit check and
+  // the increment are a single step — two concurrent generations on a user's
+  // last credit cannot both pass (the old read-then-increment could).
+  let res = await supabaseAdmin
+    .rpc('try_increment_usage', { p_user_id: userId, p_month: month, p_feature: feature, p_limit: limit })
+    .single<{ allowed: boolean; used: number }>()
+
+  // Deploy may have raced migration 017 — heal the function and retry once.
+  if (res.error && isMissingUsageRpc(res.error)) {
+    await ensureUsageRpc()
+    res = await supabaseAdmin
+      .rpc('try_increment_usage', { p_user_id: userId, p_month: month, p_feature: feature, p_limit: limit })
+      .single<{ allowed: boolean; used: number }>()
   }
+
+  if (res.error) {
+    // RPC still unavailable — fall back to the legacy (non-atomic) reserve so a
+    // missing function degrades to previous behaviour rather than hard-blocking.
+    console.error(`[tier] try_increment_usage failed for ${userId}:`, res.error.message)
+    return legacyCheckAndIncrement(userId, feature, limit)
+  }
+
+  if (!res.data) return { allowed: false, used: 0, limit, error: true }
+  return { allowed: res.data.allowed, used: res.data.used, limit }
+}
+
+// Legacy read-check-then-increment path. Only reached if try_increment_usage is
+// unavailable (never deployed and heal failed). Preserves the pre-017 behaviour
+// including its fail-closed handling, so we never regress below what shipped.
+async function legacyCheckAndIncrement(
+  userId: string,
+  feature: 'artwork' | 'video',
+  limit: number,
+): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean }> {
+  const usage = await getMonthUsage(userId)
+  const used = feature === 'artwork' ? usage.artworkGenerations : usage.videoGenerations
+  if (used >= limit) return { allowed: false, used, limit }
 
   const rpcName = feature === 'artwork' ? 'increment_artwork_usage' : 'increment_video_usage'
   const { error: rpcError } = await supabaseAdmin.rpc(rpcName, { p_user_id: userId, p_month: currentMonth() })
   if (rpcError) {
-    // The slot could NOT be reserved. Returning allowed:true here would let the
-    // paid generation proceed while the counter stays put — so a persistent RPC
-    // failure (dropped function, DB outage) would silently hand out unlimited
-    // free generations, a revenue leak. Fail closed instead, and flag it as a
-    // transient error (distinct from a real quota hit) so the caller can return
-    // a retryable 503 rather than a misleading "limit reached".
     console.error(`[tier] ${rpcName} failed for ${userId}:`, rpcError.message)
     return { allowed: false, used, limit, error: true }
   }
-
   return { allowed: true, used: used + 1, limit }
 }
 

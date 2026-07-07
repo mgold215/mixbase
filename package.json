@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "npm run test:renderers",
+    "test:renderers": "node scripts/verify-token-test.mjs && node scripts/finalize-test.mjs && node scripts/video-test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "HEADED=1 playwright test",
     "prepare": "husky || true"
@@ -43,7 +45,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "^16.2.4",
     "typescript": "^5"
   }
 }
