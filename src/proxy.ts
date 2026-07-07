@@ -25,6 +25,8 @@ if (!JWT_KEY) {
 const PUBLIC_PATHS = [
   '/login',
   '/signup',
+  '/forgot-password',
+  '/reset-password',
   '/privacy',
   '/support',
   '/terms',

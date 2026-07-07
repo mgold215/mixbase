@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-browser'
@@ -24,7 +24,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetDone, setResetDone] = useState(false)
   const router = useRouter()
+
+  // Show a confirmation when arriving here right after a successful password
+  // reset (?reset=1). Read from location rather than useSearchParams to avoid
+  // needing a Suspense boundary.
+  useEffect(() => {
+    // One-time read of ?reset=1 on mount to show the post-reset banner. Reading
+    // window (not useSearchParams) keeps this page out of a Suspense boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (new URLSearchParams(window.location.search).get('reset') === '1') setResetDone(true)
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -140,7 +151,12 @@ export default function LoginPage() {
               </div>
 
               <div>
-                <label className="block text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Password</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm" style={{ color: 'var(--text-secondary)' }}>Password</label>
+                  <Link href="/forgot-password" className="text-xs hover:underline" style={{ color: 'var(--accent)' }}>
+                    Forgot password?
+                  </Link>
+                </div>
                 <input
                   type="password"
                   value={password}
@@ -152,6 +168,7 @@ export default function LoginPage() {
                 />
               </div>
 
+              {resetDone && <p className="text-sm" style={{ color: '#4ade80' }}>Password updated. Sign in with your new password.</p>}
               {error && <p className="text-red-400 text-sm">{error}</p>}
 
               <button

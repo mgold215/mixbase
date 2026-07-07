@@ -14,8 +14,9 @@ export async function POST(request: NextRequest) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
+    console.error('[summarize-feedback] ANTHROPIC_API_KEY is not set')
     return NextResponse.json(
-      { error: 'AI summarization is not configured. Set ANTHROPIC_API_KEY.' },
+      { error: 'AI feedback summaries are temporarily unavailable.' },
       { status: 503 },
     )
   }
