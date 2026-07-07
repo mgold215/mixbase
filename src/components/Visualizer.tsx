@@ -4,15 +4,9 @@ import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { Download, Film, Sparkles, Check, MonitorPlay, X } from 'lucide-react'
 import { visualizerKindLabel } from '@/lib/visualizer-kinds'
+import { EFFECTS, EFFECT_IDS, domLayerFactory, type EffectId, type DrawFrame } from '@/lib/free-effects'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
-type Effect = 'kenburns' | 'breathe' | 'glitch'
-
-const EFFECT_CONFIG: Record<Effect, { label: string; description: string }> = {
-  kenburns: { label: 'Ken Burns', description: 'Zoom & drift' },
-  breathe:  { label: 'Breathe',   description: 'Gentle pulse' },
-  glitch:   { label: 'Glitch',    description: 'Digital noise' },
-}
 
 const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: number; duration: number; description: string }> = {
   canvas:  { label: 'Spotify Canvas', width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
@@ -21,10 +15,19 @@ const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: numb
   story:   { label: 'Story',          width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
 }
 
-// The free canvas render draws at 1/4 scale for browser performance, so the
-// output is a quarter of the format's nominal resolution. Kept here so the render
+// The free canvas render draws at 1/2 scale for browser performance, so the
+// output is half the format's nominal resolution. Kept here so the render
 // and the result label agree (the label used to advertise the full resolution).
-const RENDER_SCALE = 0.25
+const RENDER_SCALE = 0.5
+
+// Default tempo for beat-synced effects — dead center of house.
+const DEFAULT_BPM = 122
+
+function clampBpm(raw: string): number {
+  const n = parseInt(raw, 10)
+  if (!Number.isFinite(n)) return DEFAULT_BPM
+  return Math.min(200, Math.max(60, n))
+}
 
 type RatioOption = { value: string; label: string }
 type RunwayModel = { id: string; label: string; durations: number[]; ratios: RatioOption[] }
@@ -59,7 +62,10 @@ type LibraryItem = {
 
 export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
   const [format, setFormat] = useState<Format>('canvas')
-  const [effect, setEffect] = useState<Effect>('kenburns')
+  const [effect, setEffect] = useState<EffectId>('kenburns')
+  // Raw input string so typing "1" mid-edit isn't clamped out from under the
+  // user; clampBpm() is applied wherever the number is consumed.
+  const [bpm, setBpm] = useState(String(DEFAULT_BPM))
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
@@ -82,7 +88,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewRef = useRef<HTMLCanvasElement>(null)
   const cancelledRef = useRef(false)
+  // Mirrors status === 'rendering' for the preview rAF loop, which must not
+  // re-init (and restart the loop position) every time status flips.
+  const renderingRef = useRef(false)
+  // One seed per mount: the live preview and the recorded render share it, so
+  // what you see in the preview is exactly the motion you get in the video.
+  const seedRef = useRef(Math.floor(Math.random() * 2 ** 31))
 
   // Runway model options (fetched from API so they stay current)
   const [models, setModels] = useState<RunwayModel[]>([])
@@ -140,9 +153,9 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
     const cfg = FORMAT_CONFIG[format]
 
-    // Render at 1/4 scale for browser performance; output is still valid video
-    const W = cfg.width * RENDER_SCALE
-    const H = cfg.height * RENDER_SCALE
+    // Render at 1/2 scale for browser performance; output is still valid video
+    const W = Math.round(cfg.width * RENDER_SCALE)
+    const H = Math.round(cfg.height * RENDER_SCALE)
     const FPS = 30
     const TOTAL_FRAMES = cfg.duration * FPS
 
@@ -171,48 +184,25 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       return
     }
 
-    // Pan direction options (shared by kenburns + glitch)
-    const directions = [
-      { startX: -0.04, startY: -0.04, endX: 0,     endY: 0     },
-      { startX: 0.04,  startY: -0.04, endX: 0,     endY: 0     },
-      { startX: 0,     startY: 0,     endX: -0.04, endY: -0.04 },
-      { startX: 0,     startY: 0,     endX:  0.04, endY:  0.04 },
-    ]
-    const dir = directions[Math.floor(Math.random() * directions.length)]
-
-    // Pre-compute per-effect motion functions
-    type MotionFn = (t: number) => { scale: number; panX: number; panY: number }
-    let getMotion: MotionFn
-    const glitchFrames = new Set<number>()
-
-    if (effect === 'breathe') {
-      // Gentle scale pulsing, 2 full breathe cycles over the clip
-      getMotion = (t) => ({
-        scale: 1.01 + 0.06 * (0.5 + 0.5 * Math.sin(t * Math.PI * 4)),
-        panX: 0,
-        panY: 0,
+    // Build the effect's frame renderer (see src/lib/free-effects.ts). Shares
+    // the preview's seed so the recording matches what the preview showed.
+    let drawFrame: DrawFrame
+    try {
+      drawFrame = EFFECTS[effect].create({
+        W, H,
+        duration: cfg.duration,
+        fps: FPS,
+        bpm: clampBpm(bpm),
+        seed: seedRef.current,
+        image: img,
+        imageWidth: img.width,
+        imageHeight: img.height,
+        createLayer: domLayerFactory,
       })
-    } else if (effect === 'glitch') {
-      // Slow Ken Burns base with occasional digital glitch clusters
-      getMotion = (t) => ({
-        scale: 1.06 - 0.04 * t,
-        panX: (dir.startX + (dir.endX - dir.startX) * t) * W * 0.5,
-        panY: (dir.startY + (dir.endY - dir.startY) * t) * H * 0.5,
-      })
-      // Pre-compute glitch frame clusters (~15% of frames, in bursts)
-      let f = Math.floor(8 + Math.random() * 15)
-      while (f < TOTAL_FRAMES) {
-        const clusterLen = 1 + Math.floor(Math.random() * 3)
-        for (let j = 0; j < clusterLen && f + j < TOTAL_FRAMES; j++) glitchFrames.add(f + j)
-        f += Math.floor(12 + Math.random() * 20)
-      }
-    } else {
-      // Ken Burns: zoom out + random pan
-      getMotion = (t) => ({
-        scale: 1.08 + (1.0 - 1.08) * t,
-        panX: (dir.startX + (dir.endX - dir.startX) * t) * W,
-        panY: (dir.startY + (dir.endY - dir.startY) * t) * H,
-      })
+    } catch {
+      setStatus('error')
+      setErrorMsg('Could not initialize the effect renderer. Try a different image.')
+      return
     }
 
     // Set up MediaRecorder + run the frame loop. Any throw in here — a tainted
@@ -225,7 +215,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
         ? 'video/webm;codecs=vp9'
         : 'video/webm'
-      const recorder = new MediaRecorder(stream, { mimeType })
+      // Cap the bitrate so the longest render (30s YouTube) stays comfortably
+      // under /api/visualizer/save's 10 MB limit (~8.5 MB budget).
+      const videoBitsPerSecond = Math.min(3_500_000, Math.floor((8.5 * 8 * 1024 * 1024) / cfg.duration))
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
       const chunks: Blob[] = []
       recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
@@ -235,51 +228,12 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
 
       recorder.start()
 
-      // Cover-fit dimensions (constant across frames)
-      const imgAspect = img.width / img.height
-      const canvasAspect = W / H
-      let drawW: number, drawH: number
-      if (imgAspect > canvasAspect) {
-        drawH = H; drawW = H * imgAspect
-      } else {
-        drawW = W; drawH = W / imgAspect
-      }
-
+      // t = frame / TOTAL_FRAMES (never reaching 1) so the last frame sits one
+      // step before the wrap — every effect is periodic over [0,1), which makes
+      // the exported loop seamless.
+      const startTime = performance.now()
       for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
-        const t = TOTAL_FRAMES > 1 ? frame / (TOTAL_FRAMES - 1) : 0
-        const { scale, panX, panY } = getMotion(t)
-
-        ctx.clearRect(0, 0, W, H)
-        ctx.save()
-        ctx.translate(W / 2 + panX, H / 2 + panY)
-        ctx.scale(scale, scale)
-
-        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH)
-
-        // Glitch overlay: horizontal slice offsets + chromatic flash
-        if (effect === 'glitch' && glitchFrames.has(frame)) {
-          const numSlices = 2 + Math.floor(Math.random() * 3)
-          for (let s = 0; s < numSlices; s++) {
-            const sliceY  = (Math.random() - 0.5) * drawH
-            const sliceH  = 5 + Math.random() * 18
-            const offsetX = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.07) * drawW
-            const srcY    = Math.max(0, (sliceY + drawH / 2) * img.height / drawH)
-            const srcH    = Math.min(sliceH * img.height / drawH, img.height - srcY)
-            if (srcH > 1) {
-              ctx.drawImage(img, 0, srcY, img.width, srcH,
-                -drawW / 2 + offsetX, sliceY, drawW, sliceH)
-            }
-          }
-          // Chromatic aberration flash
-          ctx.globalAlpha = 0.1 + Math.random() * 0.12
-          ctx.globalCompositeOperation = 'screen'
-          ctx.fillStyle = Math.random() < 0.5 ? '#ff003380' : '#00ffff50'
-          ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH)
-          ctx.globalCompositeOperation = 'source-over'
-          ctx.globalAlpha = 1
-        }
-
-        ctx.restore()
+        drawFrame(ctx, frame / TOTAL_FRAMES, frame)
 
         setProgress(Math.round((frame / TOTAL_FRAMES) * 100))
 
@@ -288,8 +242,10 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           return
         }
 
-        // Pace each frame to real-time so MediaRecorder captures correct duration
-        await new Promise(r => setTimeout(r, 1000 / FPS))
+        // Pace against an absolute schedule (not a fixed per-frame sleep) so
+        // draw time doesn't stretch the recording past the nominal duration.
+        const wait = startTime + ((frame + 1) * 1000) / FPS - performance.now()
+        await new Promise(r => setTimeout(r, Math.max(0, wait)))
       }
 
       recorder.stop()
@@ -314,14 +270,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }
 
-  async function saveFreeToMedia(blob: Blob, fmt: Format, eff: Effect) {
+  async function saveFreeToMedia(blob: Blob, fmt: Format, eff: EffectId) {
     if (!projectId) return
     setFreeSave('saving')
     try {
       const fd = new FormData()
       fd.append('file', blob, 'visualizer.webm')
       fd.append('projectId', projectId)
-      fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECT_CONFIG[eff].label}`)
+      fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECTS[eff].label}`)
       if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
       const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
       if (res.ok) {
@@ -460,6 +416,69 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   useEffect(() => {
     return () => { cancelledRef.current = true }
   }, [])
+
+  useEffect(() => { renderingRef.current = status === 'rendering' }, [status])
+
+  const bpmNum = clampBpm(bpm)
+
+  // Live preview: run the selected effect in a small visible canvas via rAF so
+  // the user sees the motion before committing to a render. Paused (frames
+  // skipped, loop kept alive) while a recording is in flight so the two loops
+  // don't fight for the main thread.
+  useEffect(() => {
+    const canvas = previewRef.current
+    if (!canvas || !artworkUrl) return
+    let disposed = false
+    let raf = 0
+    const cfg = FORMAT_CONFIG[format]
+    const PW = 300
+    const PH = Math.round((PW * cfg.height) / cfg.width)
+    canvas.width = PW
+    canvas.height = PH
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const img = new window.Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      if (disposed) return
+      let draw: DrawFrame
+      try {
+        draw = EFFECTS[effect].create({
+          W: PW, H: PH,
+          duration: cfg.duration,
+          fps: 30,
+          bpm: bpmNum,
+          seed: seedRef.current,
+          image: img,
+          imageWidth: img.width,
+          imageHeight: img.height,
+          createLayer: domLayerFactory,
+        })
+      } catch {
+        return
+      }
+      const start = performance.now()
+      const loop = () => {
+        if (disposed) return
+        if (!renderingRef.current) {
+          const elapsed = (performance.now() - start) / 1000
+          const t = (elapsed % cfg.duration) / cfg.duration
+          try {
+            draw(ctx, t, Math.floor(t * cfg.duration * 30))
+          } catch {
+            return // stop the preview quietly; recording has its own error path
+          }
+        }
+        raf = requestAnimationFrame(loop)
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    img.src = artworkUrl
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+    }
+  }, [artworkUrl, effect, format, bpmNum])
 
   // ── Project Visualizer section — the video pinned to this project. Shown on
   // the project page (where onVisualizerUpdated is wired); rendered even before
@@ -675,18 +694,51 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
         {/* Effect selector */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Effect</p>
-          <div className="flex flex-wrap gap-2">
-            {(Object.entries(EFFECT_CONFIG) as [Effect, typeof EFFECT_CONFIG[Effect]][]).map(([key, val]) => (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {EFFECT_IDS.map(key => (
               <button
                 key={key}
                 onClick={() => setEffect(key)}
-                className="px-3 py-2 rounded-xl text-sm font-medium transition-colors"
+                className="px-3 py-2 rounded-xl text-sm font-medium transition-colors text-left"
                 style={pill(effect === key)}
               >
-                <span className="block">{val.label}</span>
-                <span className="block text-[10px] opacity-70">{val.description}</span>
+                <span className="block">{EFFECTS[key].label}</span>
+                <span className="block text-[10px] opacity-70">{EFFECTS[key].description}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* BPM — only for beat-synced effects */}
+        {EFFECTS[effect].beatSynced && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Track BPM</p>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={60}
+              max={200}
+              value={bpm}
+              onChange={e => setBpm(e.target.value)}
+              onBlur={() => setBpm(String(bpmNum))}
+              className="w-28 rounded-lg px-3 py-2 text-sm focus:outline-none transition-colors"
+              style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)', color: 'var(--text)' }}
+            />
+            <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+              Set this to your track&rsquo;s tempo — the effect pulses on the beat (snapped slightly so the loop stays seamless).
+            </p>
+          </div>
+        )}
+
+        {/* Live preview of the selected effect */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Live Preview</p>
+          <div className="rounded-xl overflow-hidden flex items-center justify-center" style={{ backgroundColor: '#000', border: '1px solid var(--surface-2)' }}>
+            <canvas
+              ref={previewRef}
+              className="block"
+              style={{ maxWidth: '100%', maxHeight: '18rem', width: 'auto', height: 'auto' }}
+            />
           </div>
         </div>
 

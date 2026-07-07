@@ -83,7 +83,10 @@ export default function RootLayout({
             <SessionRefresher />
             <PullToRefresh />
             <MiniPlayer />
-            {children}
+            {/* Single <main> landmark for the primary page content (accessibility:
+                screen readers can jump straight to it). The modal slot and the
+                global mini-player sit outside it as overlays/controls. */}
+            <main>{children}</main>
             {modal}
           </PlayerProvider>
         </ThemeProvider>

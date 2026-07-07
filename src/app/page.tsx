@@ -97,10 +97,13 @@ export default async function Home() {
       name: 'Studio',
       price: TIER_PRICES.studio,
       highlight: false,
+      // "Everything in Pro" already covers the 25 AI artworks, so lead with what
+      // Studio actually adds — the AI visualizer videos — instead of repeating
+      // the artwork count and reading like no upgrade over Pro.
       perks: [
         'Everything in Pro',
-        `${TIER_LIMITS.studio.artworkGenerations} AI artworks / month`,
         `${TIER_LIMITS.studio.videoGenerations} AI visualizer videos / month`,
+        'Priority visualizer rendering',
       ],
     },
   ]

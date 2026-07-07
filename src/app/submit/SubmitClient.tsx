@@ -313,7 +313,7 @@ export default function SubmitClient({
               <ChevronLeft size={15} /> Back to selection
             </button>
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Pitching <span style={{ color: 'var(--text)' }}>{song?.title}</span> to {selectedCurators.length} curators
+              Pitching <span style={{ color: 'var(--text)' }}>{song?.title}</span> to {selectedCurators.length} {selectedCurators.length === 1 ? 'curator' : 'curators'}
             </p>
           </div>
 

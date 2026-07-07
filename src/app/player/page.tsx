@@ -17,7 +17,9 @@ import { usePlayer } from '@/contexts/PlayerContext'
 
 type SortKey = 'title' | 'date'
 
-const PASTEL_GREEN = '#86efac'
+// The player's accent, matching the app's teal --accent (#2dd4bf) rather than a
+// standalone green, so the full-screen player reads as the same product.
+const PLAYER_ACCENT = '#2dd4bf'
 const WAVEFORM_BARS = 100
 
 function generateWaveform(seed: string, count: number): number[] {
@@ -383,7 +385,9 @@ function PlayerPage() {
       </aside>
 
       {/* ── Main stage: artwork + full-width control bar ─────────────────── */}
-      <main className="relative flex-1 flex flex-col overflow-hidden z-10">
+      {/* Plain <div> (not <main>) — the root layout now provides the single
+          <main> landmark, and nesting <main> elements is invalid HTML. */}
+      <div className="relative flex-1 flex flex-col overflow-hidden z-10">
         {/* Mobile hamburger — opens the track-list drawer */}
         <button
           onClick={() => setSidebarOpen(true)}
@@ -519,11 +523,11 @@ function PlayerPage() {
               <div className="flex items-center gap-2">
                 <button onClick={() => setShuffle(!shuffle)}
                   className="p-2 transition-colors"
-                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: shuffle ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
                   className="p-2 transition-colors"
-                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: loopMode !== 'none' ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -534,7 +538,7 @@ function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: PASTEL_GREEN }}
+                  style={{ background: PLAYER_ACCENT }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {buffering
                     ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />
@@ -549,13 +553,13 @@ function PlayerPage() {
                   <div className="relative">
                     <button onClick={handleShare}
                       className="p-2 transition-colors"
-                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                      style={{ color: copied ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: PASTEL_GREEN, color: '#000' }}>
+                        style={{ background: PLAYER_ACCENT, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
@@ -569,11 +573,11 @@ function PlayerPage() {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button onClick={() => setShuffle(!shuffle)}
                   className="p-2 transition-colors"
-                  style={{ color: shuffle ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: shuffle ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                   title="Shuffle"><Shuffle size={20} /></button>
                 <button onClick={cycleLoop}
                   className="p-2 transition-colors"
-                  style={{ color: loopMode !== 'none' ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                  style={{ color: loopMode !== 'none' ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                   title={`Loop: ${loopMode}`}>
                   {loopMode === 'one' ? <Repeat1 size={20} /> : <Repeat size={20} />}
                 </button>
@@ -584,7 +588,7 @@ function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: PASTEL_GREEN }}
+                  style={{ background: PLAYER_ACCENT }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {buffering
                     ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />
@@ -609,13 +613,13 @@ function PlayerPage() {
                   <div className="relative">
                     <button onClick={handleShare}
                       className="p-2 transition-colors"
-                      style={{ color: copied ? PASTEL_GREEN : 'rgba(255,255,255,0.55)' }}
+                      style={{ color: copied ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
                       title="Copy share link">
                       {copied ? <Check size={20} /> : <Share2 size={20} />}
                     </button>
                     {copied && (
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-lg pointer-events-none"
-                        style={{ background: PASTEL_GREEN, color: '#000' }}>
+                        style={{ background: PLAYER_ACCENT, color: '#000' }}>
                         Link copied!
                       </div>
                     )}
@@ -625,7 +629,7 @@ function PlayerPage() {
             </div>
           </div>
         )}
-      </main>
+      </div>
 
     </div>
     </>
