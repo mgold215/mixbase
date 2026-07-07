@@ -211,6 +211,11 @@ function PlayerPage() {
       if (ok) {
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
+      } else {
+        // Clipboard blocked (insecure origin / some iOS webviews). Surface the
+        // link so Share isn't a silent dead button — mirrors copyShareLink in
+        // ProjectClient, which flashes an error toast this page doesn't have.
+        alert(`Couldn't copy automatically. Copy this link:\n${url}`)
       }
     })
   }, [current])
