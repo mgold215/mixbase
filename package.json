@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:renderers",
-    "test:renderers": "node scripts/verify-token-test.mjs && node scripts/finalize-test.mjs && node scripts/video-test.mjs",
+    "test:renderers": "node scripts/verify-token-test.mjs && node scripts/effects-test.mjs && node scripts/finalize-test.mjs && node scripts/video-test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "HEADED=1 playwright test",
     "prepare": "husky || true"
