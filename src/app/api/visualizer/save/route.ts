@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 
 // Allow time to receive the upload + push it to storage.
 export const maxDuration = 60
@@ -19,7 +19,14 @@ export async function POST(req: NextRequest) {
   const file = form.get('file')
   const projectId = String(form.get('projectId') ?? '')
   const title = String(form.get('title') ?? 'Visualizer').slice(0, 200)
-  const sourceImageUrl = form.get('sourceImageUrl') ? String(form.get('sourceImageUrl')) : null
+  // The poster reference is the one client-supplied URL we persist. Only keep it
+  // if it's a real Supabase Storage URL (the sole shape a legit artwork URL
+  // takes) — mirrors the runway path's imageUrl allowlist and the
+  // audio_url/artwork_url write guards, so no off-host URL ever lands in a
+  // stored, later-rendered field. Anything else is dropped to null.
+  const sourceImageUrl = isSupabaseStorageUrl(form.get('sourceImageUrl'))
+    ? String(form.get('sourceImageUrl'))
+    : null
 
   if (!(file instanceof Blob)) return NextResponse.json({ error: 'file is required' }, { status: 400 })
   if (!isUuid(projectId)) return NextResponse.json({ error: 'Valid projectId is required' }, { status: 400 })

@@ -222,9 +222,18 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       const chunks: Blob[] = []
       recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-      const blobReady = new Promise<Blob>(resolve => {
+      const blobReady = new Promise<Blob>((resolve, reject) => {
         recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+        // A recorder-level failure (encoder error, the capture stream ending)
+        // fires 'error' and may never fire 'stop' — without this the await below
+        // would hang and the button would stay stuck on "Rendering…" forever
+        // (a hang is not a throw, so the catch never runs). Reject so the
+        // surrounding catch resets to the error state, like the tainted-canvas path.
+        recorder.onerror = () => reject(new Error('MediaRecorder failed'))
       })
+      // If a cancel bails out before the await below, keep a late rejection from
+      // surfacing as an unhandled promise rejection.
+      blobReady.catch(() => {})
 
       recorder.start()
 
