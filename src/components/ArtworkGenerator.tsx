@@ -51,7 +51,7 @@ export default function ArtworkGenerator({
   showActions = true,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
-  const [prompt, setPrompt] = useState(`architectural photograph of a giant retro tape cassette built into a real glass and exposed concrete structure, the cassette fused into board-formed concrete with natural texture and imperfections, floor-to-ceiling glass walls with accurate reflections and refractions, monumental brutalist forms, soft natural daylight, realistic materials and weathering, shot on a 35mm full-frame camera with a wide-angle lens, shallow depth of field, true-to-life color grading, photorealistic, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
+  const [prompt, setPrompt] = useState(`surreal otherworldly vista of a colossal retro tape cassette standing like an ancient monolith in a vast dreamlike valley, a winding river of glowing light curving past it toward a radiant horizon where light breaks through heavy clouds, towering mist-wrapped mountains on either side, faint pastel neon ribbons drifting through the night air, tiny distant details that reveal enormous scale, moody cinematic palette of deep blues, violets and warm gold, volumetric light and atmospheric haze, epic wide-angle composition, photorealistic detail with a painterly dreamlike quality, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
   const [model, setModel] = useState<'flux' | 'imagen'>('flux')
   const [generating, setGenerating] = useState(false)
   const [uploading, setUploading] = useState(false)
