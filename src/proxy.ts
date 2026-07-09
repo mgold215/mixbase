@@ -85,6 +85,22 @@ function setSessionCookies(
 }
 
 function clearAndRedirect(request: NextRequest) {
+  // Router prefetches must NEVER receive the login redirect: the client router
+  // caches redirect results per-URL and replays them on later real clicks —
+  // and the entry survives re-login (only a full page load clears it), so one
+  // failed prefetch makes a single project/page "log the user out" forever.
+  // A failed prefetch is silently dropped by the router, so answer with a bare
+  // 401 and leave both the redirect and the cookie clearing to a real
+  // navigation. (Clearing cookies from a background prefetch could also kill a
+  // session that a concurrent tab just refreshed.)
+  if (
+    request.headers.get('next-router-prefetch') !== null ||
+    request.headers.get('next-router-segment-prefetch') !== null ||
+    request.headers.get('purpose') === 'prefetch'
+  ) {
+    return new NextResponse(null, { status: 401, headers: { 'cache-control': 'no-store' } })
+  }
+
   // API callers (fetch/XHR, the iOS app, tus-js-client) can't follow a 307 to an
   // HTML /login page — a replayed request there returns 405 and surfaces as an
   // opaque upload/API failure. Return a clean 401 JSON for /api/* instead, and
@@ -231,6 +247,11 @@ export async function proxy(request: NextRequest) {
       setSessionCookies(res, refreshed.session.access_token, refreshed.session.refresh_token, expiresAt)
       return res
     }
+
+    // Upstream auth outage (5xx) is not a dead session — treat it like the
+    // network errors below instead of logging the user out. Only 4xx
+    // (invalid/revoked/expired token) is a definitive failure.
+    if (refreshError && (refreshError.status ?? 0) >= 500) throw refreshError
 
     // Refresh definitively failed (token revoked / truly expired)
     return clearAndRedirect(request)

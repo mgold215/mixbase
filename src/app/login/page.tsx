@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, type FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-browser'
 
@@ -25,7 +24,6 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetDone, setResetDone] = useState(false)
-  const router = useRouter()
 
   // Show a confirmation when arriving here right after a successful password
   // reset (?reset=1). Read from location rather than useSearchParams to avoid
@@ -49,8 +47,13 @@ export default function LoginPage() {
     })
 
     if (res.ok) {
-      router.push('/dashboard')
-      router.refresh()
+      // Full-page navigation, NOT router.push: the Next client router caches
+      // middleware redirects per-URL, so if any route got a cached
+      // redirect-to-/login while the old session was dying (e.g. a project
+      // card click), an SPA navigation here would keep replaying it after
+      // re-login — clicking that project would "log you out" forever. A hard
+      // navigation resets the router cache along with everything in it.
+      window.location.assign('/dashboard')
     } else {
       const body = await res.json().catch(() => ({}))
       setError(body.error ?? 'Sign in failed. Try again.')
