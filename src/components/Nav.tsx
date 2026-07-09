@@ -2,14 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
 export default function Nav() {
   const pathname = usePathname()
-  const router = useRouter()
   const { currentTrack } = usePlayer()
   const { theme, toggleTheme } = useTheme()
   const [artistName, setArtistName] = useState('')
@@ -23,7 +22,9 @@ export default function Nav() {
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
-    router.push('/login')
+    // Hard navigation: flushes the client router cache so no authed page
+    // content (or stale login redirects) survives the auth-state change.
+    window.location.assign('/login')
   }
 
   // Desktop top-nav links

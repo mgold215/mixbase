@@ -1,13 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { LogOut, Trash2, ArrowLeft, ExternalLink, Check } from 'lucide-react'
 import Link from 'next/link'
 
 export default function ProfilePage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [artistName, setArtistName] = useState('')
   const [savedArtistName, setSavedArtistName] = useState('')
@@ -90,7 +88,8 @@ export default function ProfilePage() {
 
     const res = await fetch('/api/auth/delete-account', { method: 'POST' })
     if (res.ok) {
-      router.push('/login')
+      // Hard navigation — resets the client router cache on auth-state change
+      window.location.assign('/login')
     } else {
       const body = await res.json().catch(() => ({}))
       setError(body.error ?? 'Failed to delete account')
@@ -100,7 +99,8 @@ export default function ProfilePage() {
 
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
-    router.push('/login')
+    // Hard navigation — resets the client router cache on auth-state change
+    window.location.assign('/login')
   }
 
   const hasProfileChanges = artistName.trim() !== savedArtistName

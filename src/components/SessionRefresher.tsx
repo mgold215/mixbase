@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 
 // How many seconds before expiry we proactively refresh.
 const REFRESH_BEFORE_EXPIRY_S = 5 * 60 // 5 minutes
@@ -31,7 +31,6 @@ function isAuthed(): boolean {
 // already renewed the session; the jitter makes simultaneous fires rare and
 // the server-side single-flight absorbs the rest.
 export default function SessionRefresher() {
-  const router = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
@@ -70,8 +69,11 @@ export default function SessionRefresher() {
         if (res.ok) {
           arm()
         } else {
-          // Refresh token expired/revoked — cookies were cleared by the server
-          router.push('/login')
+          // Refresh token expired/revoked — cookies were cleared by the server.
+          // Hard navigation (not router.push): it resets the client router
+          // cache, which may hold login redirects for routes requested while
+          // the session died — an SPA nav would replay those after re-login.
+          window.location.assign('/login')
         }
       } catch {
         // Network error — don't redirect; proxy handles this gracefully.
@@ -95,7 +97,7 @@ export default function SessionRefresher() {
       document.removeEventListener('visibilitychange', onWake)
       window.removeEventListener('focus', onWake)
     }
-  }, [router, pathname])
+  }, [pathname])
 
   return null
 }
