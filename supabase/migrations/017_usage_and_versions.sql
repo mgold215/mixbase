@@ -64,7 +64,11 @@ END;
 $$;
 
 -- Only service-role may call it (arbitrary p_user_id must not be client-callable).
-REVOKE EXECUTE ON FUNCTION public.try_increment_usage(uuid, text, text, int) FROM anon, authenticated;
+-- REVOKE must include PUBLIC: a new function keeps its default EXECUTE grant to
+-- PUBLIC, so revoking only anon/authenticated leaves both roles able to call it
+-- via /rest/v1/rpc and inflate any user's quota. (Mirrors 017_prc_hardening.)
+REVOKE EXECUTE ON FUNCTION public.try_increment_usage(uuid, text, text, int) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.try_increment_usage(uuid, text, text, int) TO service_role;
 
 -- ============================================================
 -- 2. Unique (project_id, version_number) — dedupe then constrain

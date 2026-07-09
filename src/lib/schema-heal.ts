@@ -97,7 +97,12 @@ begin
   end if;
   allowed := true; used := v_used + 1; return next;
 end; $$;
-revoke execute on function public.try_increment_usage(uuid, text, text, int) from anon, authenticated;`
+-- Lock execution to the service role. REVOKE must include PUBLIC: a freshly
+-- created function carries a default EXECUTE grant to PUBLIC, and revoking only
+-- anon/authenticated leaves that PUBLIC grant intact — so both roles keep access
+-- via /rest/v1/rpc and can inflate any user's quota. (Mirrors 017_prc_hardening.)
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
+grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;`
 
 let usageRpcEnsured: Promise<boolean> | null = null
 
