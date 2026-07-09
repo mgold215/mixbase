@@ -32,12 +32,18 @@ function check(name, ok, detail = '') {
 
 // ── Stub canvas plumbing ────────────────────────────────────────────────────
 
-function makeStubCtx(stats) {
+function makeStubCtx(stats, log) {
   const fn = (method) => (...args) => {
     for (const a of args) {
       if (typeof a === 'number' && !Number.isFinite(a)) {
         throw new Error(`${method} received non-finite number: ${args.join(', ')}`)
       }
+    }
+    // Optional draw-call fingerprint: record the numeric args of every call so a
+    // test can assert two renders produced byte-identical geometry.
+    if (log) {
+      const nums = args.filter((a) => typeof a === 'number')
+      if (nums.length) log.push(`${method}:${nums.join(',')}`)
     }
     if (method === 'drawImage') stats.drawImage++
     if (method === 'createImageData') {
@@ -64,7 +70,7 @@ function makeStubCtx(stats) {
   )
 }
 
-function makeSetup(stats, { W, H, duration, bpm = 122, seed = 42 }) {
+function makeSetup(stats, { W, H, duration, bpm = 122, seed = 42 }, log) {
   return {
     W,
     H,
@@ -75,7 +81,9 @@ function makeSetup(stats, { W, H, duration, bpm = 122, seed = 42 }) {
     image: { width: 1200, height: 800 },
     imageWidth: 1200,
     imageHeight: 800,
-    createLayer: (w, h) => ({ canvas: { width: w, height: h }, ctx: makeStubCtx(stats) }),
+    // Route layer contexts into the same fingerprint log as the main ctx so
+    // per-frame draws onto scratch canvases (e.g. VHS tracking jitter) are seen.
+    createLayer: (w, h) => ({ canvas: { width: w, height: h }, ctx: makeStubCtx(stats, log) }),
   }
 }
 
@@ -155,6 +163,66 @@ check(
   'every effect has label + description',
   EFFECT_IDS.every(id => EFFECTS[id].label && EFFECTS[id].description && typeof EFFECTS[id].beatSynced === 'boolean'),
 )
+
+// ── Determinism: a frame's output depends only on (seed, frame) ─────────────
+// The seed contract (free-effects.ts EffectSetup.seed / Visualizer.tsx: "the
+// live preview is exactly the motion you get in the video") holds ONLY if
+// rendering frame K is independent of which frames were drawn before it — the
+// preview is a free-running rAF loop (repeats/skips frames) while the recording
+// sweeps 0..N-1 once. Per-frame unseeded Math.random(), or a single shared
+// per-effect RNG stream, both break this. These asserts FAIL on such an engine
+// and PASS once per-frame randomness is drawn from frameRng(seed, frame).
+
+const DET_SHAPE = { name: 'det', W: 270, H: 480, duration: 6 }
+const DET_N = DET_SHAPE.duration * 30 // 180 frames
+const DET_PROBES = [5, 23, 37, 61, 89, 113, 149] // spread across the loop
+
+// Render only frame `probe` into a fresh log, after first drawing `warm` frames
+// through the SAME instance to advance any state it holds. `warm` ≥ 1 in every
+// caller so the lazily-cached vignette gradient is already built in both runs
+// (that caching is deterministic and correct; we only compare per-frame draws).
+function probeLog(id, seed, probe, warm) {
+  const stats = { drawImage: 0 }
+  const log = []
+  const draw = EFFECTS[id].create(makeSetup(stats, { ...DET_SHAPE, seed }, log))
+  const ctx = makeStubCtx(stats, log)
+  for (let f = 0; f < warm; f++) draw(ctx, f / DET_N, f)
+  log.length = 0 // discard setup + warm-up; capture ONLY the probe frame
+  draw(ctx, probe / DET_N, probe)
+  return log.join('|')
+}
+
+// Full-loop fingerprint for a seed — proves the seed actually drives the motion.
+function loopLog(id, seed) {
+  const stats = { drawImage: 0 }
+  const log = []
+  const draw = EFFECTS[id].create(makeSetup(stats, { ...DET_SHAPE, seed }, log))
+  const ctx = makeStubCtx(stats, log)
+  for (let f = 0; f < DET_N; f++) draw(ctx, f / DET_N, f)
+  return log.join('|')
+}
+
+for (const id of EFFECT_IDS) {
+  // (1) History independence: each probe frame renders identically whether drawn
+  //     right after warm-up frame 0 or after a full pass over the loop. This is
+  //     the preview==recording guarantee.
+  let historyIndependent = true
+  let mismatch = ''
+  for (const probe of DET_PROBES) {
+    if (probeLog(id, 42, probe, 1) !== probeLog(id, 42, probe, DET_N)) {
+      historyIndependent = false
+      mismatch = `frame ${probe} differs after a full-loop pass`
+      break
+    }
+  }
+  check(`${id}: frame output is history-independent (preview==recording)`, historyIndependent, mismatch)
+
+  // (2) Same seed reproduces the loop exactly; a different seed changes it (so
+  //     the fix didn't accidentally freeze the randomness to a constant).
+  const seedA = loopLog(id, 42)
+  check(`${id}: identical seed reproduces the loop exactly`, seedA === loopLog(id, 42))
+  check(`${id}: a different seed changes the loop`, seedA !== loopLog(id, 999))
+}
 
 console.log(failures === 0 ? '\nAll effects tests passed' : `\n${failures} effects test(s) FAILED`)
 process.exit(failures === 0 ? 0 : 1)

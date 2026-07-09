@@ -19,6 +19,13 @@
 //  - RESOLUTION INDEPENDENT. All offsets/radii are fractions of W/H so the
 //    live preview (small canvas) and the recorded render (large canvas)
 //    produce the same motion.
+//  - DETERMINISTIC PER FRAME. Any per-frame randomness (grain drift, VHS
+//    tracking jitter, glitch geometry) is drawn from frameRng(seed, frame),
+//    NOT the ambient Math.random() nor a single shared per-effect stream. The
+//    preview is a free-running rAF loop while the recording is a strict
+//    0…N-1 sweep, so frame K must render identically regardless of how many
+//    frames ran before it — that is the only way "the preview is exactly the
+//    motion you get in the video" (see EffectSetup.seed / Visualizer.tsx).
 
 export type EffectId =
   | 'kenburns'
@@ -75,6 +82,16 @@ export function mulberry32(seed: number): () => number {
     x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x
     return ((x ^ (x >>> 14)) >>> 0) / 4294967296
   }
+}
+
+// Per-frame PRNG: the returned stream is fully determined by (seed, frame), so
+// a given frame index renders identically no matter what was drawn before it.
+// This is what keeps the free-running preview loop and the sequential recording
+// pass in lock-step. A single shared per-effect stream would NOT: its state at
+// frame K depends on how many frames ran first, which differs between the two
+// passes (preview repeats/skips frames; recording sweeps 0…N-1 once).
+export function frameRng(seed: number, frame: number): () => number {
+  return mulberry32((seed ^ Math.imul(frame + 1, 0x9e3779b1)) >>> 0)
 }
 
 // Sine that completes an integer number of cycles per loop → seamless.
@@ -140,9 +157,11 @@ function fillBg(ctx: CanvasRenderingContext2D, W: number, H: number) {
 
 const GRAIN_SIZE = 256
 
-// Static gray-noise tile; drawn with 'overlay' at a random offset each frame
-// for animated film grain. Randomness per frame is intentional — grain that
-// doesn't repeat with the loop reads as texture, not a stutter.
+// Static gray-noise tile; drawn with 'overlay' at a per-frame offset for
+// animated film grain. The offset comes from the per-frame seeded stream
+// (frameRng) passed in by the caller, so the grain still drifts frame-to-frame
+// — reading as texture, not a stutter — while rendering identically in the
+// preview and the recording (an ambient Math.random() offset would not).
 function makeGrainLayer(createLayer: LayerFactory, rng: () => number): LayerHandle {
   const layer = createLayer(GRAIN_SIZE, GRAIN_SIZE)
   const id = layer.ctx.createImageData(GRAIN_SIZE, GRAIN_SIZE)
@@ -157,9 +176,16 @@ function makeGrainLayer(createLayer: LayerFactory, rng: () => number): LayerHand
   return layer
 }
 
-function drawGrain(ctx: CanvasRenderingContext2D, grain: LayerHandle, W: number, H: number, alpha: number) {
-  const ox = Math.floor(Math.random() * GRAIN_SIZE)
-  const oy = Math.floor(Math.random() * GRAIN_SIZE)
+function drawGrain(
+  ctx: CanvasRenderingContext2D,
+  grain: LayerHandle,
+  W: number,
+  H: number,
+  alpha: number,
+  rng: () => number,
+) {
+  const ox = Math.floor(rng() * GRAIN_SIZE)
+  const oy = Math.floor(rng() * GRAIN_SIZE)
   ctx.save()
   ctx.globalAlpha = alpha
   ctx.globalCompositeOperation = 'overlay'
@@ -222,14 +248,15 @@ const kenburns: EffectDef = {
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const scale = 1.1 + 0.045 * loopSin(t, 1, phase)
       const panX = 0.028 * p.W * loopSin(t, 1, phase + 1.7)
       const panY = 0.02 * p.H * loopSin(t, 1, phase + 3.9)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, panY)
       drawVignette(ctx, p.W, p.H, 0.42, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.07)
+      drawGrain(ctx, grain, p.W, p.H, 0.07, fr)
     }
   },
 }
@@ -260,7 +287,8 @@ const dust: EffectDef = {
       p3: rng() * Math.PI * 2,
       a: 0.12 + rng() * 0.35,
     }))
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const scale = 1.09 + 0.05 * loopSin(t, 1, phase)
       const panY = 0.015 * p.H * loopSin(t, 1, phase + 2.4)
@@ -297,7 +325,7 @@ const dust: EffectDef = {
       }
       ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.55, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
   },
 }
@@ -311,7 +339,8 @@ const pulse: EffectDef = {
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
     const beats = snapBeats(p.duration, p.bpm)
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const kick = beatPulse(t, beats, 6)
       const scale = 1.07 + 0.05 * kick
@@ -325,7 +354,7 @@ const pulse: EffectDef = {
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.45, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05)
+      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
     }
   },
 }
@@ -343,7 +372,8 @@ const strobe: EffectDef = {
     const bars = Math.max(1, Math.round(beats / 4))
     const red = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#ff0040')
     const cyan = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#00e0ff')
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const kick = beatPulse(t, beats, 7)
       // Sharp decay so the flash is a strobe hit (~150ms), not a slow fade
@@ -366,7 +396,7 @@ const strobe: EffectDef = {
         ctx.restore()
       }
       drawVignette(ctx, p.W, p.H, 0.35, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
   },
 }
@@ -383,7 +413,8 @@ const liquid: EffectDef = {
     const src = p.createLayer(p.W, p.H)
     const bandH = Math.max(2, Math.round(p.H / 140))
     const k = (Math.PI * 2 * 3.5) / p.H // spatial wave frequency
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       // Render the (slightly overscanned) artwork once, then re-draw it in
       // horizontal bands offset by a travelling sine — the classic cheap
       // "liquid" displacement.
@@ -397,7 +428,7 @@ const liquid: EffectDef = {
         ctx.drawImage(src.canvas, 0, y, p.W, bandH, dx, y, p.W, bandH)
       }
       drawVignette(ctx, p.W, p.H, 0.38, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05)
+      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
     }
   },
 }
@@ -415,14 +446,15 @@ const orbit: EffectDef = {
     // Extra zoom needed so the rotated cover never shows a corner
     const ratio = Math.max(p.W / p.H, p.H / p.W)
     const bleed = Math.cos(rotMax) + ratio * Math.sin(rotMax)
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const rot = rotMax * loopSin(t, 1, phase)
       const scale = bleed * (1.035 + 0.025 * loopSin(t, 2, phase + 2.2))
       const panX = 0.012 * p.W * loopSin(t, 1, phase + 4.1)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, 0, rot)
       drawVignette(ctx, p.W, p.H, 0.48, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
   },
 }
@@ -443,9 +475,10 @@ const vhs: EffectDef = {
     const scan = p.createLayer(p.W, p.H)
     scan.ctx.fillStyle = 'rgba(0,0,0,0.16)'
     for (let y = 0; y < p.H; y += 3) scan.ctx.fillRect(0, y, p.W, 1)
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       const scale = 1.07 + 0.01 * loopSin(t, 1, phase)
-      const jitterY = (Math.random() - 0.5) * p.H * 0.003
+      const jitterY = (fr() - 0.5) * p.H * 0.003
       const fringe = p.W * 0.0045
       fillBg(src.ctx, p.W, p.H)
       drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, 0, jitterY)
@@ -456,7 +489,7 @@ const vhs: EffectDef = {
       // Tracking band rolling bottom→top once per loop: displaced slice + noise
       const bandH = Math.max(3, Math.round(p.H * 0.045))
       const bandY = Math.round((1 - t) * p.H) - bandH / 2
-      const shift = p.W * (0.01 + 0.015 * Math.random())
+      const shift = p.W * (0.01 + 0.015 * fr())
       ctx.drawImage(src.canvas, 0, Math.max(0, bandY), p.W, bandH, shift, Math.max(0, bandY), p.W, bandH)
       ctx.save()
       ctx.beginPath()
@@ -465,7 +498,7 @@ const vhs: EffectDef = {
       ctx.globalAlpha = 0.1
       ctx.fillStyle = '#fff'
       ctx.fillRect(0, bandY, p.W, bandH)
-      drawGrain(ctx, grain, p.W, p.H, 0.5)
+      drawGrain(ctx, grain, p.W, p.H, 0.5, fr)
       ctx.restore()
       ctx.save()
       ctx.globalAlpha = 1
@@ -476,7 +509,7 @@ const vhs: EffectDef = {
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.42, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.1)
+      drawGrain(ctx, grain, p.W, p.H, 0.1, fr)
     }
   },
 }
@@ -510,7 +543,8 @@ const glitch: EffectDef = {
       }
       return e
     }
-    return (ctx, t) => {
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
       const e = env(t)
       const scale = 1.09 + 0.03 * loopSin(t, 1, phase)
       const panX = 0.015 * p.W * loopSin(t, 1, phase + 1.2)
@@ -525,25 +559,25 @@ const glitch: EffectDef = {
       ctx.drawImage(src.canvas, 0, 0)
       if (e > 0.03) {
         // Horizontal slice displacement
-        const slices = 3 + Math.floor(Math.random() * 4)
+        const slices = 3 + Math.floor(fr() * 4)
         for (let s = 0; s < slices; s++) {
-          const sy = Math.floor(Math.random() * p.H)
-          const sh = Math.max(2, Math.floor((0.006 + Math.random() * 0.03) * p.H))
-          const dx = (Math.random() < 0.5 ? -1 : 1) * (0.03 + Math.random() * 0.09) * p.W * e
+          const sy = Math.floor(fr() * p.H)
+          const sh = Math.max(2, Math.floor((0.006 + fr() * 0.03) * p.H))
+          const dx = (fr() < 0.5 ? -1 : 1) * (0.03 + fr() * 0.09) * p.W * e
           ctx.drawImage(src.canvas, 0, sy, p.W, sh, dx, sy, p.W, sh)
         }
         // Block echo: a displaced rectangular chunk
-        if (Math.random() < 0.7) {
-          const bw = Math.floor((0.15 + Math.random() * 0.3) * p.W)
-          const bh = Math.floor((0.05 + Math.random() * 0.15) * p.H)
-          const bx = Math.floor(Math.random() * (p.W - bw))
-          const by = Math.floor(Math.random() * (p.H - bh))
-          const dx = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.05) * p.W
+        if (fr() < 0.7) {
+          const bw = Math.floor((0.15 + fr() * 0.3) * p.W)
+          const bh = Math.floor((0.05 + fr() * 0.15) * p.H)
+          const bx = Math.floor(fr() * (p.W - bw))
+          const by = Math.floor(fr() * (p.H - bh))
+          const dx = (fr() < 0.5 ? -1 : 1) * (0.02 + fr() * 0.05) * p.W
           ctx.drawImage(src.canvas, bx, by, bw, bh, bx + dx, by, bw, bh)
         }
-        drawGrain(ctx, grain, p.W, p.H, 0.25 * e)
+        drawGrain(ctx, grain, p.W, p.H, 0.25 * e, fr)
         // Rare full-frame invert pop at burst peaks
-        if (e > 0.85 && Math.random() < 0.25) {
+        if (e > 0.85 && fr() < 0.25) {
           ctx.save()
           ctx.globalCompositeOperation = 'difference'
           ctx.globalAlpha = 0.9
@@ -553,7 +587,7 @@ const glitch: EffectDef = {
         }
       }
       drawVignette(ctx, p.W, p.H, 0.32, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05)
+      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
     }
   },
 }
