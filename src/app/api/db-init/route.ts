@@ -237,7 +237,11 @@ begin
   end if;
   allowed := true; used := v_used + 1; return next;
 end; $$;
-revoke execute on function public.try_increment_usage(uuid, text, text, int) from anon, authenticated;
+-- REVOKE must include PUBLIC (not just anon/authenticated): a new function keeps
+-- its default EXECUTE grant to PUBLIC, through which both roles could otherwise
+-- still call it and inflate any user's quota. (Mirrors 017_prc_hardening.)
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
+grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;
 
 with ranked as (
   select id, row_number() over (

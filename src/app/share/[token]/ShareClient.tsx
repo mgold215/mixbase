@@ -18,6 +18,7 @@ type Props = {
 
 export default function ShareClient({ version }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null)
+  const vizVideoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -26,9 +27,22 @@ export default function ShareClient({ version }: Props) {
 
   const project = version.mb_projects
   const artworkUrl: string | null = displayArtworkUrl(project ?? {})
+  // Project visualizer (Spotify-Canvas style) — ?? null because rows can
+  // predate the 015 migration until the column self-heals.
+  const visualizerUrl: string | null = project?.visualizer_url ?? null
   const title: string = project?.title ?? 'Untitled'
   const audioUrl = audioProxyUrl(version.audio_url)
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
+
+  // Keep the muted visualizer loop in step with the audio: runs while the
+  // track plays, freezes on pause — same behavior as the app's full player.
+  // play() can reject (autoplay policy); the video just sits on its first frame.
+  useEffect(() => {
+    const v = vizVideoRef.current
+    if (!v) return
+    if (isPlaying) v.play().catch(() => {})
+    else v.pause()
+  }, [isPlaying, visualizerUrl])
 
   // Extract accent colour from artwork
   useEffect(() => {
@@ -130,6 +144,19 @@ export default function ShareClient({ version }: Props) {
             <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
               <Music size={64} className="text-[#333]" />
             </div>
+          )}
+          {/* Project visualizer — loops over the artwork while the track plays
+              (artwork stays underneath as the instant frame while the video loads) */}
+          {visualizerUrl && (
+            <video
+              ref={vizVideoRef}
+              src={visualizerUrl}
+              loop
+              muted
+              playsInline
+              preload="auto"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
           )}
         </div>
 
