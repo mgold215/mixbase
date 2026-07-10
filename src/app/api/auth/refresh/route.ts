@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { refreshSessionOnce } from '@/lib/refresh-session'
+import { isTransientAuthError } from '@/lib/auth-errors'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -25,11 +26,11 @@ export async function POST(request: NextRequest) {
   const { data, error } = await refreshSessionOnce(refreshToken)
 
   if (error || !data.session) {
-    // Transient failure (network status 0, 429 rate limit, Supabase 5xx) —
-    // the session is NOT dead. Keep the cookies and tell the client to retry
-    // later. Clearing cookies here logged users out on every Supabase blip.
-    const status = error?.status ?? 0
-    if (status === 0 || status === 429 || status >= 500) {
+    // A transient failure (network status 0, 429 rate limit, Supabase 5xx) — or
+    // an ambiguous "no session, no error" — is NOT a dead session. Keep the
+    // cookies and tell the client to retry later. Clearing cookies here logged
+    // users out on every Supabase blip. Only a definitive 4xx ends the session.
+    if (!error || isTransientAuthError(error)) {
       return NextResponse.json({ error: 'Auth service unavailable', code: 'RETRY_LATER' }, { status: 503 })
     }
 

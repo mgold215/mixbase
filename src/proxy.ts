@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { refreshSessionOnce } from '@/lib/refresh-session'
 import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
+import { isTransientAuthError } from '@/lib/auth-errors'
 
 // Shared HS256 key used to verify access-token signatures locally (no network
 // call). Built once at module load. If SUPABASE_JWT_SECRET is unset we fall
@@ -90,17 +91,6 @@ function isRouterPrefetch(request: NextRequest): boolean {
     request.headers.get('next-router-segment-prefetch') !== null ||
     request.headers.get('purpose') === 'prefetch'
   )
-}
-
-// A refresh error we must NOT treat as "session is dead": network failure
-// (supabase-js reports these as status 0), rate limiting (429 — all requests
-// share Railway's egress IP, so one abusive client could otherwise log
-// everyone out), or a Supabase-side 5xx. Only a definitive 4xx (invalid /
-// revoked / expired token) should end the session.
-function isTransientAuthError(err: { status?: number } | null): boolean {
-  if (!err) return false
-  const status = err.status ?? 0
-  return status === 0 || status === 429 || status >= 500
 }
 
 function clearAndRedirect(request: NextRequest) {

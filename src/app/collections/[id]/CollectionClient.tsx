@@ -4,9 +4,10 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2 } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
+import { copyToClipboard } from '@/lib/clipboard'
 
 type Collection = { id: string; title: string; type: string; cover_url: string | null }
 type CollectionItem = {
@@ -236,6 +237,37 @@ export default function CollectionClient({ collection, initialItems, allProjects
     }
   }
 
+  // ── Share link ────────────────────────────────────────────────────────────────
+  // Copies the public /share/album/<token> player link. The API mints the token
+  // on first use, so this works for collections created before migration 019.
+  const [shareCopied, setShareCopied] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  async function copyShareLink() {
+    if (sharing) return
+    setSharing(true)
+    try {
+      const res = await fetch(`/api/collections/${collection.id}/share`, { method: 'POST' })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.share_token) {
+        flashError('Could not create the share link — try again.')
+        return
+      }
+      const url = `${window.location.origin}/share/album/${data.share_token}`
+      if (await copyToClipboard(url)) {
+        setShareCopied(true)
+        setTimeout(() => setShareCopied(false), 2000)
+      } else {
+        // Clipboard blocked (insecure origin / some iOS webviews) — surface the
+        // link so Share isn't a silent dead button.
+        alert(`Couldn't copy automatically. Copy this link:\n${url}`)
+      }
+    } catch {
+      flashError('Could not create the share link — try again.')
+    } finally {
+      setSharing(false)
+    }
+  }
+
   // ── Export tracklist as Markdown ──────────────────────────────────────────────
   // Copies the collection's ordered tracklist as one Markdown doc (heading +
   // track count + numbered tracks) so it can leave the app — release notes, a
@@ -355,6 +387,18 @@ export default function CollectionClient({ collection, initialItems, allProjects
               >
                 <Play size={14} fill="currentColor" />
                 <span className="hidden sm:inline">Play All</span>
+              </button>
+            )}
+            {items.length > 0 && (
+              <button
+                onClick={copyShareLink}
+                disabled={sharing}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-60"
+                style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+                title={shareCopied ? 'Link copied!' : 'Copy public share link'}
+              >
+                {shareCopied ? <Check size={14} /> : <Share2 size={14} />}
+                <span className="hidden sm:inline">{shareCopied ? 'Copied!' : 'Share'}</span>
               </button>
             )}
             {items.length > 0 && (

@@ -152,6 +152,16 @@ alter table mb_collection_items disable row level security;
 -- Add cover_url if it was created before this column existed
 alter table mb_collections add column if not exists cover_url text;
 
+-- Migration 019: collection-level share token (public /share/album/<token> player)
+alter table mb_collections
+  add column if not exists share_token text unique default replace(gen_random_uuid()::text, '-', '');
+
+update mb_collections
+set share_token = replace(gen_random_uuid()::text, '-', '')
+where share_token is null;
+
+create index if not exists idx_collections_share_token on mb_collections(share_token);
+
 create index if not exists idx_collection_items_collection on mb_collection_items(collection_id);
 create index if not exists idx_collection_items_position on mb_collection_items(collection_id, position);
 
