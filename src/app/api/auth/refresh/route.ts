@@ -25,6 +25,14 @@ export async function POST(request: NextRequest) {
   const { data, error } = await refreshSessionOnce(refreshToken)
 
   if (error || !data.session) {
+    // Transient failure (network status 0, 429 rate limit, Supabase 5xx) —
+    // the session is NOT dead. Keep the cookies and tell the client to retry
+    // later. Clearing cookies here logged users out on every Supabase blip.
+    const status = error?.status ?? 0
+    if (status === 0 || status === 429 || status >= 500) {
+      return NextResponse.json({ error: 'Auth service unavailable', code: 'RETRY_LATER' }, { status: 503 })
+    }
+
     // Session is truly expired — clear cookies so the client redirects to login
     const res = NextResponse.json({ error: 'Session expired', code: 'SESSION_EXPIRED' }, { status: 401 })
     res.cookies.delete('sb-access-token')

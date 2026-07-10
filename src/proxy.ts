@@ -84,6 +84,25 @@ function setSessionCookies(
   res.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: SESSION_MAX_AGE })
 }
 
+function isRouterPrefetch(request: NextRequest): boolean {
+  return (
+    request.headers.get('next-router-prefetch') !== null ||
+    request.headers.get('next-router-segment-prefetch') !== null ||
+    request.headers.get('purpose') === 'prefetch'
+  )
+}
+
+// A refresh error we must NOT treat as "session is dead": network failure
+// (supabase-js reports these as status 0), rate limiting (429 — all requests
+// share Railway's egress IP, so one abusive client could otherwise log
+// everyone out), or a Supabase-side 5xx. Only a definitive 4xx (invalid /
+// revoked / expired token) should end the session.
+function isTransientAuthError(err: { status?: number } | null): boolean {
+  if (!err) return false
+  const status = err.status ?? 0
+  return status === 0 || status === 429 || status >= 500
+}
+
 function clearAndRedirect(request: NextRequest) {
   // Router prefetches must NEVER receive the login redirect: the client router
   // caches redirect results per-URL and replays them on later real clicks —
@@ -93,11 +112,7 @@ function clearAndRedirect(request: NextRequest) {
   // 401 and leave both the redirect and the cookie clearing to a real
   // navigation. (Clearing cookies from a background prefetch could also kill a
   // session that a concurrent tab just refreshed.)
-  if (
-    request.headers.get('next-router-prefetch') !== null ||
-    request.headers.get('next-router-segment-prefetch') !== null ||
-    request.headers.get('purpose') === 'prefetch'
-  ) {
+  if (isRouterPrefetch(request)) {
     return new NextResponse(null, { status: 401, headers: { 'cache-control': 'no-store' } })
   }
 
@@ -234,6 +249,16 @@ export async function proxy(request: NextRequest) {
     return clearAndRedirect(request)
   }
 
+  // Prefetches never trigger a token refresh. The router re-issues prefetches
+  // continuously, so a tab whose refresh token is dead would otherwise hammer
+  // Supabase's token endpoint forever (from Railway's single egress IP that
+  // can rate-limit auth for every user at once). Drop the prefetch with a
+  // bare 401 — the real navigation will refresh (single-flighted) and either
+  // succeed or take the login redirect.
+  if (isRouterPrefetch(request)) {
+    return new NextResponse(null, { status: 401, headers: { 'cache-control': 'no-store' } })
+  }
+
   try {
     // Single-flight: concurrent requests with the same expired token share one
     // refresh call, avoiding refresh-token rotation races (random logouts).
@@ -248,10 +273,12 @@ export async function proxy(request: NextRequest) {
       return res
     }
 
-    // Upstream auth outage (5xx) is not a dead session — treat it like the
-    // network errors below instead of logging the user out. Only 4xx
-    // (invalid/revoked/expired token) is a definitive failure.
-    if (refreshError && (refreshError.status ?? 0) >= 500) throw refreshError
+    // A transient failure (network status 0, 429 rate limit, Supabase 5xx) is
+    // not a dead session — treat it like the network errors below instead of
+    // logging the user out. Only a definitive 4xx (invalid/revoked/expired
+    // token) ends the session. supabase-js RETURNS these errors rather than
+    // throwing, so without this check a blip would clear everyone's cookies.
+    if (refreshError && isTransientAuthError(refreshError)) throw refreshError
 
     // Refresh definitively failed (token revoked / truly expired)
     return clearAndRedirect(request)
@@ -272,7 +299,13 @@ export async function proxy(request: NextRequest) {
       requestHeaders.set('X-User-Id', userId)
       return NextResponse.next({ request: { headers: requestHeaders } })
     }
-    return clearAndRedirect(request)
+    // Transient failure and we can't even read a user id from the old token:
+    // send them to login but do NOT clear cookies — the refresh token may be
+    // perfectly valid, and the next request (or the login page's own session
+    // check) can still use it.
+    return request.nextUrl.pathname.startsWith('/api/')
+      ? NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      : NextResponse.redirect(new URL('/login', request.url))
   }
 }
 

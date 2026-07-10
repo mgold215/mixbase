@@ -35,6 +35,35 @@ export default function LoginPage() {
     if (new URLSearchParams(window.location.search).get('reset') === '1') setResetDone(true)
   }, [])
 
+  // Self-heal: if a still-authenticated user lands here (e.g. a stale client
+  // router cache replaying an old login redirect, or a transient auth blip
+  // mid-navigation), verify the session server-side and hard-bounce back to
+  // the app instead of making them "log in" again. The full-page navigation
+  // also flushes whatever cached redirect sent them here. A sessionStorage
+  // counter guards against any pathological login<->dashboard loop.
+  useEffect(() => {
+    if (!document.cookie.includes('sb-authed=1')) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/auth/me')
+        if (cancelled || !res.ok) return
+        // Loop guard: >3 bounces within a minute means the dashboard keeps
+        // sending us back — stop and show the form. (Timestamped because the
+        // page unloads on redirect, so nothing else can reset the counter.)
+        let n = 0, t = 0
+        try { ({ n = 0, t = 0 } = JSON.parse(sessionStorage.getItem('mb-login-bounce') ?? '{}')) } catch {}
+        const now = Date.now()
+        if (now - t < 60_000 && n >= 3) return
+        sessionStorage.setItem('mb-login-bounce', JSON.stringify({ n: now - t < 60_000 ? n + 1 : 1, t: now }))
+        window.location.replace('/dashboard')
+      } catch {
+        // network error — just show the login form
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setLoading(true)
