@@ -104,7 +104,11 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
     const audio = audioRef.current
     if (!audio) return
     setCurrentTime(0)
-    setDuration(tracks[index]?.duration ?? 0)
+    // Prefer the element's real duration when metadata already loaded (its
+    // durationchange can fire before our listeners attach); fall back to the
+    // stored value so the time readout isn't blank while the file loads.
+    const loaded = audio.duration
+    setDuration(Number.isFinite(loaded) && loaded > 0 ? loaded : tracks[index]?.duration ?? 0)
     if (pendingPlay.current) {
       pendingPlay.current = false
       audio.play().catch(() => {})
@@ -268,7 +272,8 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
           <div className="w-full max-w-xs space-y-5">
             <div className="flex items-center gap-3">
               <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
-                {formatDuration(Math.floor(currentTime))}
+                {/* formatDuration renders 0 as "--:--"; before playback starts 0:00 is correct */}
+                {currentTime >= 1 ? formatDuration(Math.floor(currentTime)) : '0:00'}
               </span>
               <div className="flex-1 relative h-1.5 rounded-full bg-white/15 overflow-hidden">
                 <div
