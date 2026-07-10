@@ -108,6 +108,7 @@ async function runJob(job: VideoJob, args: StartJobArgs) {
       color: args.color,
       startSec: args.startSec,
       clipSeconds: args.clipSeconds,
+      fallbackAudioSeconds: args.fallbackAudioSeconds,
       onProgress: (frac, stage) => {
         job.progress = Math.min(0.95, frac)
         job.stage = stage

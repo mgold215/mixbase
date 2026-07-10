@@ -57,6 +57,12 @@ export type BuildVideoArgs = {
   startSec?: number
   /** Shorts only: clip length in seconds (15/30/60). */
   clipSeconds?: number
+  /**
+   * Duration recorded at upload time (mb_versions.duration_seconds). Used when
+   * ffprobe can't read a duration from the audio container (VBR MP3s without
+   * a Xing header, odd WAV/M4A headers) — the file usually still decodes fine.
+   */
+  fallbackAudioSeconds?: number
   onProgress?: RenderProgress
 }
 
@@ -135,7 +141,7 @@ async function probeJson(file: string): Promise<{
   })
 }
 
-export async function probeDuration(file: string): Promise<number> {
+export async function probeDuration(file: string, label = 'media'): Promise<number> {
   const info = await probeJson(file)
   const fromFormat = parseFloat(info.format?.duration ?? '')
   if (Number.isFinite(fromFormat) && fromFormat > 0) return fromFormat
@@ -143,7 +149,7 @@ export async function probeDuration(file: string): Promise<number> {
     const d = parseFloat(s.duration ?? '')
     if (Number.isFinite(d) && d > 0) return d
   }
-  throw new Error('Could not determine media duration')
+  throw new Error(`Could not determine ${label} duration`)
 }
 
 async function download(url: string, dest: string): Promise<void> {
@@ -177,7 +183,17 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
     const audioFile = join(dir, 'audio.input')
     await Promise.all([download(visualizerUrl, vizFile), download(audioUrl, audioFile)])
 
-    const [vizDur, audioDur] = await Promise.all([probeDuration(vizFile), probeDuration(audioFile)])
+    const [vizDur, audioDur] = await Promise.all([
+      probeDuration(vizFile, 'visualizer'),
+      probeDuration(audioFile, 'audio').catch(err => {
+        // Some uploads (VBR MP3 without a Xing header, quirky WAV/M4A) carry
+        // no readable duration metadata but still decode fine — fall back to
+        // the duration measured client-side at upload instead of failing.
+        const fallback = args.fallbackAudioSeconds ?? 0
+        if (fallback > 0) return fallback
+        throw err
+      }),
+    ])
     if (vizDur < 0.5) throw new Error('Visualizer clip is too short to loop')
 
     // ── Output timing ───────────────────────────────────────────────────────

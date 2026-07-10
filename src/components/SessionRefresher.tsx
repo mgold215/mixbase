@@ -68,12 +68,16 @@ export default function SessionRefresher() {
         if (cancelled) return
         if (res.ok) {
           arm()
-        } else {
+        } else if (res.status === 401) {
           // Refresh token expired/revoked — cookies were cleared by the server.
           // Hard navigation (not router.push): it resets the client router
           // cache, which may hold login redirects for routes requested while
           // the session died — an SPA nav would replay those after re-login.
           window.location.assign('/login')
+        } else {
+          // 503/anything else — Supabase blip or rate limit; the session is
+          // still alive server-side. Retry, never log the user out for this.
+          timer = setTimeout(fire, 30_000)
         }
       } catch {
         // Network error — don't redirect; proxy handles this gracefully.

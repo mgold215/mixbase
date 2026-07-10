@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
     color,
     startSec,
     clipSeconds,
+    fallbackAudioSeconds: version.duration_seconds ?? undefined,
   })
   if (!started.ok) {
     // No render actually started, so give back the rate-limit credit consumed
