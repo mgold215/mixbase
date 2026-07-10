@@ -123,6 +123,38 @@ export function isMissingUsageRpc(error: { code?: string; message?: string } | n
   return error?.code === 'PGRST202' || !!error?.message?.includes('try_increment_usage')
 }
 
+// ── Migration 019: collection share token ────────────────────────────────────
+// The public /share/album/[token] page and the collection Share button both
+// select mb_collections.share_token. A deploy can reach production before the
+// migration runs; heal on the specific missing-column failure and retry.
+
+const COLLECTION_SHARE_SQL = `
+alter table mb_collections
+  add column if not exists share_token text unique default replace(gen_random_uuid()::text, '-', '');
+update mb_collections
+set share_token = replace(gen_random_uuid()::text, '-', '')
+where share_token is null;
+create index if not exists idx_collections_share_token on mb_collections(share_token);`
+
+let collectionShareEnsured: Promise<boolean> | null = null
+
+export function ensureCollectionShareToken(): Promise<boolean> {
+  if (!collectionShareEnsured) {
+    collectionShareEnsured = runQuery(COLLECTION_SHARE_SQL, 'mb_collections share_token')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) collectionShareEnsured = null
+        return ok
+      })
+  }
+  return collectionShareEnsured
+}
+
+/** True when a PostgREST error is the missing-column failure ensureCollectionShareToken heals. */
+export function isMissingCollectionShareToken(error: { message?: string } | null): boolean {
+  return !!error?.message?.includes('share_token')
+}
+
 const VERSION_INDEX_SQL = `
 create unique index if not exists mb_versions_project_version_uidx
   on public.mb_versions (project_id, version_number);`
