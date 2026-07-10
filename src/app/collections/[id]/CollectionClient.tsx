@@ -4,10 +4,11 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2 } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2, Pencil } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
 import { copyToClipboard } from '@/lib/clipboard'
+import AlbumPlayer, { type AlbumPlayerTrack } from '@/components/AlbumPlayer'
 
 type Collection = { id: string; title: string; type: string; cover_url: string | null }
 type CollectionItem = {
@@ -17,7 +18,14 @@ type CollectionItem = {
   position: number
   mb_projects: { title: string; artwork_url: string | null; genre: string | null } | null
 }
-type Project = { id: string; title: string; artwork_url: string | null }
+type Project = { id: string; title: string; genre?: string | null; artwork_url: string | null }
+
+// Latest-version playback data per project, keyed by project id (server-built).
+export type TrackMeta = {
+  audioUrl: string | null
+  duration: number | null
+  visualizerUrl: string | null
+}
 
 // User-facing type labels live in collection-export.ts so the pill and the
 // exported document can't drift apart.
@@ -28,12 +36,18 @@ type Props = {
   collection: Collection
   initialItems: CollectionItem[]
   allProjects: Project[]
+  trackMeta: Record<string, TrackMeta>
+  artistName: string
 }
 
-export default function CollectionClient({ collection, initialItems, allProjects }: Props) {
+export default function CollectionClient({ collection, initialItems, allProjects, trackMeta, artistName }: Props) {
   const router = useRouter()
   const { playTrack } = usePlayer()
   const [items, setItems] = useState(initialItems)
+  // Player view is the default experience (same look as the public share
+  // page); Edit switches to the management list. Empty collections start in
+  // edit mode so there's something to do.
+  const [view, setView] = useState<'player' | 'edit'>(initialItems.length > 0 ? 'player' : 'edit')
   const [showPicker, setShowPicker] = useState(false)
   const [showCoverPicker, setShowCoverPicker] = useState(false)
   const [search, setSearch] = useState('')
@@ -169,7 +183,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
       setItems(prev => [...prev, {
         ...newItem,
         mb_projects: project
-          ? { title: project.title, artwork_url: project.artwork_url, genre: null }
+          ? { title: project.title, artwork_url: project.artwork_url, genre: project.genre ?? null }
           : null,
       }])
     }
@@ -299,17 +313,103 @@ export default function CollectionClient({ collection, initialItems, allProjects
     !coverSearch.trim() || m.title.toLowerCase().includes(coverSearch.toLowerCase())
   )
 
+  const errorToast = error ? (
+    <div
+      className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
+      style={{ backgroundColor: 'var(--surface)', color: '#f87171', border: '1px solid var(--surface-2)' }}
+      role="alert"
+    >
+      {error}
+    </div>
+  ) : null
+
+  // ── Player view (default): same experience as the public share page ────────────
+  const playerTracks: AlbumPlayerTrack[] = items.map(item => {
+    const meta = trackMeta[item.project_id]
+    return {
+      id: item.project_id,
+      title: item.mb_projects?.title ?? 'Untitled',
+      genre: item.mb_projects?.genre ?? null,
+      artworkUrl: item.mb_projects?.artwork_url ?? null,
+      visualizerUrl: meta?.visualizerUrl ?? null,
+      audioUrl: meta?.audioUrl ?? null,
+      duration: meta?.duration ?? null,
+    }
+  })
+
+  if (view === 'player' && items.length > 0) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col pb-28 md:pb-6">
+        {errorToast}
+
+        {/* Toolbar */}
+        <div className="relative z-20 w-full max-w-6xl mx-auto px-5 sm:px-8 pt-4 flex items-center gap-2">
+          <Link
+            href="/collections"
+            className="p-1.5 rounded-lg transition-colors text-white/50 hover:text-white"
+            title="Back to collections"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <span
+            className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+          >
+            {TYPE_LABEL[type] ?? type}
+          </span>
+          <span className="flex-1" />
+          <button
+            onClick={copyShareLink}
+            disabled={sharing}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-60"
+            style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+            title={shareCopied ? 'Link copied!' : 'Copy public share link'}
+          >
+            {shareCopied ? <Check size={14} /> : <Share2 size={14} />}
+            <span className="hidden sm:inline">{shareCopied ? 'Copied!' : 'Share'}</span>
+          </button>
+          <button
+            onClick={exportTracklist}
+            className="p-2 rounded-lg transition-colors"
+            style={{ color: exported ? 'var(--accent)' : 'rgba(255,255,255,0.5)' }}
+            title={exported ? 'Copied!' : 'Export tracklist as Markdown'}
+          >
+            {exported ? <Check size={16} /> : <FileText size={16} />}
+          </button>
+          <button
+            onClick={() => setView('edit')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition-colors text-white/70 hover:text-white"
+            style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+            title="Edit tracks, cover, and details"
+          >
+            <Pencil size={13} />
+            <span className="hidden sm:inline">Edit</span>
+          </button>
+          <button
+            onClick={deleteCollection}
+            className="p-2 rounded-lg transition-colors text-white/40 hover:text-white/70"
+            title="Delete collection"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+
+        <AlbumPlayer
+          title={collection.title}
+          typeLabel={TYPE_LABEL[type] ?? type}
+          coverUrl={coverUrl}
+          artistName={artistName}
+          tracks={playerTracks}
+          sourceId="collection-player"
+        />
+      </div>
+    )
+  }
+
+  // ── Edit view: track management ────────────────────────────────────────────────
   return (
     <div className="min-h-screen pb-36 md:pb-12" style={{ backgroundColor: 'var(--bg-page)' }}>
-      {error && (
-        <div
-          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
-          style={{ backgroundColor: 'var(--surface)', color: '#f87171', border: '1px solid var(--surface-2)' }}
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {errorToast}
       <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-16 sm:pt-20">
 
         {/* Header */}
@@ -381,24 +481,13 @@ export default function CollectionClient({ collection, initialItems, allProjects
           <div className="flex items-center gap-2 flex-shrink-0 mt-1">
             {items.length > 0 && (
               <button
-                onClick={() => playTrack(items[0].project_id)}
+                onClick={() => setView('player')}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                title="Back to the player"
               >
                 <Play size={14} fill="currentColor" />
-                <span className="hidden sm:inline">Play All</span>
-              </button>
-            )}
-            {items.length > 0 && (
-              <button
-                onClick={copyShareLink}
-                disabled={sharing}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
-                title={shareCopied ? 'Link copied!' : 'Copy public share link'}
-              >
-                {shareCopied ? <Check size={14} /> : <Share2 size={14} />}
-                <span className="hidden sm:inline">{shareCopied ? 'Copied!' : 'Share'}</span>
+                <span className="hidden sm:inline">Done</span>
               </button>
             )}
             {items.length > 0 && (
