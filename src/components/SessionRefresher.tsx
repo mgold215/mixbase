@@ -39,6 +39,21 @@ export default function SessionRefresher() {
     let timer: ReturnType<typeof setTimeout> | undefined
     let cancelled = false
 
+    // The single scheduling point for the next fire(). It ALWAYS clears any
+    // pending timer first, so one can never be orphaned. This matters because
+    // fire() is async: while it awaits the refresh fetch, onWake() → arm() can
+    // set a fresh timer; if the retry branches below did a bare
+    // `timer = setTimeout(...)` (as they used to), they'd overwrite that
+    // reference without clearing it, leaving a live orphan and forking a second
+    // self-perpetuating 30s retry loop — multiplying with each wake and
+    // hammering /api/auth/refresh during exactly the outage the backoff exists
+    // to ride out. Routing every schedule through here eliminates that class.
+    function schedule(delayMs: number) {
+      if (cancelled) return
+      clearTimeout(timer)
+      timer = setTimeout(fire, delayMs)
+    }
+
     function arm() {
       if (cancelled || !isAuthed()) return
       const expiresAt = getExpiresAt()
@@ -47,8 +62,7 @@ export default function SessionRefresher() {
       const nowS = Math.floor(Date.now() / 1000)
       const jitterS = Math.random() * MAX_JITTER_S
       const delayMs = Math.max(0, (expiresAt - nowS - REFRESH_BEFORE_EXPIRY_S - jitterS) * 1000)
-      clearTimeout(timer)
-      timer = setTimeout(fire, delayMs)
+      schedule(delayMs)
     }
 
     async function fire() {
@@ -77,11 +91,11 @@ export default function SessionRefresher() {
         } else {
           // 503/anything else — Supabase blip or rate limit; the session is
           // still alive server-side. Retry, never log the user out for this.
-          timer = setTimeout(fire, 30_000)
+          schedule(30_000)
         }
       } catch {
         // Network error — don't redirect; proxy handles this gracefully.
-        if (!cancelled) timer = setTimeout(fire, 30_000)
+        schedule(30_000)
       }
     }
 

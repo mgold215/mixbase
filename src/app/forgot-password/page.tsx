@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-browser'
+import { isTransientAuthError } from '@/lib/auth-errors'
 
 const STYLES = `
   @keyframes fadeUp {
@@ -34,9 +35,14 @@ export default function ForgotPasswordPage() {
       redirectTo: `${window.location.origin}/reset-password`,
     })
 
-    // Always show the same confirmation whether or not the email exists — never
-    // reveal which addresses have accounts (avoids account enumeration).
-    if (error && error.status && error.status >= 500) {
+    // Only a TRANSIENT failure (network status 0, rate-limit 429, Supabase 5xx)
+    // means the reset email may not have gone out — surface a retry instead of a
+    // false "we've sent a link". Every other outcome (success, or a definitive
+    // 4xx) shows the same enumeration-safe confirmation, so account existence is
+    // never revealed. The old `>= 500`-only check (plus the `error.status &&`
+    // truthiness guard, which also dropped status 0) reported a false success on
+    // an offline submit or a rate-limited request.
+    if (isTransientAuthError(error)) {
       setError('Something went wrong. Please try again.')
       setLoading(false)
       return
