@@ -8,7 +8,7 @@ import {
   ensureProjectVisualizerColumn,
   isMissingVisualizerColumn,
 } from '@/lib/schema-heal'
-import AlbumShareClient, { type ShareTrack } from './AlbumShareClient'
+import AlbumPlayer, { type AlbumPlayerTrack } from '@/components/AlbumPlayer'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,7 +74,7 @@ async function getAlbumShareData(token: string) {
     if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
   }
 
-  const tracks: ShareTrack[] = rows.flatMap(row => {
+  const tracks: AlbumPlayerTrack[] = rows.flatMap(row => {
     // supabase-js types the to-one join as an array; at runtime it's an object.
     const p = row.mb_projects as unknown as ProjectRow | null
     const version = latestByProject.get(row.project_id)
@@ -139,12 +139,14 @@ export default async function AlbumSharePage({ params }: { params: Promise<{ tok
         </span>
       </header>
 
-      <AlbumShareClient
+      <AlbumPlayer
         title={data.title}
         typeLabel={data.typeLabel}
         coverUrl={data.coverUrl}
         artistName={data.artistName}
         tracks={data.tracks}
+        sourceId="album-share-player"
+        footnote="Shared privately via mixBASE"
       />
     </div>
   )

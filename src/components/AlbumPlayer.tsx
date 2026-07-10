@@ -8,13 +8,19 @@ import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, onOtherSourcePlay } from '@/lib/audio-coordinator'
 
-export type ShareTrack = {
+// Full-album player used by both the public /share/album/[token] page and the
+// logged-in collection view: blurred backdrop + accent theme that follow the
+// current track, transport with auto-advance, and a tracklist with per-track
+// artwork. Tracks without an uploaded mix (audioUrl null) are listed but
+// muted — playback and auto-advance skip over them.
+
+export type AlbumPlayerTrack = {
   id: string
   title: string
   genre: string | null
   artworkUrl: string | null
   visualizerUrl: string | null
-  audioUrl: string
+  audioUrl: string | null
   duration: number | null
 }
 
@@ -23,13 +29,20 @@ type Props = {
   typeLabel: string
   coverUrl: string | null
   artistName: string
-  tracks: ShareTrack[]
+  tracks: AlbumPlayerTrack[]
+  /** audio-coordinator source id — unique per mount site */
+  sourceId?: string
+  /** small line under the tracklist, e.g. "Shared privately via mixBASE" */
+  footnote?: string | null
 }
 
-export default function AlbumShareClient({ title, typeLabel, coverUrl, artistName, tracks }: Props) {
+export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tracks, sourceId = 'album-player', footnote }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const vizVideoRef = useRef<HTMLVideoElement | null>(null)
-  const [index, setIndex] = useState(0)
+  const [index, setIndex] = useState(() => {
+    const first = tracks.findIndex(t => t.audioUrl)
+    return first === -1 ? 0 : first
+  })
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -38,18 +51,31 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
   // (row click, next/prev, auto-advance) — a plain src swap alone stays paused.
   const pendingPlay = useRef(false)
 
-  const current: ShareTrack | undefined = tracks[index]
+  const current: AlbumPlayerTrack | undefined = tracks[index]
   const displayArt = current?.artworkUrl ?? coverUrl
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
 
-  // Total runtime for the header — only shown when every track reported one,
-  // so a missing duration can't display as a too-short total.
+  // Total runtime for the header — only shown when every playable track
+  // reported one, so a missing duration can't display as a too-short total.
   const totalDuration = useMemo(() => {
-    if (tracks.length === 0 || tracks.some(t => t.duration == null)) return null
-    return tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0)
+    const playable = tracks.filter(t => t.audioUrl)
+    if (playable.length === 0 || playable.some(t => t.duration == null)) return null
+    return playable.reduce((sum, t) => sum + (t.duration ?? 0), 0)
   }, [tracks])
 
-  // Keep the muted visualizer loop in step with the audio — same as ShareClient.
+  // Nearest playable track index from `from` in `dir`, or -1. wrap=false stops
+  // at the list edge (used by auto-advance so the album ends after the last song).
+  const findPlayable = useCallback((from: number, dir: 1 | -1, wrap: boolean): number => {
+    for (let step = 1; step <= tracks.length; step++) {
+      const i = from + dir * step
+      if (!wrap && (i < 0 || i >= tracks.length)) return -1
+      const wrapped = ((i % tracks.length) + tracks.length) % tracks.length
+      if (tracks[wrapped]?.audioUrl) return wrapped
+    }
+    return -1
+  }, [tracks])
+
+  // Keep the muted visualizer loop in step with the audio.
   useEffect(() => {
     const v = vizVideoRef.current
     if (!v) return
@@ -71,12 +97,13 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
     if (!audio) return
     const onTime = () => setCurrentTime(audio.currentTime)
     const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
-    const onPlay = () => { setIsPlaying(true); announcePlay('album-share-player') }
+    const onPlay = () => { setIsPlaying(true); announcePlay(sourceId) }
     const onPause = () => setIsPlaying(false)
     const onEnded = () => {
-      if (index < tracks.length - 1) {
+      const next = findPlayable(index, 1, false)
+      if (next !== -1) {
         pendingPlay.current = true
-        setIndex(index + 1)
+        setIndex(next)
       } else {
         setIsPlaying(false)
       }
@@ -87,7 +114,7 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
     audio.addEventListener('pause', onPause)
     audio.addEventListener('ended', onEnded)
     // Pause when another source (the app's shared player) starts playing.
-    const unsubscribe = onOtherSourcePlay('album-share-player', () => audio.pause())
+    const unsubscribe = onOtherSourcePlay(sourceId, () => audio.pause())
     return () => {
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('durationchange', onDuration)
@@ -96,7 +123,7 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
       audio.removeEventListener('ended', onEnded)
       unsubscribe()
     }
-  }, [index, tracks.length])
+  }, [index, findPlayable, sourceId])
 
   // After a track change commits (new src is on the element), start playback
   // if the change came from an explicit play intent.
@@ -118,7 +145,7 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
 
   const playTrackAt = useCallback((i: number) => {
     const track = tracks[i]
-    if (!track) return
+    if (!track?.audioUrl) return
     if (i === index) {
       const audio = audioRef.current
       if (!audio) return
@@ -141,9 +168,9 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
   const togglePlay = useCallback(() => playTrackAt(index), [playTrackAt, index])
 
   const nextTrack = useCallback(() => {
-    if (tracks.length < 2) return
-    playTrackAt((index + 1) % tracks.length)
-  }, [tracks.length, index, playTrackAt])
+    const next = findPlayable(index, 1, true)
+    if (next !== -1 && next !== index) playTrackAt(next)
+  }, [findPlayable, index, playTrackAt])
 
   const prevTrack = useCallback(() => {
     const audio = audioRef.current
@@ -152,12 +179,10 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
       audio.currentTime = 0
       return
     }
-    if (tracks.length < 2) {
-      if (audio) audio.currentTime = 0
-      return
-    }
-    playTrackAt((index - 1 + tracks.length) % tracks.length)
-  }, [tracks.length, index, playTrackAt])
+    const prev = findPlayable(index, -1, true)
+    if (prev !== -1 && prev !== index) playTrackAt(prev)
+    else if (audio) audio.currentTime = 0
+  }, [findPlayable, index, playTrackAt])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current
@@ -166,8 +191,9 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
   }
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
+  const currentPlayable = !!current?.audioUrl
 
-  // ── Empty state: collection exists but no track has an uploaded mix yet ──
+  // ── Empty state: no tracks at all ──
   if (!current) {
     return (
       <div className="relative flex-1 flex flex-col items-center justify-center gap-6 px-6 py-16">
@@ -181,8 +207,9 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
           )}
         </div>
         <div className="text-center">
-          <p className="text-[11px] uppercase tracking-[0.2em] text-white/35 mb-2">{typeLabel} · {artistName}</p>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-white/35 mb-2">{typeLabel}</p>
           <h1 className="text-2xl font-bold text-white">{title}</h1>
+          <p className="text-sm text-white/40 mt-1">{artistName}</p>
           <p className="text-sm text-white/40 mt-3">No playable tracks yet — check back soon.</p>
         </div>
       </div>
@@ -191,13 +218,15 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
 
   return (
     <div className="relative flex-1 flex flex-col overflow-hidden">
-      <audio
-        ref={audioRef}
-        src={audioProxyUrl(current.audioUrl)}
-        playsInline
-        preload="auto"
-        style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-      />
+      {currentPlayable && (
+        <audio
+          ref={audioRef}
+          src={audioProxyUrl(current.audioUrl!)}
+          playsInline
+          preload="auto"
+          style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+        />
+      )}
 
       {/* Equalizer bars for the playing row */}
       <style>{`@keyframes mb-eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }`}</style>
@@ -262,10 +291,11 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
 
           <div className="text-center max-w-sm">
             <p className="text-[11px] uppercase tracking-[0.2em] text-white/35 mb-1.5">
-              {typeLabel} · {artistName}
+              {typeLabel} · {title}
             </p>
             <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate">{current.title}</h1>
-            <p className="text-sm text-white/40 mt-1 truncate">{title}</p>
+            {/* Artist stays in its natural case — no uppercase transform here */}
+            <p className="text-sm text-white/40 mt-1 truncate">{artistName}</p>
           </div>
 
           {/* Progress + transport */}
@@ -302,7 +332,8 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
               </button>
               <button
                 onClick={togglePlay}
-                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 disabled:opacity-40"
+                disabled={!currentPlayable}
                 style={{
                   background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.7))`,
                   boxShadow: `0 0 40px rgba(${accent[0]},${accent[1]},${accent[2]},0.5), inset 0 1px 0 rgba(255,255,255,0.2)`,
@@ -355,12 +386,14 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
             <div className="py-1.5 lg:max-h-[58vh] lg:overflow-y-auto">
               {tracks.map((track, i) => {
                 const active = i === index
+                const playable = !!track.audioUrl
                 return (
                   <button
                     key={track.id}
                     onClick={() => playTrackAt(i)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.06] group"
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors group ${playable ? 'hover:bg-white/[0.06]' : 'cursor-default'}`}
                     style={active ? { background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.12)` } : undefined}
+                    title={playable ? undefined : 'No mix uploaded yet'}
                   >
                     {/* Index / equalizer / hover play */}
                     <span className="w-5 flex items-center justify-center flex-shrink-0">
@@ -381,18 +414,20 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
                       ) : (
                         <>
                           <span
-                            className="text-xs font-mono tabular-nums group-hover:hidden"
+                            className={`text-xs font-mono tabular-nums ${playable ? 'group-hover:hidden' : ''}`}
                             style={{ color: active ? accentCss : 'rgba(255,255,255,0.35)' }}
                           >
                             {i + 1}
                           </span>
-                          <Play size={12} fill="currentColor" className="hidden group-hover:block text-white" />
+                          {playable && (
+                            <Play size={12} fill="currentColor" className="hidden group-hover:block text-white" />
+                          )}
                         </>
                       )}
                     </span>
 
                     {/* Per-track artwork */}
-                    <span className="relative w-10 h-10 rounded-md overflow-hidden flex-shrink-0 block" style={{ backgroundColor: '#181818' }}>
+                    <span className={`relative w-10 h-10 rounded-md overflow-hidden flex-shrink-0 block ${playable ? '' : 'opacity-50'}`} style={{ backgroundColor: '#181818' }}>
                       {track.artworkUrl ? (
                         <Image src={track.artworkUrl} alt="" fill className="object-cover" unoptimized />
                       ) : (
@@ -405,7 +440,7 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
                     <span className="flex-1 min-w-0 block">
                       <span
                         className="block text-sm font-medium truncate"
-                        style={{ color: active ? accentCss : 'rgba(255,255,255,0.92)' }}
+                        style={{ color: active ? accentCss : playable ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.45)' }}
                       >
                         {track.title}
                       </span>
@@ -415,7 +450,7 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
                     </span>
 
                     <span className="text-[11px] font-mono tabular-nums text-white/35 flex-shrink-0">
-                      {track.duration != null ? formatDuration(track.duration) : ''}
+                      {playable && track.duration != null ? formatDuration(track.duration) : ''}
                     </span>
                   </button>
                 )
@@ -423,9 +458,9 @@ export default function AlbumShareClient({ title, typeLabel, coverUrl, artistNam
             </div>
           </div>
 
-          <p className="text-center text-[11px] text-white/25 mt-4">
-            Shared privately via <span className="text-white/40">mixBASE</span>
-          </p>
+          {footnote && (
+            <p className="text-center text-[11px] text-white/25 mt-4">{footnote}</p>
+          )}
         </div>
       </div>
     </div>
