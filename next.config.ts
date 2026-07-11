@@ -66,6 +66,21 @@ const nextConfig: NextConfig = {
   // relative to node_modules at runtime and break if the bundler inlines them.
   serverExternalPackages: ['@ffmpeg-installer/ffmpeg', '@ffprobe-installer/ffprobe'],
 
+  // Canonicalize www → apex. Session cookies are host-only, so www.mixbase.app
+  // and mixbase.app hold two independent sessions — a user drifting between the
+  // hosts (bookmark vs typed URL) sees phantom logouts and double session churn.
+  // Redirecting before anything else keeps every session on one host.
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'www.mixbase.app' }],
+        destination: 'https://mixbase.app/:path*',
+        permanent: true,
+      },
+    ]
+  },
+
   // Apply security headers to every response
   async headers() {
     return [
