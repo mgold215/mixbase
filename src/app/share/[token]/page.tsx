@@ -1,11 +1,15 @@
 import type { Metadata } from 'next'
+import { cache } from 'react'
 import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
 import ShareClient from './ShareClient'
 
 export const dynamic = 'force-dynamic'
 
-async function getShareData(token: string) {
+// Wrapped in React cache() so generateMetadata and the page component (both
+// called in the same request) share ONE execution instead of running the full
+// project → version → profile query set twice per share-page view.
+const getShareData = cache(async (token: string) => {
   // ── 1. Project-level share token (always resolves to the latest mix) ──
   const { data: project } = await supabaseAdmin
     .from('mb_projects')
@@ -56,7 +60,7 @@ async function getShareData(token: string) {
     if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
   }
   return { version, artistName }
-}
+})
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
   const { token } = await params
