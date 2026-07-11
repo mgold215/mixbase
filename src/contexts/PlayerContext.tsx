@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, us
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 import { applyMediaSession } from '@/lib/media-session'
-import { announcePlay, onOtherSourcePlay } from '@/lib/audio-coordinator'
+import { announcePlay, onOtherSourcePlay, claimMediaSession, canRegisterMediaSession } from '@/lib/audio-coordinator'
 
 export type LoopMode = 'none' | 'all' | 'one'
 
@@ -116,6 +116,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
   // set before play() resolves.
   const mediaMetaRef = useRef<{ title: string; artworkUrl: string | null; artist?: string } | null>(null)
+
+  // Re-registers this player's media-session action handlers. Called from onPlay so
+  // ownership of the lock-screen transport follows whichever audio source played last —
+  // an in-page album player (AlbumPlayer) claims the handlers while it plays, and we
+  // take them back the moment our audio starts again.
+  const registerMediaHandlersRef = useRef<() => void>(() => {})
 
   // Timestamp of last successful track fetch — used to avoid hammering on visibility
   const lastFetchRef = useRef(0)
@@ -237,6 +243,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setIsPlaying(true)
       // Tell other audio sources (share-page player) to pause.
       announcePlay('player-context')
+      // Reclaim the lock-screen transport in case another in-page player (e.g. the
+      // collection album player) took the handlers while it was the active source.
+      claimMediaSession('player-context')
+      registerMediaHandlersRef.current()
       // Re-apply full metadata after iOS activates the audio session — iOS sometimes
       // ignores metadata set before play() resolves, so we push it again on the play event.
       if (mediaMetaRef.current) {
@@ -652,18 +662,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
     }
-    set('play',          () => attemptPlay())
-    set('pause',         () => pause())
-    set('previoustrack', () => prev())
-    set('nexttrack',     () => next())
-    set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
-    // Deliberately DON'T register seekforward/seekbackward. When those handlers are present
-    // iOS shows ±10s skip buttons on the lock screen and hides the next/previous-track
-    // transport. Leaving them unset (null) makes iOS render next/previous-track instead,
-    // which is what we want for a track-based player. 'seekto' still powers the scrubber.
-    set('seekforward',   null)
-    set('seekbackward',  null)
+    const register = () => {
+      set('play',          () => attemptPlay())
+      set('pause',         () => pause())
+      set('previoustrack', () => prev())
+      set('nexttrack',     () => next())
+      set('seekto',        (d) => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
+      // Deliberately DON'T register seekforward/seekbackward. When those handlers are present
+      // iOS shows ±10s skip buttons on the lock screen and hides the next/previous-track
+      // transport. Leaving them unset (null) makes iOS render next/previous-track instead,
+      // which is what we want for a track-based player. 'seekto' still powers the scrubber.
+      set('seekforward',   null)
+      set('seekbackward',  null)
+    }
+    // Only touch the handlers while we own the transport (or nobody does) —
+    // otherwise a re-render here would clobber an album player's next/prev
+    // while it is the active source.
+    if (canRegisterMediaSession('player-context')) register()
+    registerMediaHandlersRef.current = register
     return () => {
+      if (!canRegisterMediaSession('player-context')) return
       ;(['play','pause','previoustrack','nexttrack','seekto','seekbackward','seekforward'] as MediaSessionAction[])
         .forEach(a => set(a, null))
     }
