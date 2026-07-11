@@ -121,19 +121,61 @@ function clearAndRedirect(request: NextRequest) {
   return res
 }
 
-// Fail-closed verification when no local JWT secret is configured in production:
-// validate the token against Supabase directly rather than trusting an unsigned
-// decode. Returns the verified user id, or null if the token is invalid or
-// Supabase is unreachable (caller then treats it as unauthenticated — never
-// trusts unverified claims).
+// Fail-closed verification when the signature can't be checked locally (no
+// SUPABASE_JWT_SECRET, wrong secret, JWKS unreachable): validate the token
+// against Supabase directly rather than trusting an unsigned decode. Returns
+// the verified user id, or null if the token is invalid or Supabase is
+// unreachable (caller then treats it as unauthenticated — never trusts
+// unverified claims).
+//
+// Results are cached per token for a few minutes (on globalThis, shared with
+// every bundle). This path used to be conflated with "token expired", which
+// made the middleware REFRESH the session on every request — rotating the
+// refresh token every few seconds until a reuse race tripped GoTrue's abuse
+// detection and revoked the whole session. That was the "random logout" bug.
+// One getUser per token per few minutes is cheap; a refresh per request is
+// fatal.
+const NETWORK_VERIFY_TTL_MS = 5 * 60 * 1000
+const NETWORK_VERIFY_MAX = 5000
+type VerifyCache = Map<string, { userId: string; at: number }>
+function verifyCache(): VerifyCache {
+  const g = globalThis as Record<string, unknown>
+  if (!g.__mb_verify_cache__) g.__mb_verify_cache__ = new Map()
+  return g.__mb_verify_cache__ as VerifyCache
+}
+
 async function verifyViaNetwork(token: string): Promise<string | null> {
+  const cache = verifyCache()
+  const hit = cache.get(token)
+  if (hit && Date.now() - hit.at < NETWORK_VERIFY_TTL_MS) return hit.userId
   try {
     const { data, error } = await supabaseAdmin.auth.getUser(token)
     if (error || !data.user) return null
+    if (cache.size >= NETWORK_VERIFY_MAX) {
+      for (const key of cache.keys()) {
+        if (cache.size < NETWORK_VERIFY_MAX) break
+        cache.delete(key)
+      }
+    }
+    cache.set(token, { userId: data.user.id, at: Date.now() })
     return data.user.id
   } catch {
     return null
   }
+}
+
+// Loud one-time (per reason, per boot) diagnostic so Railway logs say WHY local
+// verification is being bypassed instead of silently degrading.
+const warnedReasons = new Set<string>()
+function warnUnverifiable(detail: string) {
+  if (warnedReasons.has(detail)) return
+  warnedReasons.add(detail)
+  console.error(
+    `[proxy] Access token signature could NOT be verified locally (${detail}). ` +
+      'Falling back to cached Supabase getUser() verification. If this appears with a ' +
+      'SUPABASE_JWT_SECRET set, the secret is wrong or the project has migrated to ' +
+      'asymmetric JWT signing keys — check Supabase → Settings → API → JWT keys.',
+  )
 }
 
 async function withAdminCheck(
@@ -207,19 +249,34 @@ export async function proxy(request: NextRequest) {
   let tokenExpired = false
 
   if (accessToken) {
-    if (JWT_KEY || !IS_PROD) {
-      // Local signature verification (or, in dev without a secret, legacy decode).
-      const check = await verifyAccessToken(accessToken, JWT_KEY)
+    const check = await verifyAccessToken(accessToken, JWT_KEY)
+
+    if (check.reason === 'valid') {
       userId = check.userId
-      tokenExpired = check.expired
+    } else if (check.reason === 'expired') {
+      // Signature verified (or, without a key, self-reported exp): genuinely
+      // stale — the refresh path below is the correct response.
+      userId = check.userId
+      tokenExpired = true
+    } else if (check.reason === 'unverifiable') {
+      // The token is NOT known to be expired — we just couldn't check the
+      // signature locally (wrong/missing secret, JWKS blip). Refreshing here
+      // would fire on EVERY request and melt the session (see verifyToken.ts),
+      // so confirm identity via a cached network check instead.
+      if (IS_PROD) {
+        warnUnverifiable(JWT_KEY ? 'secret/alg mismatch' : 'no SUPABASE_JWT_SECRET')
+        userId = await verifyViaNetwork(accessToken)
+        // Network says the token is bad (or Supabase unreachable): fall through
+        // to the refresh path, which distinguishes transient from definitive.
+        tokenExpired = userId === null
+      } else {
+        // Dev without a secret: legacy decode-only trust.
+        userId = check.userId
+        tokenExpired = check.expired
+      }
     } else {
-      // Production without a JWT secret: fail closed. Verify against Supabase
-      // instead of trusting an unsigned decode. A failure (invalid token or
-      // Supabase unreachable) yields null → treated as unauthenticated, never
-      // trusted. This is a safety net; the fix is to set SUPABASE_JWT_SECRET.
-      const networkUserId = await verifyViaNetwork(accessToken)
-      userId = networkUserId
-      tokenExpired = networkUserId === null
+      // malformed — never trust it; try the refresh path.
+      tokenExpired = true
     }
   }
 
