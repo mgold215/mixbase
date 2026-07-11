@@ -6,7 +6,7 @@ import { Play, Pause, Music, MessageSquare, ChevronDown } from 'lucide-react'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
-import { announcePlay, onOtherSourcePlay } from '@/lib/audio-coordinator'
+import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coordinator'
 import FeedbackForm from '@/components/FeedbackForm'
 import type { Version } from '@/lib/supabase'
 
@@ -58,8 +58,8 @@ export default function ShareClient({ version }: Props) {
     const onTime = () => setCurrentTime(audio.currentTime)
     const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
     const onPlay = () => { setIsPlaying(true); announcePlay('share-player') }
-    const onPause = () => setIsPlaying(false)
-    const onEnded = () => setIsPlaying(false)
+    const onPause = () => { setIsPlaying(false); announceStop('share-player') }
+    const onEnded = () => { setIsPlaying(false); announceStop('share-player') }
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('durationchange', onDuration)
     audio.addEventListener('play', onPlay)
@@ -68,6 +68,8 @@ export default function ShareClient({ version }: Props) {
     // Pause when another source (the app's shared player) starts playing.
     const unsubscribe = onOtherSourcePlay('share-player', () => audio.pause())
     return () => {
+      // Unmount kills this player's audio without a 'pause' event.
+      announceStop('share-player')
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('durationchange', onDuration)
       audio.removeEventListener('play', onPlay)

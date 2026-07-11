@@ -7,18 +7,34 @@
 // play path (clicks, media-session, iOS auto-resume retries).
 
 const EVT = 'mixbase:audio-play'
+const STOP_EVT = 'mixbase:audio-stop'
 
 export function announcePlay(sourceId: string) {
   window.dispatchEvent(new CustomEvent<string>(EVT, { detail: sourceId }))
 }
 
 /** Subscribe `pause` to fire whenever a different source starts playing. Returns unsubscribe. */
-export function onOtherSourcePlay(sourceId: string, pause: () => void): () => void {
+export function onOtherSourcePlay(sourceId: string, pause: (otherSourceId: string) => void): () => void {
   const handler = (e: Event) => {
-    if ((e as CustomEvent<string>).detail !== sourceId) pause()
+    const other = (e as CustomEvent<string>).detail
+    if (other !== sourceId) pause(other)
   }
   window.addEventListener(EVT, handler)
   return () => window.removeEventListener(EVT, handler)
+}
+
+/** Announce that a source stopped (pause / ended / unmount) so the UI can react —
+ *  e.g. the mini player hides while an in-page album player is the active source
+ *  and reappears once it stops. */
+export function announceStop(sourceId: string) {
+  window.dispatchEvent(new CustomEvent<string>(STOP_EVT, { detail: sourceId }))
+}
+
+/** Subscribe to stop announcements from any source. Returns unsubscribe. */
+export function onSourceStop(handler: (sourceId: string) => void): () => void {
+  const listener = (e: Event) => handler((e as CustomEvent<string>).detail)
+  window.addEventListener(STOP_EVT, listener)
+  return () => window.removeEventListener(STOP_EVT, listener)
 }
 
 // ── Media-session transport ownership ───────────────────────────────────────

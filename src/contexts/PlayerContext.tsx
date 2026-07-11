@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, us
 import type { Track } from '@/app/api/tracks/route'
 import { audioProxyUrl } from '@/lib/supabase'
 import { applyMediaSession } from '@/lib/media-session'
-import { announcePlay, onOtherSourcePlay, claimMediaSession, canRegisterMediaSession } from '@/lib/audio-coordinator'
+import { announcePlay, onOtherSourcePlay, onSourceStop, claimMediaSession, canRegisterMediaSession } from '@/lib/audio-coordinator'
 
 export type LoopMode = 'none' | 'all' | 'one'
 
@@ -18,6 +18,11 @@ type PlayerCtx = {
   /** True while the engine is buffering/seeking with intent to play — use to show a spinner
    *  instead of a fake "playing" animation. */
   buffering: boolean
+  /** True while a different in-page audio source (collection album player, share-page
+   *  player) is actively playing. The mini player hides itself then — its transport
+   *  drives THIS engine's app-wide queue, so showing it next to an album player invites
+   *  a "next" that jumps to the wrong (non-collection) track. */
+  externalSourceActive: boolean
   currentTime: number
   duration: number
   volume: number
@@ -63,6 +68,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
+  // Which other in-page audio source is actively playing (null = none). Set when a
+  // different source announces play, cleared when it announces stop or our audio plays.
+  const [externalSource, setExternalSource] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolumeState] = useState(0.85)
@@ -241,6 +249,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onPlay = () => {
       // Optimistic: the engine is running. 'playing'/'waiting' refine buffering below.
       setIsPlaying(true)
+      // Our audio is the active source again — no external player is playing.
+      setExternalSource(null)
       // Tell other audio sources (share-page player) to pause.
       announcePlay('player-context')
       // Reclaim the lock-screen transport in case another in-page player (e.g. the
@@ -399,10 +409,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // ── Pause when another audio source starts playing (e.g. share-page player).
   // Must clear play intent too, or the iOS visibility/stalled recovery effects
   // would immediately resurrect playback.
-  useEffect(() => onOtherSourcePlay('player-context', () => {
+  useEffect(() => onOtherSourcePlay('player-context', (otherSourceId) => {
     playIntentRef.current = false
     pendingPlayRef.current = false
     audioRef.current?.pause()
+    setExternalSource(otherSourceId)
+  }), [])
+
+  // Clear the external-source flag once that source stops (pause/ended/unmount)
+  // so the mini player can reappear.
+  useEffect(() => onSourceStop(sourceId => {
+    setExternalSource(cur => (cur === sourceId ? null : cur))
   }), [])
 
   // ── stalled / interrupted recovery — iOS can silently pause audio
@@ -695,6 +712,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       currentTrack,
       isPlaying,
       buffering,
+      externalSourceActive: externalSource !== null,
       currentTime,
       duration,
       volume,

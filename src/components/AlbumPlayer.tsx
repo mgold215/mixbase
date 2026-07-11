@@ -6,7 +6,7 @@ import { Play, Pause, Music, SkipBack, SkipForward } from 'lucide-react'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
-import { announcePlay, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
+import { announcePlay, announceStop, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
 
 // Full-album player used by both the public /share/album/[token] page and the
 // logged-in collection view: blurred backdrop + accent theme that follow the
@@ -118,6 +118,9 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   // lock screen keeps controls wired to a player that no longer exists.
   // PlayerContext re-registers on its next 'play' (or effect re-run).
   useEffect(() => () => {
+    // Navigating away kills this player's audio without a 'pause' event —
+    // announce the stop so the mini player can reappear.
+    announceStop(sourceId)
     if (!ownsMediaSession(sourceId)) return
     releaseMediaSession(sourceId)
     if (!('mediaSession' in navigator)) return
@@ -153,6 +156,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     }
     const onPause = () => {
       setIsPlaying(false)
+      announceStop(sourceId)
       if (ownsMediaSession(sourceId) && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     }
     const onEnded = () => {
@@ -162,6 +166,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
         setIndex(next)
       } else {
         setIsPlaying(false)
+        announceStop(sourceId)
       }
     }
     audio.addEventListener('timeupdate', onTime)

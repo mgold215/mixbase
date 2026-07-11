@@ -13,6 +13,7 @@ import {
   buildMailto, copyToClipboard, renderTemplate, splitSubjectBody, loadTemplate, saveTemplate,
   resetTemplate, DEFAULT_TEMPLATE, curatorsToCsv, parseCuratorCsv, EXAMPLE_CSV,
 } from '@/lib/submit'
+import { trackShareUrl } from '@/lib/share-url'
 
 const TYPES: CuratorType[] = ['label', 'playlist', 'blog', 'radio', 'influencer', 'other']
 const METHODS: ContactMethod[] = ['form', 'email', 'soundcloud', 'instagram', 'twitter', 'other']
@@ -94,8 +95,7 @@ export default function SubmitClient({
 
   function shareUrlFor(s: Song | undefined): string {
     if (!s?.share_token) return ''
-    const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    return `${origin}/share/${s.share_token}`
+    return trackShareUrl(s.share_token)
   }
 
   async function refreshCurators() {

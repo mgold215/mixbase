@@ -155,7 +155,7 @@ export default async function Home() {
           style={{ background: 'radial-gradient(ellipse 70% 50% at 50% 40%, rgba(45,212,191,0.07) 0%, transparent 70%)' }}
         />
         <div className="relative max-w-3xl mx-auto text-center px-4 pt-20 pb-24">
-          <p className="text-xs uppercase tracking-[0.2em] mb-4" style={{ color: '#4ade80' }}>ROUGH-TO-RELEASE</p>
+          <p className="text-xs uppercase tracking-[0.2em] mb-4 text-emerald-400">ROUGH-TO-RELEASE</p>
           <h1 className="text-5xl sm:text-6xl leading-tight" style={{ fontFamily: 'var(--font-bebas)' }}>
             Version control for your music
           </h1>
