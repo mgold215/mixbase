@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { cache } from 'react'
 import { notFound } from 'next/navigation'
 import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
@@ -20,7 +21,11 @@ type ProjectRow = {
   visualizer_url?: string | null
 }
 
-async function getAlbumShareData(token: string) {
+// Wrapped in React cache() so generateMetadata and the page component (which
+// both call this in the same request) share ONE execution — supabase-js isn't
+// deduped by Next the way built-in fetch() is, so without this the full
+// collection → items → versions → profile query set runs twice per view.
+const getAlbumShareData = cache(async (token: string) => {
   const fetchCollection = () =>
     supabaseAdmin.from('mb_collections').select('*').eq('share_token', token).single()
 
@@ -95,7 +100,7 @@ async function getAlbumShareData(token: string) {
   const typeLabel = COLLECTION_TYPE_LABEL[collection.type as string] ?? 'Album'
 
   return { title: collection.title as string, typeLabel, coverUrl, artistName, tracks }
-}
+})
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
   const { token } = await params
