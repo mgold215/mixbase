@@ -6,7 +6,7 @@ import { Play, Pause, Music, SkipBack, SkipForward } from 'lucide-react'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
-import { announcePlay, onOtherSourcePlay } from '@/lib/audio-coordinator'
+import { announcePlay, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
 
 // Full-album player used by both the public /share/album/[token] page and the
 // logged-in collection view: blurred backdrop + accent theme that follow the
@@ -50,6 +50,9 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   // Set when a track change should start playback once the new src is committed
   // (row click, next/prev, auto-advance) — a plain src swap alone stays paused.
   const pendingPlay = useRef(false)
+  // Latest transport callbacks for the media-session handlers, which are
+  // registered once per 'play' event and must not go stale between renders.
+  const controlsRef = useRef({ next: () => {}, prev: () => {}, toggle: () => {} })
 
   const current: AlbumPlayerTrack | undefined = tracks[index]
   const displayArt = current?.artworkUrl ?? coverUrl
@@ -90,15 +93,68 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     }
   }, [displayArt])
 
+  // Claim the lock-screen / headphone transport for THIS player: without this,
+  // "next" from the lock screen drives PlayerContext's app-wide queue instead
+  // of the album. Called on every 'play' event; PlayerContext takes the
+  // handlers back the moment its own audio plays.
+  const claimTransport = useCallback(() => {
+    claimMediaSession(sourceId)
+    if (!('mediaSession' in navigator)) return
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* unsupported */ }
+    }
+    set('play',          () => { audioRef.current?.play().catch(() => {}) })
+    set('pause',         () => { audioRef.current?.pause() })
+    set('previoustrack', () => controlsRef.current.prev())
+    set('nexttrack',     () => controlsRef.current.next())
+    set('seekto',        d => { if (d.seekTime != null && audioRef.current) audioRef.current.currentTime = d.seekTime })
+    // No seekforward/seekbackward: registering them makes iOS show ±10s skip
+    // buttons instead of next/previous-track (same gotcha as PlayerContext).
+    set('seekforward',   null)
+    set('seekbackward',  null)
+  }, [sourceId])
+
+  // On unmount, hand the transport back if we still hold it — otherwise the
+  // lock screen keeps controls wired to a player that no longer exists.
+  // PlayerContext re-registers on its next 'play' (or effect re-run).
+  useEffect(() => () => {
+    if (!ownsMediaSession(sourceId)) return
+    releaseMediaSession(sourceId)
+    if (!('mediaSession' in navigator)) return
+    ;(['play', 'pause', 'previoustrack', 'nexttrack', 'seekto'] as MediaSessionAction[]).forEach(a => {
+      try { navigator.mediaSession.setActionHandler(a, null) } catch { /* unsupported */ }
+    })
+  }, [sourceId])
+
   // Wire audio events. Depends on `index` so onEnded always advances from the
   // track that actually finished (re-binding on change is cheap).
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
-    const onTime = () => setCurrentTime(audio.currentTime)
+    const track = tracks[index]
+    const onTime = () => {
+      setCurrentTime(audio.currentTime)
+      // Keep the lock-screen scrubber honest while we hold the transport.
+      if (ownsMediaSession(sourceId) && 'mediaSession' in navigator) {
+        const d = audio.duration
+        if (Number.isFinite(d) && d > 0) {
+          try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(audio.currentTime, d), playbackRate: 1 }) } catch { /* position race */ }
+        }
+      }
+    }
     const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
-    const onPlay = () => { setIsPlaying(true); announcePlay(sourceId) }
-    const onPause = () => setIsPlaying(false)
+    const onPlay = () => {
+      setIsPlaying(true)
+      announcePlay(sourceId)
+      claimTransport()
+      // Re-apply metadata on every play so auto-advance updates the lock
+      // screen too (playTrackAt only covers explicit taps).
+      if (track) applyMediaSession(track.title, track.artworkUrl ?? coverUrl, true, artistName)
+    }
+    const onPause = () => {
+      setIsPlaying(false)
+      if (ownsMediaSession(sourceId) && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+    }
     const onEnded = () => {
       const next = findPlayable(index, 1, false)
       if (next !== -1) {
@@ -123,7 +179,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       audio.removeEventListener('ended', onEnded)
       unsubscribe()
     }
-  }, [index, findPlayable, sourceId])
+  }, [index, tracks, findPlayable, sourceId, claimTransport, coverUrl, artistName])
 
   // After a track change commits (new src is on the element), start playback
   // if the change came from an explicit play intent.
@@ -183,6 +239,12 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     if (prev !== -1 && prev !== index) playTrackAt(prev)
     else if (audio) audio.currentTime = 0
   }, [findPlayable, index, playTrackAt])
+
+  // Keep the media-session handlers pointed at fresh callbacks — they're
+  // registered once per 'play' event, not per render.
+  useEffect(() => {
+    controlsRef.current = { next: nextTrack, prev: prevTrack, toggle: togglePlay }
+  }, [nextTrack, prevTrack, togglePlay])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current
