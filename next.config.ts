@@ -78,6 +78,16 @@ const nextConfig: NextConfig = {
         destination: 'https://mixbase.app/:path*',
         permanent: true,
       },
+      // Same canonicalization for the raw Railway production domain — nobody
+      // should ever see (or re-share) a *.up.railway.app URL. API routes are
+      // deliberately excluded: Railway's healthcheck and any API client pinned
+      // to the deployment URL must keep answering in place.
+      {
+        source: '/:path((?!api/).*)',
+        has: [{ type: 'host', value: 'mixbase-production.up.railway.app' }],
+        destination: 'https://mixbase.app/:path',
+        permanent: true,
+      },
     ]
   },
 

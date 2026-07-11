@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
+import { trackShareUrl } from '@/lib/share-url'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
 import Nav from '@/components/Nav'
@@ -208,7 +209,7 @@ function PlayerPage() {
 
   const handleShare = useCallback(() => {
     if (!current?.share_token) return
-    const url = `${window.location.origin}/share/${current.share_token}`
+    const url = trackShareUrl(current.share_token)
     copyToClipboard(url).then(ok => {
       if (ok) {
         setCopied(true)

@@ -8,6 +8,7 @@ import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { trackShareUrl } from '@/lib/share-url'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -125,7 +126,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   async function copyShareLink() {
     if (!project.share_token) return
-    const url = `${window.location.origin}/share/${project.share_token}`
+    const url = trackShareUrl(project.share_token)
     // copyToClipboard tries the async API then a hidden-textarea fallback, so we
     // only flash "Copied!" when the text actually made it to the clipboard.
     if (await copyToClipboard(url)) {

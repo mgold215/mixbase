@@ -33,6 +33,7 @@ const PUBLIC_PATHS = [
   '/terms',
   '/dmca',
   '/share/',
+  '/album/', // canonical public album share player (token-addressed)
   '/auth/callback',
   '/api/auth/signup',
   '/api/auth/logout',

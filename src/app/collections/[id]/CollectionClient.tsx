@@ -8,6 +8,7 @@ import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIco
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
 import { copyToClipboard } from '@/lib/clipboard'
+import { albumShareUrl } from '@/lib/share-url'
 import AlbumPlayer, { type AlbumPlayerTrack } from '@/components/AlbumPlayer'
 
 type Collection = { id: string; title: string; type: string; cover_url: string | null }
@@ -252,7 +253,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
   }
 
   // ── Share link ────────────────────────────────────────────────────────────────
-  // Copies the public /share/album/<token> player link. The API mints the token
+  // Copies the public album player link. The API mints the token
   // on first use, so this works for collections created before migration 019.
   const [shareCopied, setShareCopied] = useState(false)
   const [sharing, setSharing] = useState(false)
@@ -266,7 +267,10 @@ export default function CollectionClient({ collection, initialItems, allProjects
         flashError('Could not create the share link — try again.')
         return
       }
-      const url = `${window.location.origin}/share/album/${data.share_token}`
+      // The API builds the canonical mixbase.app/album/<artist>/<title>/<token>
+      // URL server-side; never use window.location.origin here — it leaks the
+      // Railway host when the app is opened via the deployment URL.
+      const url: string = data.url ?? albumShareUrl(null, collection.title, data.share_token)
       if (await copyToClipboard(url)) {
         setShareCopied(true)
         setTimeout(() => setShareCopied(false), 2000)
