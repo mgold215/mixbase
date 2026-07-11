@@ -3,6 +3,7 @@
 //
 // Design goals (modeled on KREAM-style melodic-house visualizers and the
 // standard club-visual toolkit — beat pulses, strobe punches, VHS, glitch,
+// drone flyovers, 2.5-D parallax, kaleidoscope mirrors, warp-zoom bursts,
 // film grain, vignette):
 //
 //  - SEAMLESS LOOPS. Every motion curve is periodic over t ∈ [0, 1): all
@@ -29,11 +30,15 @@
 
 export type EffectId =
   | 'kenburns'
+  | 'drone'
+  | 'parallax'
   | 'dust'
   | 'pulse'
   | 'strobe'
+  | 'zoomblur'
   | 'liquid'
   | 'orbit'
+  | 'kaleido'
   | 'vhs'
   | 'glitch'
 
@@ -237,6 +242,25 @@ function makeTintLayer(
   return { layer, w, h }
 }
 
+// Hand-rolled rounded-rect path — ctx.roundRect is too new to rely on in every
+// recording browser, and the Node test stubs only see generic method calls.
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + w, y, x + w, y + h, r)
+  ctx.arcTo(x + w, y + h, x, y + h, r)
+  ctx.arcTo(x, y + h, x, y, r)
+  ctx.arcTo(x, y, x + w, y, r)
+  ctx.closePath()
+}
+
 // ── Effects ─────────────────────────────────────────────────────────────────
 
 const kenburns: EffectDef = {
@@ -257,6 +281,152 @@ const kenburns: EffectDef = {
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, panY)
       drawVignette(ctx, p.W, p.H, 0.42, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.07, fr)
+    }
+  },
+}
+
+const drone: EffectDef = {
+  label: 'Drone Shot',
+  description: 'Aerial dive & climb, banked turns',
+  beatSynced: false,
+  create(p) {
+    const rng = mulberry32(p.seed)
+    const phase = rng() * Math.PI * 2
+    const grain = makeGrainLayer(p.createLayer, rng)
+    const vig: VignetteCache = {}
+    const rotMax = 0.045 // banking ~2.6°
+    // Extra zoom so the banked (rotated) cover never shows a corner
+    const ratio = Math.max(p.W / p.H, p.H / p.W)
+    const bleed = Math.cos(rotMax) + ratio * Math.sin(rotMax)
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
+      fillBg(ctx, p.W, p.H)
+      // Altitude: smoothstepped sine — the dive accelerates in, eases out.
+      // alt 0 = high & wide, alt 1 = low flyover (pushed in).
+      const u = 0.5 + 0.5 * loopSin(t, 1, phase)
+      const alt = u * u * (3 - 2 * u)
+      const scale = bleed * (1.04 + 0.42 * alt)
+      // Sweep across the artwork — amplitude grows with the zoom margin, so
+      // the low pass glides far while the high shot barely drifts. Banking
+      // follows the sweep's velocity (its cosine), like a drone leaning into
+      // the turn.
+      const zoomExtra = scale - bleed
+      const panX = 0.25 * zoomExtra * p.W * loopSin(t, 2, phase + 0.9)
+      const panY = 0.15 * zoomExtra * p.H * loopSin(t, 1, phase + 2.6)
+      const rot = rotMax * loopSin(t, 2, phase + 0.9 + Math.PI / 2)
+      // Micro-vibration — the handheld/props shimmer that sells "drone"
+      const jx = (fr() - 0.5) * 0.0015 * p.W
+      const jy = (fr() - 0.5) * 0.0015 * p.H
+      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX + jx, panY + jy, rot)
+      // Zoom smear while the dive is moving fast (|d alt/dt| peaks mid-sine)
+      const speed = Math.abs(loopSin(t, 1, phase + Math.PI / 2))
+      const echoA = 0.16 * speed
+      if (echoA > 0.02) {
+        drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.02, panX + jx, panY + jy, rot, echoA)
+        drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.04, panX + jx, panY + jy, rot, echoA * 0.5)
+      }
+      // Cool atmospheric haze at altitude, burning off as the drone dives
+      const haze = 0.07 * (1 - alt)
+      if (haze > 0.005) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'screen'
+        ctx.globalAlpha = haze
+        ctx.fillStyle = 'rgb(180,200,255)'
+        ctx.fillRect(0, 0, p.W, p.H)
+        ctx.restore()
+      }
+      drawVignette(ctx, p.W, p.H, 0.45, vig)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+    }
+  },
+}
+
+const parallax: EffectDef = {
+  label: 'Depth Float',
+  description: 'Art floats over blurred depth',
+  beatSynced: false,
+  create(p) {
+    const rng = mulberry32(p.seed)
+    const phase = rng() * Math.PI * 2
+    const grain = makeGrainLayer(p.createLayer, rng)
+    const vig: VignetteCache = {}
+    // Backdrop blur: two bilinear downscale passes ≈ cheap gaussian; the
+    // upscale at draw time keeps it soft. Pre-rendered once — only the pan
+    // animates, so no per-frame cost.
+    const aW = Math.max(8, Math.round(p.W / 4))
+    const aH = Math.max(8, Math.round(p.H / 4))
+    const a = p.createLayer(aW, aH)
+    drawCover(a.ctx, p.image, p.imageWidth, p.imageHeight, aW, aH, 1)
+    const bW = Math.max(4, Math.round(aW / 3))
+    const bH = Math.max(4, Math.round(aH / 3))
+    const b = p.createLayer(bW, bH)
+    b.ctx.drawImage(a.canvas, 0, 0, aW, aH, 0, 0, bW, bH)
+    // Foreground card: the artwork contain-fit, floating over its own blur
+    const imgAspect = p.imageWidth / p.imageHeight
+    let cardW = p.W * 0.52
+    let cardH = cardW / imgAspect
+    const maxH = p.H * 0.6
+    if (cardH > maxH) {
+      cardH = maxH
+      cardW = cardH * imgAspect
+    }
+    const corner = Math.min(cardW, cardH) * 0.045
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
+      fillBg(ctx, p.W, p.H)
+      const bgPanX = 0.035 * p.W * loopSin(t, 1, phase + 1.1)
+      const bgPanY = 0.02 * p.H * loopSin(t, 1, phase + 3.3)
+      drawCover(ctx, b.canvas, bW, bH, p.W, p.H, 1.16 + 0.04 * loopSin(t, 1, phase), bgPanX, bgPanY)
+      ctx.save()
+      ctx.globalAlpha = 0.34
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.restore()
+      // Card drifts counter to the backdrop — that opposition is the parallax
+      const px = -0.55 * bgPanX
+      const py = 0.02 * p.H * loopSin(t, 2, phase + 4.2)
+      const tilt = 0.035 * loopSin(t, 1, phase + 5.1)
+      const cs = 1 + 0.022 * loopSin(t, 1, phase + 2.4)
+      // Soft ground shadow under the card
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.translate(p.W / 2 + px * 1.15, p.H / 2 + py + cardH * 0.62 * cs)
+      ctx.scale(1, 0.22)
+      const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, cardW * 0.75)
+      sg.addColorStop(0, 'rgba(0,0,0,0.55)')
+      sg.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = sg
+      ctx.fillRect(-cardW, -cardW, cardW * 2, cardW * 2)
+      ctx.restore()
+      // The card itself: rounded clip, artwork, sheen sweep, hairline edge
+      ctx.save()
+      ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.translate(p.W / 2 + px, p.H / 2 + py)
+      ctx.rotate(tilt)
+      ctx.scale(cs, cs)
+      roundRectPath(ctx, -cardW / 2, -cardH / 2, cardW, cardH, corner)
+      ctx.clip()
+      ctx.drawImage(p.image, -cardW / 2, -cardH / 2, cardW, cardH)
+      // Diagonal light sheen crossing the card once per loop (enters and
+      // exits fully off-card, so the wrap jump is invisible)
+      const sheenX = (-1.5 + 3 * t) * cardW
+      const g = ctx.createLinearGradient(sheenX - cardW * 0.35, -cardH / 2, sheenX + cardW * 0.35, cardH / 2)
+      g.addColorStop(0, 'rgba(255,255,255,0)')
+      g.addColorStop(0.5, 'rgba(255,255,255,0.14)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.globalCompositeOperation = 'screen'
+      ctx.fillStyle = g
+      ctx.fillRect(-cardW / 2, -cardH / 2, cardW, cardH)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)'
+      ctx.lineWidth = Math.max(1, 0.004 * Math.min(cardW, cardH))
+      roundRectPath(ctx, -cardW / 2, -cardH / 2, cardW, cardH, corner)
+      ctx.stroke()
+      ctx.restore()
+      drawVignette(ctx, p.W, p.H, 0.5, vig)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
   },
 }
@@ -401,6 +571,52 @@ const strobe: EffectDef = {
   },
 }
 
+const zoomblur: EffectDef = {
+  label: 'Warp Zoom',
+  description: 'Radial warp bursts on the beat',
+  beatSynced: true,
+  create(p) {
+    const rng = mulberry32(p.seed)
+    const phase = rng() * Math.PI * 2
+    const grain = makeGrainLayer(p.createLayer, rng)
+    const vig: VignetteCache = {}
+    const beats = snapBeats(p.duration, p.bpm)
+    const bars = Math.max(1, Math.round(beats / 4))
+    const red = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#ff0040')
+    const cyan = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#00e0ff')
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
+      fillBg(ctx, p.W, p.H)
+      const kick = beatPulse(t, beats, 5)
+      // Longer bar-level swell so downbeats detonate harder than every kick.
+      // Gentler decay than the default — dies to ~0.01 before the wrap, which
+      // is invisible at these alpha levels but keeps the tail long and warpy.
+      const surge = beatPulse(t, bars, 4.5)
+      const e = Math.min(1, 0.3 * kick + 0.8 * surge)
+      const scale = 1.1 + 0.05 * kick + 0.02 * loopSin(t, 1, phase)
+      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale)
+      if (e > 0.02) {
+        // Radial smear: stacked enlarged ghosts with a slight vortex twist
+        const steps = 5
+        for (let i = 1; i <= steps; i++) {
+          const k = i / steps
+          const ga = 0.22 * e * (1 - k * 0.55)
+          drawCover(
+            ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
+            scale * (1 + 0.14 * e * k), 0, 0, 0.02 * e * k, ga,
+          )
+        }
+        // Spectral fringe: red pulled outward, cyan pushed inward
+        const d = 1 + 0.05 * e
+        drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale * d, 0, 0, 0, 0.3 * e, 'screen')
+        drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale / d, 0, 0, 0, 0.3 * e, 'screen')
+      }
+      drawVignette(ctx, p.W, p.H, 0.4, vig)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+    }
+  },
+}
+
 const liquid: EffectDef = {
   label: 'Liquid',
   description: 'Slow underwater ripple',
@@ -454,6 +670,69 @@ const orbit: EffectDef = {
       const panX = 0.012 * p.W * loopSin(t, 1, phase + 4.1)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, 0, rot)
       drawVignette(ctx, p.W, p.H, 0.48, vig)
+      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+    }
+  },
+}
+
+const kaleido: EffectDef = {
+  label: 'Kaleidoscope',
+  description: 'Mirrored prism, slow spin',
+  beatSynced: false,
+  create(p) {
+    const rng = mulberry32(p.seed)
+    const phase = rng() * Math.PI * 2
+    const grain = makeGrainLayer(p.createLayer, rng)
+    const vig: VignetteCache = {}
+    const src = p.createLayer(p.W, p.H)
+    // Only the CENTER half-size region of the rotating source is sampled, so
+    // the zoom just has to keep the inscribed circle of the rotated cover
+    // over that region (plus pan): scale ≥ 2·(quarter-diagonal + pan) / minDim.
+    const minDim = Math.min(p.W, p.H)
+    const panAmp = 0.045 * minDim
+    const s0 = (2 * (Math.hypot(p.W, p.H) / 4 + panAmp)) / minDim
+    return (ctx, t, frame) => {
+      const fr = frameRng(p.seed, frame)
+      // One full revolution per loop — inherently seamless
+      const rot = Math.PI * 2 * t
+      const scale = s0 * (1.06 + 0.05 * loopSin(t, 2, phase))
+      const panX = panAmp * loopSin(t, 1, phase + 1.8)
+      const panY = panAmp * 0.7 * loopSin(t, 2, phase + 3.7)
+      fillBg(src.ctx, p.W, p.H)
+      drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, panY, rot)
+      // Four-way mirror of the source's center region
+      fillBg(ctx, p.W, p.H)
+      const hw = p.W / 2
+      const hh = p.H / 2
+      const sx = p.W / 4
+      const sy = p.H / 4
+      ctx.drawImage(src.canvas, sx, sy, hw, hh, 0, 0, hw, hh)
+      ctx.save()
+      ctx.translate(p.W, 0)
+      ctx.scale(-1, 1)
+      ctx.drawImage(src.canvas, sx, sy, hw, hh, 0, 0, hw, hh)
+      ctx.restore()
+      ctx.save()
+      ctx.translate(0, p.H)
+      ctx.scale(1, -1)
+      ctx.drawImage(src.canvas, sx, sy, hw, hh, 0, 0, hw, hh)
+      ctx.restore()
+      ctx.save()
+      ctx.translate(p.W, p.H)
+      ctx.scale(-1, -1)
+      ctx.drawImage(src.canvas, sx, sy, hw, hh, 0, 0, hw, hh)
+      ctx.restore()
+      // Soft bloom at the mirror seam's center where all four folds meet
+      const g = ctx.createRadialGradient(hw, hh, 0, hw, hh, minDim * 0.4)
+      g.addColorStop(0, 'rgba(255,255,255,0.10)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.7 + 0.3 * loopSin(t, 3, phase + 0.5)
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.restore()
+      drawVignette(ctx, p.W, p.H, 0.42, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
   },
@@ -595,11 +874,15 @@ const glitch: EffectDef = {
 // Registry — insertion order is the UI display order.
 export const EFFECTS: Record<EffectId, EffectDef> = {
   kenburns,
+  drone,
+  parallax,
   dust,
   pulse,
   strobe,
+  zoomblur,
   liquid,
   orbit,
+  kaleido,
   vhs,
   glitch,
 }
