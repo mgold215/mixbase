@@ -15,11 +15,14 @@ const MINIPLAYER_STYLES = `
 `
 
 export default function MiniPlayer() {
-  const { currentTrack, isPlaying, buffering, currentTime, duration, togglePlay, seek, next, prev } = usePlayer()
+  const { currentTrack, isPlaying, buffering, currentTime, duration, togglePlay, seek, next, prev, externalSourceActive } = usePlayer()
   const pathname = usePathname()
 
-  // Hide on the full player page or when nothing is loaded
-  if (!currentTrack || pathname.startsWith('/player')) return null
+  // Hide on the full player page, when nothing is loaded, or while another in-page
+  // player (collection album player, share-page player) is the active audio source —
+  // this transport drives the app-wide queue, so tapping "next" here while a
+  // collection is playing would jump to the wrong track and hijack playback.
+  if (!currentTrack || externalSourceActive || pathname.startsWith('/player')) return null
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 

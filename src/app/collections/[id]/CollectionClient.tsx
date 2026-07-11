@@ -43,7 +43,7 @@ type Props = {
 
 export default function CollectionClient({ collection, initialItems, allProjects, trackMeta, artistName }: Props) {
   const router = useRouter()
-  const { playTrack } = usePlayer()
+  const { playTrack, setQueue } = usePlayer()
   const [items, setItems] = useState(initialItems)
   // Player view is the default experience (same look as the public share
   // page); Edit switches to the management list. Empty collections start in
@@ -714,7 +714,12 @@ export default function CollectionClient({ collection, initialItems, allProjects
               {/* Actions — draggable={false} prevents the row's drag from swallowing clicks */}
               <button
                 draggable={false}
-                onClick={() => playTrack(item.project_id)}
+                onClick={() => {
+                  // Playing from a collection: next/prev/auto-advance must follow the
+                  // collection's track order, not the app-wide list.
+                  setQueue(items.map(i => i.project_id))
+                  playTrack(item.project_id)
+                }}
                 className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all flex-shrink-0"
                 style={{ color: 'var(--accent)' }}
                 title="Play"
