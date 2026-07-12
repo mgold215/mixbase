@@ -1,6 +1,8 @@
 import { SUPABASE_URL } from '@/lib/supabase'
 
-// Runtime self-heal for the additive mb_projects.visualizer_url column.
+// Runtime self-heal for the additive mb_projects visualizer pin columns
+// (visualizer_url from migration 015, visualizer_wide_url from 020 — one heal
+// adds both since they always travel together).
 //
 // Migrations normally land via supabase/migrations + /api/db-init, but a deploy
 // can reach production before either has run — and PostgREST rejects the WHOLE
@@ -10,7 +12,9 @@ import { SUPABASE_URL } from '@/lib/supabase'
 // uses. The ALTER is idempotent (add column if not exists) and the promise is
 // memoized per process so it runs at most once per deploy.
 
-const ALTER_SQL = 'alter table mb_projects add column if not exists visualizer_url text;'
+const ALTER_SQL =
+  'alter table mb_projects add column if not exists visualizer_url text;' +
+  ' alter table mb_projects add column if not exists visualizer_wide_url text;'
 
 let ensured: Promise<boolean> | null = null
 
@@ -42,7 +46,9 @@ async function runAlter(): Promise<boolean> {
 
 /** True when a PostgREST error is the missing-column failure this module heals. */
 export function isMissingVisualizerColumn(error: { message?: string } | null): boolean {
-  return !!error?.message?.includes('visualizer_url')
+  // Matches either pin column ('visualizer_wide_url' does NOT contain the
+  // substring 'visualizer_url', so both are checked explicitly).
+  return !!error?.message && /visualizer(_wide)?_url/.test(error.message)
 }
 
 // ── mf-video bucket size limit (migration 016) ──────────────────────────────

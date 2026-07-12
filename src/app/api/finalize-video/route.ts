@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 import { finalVideoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
 import { startVideoJob, getVideoJob } from '@/lib/video-jobs'
@@ -51,17 +52,37 @@ export async function POST(request: NextRequest) {
     ? body.start_sec : 0
 
   // Everything renders from server-side state, never client-supplied URLs —
-  // same rule as finalize-artwork.
-  const { data: project, error: projectError } = await supabaseAdmin
-    .from('mb_projects')
-    .select('title, visualizer_url')
-    .eq('id', project_id)
-    .eq('user_id', userId)
-    .single()
+  // same rule as finalize-artwork. visualizer_wide_url can predate migration
+  // 020 on prod: heal + retry, and if the heal can't run (no Mgmt token) fall
+  // back to selecting only the vertical pin so finalize keeps working.
+  type ProjectPins = { title: string | null; visualizer_url: string | null; visualizer_wide_url?: string | null }
+  const selectProject = async (withWide: boolean) => {
+    const { data, error } = await supabaseAdmin
+      .from('mb_projects')
+      .select(`title, visualizer_url${withWide ? ', visualizer_wide_url' : ''}`)
+      .eq('id', project_id)
+      .eq('user_id', userId)
+      .single()
+    return { data: data as ProjectPins | null, error }
+  }
+  let { data: project, error: projectError } = await selectProject(true)
+  if (projectError && isMissingVisualizerColumn(projectError)) {
+    if (await ensureProjectVisualizerColumn()) {
+      ({ data: project, error: projectError } = await selectProject(true))
+    } else {
+      ({ data: project, error: projectError } = await selectProject(false))
+    }
+  }
   if (projectError || !project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
-  if (!project.visualizer_url) {
+  // Each output renders from the pin in its own orientation — horizontal for
+  // the full-length 16:9, vertical for the Short — falling back to the other
+  // pin (cover-cropped by the renderer) so projects with one pin still work.
+  const vertical = project.visualizer_url ?? null
+  const wide = project.visualizer_wide_url ?? null
+  const sourceUrl = format === 'youtube' ? (wide ?? vertical) : (vertical ?? wide)
+  if (!sourceUrl) {
     return NextResponse.json({ error: 'Pin a visualizer to this project first (Visualizer tab)' }, { status: 400 })
   }
   if (!project.title) {
@@ -95,14 +116,14 @@ export async function POST(request: NextRequest) {
   // that isn't a Supabase Storage URL (their only legitimate shape). Belt-and-
   // suspenders alongside the write-site checks in /api/versions and PATCH
   // /api/projects — this also covers any row written before those checks existed.
-  if (!isSupabaseStorageUrl(project.visualizer_url) || !isSupabaseStorageUrl(version.audio_url)) {
+  if (!isSupabaseStorageUrl(sourceUrl) || !isSupabaseStorageUrl(version.audio_url)) {
     return NextResponse.json({ error: 'Media source is not a valid storage URL' }, { status: 400 })
   }
 
   const started = startVideoJob({
     userId,
     projectId: project_id,
-    visualizerUrl: project.visualizer_url,
+    visualizerUrl: sourceUrl,
     audioUrl: version.audio_url,
     title: project.title,
     artist,
