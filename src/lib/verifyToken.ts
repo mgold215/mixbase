@@ -144,15 +144,25 @@ export async function verifyAccessToken(
     }
   }
 
-  // No secret configured (or an alg we don't handle): decode-only. Report the
-  // token's own expiry so obviously-stale tokens still take the refresh path,
-  // but flag it unverifiable so the claims are never trusted for identity.
+  // No secret configured (or an alg we don't handle, e.g. {alg:'none'}):
+  // decode-only, so the signature was NOT checked. `expired` still reports the
+  // token's own `exp` so the dev decode-only path can slide a stale session
+  // forward — but the reason stays 'unverifiable', NEVER 'expired'.
+  //
+  // SECURITY: 'expired' means "signature verified, just past exp" and the
+  // middleware trusts that token's `sub` as X-User-Id on the strength of the
+  // verified signature. Labeling an UNVERIFIED token 'expired' here (which the
+  // old `selfExpired ? 'expired' : …` did) let a forged {alg:'none'} token — or
+  // ANY token while SUPABASE_JWT_SECRET is unset — carry an attacker-chosen
+  // `sub` into that trusted branch and impersonate a user during a transient
+  // refresh error. An unverifiable token must be confirmed by a network
+  // getUser() in prod, not trusted, so it always routes through 'unverifiable'.
   const nowS = Math.floor(Date.now() / 1000)
   const selfExpired = exp !== null && exp < nowS
   return {
     userId: sub,
     expired: selfExpired,
     verified: false,
-    reason: selfExpired ? 'expired' : 'unverifiable',
+    reason: 'unverifiable',
   }
 }

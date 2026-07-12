@@ -716,8 +716,11 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 draggable={false}
                 onClick={() => {
                   // Playing from a collection: next/prev/auto-advance must follow the
-                  // collection's track order, not the app-wide list.
-                  setQueue(items.map(i => i.project_id))
+                  // collection's track order, not the app-wide list. Only queue tracks
+                  // that actually have an uploaded mix — PlayerContext.next() has no
+                  // skip-non-playable logic, so a queued mix-less project would stall
+                  // auto-advance (playTrack no-ops on an id absent from /api/tracks).
+                  setQueue(items.filter(i => trackMeta[i.project_id]?.audioUrl).map(i => i.project_id))
                   playTrack(item.project_id)
                 }}
                 className="opacity-60 group-hover:opacity-100 p-1.5 rounded-lg transition-all flex-shrink-0"
