@@ -255,9 +255,13 @@ export async function proxy(request: NextRequest) {
     if (check.reason === 'valid') {
       userId = check.userId
     } else if (check.reason === 'expired') {
-      // Signature verified (or, without a key, self-reported exp): genuinely
-      // stale — the refresh path below is the correct response.
-      userId = check.userId
+      // Signature was verified and the token is simply stale — trust its `sub`
+      // for the refresh path (and the transient-error fail-open below).
+      // Defence-in-depth at the trust boundary: only adopt the userId when the
+      // check was actually verified. verifyToken guarantees 'expired' ⟹ verified,
+      // but the middleware refuses to trust it regardless, so a forged token can
+      // never inject an identity here even if that invariant ever regresses.
+      if (check.verified) userId = check.userId
       tokenExpired = true
     } else if (check.reason === 'unverifiable') {
       // The token is NOT known to be expired — we just couldn't check the

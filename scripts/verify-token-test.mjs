@@ -15,6 +15,9 @@
 // Run: node scripts/verify-token-test.mjs
 
 import { SignJWT, jwtVerify, decodeJwt, errors as joseErrors } from 'jose'
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const enc = new TextEncoder()
 const SECRET = enc.encode('test-secret-correct-0123456789abcdef')
@@ -78,6 +81,62 @@ check('expired+valid token yields sub (for refresh)', r3.userId === USER)
 const unsigned = `${Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ sub: USER, exp: 9999999999 })).toString('base64url')}.`
 const r4 = await verify(unsigned, SECRET)
 check('unsigned (alg:none) token is REJECTED', r4.verified === false && r4.userId === null)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. REAL-MODULE invariant — exercise src/lib/verifyToken.ts itself, not the
+//    HS256-only mirror above. The mirror never modelled "path 4" (an alg the
+//    verifier doesn't handle — e.g. {alg:'none'} — or ANY token when
+//    SUPABASE_JWT_SECRET is unset), which used to return reason:'expired' with
+//    verified:false for a past-exp token. The middleware trusts an 'expired'
+//    token's `sub` as X-User-Id, so a forged token could impersonate a user.
+//    Lock the invariant against the live code: reason ∈ {'valid','expired'} ⇒
+//    verified === true. verifyToken.ts imports '@/lib/supabase' (unresolvable
+//    under plain node), so load a copy with that single unused import stubbed —
+//    forged/legacy tokens here never reach the JWKS branch that reads those
+//    values, so the path-4 / HS256 / expiry logic runs exactly as in production.
+console.log('\nReal-module (src/lib/verifyToken.ts) forged-token invariant:')
+const here = dirname(fileURLToPath(import.meta.url))
+const stubbed = readFileSync(join(here, '..', 'src', 'lib', 'verifyToken.ts'), 'utf8')
+  .replace(
+    /import \{ SUPABASE_URL, SUPABASE_ANON_KEY \} from '\.\/supabase'/,
+    "const SUPABASE_URL = 'https://stub.supabase.co'; const SUPABASE_ANON_KEY = 'stub'",
+  )
+const tmpPath = join(here, '_verifytoken-under-test.ts')
+writeFileSync(tmpPath, stubbed)
+try {
+  const { verifyAccessToken, makeJwtKey } = await import('./_verifytoken-under-test.ts')
+  const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const past = Math.floor(Date.now() / 1000) - 3600
+  const future = Math.floor(Date.now() / 1000) + 3600
+  const REAL_SECRET = 'correct-secret-0123456789abcdef0'
+  // Hand-forged tokens with an attacker-chosen sub and no valid signature.
+  const forge = (alg, exp) =>
+    `${b64({ alg, typ: 'JWT' })}.${b64({ sub: USER, exp })}.${alg === 'none' ? '' : Buffer.from('garbage-sig').toString('base64url')}`
+  const forged = {
+    'alg:none past-exp': forge('none', past),
+    'alg:none future-exp': forge('none', future),
+    'alg:HS512 past-exp': forge('HS512', past),
+  }
+  // The core security invariant, checked with the secret SET and UNSET (unset is
+  // the fail-open state the middleware must survive without trusting forged sub).
+  for (const [mode, key] of [['secret set', makeJwtKey(REAL_SECRET)], ['no secret', makeJwtKey(undefined)]]) {
+    for (const [name, tok] of Object.entries(forged)) {
+      const r = await verifyAccessToken(tok, key)
+      const trustedUnverified = (r.reason === 'valid' || r.reason === 'expired') && r.verified === false
+      check(`forged ${name} (${mode}) is NEVER labelled valid/expired`, !trustedUnverified)
+    }
+  }
+  // Legit paths still behave — the fix must not break real sessions.
+  const good = makeJwtKey(REAL_SECRET)
+  const validTok = await sign(enc.encode(REAL_SECRET), '1h')
+  const rv = await verifyAccessToken(validTok, good)
+  check('correctly-signed token → valid + verified + sub', rv.reason === 'valid' && rv.verified === true && rv.userId === USER)
+  const expTok = await sign(enc.encode(REAL_SECRET), '-1h')
+  const re = await verifyAccessToken(expTok, good)
+  check('correctly-signed EXPIRED token → expired + verified + sub (refreshable)', re.reason === 'expired' && re.verified === true && re.userId === USER)
+} finally {
+  try { unlinkSync(tmpPath) } catch {}
+}
 
 if (failures > 0) {
   console.error(`\nFAIL: ${failures} security assertion(s) failed.`)

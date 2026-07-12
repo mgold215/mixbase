@@ -9,13 +9,63 @@ import { isUuid } from '@/lib/validators'
 export const maxDuration = 120
 
 const MODEL_ENDPOINTS: Record<string, string> = {
-  flux: 'https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions',
-  imagen: 'https://api.replicate.com/v1/models/google/imagen-4/predictions',
+  // Photorealism-first lineup. flux-ultra runs FLUX 1.1 Pro Ultra in raw mode,
+  // which is specifically tuned to avoid the over-processed "AI art" look.
+  'flux-ultra':   'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions',
+  seedream:       'https://api.replicate.com/v1/models/bytedance/seedream-4/predictions',
+  'imagen-ultra': 'https://api.replicate.com/v1/models/google/imagen-4-ultra/predictions',
+  recraft:        'https://api.replicate.com/v1/models/recraft-ai/recraft-v3/predictions',
+  flux:           'https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions',
+  imagen:         'https://api.replicate.com/v1/models/google/imagen-4/predictions',
 }
 
-const MODEL_INPUTS = {
-  flux:   (prompt: string) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
-  imagen: (prompt: string) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
+const MODEL_INPUTS: Record<string, (prompt: string) => Record<string, unknown>> = {
+  'flux-ultra':   (prompt) => ({ prompt, aspect_ratio: '1:1', raw: true }),
+  seedream:       (prompt) => ({ prompt, aspect_ratio: '1:1', size: '2K' }),
+  'imagen-ultra': (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
+  recraft:        (prompt) => ({ prompt, size: '1024x1024', style: 'realistic_image' }),
+  flux:           (prompt) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
+  imagen:         (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
+}
+
+// Randomized photographic treatment, appended when the client asks to vary the
+// look. One pick per axis — vantage × light × weather × mood — so consecutive
+// generations of the same subject land on visibly different photographs instead
+// of the model's single house style.
+const LOOK_VANTAGE = [
+  'shot on 35mm film, Kodak Portra 400, subtle grain',
+  'medium format Hasselblad capture, razor-sharp 8k architectural photography',
+  'aerial drone photograph from 120 meters',
+  'low-angle street-level shot on a 24mm wide lens, dramatic perspective',
+  'telephoto compression from a distant rooftop, layered against the skyline',
+  'tilt-shift photograph with selective focus',
+]
+const LOOK_LIGHT = [
+  'golden hour, long shadows and warm sun flare',
+  'overcast flat daylight, muted tones',
+  'blue hour, sodium streetlights glowing',
+  'harsh midday sun, deep black shadows',
+  'night scene, neon signage reflecting on wet asphalt',
+  'dawn light breaking through low clouds',
+]
+const LOOK_WEATHER = [
+  'dense fog rolling between structures',
+  'light rain, wet reflective surfaces',
+  'dust haze in the air',
+  'crystal clear air, extreme detail',
+  'low storm clouds gathering overhead',
+]
+const LOOK_MOOD = [
+  'ominous looming scale, tiny human figures dwarfed below',
+  'dystopian corporate megastructure, uncanny emptiness',
+  'abandoned and partially overgrown, nature reclaiming the facade',
+  'pristine futuristic campus, sterile and unsettling',
+  'brutalist monolith against an empty sky',
+]
+
+function composeLook(): string {
+  const pick = (pool: string[]) => pool[Math.floor(Math.random() * pool.length)]
+  return [pick(LOOK_VANTAGE), pick(LOOK_LIGHT), pick(LOOK_WEATHER), pick(LOOK_MOOD)].join(', ')
 }
 
 async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
@@ -43,11 +93,17 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { project_id, collection_id, prompt, model = 'flux' } = body
+  const { project_id, collection_id, prompt, model = 'flux', vary = false } = body
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'Prompt is required' }, { status: 400 })
   }
+
+  // Vary layer: append a randomized photographic treatment so repeat runs of
+  // the same subject produce visibly different shots. Composed before the paid
+  // call; echoed back in the response so the UI can show what was applied.
+  const look = vary ? composeLook() : null
+  const finalPrompt = look ? `${prompt.trim()}, ${look}` : prompt.trim()
 
   // Two targets: a project's artwork, or a collection's cover. Exactly one id.
   const isCollection = !!collection_id
@@ -117,7 +173,7 @@ export async function POST(request: NextRequest) {
       'Content-Type': 'application/json',
       Prefer: 'wait',
     },
-    body: JSON.stringify({ input: inputFn(prompt.trim()) }),
+    body: JSON.stringify({ input: inputFn(finalPrompt) }),
   })
 
   const prediction = await replicateRes.json()
@@ -207,5 +263,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Saved image but failed to update project. Please retry.' }, { status: 500 })
   }
 
-  return NextResponse.json({ artwork_url: artworkUrl })
+  return NextResponse.json({ artwork_url: artworkUrl, look })
 }

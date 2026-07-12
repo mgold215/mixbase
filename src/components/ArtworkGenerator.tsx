@@ -29,6 +29,18 @@ const POSITION_GRID: Position[] = [
   'bottom-left', 'bottom-center', 'bottom-right',
 ]
 
+// Photorealism-first model lineup — ids must match MODEL_ENDPOINTS in
+// /api/generate-artwork. flux-ultra (raw mode) leads: it's tuned to produce
+// natural photographic output instead of the glossy "AI art" house style.
+const IMAGE_MODELS: { id: string; label: string }[] = [
+  { id: 'flux-ultra',   label: 'FLUX Ultra Raw' },
+  { id: 'seedream',     label: 'Seedream 4' },
+  { id: 'imagen-ultra', label: 'Imagen 4 Ultra' },
+  { id: 'recraft',      label: 'Recraft V3' },
+  { id: 'flux',         label: 'Flux 2 Pro' },
+  { id: 'imagen',       label: 'Imagen 4' },
+]
+
 type Props = {
   projectId: string
   projectTitle: string
@@ -51,8 +63,12 @@ export default function ArtworkGenerator({
   showActions = true,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
-  const [prompt, setPrompt] = useState(`surreal otherworldly vista of a colossal retro tape cassette standing like an ancient monolith in a vast dreamlike valley, a winding river of glowing light curving past it toward a radiant horizon where light breaks through heavy clouds, towering mist-wrapped mountains on either side, faint pastel neon ribbons drifting through the night air, tiny distant details that reveal enormous scale, moody cinematic palette of deep blues, violets and warm gold, volumetric light and atmospheric haze, epic wide-angle composition, photorealistic detail with a painterly dreamlike quality, no text — ${projectTitle}${genre ? `, ${genre}` : ''}`)
-  const [model, setModel] = useState<'flux' | 'imagen'>('flux')
+  // Subject only — the photographic treatment (lens, light, weather, mood) is
+  // layered on server-side by the Vary option so repeat runs look different.
+  const [prompt, setPrompt] = useState(`a colossal futuristic building shaped like a giant retro cassette tape, its two tape reels forming vast circular glass atriums, weathered board-formed concrete and steel, hyper-realistic materials with natural imperfections, surreal ominous megastructure, photorealistic architectural photograph, looks like a real photo, no text, no watermark — ${projectTitle}${genre ? `, ${genre}` : ''}`)
+  const [model, setModel] = useState('flux-ultra')
+  const [vary, setVary] = useState(true)
+  const [lastLook, setLastLook] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
@@ -102,7 +118,7 @@ export default function ArtworkGenerator({
     const res = await fetch('/api/generate-artwork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, prompt, model, title: projectTitle }),
+      body: JSON.stringify({ project_id: projectId, prompt, model, vary, title: projectTitle }),
     })
 
     const data = await res.json()
@@ -110,6 +126,7 @@ export default function ArtworkGenerator({
       onArtworkUpdated(data.artwork_url)
       // Server cleared finalized_artwork_url; mirror that in client state.
       onFinalizedUpdated(null)
+      setLastLook(data.look ?? null)
       setMode('idle')
     } else {
       setError(data.error ?? 'Generation failed. Try again.')
@@ -189,6 +206,12 @@ export default function ArtworkGenerator({
           </div>
         )}
       </div>
+
+      {/* Applied vary treatment — tells the user why this shot looks the way
+          it does, and what to re-roll for */}
+      {lastLook && mode === 'idle' && (
+        <p className="text-[10px] text-[#666] leading-snug">Look: {lastLook}</p>
+      )}
 
       {/* Download — generated/source image and the finalized render (with
           baked-in text) are separate exports. Only shown on the full Artwork
@@ -381,19 +404,31 @@ export default function ArtworkGenerator({
       {showActions && mode === 'generate' && (
         <div className="space-y-2">
           {/* Model selector */}
-          <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
-            {(['flux', 'imagen'] as const).map(m => (
+          <div className="grid grid-cols-3 gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
+            {IMAGE_MODELS.map(m => (
               <button
-                key={m}
-                onClick={() => setModel(m)}
-                className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
-                  model === m ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
+                key={m.id}
+                onClick={() => setModel(m.id)}
+                className={`py-1.5 px-1 text-[10px] font-medium rounded-lg transition-colors ${
+                  model === m.id ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
                 }`}
               >
-                {m === 'flux' ? 'Flux 2 Pro' : 'Imagen 4'}
+                {m.label}
               </button>
             ))}
           </div>
+
+          {/* Vary toggle — server appends a random lens/light/weather/mood
+              treatment so repeat generations don't all share one look */}
+          <button
+            onClick={() => setVary(v => !v)}
+            className="flex items-center gap-2 text-[11px] text-[#999] hover:text-white transition-colors"
+          >
+            <span className={`w-8 h-4 rounded-full relative transition-colors ${vary ? 'bg-[#2dd4bf]' : 'bg-[#2a2a2a]'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${vary ? 'left-4' : 'left-0.5'}`} />
+            </span>
+            Vary the look (random lens, light &amp; mood each run)
+          </button>
           <textarea
             value={prompt}
             onChange={e => setPrompt(e.target.value)}

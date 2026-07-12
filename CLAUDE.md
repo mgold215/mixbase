@@ -50,7 +50,7 @@ All relevant tests must pass before telling the user a fix is done.
 
 ## AI Features (per-user rate-limited + tier-gated)
 - `POST /api/chat/summarize-feedback` — Claude (`claude-opus-4-7`) mix-notes summary
-- `POST /api/generate-artwork` — Replicate Flux 2 Pro / Imagen 4, polls up to 2min
+- `POST /api/generate-artwork` — Replicate image models (FLUX 1.1 Ultra raw / Seedream 4 / Imagen 4 Ultra / Recraft V3 / Flux 2 Pro / Imagen 4), optional `vary` flag appends a randomized photographic look (lens/light/weather/mood), polls up to 2min
 - `POST /api/finalize-artwork` — `sharp` + `opentype.js` text overlay. **Gotcha:** the bundled font is traced via `outputFileTracingIncludes` in `next.config.ts` — removing that config crashes the route on Railway.
 - `GET|POST /api/visualizer/runway` — Runway Gen-4 Turbo / Gen-4.5 / Seedance 2 / Veo 3/3.1 image-to-video
 - `POST|GET /api/finalize-video` — finished YouTube (1080p) / Shorts (9:16) renders: loops the pinned visualizer seamlessly for the song, flashes the artwork text lockup, muxes the current mix. In-process async jobs (POST starts, GET polls; lost on deploy by design). ffmpeg via `@ffmpeg-installer` (npm-hosted, 2018 build — **no xfade**; crossfade is trim/concat/fade/overlay in `src/lib/video-render.ts`). Outputs → `mf-video` + `mb_visualizers` kind `youtube`/`shorts`. Bucket limit raised to 500 MB via SQL (migration 016 + `ensureVideoBucketLimit` heal).
