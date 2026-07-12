@@ -45,8 +45,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
-  // ?? null: prod rows can predate the 015 migration (column self-heals on first write)
+  // ?? null: prod rows can predate the 015/020 migrations (columns self-heal on first write)
   const [visualizer, setVisualizer] = useState(project.visualizer_url ?? null)
+  const [visualizerWide, setVisualizerWide] = useState(project.visualizer_wide_url ?? null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -100,6 +101,11 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   function handleVisualizerUpdated(url: string | null) {
     setVisualizer(url)
+    syncAfterMutation()
+  }
+
+  function handleWideVisualizerUpdated(url: string | null) {
+    setVisualizerWide(url)
     syncAfterMutation()
   }
 
@@ -822,15 +828,18 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             artworkUrl={artwork}
             visualizerUrl={visualizer}
             onVisualizerUpdated={handleVisualizerUpdated}
+            wideVisualizerUrl={visualizerWide}
+            onWideVisualizerUpdated={handleWideVisualizerUpdated}
             onSwitchToArtwork={() => switchTab('artwork')}
           />
         )}
 
-        {/* Tab content — Video (finished YouTube / Shorts renders) */}
+        {/* Tab content — Video (finished full-length / Short renders) */}
         {activeTab === 'video' && (
           <VideoFinalizer
             projectId={project.id}
             visualizerUrl={visualizer}
+            wideVisualizerUrl={visualizerWide}
             hasAudio={versions.length > 0}
             audioDurationSec={versions[0]?.duration_seconds ?? null}
             onSwitchToVisualizer={() => switchTab('visualizer')}

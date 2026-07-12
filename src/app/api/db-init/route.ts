@@ -128,6 +128,10 @@ create index if not exists idx_projects_share_token on mb_projects(share_token);
 alter table mb_projects
   add column if not exists visualizer_url text;
 
+-- Migration 020: horizontal (16:9) visualizer pin for the Full-Length finalize
+alter table mb_projects
+  add column if not exists visualizer_wide_url text;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

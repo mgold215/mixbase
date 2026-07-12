@@ -5,10 +5,14 @@ import { MonitorPlay, Smartphone, Download, Clapperboard, RefreshCw } from 'luci
 import { TEXT_COLORS } from '@/lib/text-colors'
 
 // ── Video finalizer — the "assemble the finished product" tab ────────────────
-// Renders the upload-ready YouTube video (16:9) and vertical Short (9:16) for
-// a song by combining the pinned visualizer (looped seamlessly), the current
-// mix audio, and the artwork text lockup flashing through the track. Renders
-// take minutes server-side, so POST starts a job and this component polls.
+// Renders the upload-ready full-length video (16:9, horizontal) and vertical
+// Short (9:16) for a song by combining a pinned visualizer (looped
+// seamlessly), the current mix audio, and the artwork text lockup flashing
+// through the track. Each format renders from the pin in its own orientation
+// — the horizontal pin feeds Finalize Full-Length, the vertical pin feeds
+// Finalize Short — falling back to the other pin (center-cropped) when only
+// one is set. Renders take minutes server-side, so POST starts a job and this
+// component polls.
 
 type VideoFormat = 'youtube' | 'shorts'
 
@@ -24,7 +28,10 @@ type JobState = {
 
 type Props = {
   projectId: string
+  /** Vertical pin (mb_projects.visualizer_url) — source for the Short. */
   visualizerUrl: string | null
+  /** Horizontal pin (visualizer_wide_url) — source for the full-length video. */
+  wideVisualizerUrl: string | null
   hasAudio: boolean
   /** Song length in seconds when known — drives the Short start-point options. */
   audioDurationSec: number | null
@@ -34,7 +41,7 @@ type Props = {
 const SHORT_LENGTHS = [15, 30, 60] as const
 
 export default function VideoFinalizer({
-  projectId, visualizerUrl, hasAudio, audioDurationSec, onSwitchToVisualizer,
+  projectId, visualizerUrl, wideVisualizerUrl, hasAudio, audioDurationSec, onSwitchToVisualizer,
 }: Props) {
   const [saved, setSaved] = useState<Record<VideoFormat, SavedVideo>>({ youtube: null, shorts: null })
   const [jobs, setJobs] = useState<Partial<Record<VideoFormat, JobState>>>({})
@@ -131,23 +138,24 @@ export default function VideoFinalizer({
     }
   }
 
-  // ── Gating: both source pieces must exist before anything can render ──────
-  if (!visualizerUrl || !hasAudio) {
+  // ── Gating: audio + at least one pinned visualizer before anything renders ─
+  const anyViz = visualizerUrl || wideVisualizerUrl
+  if (!anyViz || !hasAudio) {
     return (
       <div className="max-w-2xl">
         <div className="rounded-2xl p-8 text-center" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
           <Clapperboard size={28} className="mx-auto mb-3 text-[#2dd4bf]" />
           <h3 className="text-sm font-semibold text-[var(--text)] mb-2">Finish the pieces first</h3>
           <p className="text-xs text-[var(--text-muted)] mb-4 leading-relaxed">
-            The video finalizer combines your pinned visualizer, the current mix, and your title text
-            into upload-ready YouTube and Shorts videos.
+            The video finalizer combines your pinned visualizers, the current mix, and your title text
+            into an upload-ready full-length video (horizontal) and Short (vertical).
           </p>
           <ul className="text-xs text-[var(--text-secondary)] space-y-1.5 mb-5 inline-block text-left">
             <li className={hasAudio ? 'line-through text-[var(--text-muted)]' : ''}>1. Upload a mix (Song Info tab)</li>
-            <li className={visualizerUrl ? 'line-through text-[var(--text-muted)]' : ''}>2. Generate &amp; pin a visualizer</li>
+            <li className={anyViz ? 'line-through text-[var(--text-muted)]' : ''}>2. Generate &amp; pin a visualizer</li>
           </ul>
           <div>
-            {!visualizerUrl && (
+            {!anyViz && (
               <button
                 onClick={onSwitchToVisualizer}
                 className="px-4 py-2 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] transition-colors"
@@ -164,9 +172,10 @@ export default function VideoFinalizer({
   return (
     <div className="max-w-2xl space-y-5">
       <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-        Loops your pinned visualizer seamlessly for the length of the song, flashes the artist name and
+        Loops a pinned visualizer seamlessly for the length of the song, flashes the artist name and
         title (styled like your artwork) through the track, and muxes in the current mix — rendered
-        server-side into an upload-ready MP4.
+        server-side into an upload-ready MP4. The full-length video renders from your horizontal pin,
+        the Short from your vertical pin.
       </p>
 
       {/* Shared text color */}
@@ -190,9 +199,13 @@ export default function VideoFinalizer({
 
       <FormatCard
         icon={<MonitorPlay size={15} />}
-        title="YouTube video"
-        subtitle="1920×1080 · full song"
+        title="Full-length video"
+        subtitle="1920×1080 · horizontal · full song"
         aspect="16/9"
+        renderLabel="Finalize Full-Length"
+        sourceNote={!wideVisualizerUrl
+          ? 'No horizontal visualizer pinned — this will center-crop your vertical pin. Pin a 16:9 loop in the Visualizer tab for a full-frame render.'
+          : undefined}
         saved={saved.youtube}
         job={jobs.youtube}
         error={errors.youtube}
@@ -202,8 +215,12 @@ export default function VideoFinalizer({
       <FormatCard
         icon={<Smartphone size={15} />}
         title="Short / vertical ad"
-        subtitle="1080×1920 · clip of the song"
+        subtitle="1080×1920 · vertical · clip of the song"
         aspect="9/16"
+        renderLabel="Finalize Short"
+        sourceNote={!visualizerUrl
+          ? 'No vertical visualizer pinned — this will center-crop your horizontal pin. Pin a 9:16 loop in the Visualizer tab for a full-frame render.'
+          : undefined}
         saved={saved.shorts}
         job={jobs.shorts}
         error={errors.shorts}
@@ -251,12 +268,15 @@ export default function VideoFinalizer({
 }
 
 function FormatCard({
-  icon, title, subtitle, aspect, saved, job, error, onRender, controls,
+  icon, title, subtitle, aspect, renderLabel, sourceNote, saved, job, error, onRender, controls,
 }: {
   icon: React.ReactNode
   title: string
   subtitle: string
   aspect: '16/9' | '9/16'
+  renderLabel: string
+  /** Warning shown when this format has to fall back to the other orientation's pin. */
+  sourceNote?: string
   saved: SavedVideo
   job?: JobState
   error?: string
@@ -273,6 +293,10 @@ function FormatCard({
       </div>
 
       {controls}
+
+      {sourceNote && !rendering && (
+        <p className="text-[11px] leading-relaxed text-amber-400/90">{sourceNote}</p>
+      )}
 
       {saved && !rendering && (
         <video
@@ -315,7 +339,7 @@ function FormatCard({
           ) : (
             <>
               {saved ? <RefreshCw size={13} /> : <Clapperboard size={13} />}
-              {saved ? 'Re-render' : 'Render'}
+              {renderLabel}
             </>
           )}
         </button>

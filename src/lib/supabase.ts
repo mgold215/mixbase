@@ -21,6 +21,9 @@ export type Project = {
   artwork_url: string | null
   finalized_artwork_url: string | null
   visualizer_url: string | null
+  // Horizontal 16:9 pin (migration 020) — feeds the Full-Length finalize.
+  // Optional-shaped (?? null at read sites) since prod rows can predate it.
+  visualizer_wide_url?: string | null
   genre: string | null
   bpm: number | null
   key_signature: string | null

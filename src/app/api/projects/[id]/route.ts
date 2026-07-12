@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
-  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url'] as const
+  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url', 'visualizer_wide_url'] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
@@ -56,22 +56,24 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     patch.finalized_artwork_url = null
   }
 
-  // The project visualizer is rendered as a <video> across the app, so only
-  // accept a video the user actually generated (an mb_visualizers row they
-  // own — any of their projects, matching how artwork can be reassigned), or
-  // null to clear it.
-  if ('visualizer_url' in body && body.visualizer_url !== null) {
-    if (typeof body.visualizer_url !== 'string') {
-      return NextResponse.json({ error: 'Invalid visualizer_url' }, { status: 400 })
+  // The project visualizers (vertical + horizontal pins) are rendered as
+  // <video> across the app, so only accept a video the user actually generated
+  // (an mb_visualizers row they own — any of their projects, matching how
+  // artwork can be reassigned), or null to clear a pin.
+  for (const key of ['visualizer_url', 'visualizer_wide_url'] as const) {
+    if (key in body && body[key] !== null) {
+      if (typeof body[key] !== 'string') {
+        return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
+      }
+      const { data: viz } = await supabaseAdmin
+        .from('mb_visualizers')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('video_url', body[key])
+        .limit(1)
+        .maybeSingle()
+      if (!viz) return NextResponse.json({ error: 'Unknown visualizer video' }, { status: 400 })
     }
-    const { data: viz } = await supabaseAdmin
-      .from('mb_visualizers')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('video_url', body.visualizer_url)
-      .limit(1)
-      .maybeSingle()
-    if (!viz) return NextResponse.json({ error: 'Unknown visualizer video' }, { status: 400 })
   }
 
   // maybeSingle (not single) so updating a project the caller doesn't own — or
@@ -87,8 +89,9 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
   let { data, error } = await runUpdate()
 
-  // Deploys can beat the 015 migration to production — heal the column and retry.
-  if (error && 'visualizer_url' in patch && isMissingVisualizerColumn(error) && await ensureProjectVisualizerColumn()) {
+  // Deploys can beat the 015/020 migrations to production — heal the columns and retry.
+  if (error && ('visualizer_url' in patch || 'visualizer_wide_url' in patch)
+    && isMissingVisualizerColumn(error) && await ensureProjectVisualizerColumn()) {
     ({ data, error } = await runUpdate())
   }
 

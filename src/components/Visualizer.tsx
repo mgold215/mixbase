@@ -8,6 +8,10 @@ import { EFFECTS, EFFECT_IDS, domLayerFactory, type EffectId, type DrawFrame } f
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
 
+// Which project pin a video goes into: 'canvas' = vertical (player + Finalize
+// Short), 'wide' = horizontal (Finalize Full-Length).
+type VizSlot = 'canvas' | 'wide'
+
 const FORMAT_CONFIG: Record<Format, { label: string; width: number; height: number; duration: number; description: string }> = {
   canvas:  { label: 'Spotify Canvas', width: 1080, height: 1920, duration: 6,  description: '9:16 · 6s loop' },
   youtube: { label: 'YouTube',        width: 1920, height: 1080, duration: 30, description: '16:9 · 30s loop' },
@@ -39,11 +43,15 @@ type Props = {
   // When set, generated videos are persisted to the Media library against this
   // project. Omitted in contexts with no backing project (none currently).
   projectId?: string
-  // The project's pinned visualizer (mb_projects.visualizer_url) — the video
-  // that loops in the player while this track plays, Spotify-Canvas style.
-  // Wired on the project page; the Media modal omits it.
+  // The project's pinned visualizers. visualizer_url is the VERTICAL pin —
+  // loops in the player while this track plays (Spotify-Canvas style) and
+  // feeds the Finalize Short render. visualizer_wide_url is the HORIZONTAL
+  // pin that feeds the Finalize Full-Length render. Wired on the project
+  // page; the Media modal omits them.
   visualizerUrl?: string | null
   onVisualizerUpdated?: (url: string | null) => void
+  wideVisualizerUrl?: string | null
+  onWideVisualizerUpdated?: (url: string | null) => void
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -60,7 +68,10 @@ type LibraryItem = {
   created_at: string
 }
 
-export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork, projectId, visualizerUrl, onVisualizerUpdated }: Props) {
+export default function Visualizer({
+  projectTitle, artworkUrl, onSwitchToArtwork, projectId,
+  visualizerUrl, onVisualizerUpdated, wideVisualizerUrl, onWideVisualizerUpdated,
+}: Props) {
   const [format, setFormat] = useState<Format>('canvas')
   const [effect, setEffect] = useState<EffectId>('kenburns')
   // Raw input string so typing "1" mid-edit isn't clamped out from under the
@@ -80,10 +91,12 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   const [freeSavedUrl, setFreeSavedUrl] = useState<string | null>(null)
   const [aiSaved, setAiSaved] = useState(false)
   const [projectViz, setProjectViz] = useState(visualizerUrl ?? null)
+  const [projectVizWide, setProjectVizWide] = useState(wideVisualizerUrl ?? null)
   const [settingViz, setSettingViz] = useState(false)
   const [vizError, setVizError] = useState('')
-  // "Choose from Media" picker — pin any previously generated loop, from any project.
-  const [pickerOpen, setPickerOpen] = useState(false)
+  // "Choose from Media" picker — pin any previously generated loop, from any
+  // project, into whichever slot (vertical/horizontal) opened the picker.
+  const [pickerSlot, setPickerSlot] = useState<VizSlot | null>(null)
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState('')
@@ -301,10 +314,11 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }
 
-  // Open the library picker and load every saved loop the user owns. Loading
-  // flag resets in finally so a network reject can't strand the spinner.
-  async function openPicker() {
-    setPickerOpen(true)
+  // Open the library picker for a pin slot and load every saved loop the user
+  // owns. Loading flag resets in finally so a network reject can't strand the
+  // spinner.
+  async function openPicker(slot: VizSlot) {
+    setPickerSlot(slot)
     setLibraryError('')
     setLibraryLoading(true)
     try {
@@ -320,13 +334,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
   }
 
   async function pickFromLibrary(item: LibraryItem) {
-    await setProjectVisualizer(item.video_url)
-    setPickerOpen(false)
+    await setProjectVisualizer(pickerSlot ?? 'canvas', item.video_url)
+    setPickerSlot(null)
   }
 
-  // Pin (or clear) the project's visualizer — the video the player loops while
-  // this track plays. Persists via the project PATCH so it survives reloads.
-  async function setProjectVisualizer(url: string | null) {
+  // Pin (or clear) one of the project's visualizer slots — vertical loops in
+  // the player and feeds the Short; horizontal feeds the Full-Length video.
+  // Persists via the project PATCH so it survives reloads.
+  async function setProjectVisualizer(slot: VizSlot, url: string | null) {
     if (!projectId || settingViz) return
     setSettingViz(true)
     setVizError('')
@@ -334,11 +349,16 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
       const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visualizer_url: url }),
+        body: JSON.stringify(slot === 'wide' ? { visualizer_wide_url: url } : { visualizer_url: url }),
       })
       if (!res.ok) throw new Error()
-      setProjectViz(url)
-      onVisualizerUpdated?.(url)
+      if (slot === 'wide') {
+        setProjectVizWide(url)
+        onWideVisualizerUpdated?.(url)
+      } else {
+        setProjectViz(url)
+        onVisualizerUpdated?.(url)
+      }
     } catch {
       setVizError('Could not update the project visualizer. Try again.')
     } finally {
@@ -489,18 +509,14 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     }
   }, [artworkUrl, effect, format, bpmNum])
 
-  // ── Project Visualizer section — the video pinned to this project. Shown on
-  // the project page (where onVisualizerUpdated is wired); rendered even before
-  // any artwork exists so a previously set visualizer never disappears.
-  const projectVizSection = projectId && onVisualizerUpdated ? (
-    <div className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+  // One pin slot's UI: preview + Choose from Media + Remove. Shared by the
+  // vertical (player + Short) and horizontal (Full-Length) slots below.
+  const vizSlotCard = (slot: VizSlot, url: string | null, title: string, blurb: string) => (
+    <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
-          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizer</p>
-        </div>
+        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{title}</p>
         <button
-          onClick={openPicker}
+          onClick={() => openPicker(slot)}
           disabled={settingViz}
           className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
           style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
@@ -509,15 +525,13 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           Choose from Media
         </button>
       </div>
-      {projectViz ? (
+      {url ? (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-          <video src={projectViz} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+          <video src={url} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
           <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Loops in the player while this track plays — like a Spotify Canvas.
-            </span>
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{blurb}</span>
             <button
-              onClick={() => setProjectVisualizer(null)}
+              onClick={() => setProjectVisualizer(slot, null)}
               disabled={settingViz}
               className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
               style={{ backgroundColor: 'var(--surface-2)', color: '#f87171' }}
@@ -528,24 +542,39 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
           </div>
         </div>
       ) : (
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          None set. Pick a previously generated video with &ldquo;Choose from Media&rdquo;, or generate one below —
-          it will loop in the player while this track plays, like a Spotify Canvas.
-        </p>
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>None set. {blurb}</p>
       )}
+    </div>
+  )
+
+  // ── Project Visualizers section — the videos pinned to this project. Shown
+  // on the project page (where onVisualizerUpdated is wired); rendered even
+  // before any artwork exists so a previously set visualizer never disappears.
+  const projectVizSection = projectId && onVisualizerUpdated ? (
+    <div className="rounded-2xl p-5 space-y-5" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}>
+      <div className="flex items-center gap-2">
+        <MonitorPlay size={16} style={{ color: 'var(--text-muted)' }} />
+        <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Project Visualizers</p>
+      </div>
+      {vizSlotCard('canvas', projectViz, 'Vertical · player + Short',
+        'Loops in the player while this track plays (like a Spotify Canvas) and is the source for Finalize Short.')}
+      {vizSlotCard('wide', projectVizWide, 'Horizontal · full-length video',
+        'The 16:9 loop behind the full-length YouTube render (Video tab → Finalize Full-Length).')}
       {vizError && <p className="text-sm" style={{ color: '#f87171' }}>{vizError}</p>}
 
       {/* Library picker — every saved loop the user owns, any project */}
-      {pickerOpen && (
+      {pickerSlot && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
           style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
-          onClick={e => { if (e.target === e.currentTarget) setPickerOpen(false) }}
+          onClick={e => { if (e.target === e.currentTarget) setPickerSlot(null) }}
         >
           <div className="w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', maxHeight: '85dvh' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border)' }}>
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Choose a visualizer</h3>
-              <button onClick={() => setPickerOpen(false)} aria-label="Close" className="transition-colors" style={{ color: 'var(--text-muted)' }}>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                {pickerSlot === 'wide' ? 'Choose the horizontal visualizer' : 'Choose the vertical visualizer'}
+              </h3>
+              <button onClick={() => setPickerSlot(null)} aria-label="Close" className="transition-colors" style={{ color: 'var(--text-muted)' }}>
                 <X size={16} />
               </button>
             </div>
@@ -561,7 +590,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {library.map(item => {
-                    const isCurrent = projectViz === item.video_url
+                    const isCurrent = (pickerSlot === 'wide' ? projectVizWide : projectViz) === item.video_url
                     return (
                       <button
                         key={item.id}
@@ -635,27 +664,37 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
     ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
     : { backgroundColor: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--surface-2)' }
 
-  // "Set as Project Visualizer" affordance for a persisted mf-video URL — only
-  // where the project page wired the callback, and only once the video is saved.
-  const pinButton = (url: string | null) => {
+  // Pin affordance for a persisted mf-video URL — only where the project page
+  // wired the callback, and only once the video is saved. The slot follows the
+  // render's orientation: 16:9 loops pin as the horizontal (Full-Length)
+  // visualizer, everything else as the vertical (player + Short) one.
+  const pinButton = (url: string | null, slot: VizSlot) => {
     if (!projectId || !onVisualizerUpdated || !url) return null
-    if (projectViz === url) return (
+    const label = slot === 'wide' ? 'Horizontal Visualizer' : 'Vertical Visualizer'
+    if ((slot === 'wide' ? projectVizWide : projectViz) === url) return (
       <span className="flex items-center gap-1 text-sm font-medium flex-shrink-0" style={{ color: 'var(--accent)' }}>
-        <Check size={13} strokeWidth={3} /> Project Visualizer
+        <Check size={13} strokeWidth={3} /> {label}
       </span>
     )
     return (
       <button
-        onClick={() => setProjectVisualizer(url)}
+        onClick={() => setProjectVisualizer(slot, url)}
         disabled={settingViz}
         className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
         style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
       >
         <MonitorPlay size={14} />
-        {settingViz ? 'Setting…' : 'Set as Project Visualizer'}
+        {settingViz ? 'Setting…' : `Set as ${label}`}
       </button>
     )
   }
+
+  // Orientation of the AI render, from the selected Runway ratio ('1280:720'
+  // style). Wider-than-tall pins to the horizontal slot.
+  const aiSlot: VizSlot = (() => {
+    const [w, h] = selectedRatio.split(':').map(n => parseInt(n, 10))
+    return Number.isFinite(w) && Number.isFinite(h) && w > h ? 'wide' : 'canvas'
+  })()
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -786,7 +825,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
                 )}
                 {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
               </span>
-              {freeSave === 'saved' && pinButton(freeSavedUrl)}
+              {freeSave === 'saved' && pinButton(freeSavedUrl, format === 'youtube' ? 'wide' : 'canvas')}
               <button
                 onClick={() => download(videoUrl, 'free', 'webm')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -901,7 +940,7 @@ export default function Visualizer({ projectTitle, artworkUrl, onSwitchToArtwork
             <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>
               {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
-              {aiSaved && pinButton(aiVideoUrl)}
+              {aiSaved && pinButton(aiVideoUrl, aiSlot)}
               <button
                 onClick={() => download(aiVideoUrl, 'ai', 'mp4')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
