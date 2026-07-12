@@ -287,54 +287,89 @@ const kenburns: EffectDef = {
 
 const drone: EffectDef = {
   label: 'Drone Shot',
-  description: 'Aerial dive & climb, banked turns',
+  description: 'Circles the art, zooming in & out',
   beatSynced: false,
   create(p) {
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
+    const dir = rng() < 0.5 ? -1 : 1
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
-    const rotMax = 0.045 // banking ~2.6°
-    // Extra zoom so the banked (rotated) cover never shows a corner
-    const ratio = Math.max(p.W / p.H, p.H / p.W)
-    const bleed = Math.cos(rotMax) + ratio * Math.sin(rotMax)
+    // A true aerial orbit, Mode-7 style: the artwork is terrain seen from a
+    // drone circling its center. Two passes per frame —
+    //   1. rotate (the orbit) + scale (the zoom) the artwork into a square
+    //      scratch big enough that the sampled region never leaves it at any
+    //      angle;
+    //   2. re-sample the scratch row by row with a projective ground-plane
+    //      mapping: lateral scale is linear in screen y and vanishes at a
+    //      virtual horizon above the frame, and world depth per row grows
+    //      with the square of the distance to that horizon — genuine
+    //      perspective, so the spin reads as the camera circling, not the
+    //      image rotating.
+    // The orbit is exactly one revolution per loop, which is inherently
+    // seamless; the zoom runs one eased in-and-out cycle.
+    const VH = -1.0 // virtual horizon, in screen fractions above the top edge
+    const VC = 0.62 // screen row of the orbit target (just below center)
+    const DEPTH = 0.5 * p.H * (VC - VH) ** 2 // depth scale — sets the camera tilt
+    const sxAt = (v: number) => (v - VH) / (1 - VH)
+    const worldAt = (v: number) => DEPTH * (1 / (VC - VH) - 1 / (v - VH))
+    const rowStep = Math.max(1, Math.round(p.H / 240))
+    const hwMax = (p.W / 2) / sxAt(0)
+    const spanUp = -worldAt(0)
+    const spanDn = worldAt(1 + rowStep / p.H)
+    const S = Math.ceil(2 * Math.hypot(hwMax, Math.max(spanUp, spanDn)) * 1.04)
+    const scratch = p.createLayer(S, S)
+    const { drawW, drawH } = coverDims(p.imageWidth, p.imageHeight, S, S)
+    // The projection is static per canvas size — precompute the row table.
+    const rows: { dy: number; dh: number; sx: number; sy: number; sw: number; sh: number }[] = []
+    for (let y = 0; y < p.H; y += rowStep) {
+      const v0 = y / p.H
+      const v1 = (y + rowStep) / p.H
+      const hw = (p.W / 2) / sxAt((v0 + v1) / 2)
+      const sy = S / 2 + worldAt(v0)
+      rows.push({
+        dy: y,
+        dh: Math.min(rowStep, p.H - y),
+        sx: S / 2 - hw,
+        sy,
+        sw: hw * 2,
+        sh: Math.max(0.5, S / 2 + worldAt(v1) - sy),
+      })
+    }
+    let fog: CanvasGradient | undefined
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
-      fillBg(ctx, p.W, p.H)
-      // Altitude: smoothstepped sine — the dive accelerates in, eases out.
-      // alt 0 = high & wide, alt 1 = low flyover (pushed in).
+      // Slow push-in and pull-back, eased at both turnarounds
       const u = 0.5 + 0.5 * loopSin(t, 1, phase)
-      const alt = u * u * (3 - 2 * u)
-      const scale = bleed * (1.04 + 0.42 * alt)
-      // Sweep across the artwork — amplitude grows with the zoom margin, so
-      // the low pass glides far while the high shot barely drifts. Banking
-      // follows the sweep's velocity (its cosine), like a drone leaning into
-      // the turn.
-      const zoomExtra = scale - bleed
-      const panX = 0.25 * zoomExtra * p.W * loopSin(t, 2, phase + 0.9)
-      const panY = 0.15 * zoomExtra * p.H * loopSin(t, 1, phase + 2.6)
-      const rot = rotMax * loopSin(t, 2, phase + 0.9 + Math.PI / 2)
-      // Micro-vibration — the handheld/props shimmer that sells "drone"
-      const jx = (fr() - 0.5) * 0.0015 * p.W
+      const zoom = 1.05 + 0.5 * u * u * (3 - 2 * u)
+      const theta = dir * Math.PI * 2 * t + phase
+      fillBg(scratch.ctx, S, S)
+      scratch.ctx.save()
+      scratch.ctx.translate(S / 2, S / 2)
+      scratch.ctx.rotate(theta)
+      scratch.ctx.scale(zoom, zoom)
+      scratch.ctx.drawImage(p.image, -drawW / 2, -drawH / 2, drawW, drawH)
+      scratch.ctx.restore()
+      // Re-project onto the tilted plane; sub-pixel source jitter is the
+      // airborne micro-vibration that sells "drone"
+      fillBg(ctx, p.W, p.H)
+      const jx = (fr() - 0.5) * 0.0025 * p.W
       const jy = (fr() - 0.5) * 0.0015 * p.H
-      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX + jx, panY + jy, rot)
-      // Zoom smear while the dive is moving fast (|d alt/dt| peaks mid-sine)
-      const speed = Math.abs(loopSin(t, 1, phase + Math.PI / 2))
-      const echoA = 0.16 * speed
-      if (echoA > 0.02) {
-        drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.02, panX + jx, panY + jy, rot, echoA)
-        drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.04, panX + jx, panY + jy, rot, echoA * 0.5)
+      for (const r of rows) {
+        ctx.drawImage(scratch.canvas, r.sx + jx * (r.sw / p.W), r.sy + jy, r.sw, r.sh, 0, r.dy, p.W, r.dh)
       }
-      // Cool atmospheric haze at altitude, burning off as the drone dives
-      const haze = 0.07 * (1 - alt)
-      if (haze > 0.005) {
-        ctx.save()
-        ctx.globalCompositeOperation = 'screen'
-        ctx.globalAlpha = haze
-        ctx.fillStyle = 'rgb(180,200,255)'
-        ctx.fillRect(0, 0, p.W, p.H)
-        ctx.restore()
+      // Atmospheric haze over the far ground, thinning as the drone dives
+      if (!fog) {
+        fog = ctx.createLinearGradient(0, 0, 0, p.H * 0.5)
+        fog.addColorStop(0, 'rgba(185,205,255,0.20)')
+        fog.addColorStop(1, 'rgba(185,205,255,0)')
       }
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 1 - 0.7 * ((zoom - 1.05) / 0.5)
+      ctx.fillStyle = fog
+      ctx.fillRect(0, 0, p.W, p.H * 0.5)
+      ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.45, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
