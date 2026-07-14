@@ -7,26 +7,35 @@
 
 // Photorealism-first lineup. flux-ultra runs FLUX 1.1 Pro Ultra in raw mode,
 // which is specifically tuned to avoid the over-processed "AI art" look.
-export const MODEL_ENDPOINTS: Record<string, string> = {
+//
+// `satisfies` (not a `Record<string, string>` annotation) keeps the literal keys
+// so `keyof typeof MODEL_ENDPOINTS` is the real id union, not `string` — that's
+// what lets IMAGE_MODELS and resolveModelKey be checked against the registry at
+// compile time instead of only at runtime.
+export const MODEL_ENDPOINTS = {
   'flux-ultra':   'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions',
   seedream:       'https://api.replicate.com/v1/models/bytedance/seedream-4/predictions',
   'imagen-ultra': 'https://api.replicate.com/v1/models/google/imagen-4-ultra/predictions',
   recraft:        'https://api.replicate.com/v1/models/recraft-ai/recraft-v3/predictions',
   flux:           'https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions',
   imagen:         'https://api.replicate.com/v1/models/google/imagen-4/predictions',
-}
+} satisfies Record<string, string>
 
-export const MODEL_INPUTS: Record<string, (prompt: string) => Record<string, unknown>> = {
-  'flux-ultra':   (prompt) => ({ prompt, aspect_ratio: '1:1', raw: true }),
-  seedream:       (prompt) => ({ prompt, aspect_ratio: '1:1', size: '2K' }),
-  'imagen-ultra': (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
-  recraft:        (prompt) => ({ prompt, size: '1024x1024', style: 'realistic_image' }),
-  flux:           (prompt) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
-  imagen:         (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
-}
+// The registry's real ids as a literal union. Everything model-keyed downstream
+// (the resolver's return type, the UI list) is checked against this.
+export type ModelKey = keyof typeof MODEL_ENDPOINTS
+
+export const MODEL_INPUTS = {
+  'flux-ultra':   (prompt: string) => ({ prompt, aspect_ratio: '1:1', raw: true }),
+  seedream:       (prompt: string) => ({ prompt, aspect_ratio: '1:1', size: '2K' }),
+  'imagen-ultra': (prompt: string) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
+  recraft:        (prompt: string) => ({ prompt, size: '1024x1024', style: 'realistic_image' }),
+  flux:           (prompt: string) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
+  imagen:         (prompt: string) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
+} satisfies Record<ModelKey, (prompt: string) => Record<string, unknown>>
 
 // Default model when the caller sends nothing (or something unusable).
-export const DEFAULT_MODEL = 'flux'
+export const DEFAULT_MODEL: ModelKey = 'flux'
 
 /**
  * Resolve a client-supplied `model` value to a real registry key.
@@ -42,11 +51,26 @@ export const DEFAULT_MODEL = 'flux'
  * keys through; everything else (crafted names, unknown strings, non-strings)
  * collapses to `flux`, keeping endpoint + input paired and the route crash-free.
  */
-export function resolveModelKey(model: unknown): string {
+export function resolveModelKey(model: unknown): ModelKey {
   return typeof model === 'string' && Object.prototype.hasOwnProperty.call(MODEL_ENDPOINTS, model)
-    ? model
+    ? (model as ModelKey)
     : DEFAULT_MODEL
 }
+
+// UI-facing model list — the single source for every client model selector
+// (the Artwork tab + the collection cover picker) so they can't drift from the
+// endpoint/input registry. `satisfies` proves each id is a real ModelKey at
+// compile time (a typo or a removed model fails the build); the runtime contract
+// test additionally proves the list stays 1:1 with the registry. The first
+// entry is the selectors' default — ordered photorealism-first to match.
+export const IMAGE_MODELS = [
+  { id: 'flux-ultra',   label: 'FLUX Ultra Raw' },
+  { id: 'seedream',     label: 'Seedream 4' },
+  { id: 'imagen-ultra', label: 'Imagen 4 Ultra' },
+  { id: 'recraft',      label: 'Recraft V3' },
+  { id: 'flux',         label: 'Flux 2 Pro' },
+  { id: 'imagen',       label: 'Imagen 4' },
+] satisfies { id: ModelKey; label: string }[]
 
 // Randomized photographic treatment, appended when the client asks to vary the
 // look. One pick per axis — vantage × light × weather × mood — so consecutive

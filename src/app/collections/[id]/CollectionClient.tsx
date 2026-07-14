@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2, Pencil } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
+import { IMAGE_MODELS } from '@/lib/artwork-models'
 import { copyToClipboard } from '@/lib/clipboard'
 import { albumShareUrl } from '@/lib/share-url'
 import AlbumPlayer, { type AlbumPlayerTrack } from '@/components/AlbumPlayer'
@@ -62,7 +63,10 @@ export default function CollectionClient({ collection, initialItems, allProjects
   // In-modal cover generation
   const [coverGenMode, setCoverGenMode] = useState(false)
   const [coverPrompt, setCoverPrompt] = useState('')
-  const [coverModel, setCoverModel] = useState<'flux' | 'imagen'>('flux')
+  // Same photorealism-first lineup + vary toggle as the project Artwork tab,
+  // single-sourced from IMAGE_MODELS so the two selectors can't drift apart.
+  const [coverModel, setCoverModel] = useState<string>(IMAGE_MODELS[0].id)
+  const [coverVary, setCoverVary] = useState(true)
   const [generatingCover, setGeneratingCover] = useState(false)
   const [coverError, setCoverError] = useState('')
 
@@ -140,7 +144,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
       const res = await fetch('/api/generate-artwork', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ collection_id: collection.id, prompt: coverPrompt.trim(), model: coverModel }),
+        body: JSON.stringify({ collection_id: collection.id, prompt: coverPrompt.trim(), model: coverModel, vary: coverVary }),
       })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.artwork_url) {
@@ -569,20 +573,38 @@ export default function CollectionClient({ collection, initialItems, allProjects
               {/* Generate panel */}
               {coverGenMode && (
                 <div className="px-4 py-3 border-b flex-shrink-0 space-y-2" style={{ borderColor: 'var(--surface-2)' }}>
-                  <div className="flex gap-1 p-0.5 rounded-xl" style={{ backgroundColor: 'var(--surface-2)' }}>
-                    {(['flux', 'imagen'] as const).map(m => (
+                  <div className="grid grid-cols-3 gap-1 p-0.5 rounded-xl" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    {IMAGE_MODELS.map(m => (
                       <button
-                        key={m}
-                        onClick={() => setCoverModel(m)}
-                        className="flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors"
-                        style={coverModel === m
+                        key={m.id}
+                        onClick={() => setCoverModel(m.id)}
+                        className="py-1.5 px-1 text-[10px] font-medium rounded-lg transition-colors"
+                        style={coverModel === m.id
                           ? { backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }
                           : { color: 'var(--text-muted)' }}
                       >
-                        {m === 'flux' ? 'Flux 2 Pro' : 'Imagen 4'}
+                        {m.label}
                       </button>
                     ))}
                   </div>
+                  {/* Vary toggle — server appends a random lens/light/weather/mood
+                      treatment so repeat covers don't all share one look */}
+                  <button
+                    onClick={() => setCoverVary(v => !v)}
+                    className="flex items-center gap-2 text-[11px] transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    <span
+                      className="w-8 h-4 rounded-full relative transition-colors flex-shrink-0"
+                      style={{ backgroundColor: coverVary ? 'var(--accent)' : 'var(--surface-2)' }}
+                    >
+                      <span
+                        className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all"
+                        style={{ left: coverVary ? '1rem' : '0.125rem' }}
+                      />
+                    </span>
+                    Vary the look (random lens, light &amp; mood)
+                  </button>
                   <textarea
                     value={coverPrompt}
                     onChange={e => setCoverPrompt(e.target.value)}

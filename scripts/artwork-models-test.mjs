@@ -22,6 +22,7 @@
 import {
   MODEL_ENDPOINTS,
   MODEL_INPUTS,
+  IMAGE_MODELS,
   resolveModelKey,
   composeLook,
   DEFAULT_MODEL,
@@ -108,6 +109,24 @@ check(
       && fn('p').prompt === 'p'
   }),
 )
+
+console.log('\nartwork-models: IMAGE_MODELS UI list stays 1:1 with the registry')
+
+// The client selectors (Artwork tab + collection cover picker) render this list
+// and send its ids straight to the paid route. `satisfies` proves at compile
+// time that every id is a real key; these runtime asserts additionally prove the
+// list is EXHAUSTIVE and duplicate-free, so a model can't be added to the
+// registry (or removed) without its selector entry moving in lockstep.
+const uiIds = IMAGE_MODELS.map(m => m.id)
+check('one UI entry per registered model', IMAGE_MODELS.length === KEYS.length, `${IMAGE_MODELS.length} vs ${KEYS.length}`)
+check('every UI id is a real registry key', uiIds.every(id => KEYS.includes(id)), uiIds.join(','))
+check('every registry key has exactly one UI entry (no drift)',
+  KEYS.every(k => uiIds.filter(id => id === k).length === 1))
+check('UI ids are unique', new Set(uiIds).size === uiIds.length)
+check('every UI entry has a non-empty label',
+  IMAGE_MODELS.every(m => typeof m.label === 'string' && m.label.trim().length > 0))
+check('resolveModelKey accepts every UI id unchanged (selector can never burn quota)',
+  IMAGE_MODELS.every(m => resolveModelKey(m.id) === m.id))
 
 console.log('\nartwork-models: composeLook')
 
