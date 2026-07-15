@@ -5,6 +5,7 @@ import { Sparkles, Upload, X, Wand2, Download } from 'lucide-react'
 import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
 import { TEXT_COLORS } from '@/lib/text-colors'
+import { IMAGE_MODELS } from '@/lib/artwork-models'
 
 type Position =
   | 'top-left' | 'top-center' | 'top-right'
@@ -27,18 +28,6 @@ const POSITION_GRID: Position[] = [
   'top-left', 'top-center', 'top-right',
   'middle-left', 'middle-center', 'middle-right',
   'bottom-left', 'bottom-center', 'bottom-right',
-]
-
-// Photorealism-first model lineup — ids must match MODEL_ENDPOINTS in
-// /api/generate-artwork. flux-ultra (raw mode) leads: it's tuned to produce
-// natural photographic output instead of the glossy "AI art" house style.
-const IMAGE_MODELS: { id: string; label: string }[] = [
-  { id: 'flux-ultra',   label: 'FLUX Ultra Raw' },
-  { id: 'seedream',     label: 'Seedream 4' },
-  { id: 'imagen-ultra', label: 'Imagen 4 Ultra' },
-  { id: 'recraft',      label: 'Recraft V3' },
-  { id: 'flux',         label: 'Flux 2 Pro' },
-  { id: 'imagen',       label: 'Imagen 4' },
 ]
 
 type Props = {
@@ -66,7 +55,7 @@ export default function ArtworkGenerator({
   // Subject only — the photographic treatment (lens, light, weather, mood) is
   // layered on server-side by the Vary option so repeat runs look different.
   const [prompt, setPrompt] = useState(`a colossal futuristic building shaped like a giant retro cassette tape, its two tape reels forming vast circular glass atriums, weathered board-formed concrete and steel, hyper-realistic materials with natural imperfections, surreal ominous megastructure, photorealistic architectural photograph, looks like a real photo, no text, no watermark — ${projectTitle}${genre ? `, ${genre}` : ''}`)
-  const [model, setModel] = useState('flux-ultra')
+  const [model, setModel] = useState<string>(IMAGE_MODELS[0].id)
   const [vary, setVary] = useState(true)
   const [lastLook, setLastLook] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)

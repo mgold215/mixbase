@@ -9,18 +9,27 @@ export const dynamic = 'force-dynamic'
 // Wrapped in React cache() so generateMetadata and the page component (both
 // called in the same request) share ONE execution instead of running the full
 // project → version → profile query set twice per share-page view.
+// This is a PUBLIC page: anything selected here is serialized into the payload
+// sent to anonymous viewers (props flow Server Component → ShareClient → browser).
+// So we select ONLY the columns the page actually renders — never `*`. In
+// particular this keeps mb_versions.private_notes (the artist's own notes) and
+// every mb_feedback row (owner-read-only per RLS: another reviewer's name,
+// rating, comment) out of the payload. share-projection-test.mjs locks this.
+const VERSION_PUBLIC_COLS = 'id, audio_url, label, version_number, status, public_notes'
+const PROJECT_PUBLIC_COLS = 'id, user_id, title, artwork_url, finalized_artwork_url, visualizer_url'
+
 const getShareData = cache(async (token: string) => {
   // ── 1. Project-level share token (always resolves to the latest mix) ──
   const { data: project } = await supabaseAdmin
     .from('mb_projects')
-    .select('*')
+    .select(PROJECT_PUBLIC_COLS)
     .eq('share_token', token)
     .single()
 
   if (project) {
     const { data: latestVersion } = await supabaseAdmin
       .from('mb_versions')
-      .select('*, mb_feedback(*)')
+      .select(VERSION_PUBLIC_COLS)
       .eq('project_id', project.id)
       .order('version_number', { ascending: false })
       .limit(1)
@@ -44,18 +53,20 @@ const getShareData = cache(async (token: string) => {
   // ── 2. Legacy: version-level share token (old links keep working) ──
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
-    .select('*, mb_projects(*)')
+    .select(`${VERSION_PUBLIC_COLS}, mb_projects(${PROJECT_PUBLIC_COLS})`)
     .eq('share_token', token)
     .single()
 
   if (!version) return null
 
   let artistName = 'mixBASE'
-  if (version.mb_projects?.user_id) {
+  // supabase-js types a to-one embed as an array; at runtime it's the object.
+  const legacyProject = version.mb_projects as unknown as { user_id?: string | null } | null
+  if (legacyProject?.user_id) {
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('artist_name, display_name')
-      .eq('id', version.mb_projects.user_id)
+      .eq('id', legacyProject.user_id)
       .single()
     if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
   }

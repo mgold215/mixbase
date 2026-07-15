@@ -4,69 +4,10 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
+import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook } from '@/lib/artwork-models'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
 export const maxDuration = 120
-
-const MODEL_ENDPOINTS: Record<string, string> = {
-  // Photorealism-first lineup. flux-ultra runs FLUX 1.1 Pro Ultra in raw mode,
-  // which is specifically tuned to avoid the over-processed "AI art" look.
-  'flux-ultra':   'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions',
-  seedream:       'https://api.replicate.com/v1/models/bytedance/seedream-4/predictions',
-  'imagen-ultra': 'https://api.replicate.com/v1/models/google/imagen-4-ultra/predictions',
-  recraft:        'https://api.replicate.com/v1/models/recraft-ai/recraft-v3/predictions',
-  flux:           'https://api.replicate.com/v1/models/black-forest-labs/flux-2-pro/predictions',
-  imagen:         'https://api.replicate.com/v1/models/google/imagen-4/predictions',
-}
-
-const MODEL_INPUTS: Record<string, (prompt: string) => Record<string, unknown>> = {
-  'flux-ultra':   (prompt) => ({ prompt, aspect_ratio: '1:1', raw: true }),
-  seedream:       (prompt) => ({ prompt, aspect_ratio: '1:1', size: '2K' }),
-  'imagen-ultra': (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
-  recraft:        (prompt) => ({ prompt, size: '1024x1024', style: 'realistic_image' }),
-  flux:           (prompt) => ({ prompt, aspect_ratio: '1:1', output_format: 'webp', output_quality: 95 }),
-  imagen:         (prompt) => ({ prompt, aspect_ratio: '1:1', safety_filter_level: 'block_only_high' }),
-}
-
-// Randomized photographic treatment, appended when the client asks to vary the
-// look. One pick per axis — vantage × light × weather × mood — so consecutive
-// generations of the same subject land on visibly different photographs instead
-// of the model's single house style.
-const LOOK_VANTAGE = [
-  'shot on 35mm film, Kodak Portra 400, subtle grain',
-  'medium format Hasselblad capture, razor-sharp 8k architectural photography',
-  'aerial drone photograph from 120 meters',
-  'low-angle street-level shot on a 24mm wide lens, dramatic perspective',
-  'telephoto compression from a distant rooftop, layered against the skyline',
-  'tilt-shift photograph with selective focus',
-]
-const LOOK_LIGHT = [
-  'golden hour, long shadows and warm sun flare',
-  'overcast flat daylight, muted tones',
-  'blue hour, sodium streetlights glowing',
-  'harsh midday sun, deep black shadows',
-  'night scene, neon signage reflecting on wet asphalt',
-  'dawn light breaking through low clouds',
-]
-const LOOK_WEATHER = [
-  'dense fog rolling between structures',
-  'light rain, wet reflective surfaces',
-  'dust haze in the air',
-  'crystal clear air, extreme detail',
-  'low storm clouds gathering overhead',
-]
-const LOOK_MOOD = [
-  'ominous looming scale, tiny human figures dwarfed below',
-  'dystopian corporate megastructure, uncanny emptiness',
-  'abandoned and partially overgrown, nature reclaiming the facade',
-  'pristine futuristic campus, sterile and unsettling',
-  'brutalist monolith against an empty sky',
-]
-
-function composeLook(): string {
-  const pick = (pool: string[]) => pool[Math.floor(Math.random() * pool.length)]
-  return [pick(LOOK_VANTAGE), pick(LOOK_LIGHT), pick(LOOK_WEATHER), pick(LOOK_MOOD)].join(', ')
-}
 
 async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
   for (let i = 0; i < 24; i++) {  // 24 * 5s = 2 min
@@ -163,20 +104,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'AI artwork generation is temporarily unavailable.' }, { status: 503 })
   }
 
-  const endpoint = MODEL_ENDPOINTS[model] ?? MODEL_ENDPOINTS.flux
-  const inputFn   = MODEL_INPUTS[model as keyof typeof MODEL_INPUTS] ?? MODEL_INPUTS.flux
+  // resolveModelKey collapses any unknown / crafted model (incl. inherited
+  // Object.prototype names like "__proto__") to a real key, so endpoint + input
+  // stay paired and neither can be a non-function/non-URL that throws below.
+  const modelKey = resolveModelKey(model)
+  const endpoint = MODEL_ENDPOINTS[modelKey]
+  const inputFn  = MODEL_INPUTS[modelKey]
 
-  const replicateRes = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${replicateToken}`,
-      'Content-Type': 'application/json',
-      Prefer: 'wait',
-    },
-    body: JSON.stringify({ input: inputFn(finalPrompt) }),
-  })
-
-  const prediction = await replicateRes.json()
+  // The slot is already reserved, so a network/JSON failure on the paid call must
+  // refund — matching pollPrediction's catch below. Without this an outbound
+  // hiccup would throw uncaught (500) and silently burn the user's monthly quota.
+  let replicateRes: Response
+  let prediction: {
+    error?: unknown
+    detail?: string
+    output?: string | string[] | null
+    status?: string
+    urls?: { get?: string }
+  }
+  try {
+    replicateRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${replicateToken}`,
+        'Content-Type': 'application/json',
+        Prefer: 'wait',
+      },
+      body: JSON.stringify({ input: inputFn(finalPrompt) }),
+    })
+    prediction = await replicateRes.json()
+  } catch (err) {
+    await refund()
+    console.error('[generate-artwork] Replicate request failed:', err instanceof Error ? err.message : err)
+    return NextResponse.json({ error: 'Image generation failed. Please try again.' }, { status: 502 })
+  }
 
   if (!replicateRes.ok || prediction.error) {
     await refund()
