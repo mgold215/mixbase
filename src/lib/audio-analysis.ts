@@ -21,13 +21,51 @@ export function detectBPM(audioBuffer: AudioBuffer): number {
   for (let i = 1; i < maxFrames; i++) flux[i] = Math.max(0, energy[i] - energy[i - 1])
 
   // Autocorrelation — at 100fps, lag 30=200BPM, lag 100=60BPM
+  const corr = new Float32Array(101)
   let bestLag = 50, bestCorr = -1
   for (let lag = 30; lag <= 100; lag++) {
     let c = 0
     for (let i = 0; i < maxFrames - lag; i++) c += flux[i] * flux[i + lag]
+    c /= maxFrames - lag // normalize: long lags sum fewer terms
+    corr[lag] = c
     if (c > bestCorr) { bestCorr = c; bestLag = lag }
   }
-  return Math.round(60_000 / (bestLag * 10))
+
+  // A beat period rarely falls on an exact 10ms frame, so a peak's mass can
+  // split across two adjacent lag bins (126 BPM = lag 47.62 → bins 47+48).
+  // Always measure peak strength as a small window sum, never a single bin.
+  const peakSum = (center: number) => {
+    let s = 0
+    const lo = Math.max(30, Math.floor(center) - 1), hi = Math.min(100, Math.ceil(center) + 1)
+    for (let l = lo; l <= hi; l++) s += corr[l]
+    return s
+  }
+
+  // Octave correction: autocorrelation also peaks at every multiple of the
+  // beat period, and the 2-beat lag often wins on kick/snare patterns where
+  // alternate beats are accented — reporting 126 BPM tracks as 63. If the
+  // half-lag (double tempo) shows a real periodicity peak of its own, prefer
+  // it. Genuine slow tracks have no half-lag peak (only the off-beat floor),
+  // so they are left alone.
+  while (bestLag >= 60) {
+    const mid = bestLag / 2
+    if (peakSum(mid) < 0.3 * peakSum(bestLag)) break
+    let halfLag = Math.floor(mid)
+    for (let l = Math.floor(mid) - 1; l <= Math.ceil(mid) + 1; l++) {
+      if (l >= 30 && corr[l] > corr[halfLag]) halfLag = l
+    }
+    bestLag = halfLag
+    bestCorr = corr[halfLag]
+  }
+
+  // Centroid interpolation recovers the fractional lag from the split bins
+  // (34.48 → 174 BPM instead of lag 34 → 176 or lag 35 → 171).
+  const l0 = Math.max(30, bestLag - 1), l1 = Math.min(100, bestLag + 1)
+  let wSum = 0, lagSum = 0
+  for (let l = l0; l <= l1; l++) { wSum += corr[l]; lagSum += corr[l] * l }
+  const fracLag = wSum > 0 ? lagSum / wSum : bestLag
+
+  return Math.round(60_000 / (fracLag * 10))
 }
 
 // ─── Key Detection ─────────────────────────────────────────────────────────────
