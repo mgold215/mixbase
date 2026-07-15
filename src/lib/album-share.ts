@@ -33,9 +33,16 @@ export type AlbumShareData = {
 // both call this in the same request) share ONE execution — supabase-js isn't
 // deduped by Next the way built-in fetch() is, so without this the full
 // collection → items → versions → profile query set runs twice per view.
+// Public page: select ONLY the columns rendered below — never `*` — so no
+// owner-private column can ever ride the share_token into the anonymous payload
+// (this is served on the public /album/... route). share-projection-test.mjs
+// locks this. Columns: id (items lookup), user_id (artist-name lookup),
+// title + type + cover_url (rendered).
+const COLLECTION_PUBLIC_COLS = 'id, user_id, title, type, cover_url'
+
 export const getAlbumShareData = cache(async (token: string): Promise<AlbumShareData | null> => {
   const fetchCollection = () =>
-    supabaseAdmin.from('mb_collections').select('*').eq('share_token', token).single()
+    supabaseAdmin.from('mb_collections').select(COLLECTION_PUBLIC_COLS).eq('share_token', token).single()
 
   const firstTry = await fetchCollection()
   let collection = firstTry.data

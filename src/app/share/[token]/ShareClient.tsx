@@ -8,12 +8,24 @@ import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coordinator'
 import FeedbackForm from '@/components/FeedbackForm'
-import type { Version } from '@/lib/supabase'
 
+// The public share page renders ONLY these version fields. The loader
+// (share/[token]/page.tsx) selects exactly this set and deliberately omits
+// owner-private columns (private_notes, mb_feedback, share_token, …), so the
+// type mirrors the minimized public payload — reading an omitted field here
+// would fail the build, preventing an accidental re-leak.
 type Props = {
-  // mb_projects is the full joined project row
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  version: Version & { mb_projects: any }
+  version: {
+    id: string
+    audio_url: string
+    label: string | null
+    version_number: number
+    status: string | null
+    public_notes: string | null
+    // to-one project embed; supabase-js types embeds loosely
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mb_projects: any
+  }
 }
 
 export default function ShareClient({ version }: Props) {
