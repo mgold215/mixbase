@@ -179,6 +179,35 @@ export function ensureVersionUniqueIndex(): Promise<boolean> {
   return versionIndexEnsured
 }
 
+// ── Migration 021: artist social links on profiles ──────────────────────────
+// The submission portal reads/writes profiles.spotify_url + youtube_url. A
+// deploy can reach production before the migration runs, and PostgREST rejects
+// the whole select/upsert when a referenced column is missing; heal on that
+// specific failure and retry. Idempotent ALTER, memoized per process.
+
+const PROFILE_SOCIAL_SQL =
+  'alter table public.profiles add column if not exists spotify_url text;' +
+  ' alter table public.profiles add column if not exists youtube_url text;'
+
+let profileSocialEnsured: Promise<boolean> | null = null
+
+export function ensureProfileSocialColumns(): Promise<boolean> {
+  if (!profileSocialEnsured) {
+    profileSocialEnsured = runQuery(PROFILE_SOCIAL_SQL, 'profiles social columns')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) profileSocialEnsured = null
+        return ok
+      })
+  }
+  return profileSocialEnsured
+}
+
+/** True when a PostgREST error is the missing-column failure this heals. */
+export function isMissingProfileSocialColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /(spotify|youtube)_url/.test(error.message)
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false

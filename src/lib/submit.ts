@@ -58,6 +58,16 @@ export type Song = {
   share_token: string | null
   latest_version_id: string | null
   status: string | null
+  // Absolute, public download URL for the latest version's audio (the WAV a
+  // curator/distributor grabs). Null when the song has no uploaded audio yet.
+  download_url: string | null
+}
+
+// The artist's own links, auto-included in every pitch (from Settings, or a
+// name-search fallback). Resolved server-side in submit/page.tsx.
+export type ArtistLinks = {
+  spotify_url: string | null
+  youtube_url: string | null
 }
 
 // ─── Message template ───
@@ -68,12 +78,25 @@ Hi {curator_name},
 I'm moodmixformat, a {genre} producer. I think my new track
 "{track_title}" could be a strong fit for {curator_name}.
 
-Listen (private, download enabled): {track_url}
+Listen (private): {track_url}
+Download (WAV): {download_url}
+Spotify: {spotify_url}
+YouTube: {youtube_url}
 
 {pitch}
 
 Thanks for taking a look — totally understand if it's not the right fit.
 — Matt (moodmixformat)`
+
+// The links auto-included in every pitch. When a template doesn't already
+// position one of these tokens, renderTemplate appends the present ones as a
+// footer — so the download/Spotify/YouTube links always ship, even for a user
+// whose saved custom template predates them.
+const LINK_FIELDS: { key: string; label: string }[] = [
+  { key: 'download_url', label: 'Download (WAV)' },
+  { key: 'spotify_url', label: 'Spotify' },
+  { key: 'youtube_url', label: 'YouTube' },
+]
 
 const TEMPLATE_KEY = 'submitbase:template'
 
@@ -88,13 +111,22 @@ export function resetTemplate() {
   if (typeof window !== 'undefined') localStorage.removeItem(TEMPLATE_KEY)
 }
 
-// Fill merge fields. Supported: {curator_name} {track_title} {genre} {pitch} {track_url} {platform}
+// Fill merge fields. Supported: {curator_name} {track_title} {genre} {pitch}
+// {track_url} {platform} {download_url} {spotify_url} {youtube_url}
+//
+// Behavior worth knowing:
+//  - A field with an empty value drops its whole line, so an unset link (or an
+//    empty pitch) never leaves a dangling "Spotify:" label behind.
+//  - Any of the three link fields that has a value but no token in the template
+//    is appended as a footer — the download/Spotify/YouTube links ship even when
+//    a user's saved custom template predates them.
 export function renderTemplate(
   template: string,
   curator: Curator,
   song: Song,
   shareUrl: string,
   pitch: string,
+  links?: ArtistLinks,
 ): string {
   const fields: Record<string, string> = {
     curator_name: curator.name || '',
@@ -103,10 +135,32 @@ export function renderTemplate(
     pitch: pitch || '',
     track_url: shareUrl || '',
     platform: curator.platform || '',
+    download_url: song.download_url || '',
+    spotify_url: links?.spotify_url || '',
+    youtube_url: links?.youtube_url || '',
   }
-  return template.replace(/\{(\w+)\}/g, (whole, key: string) =>
+
+  // Drop lines whose only merge content is an empty field (removes dangling
+  // "Label:" lines for unset links and the blank line of an empty pitch).
+  let out = template
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === '') {
+      out = out.replace(new RegExp(`^[^\\n]*\\{${key}\\}[^\\n]*\\n?`, 'gm'), '')
+    }
+  }
+
+  out = out.replace(/\{(\w+)\}/g, (whole, key: string) =>
     key in fields ? fields[key] : whole,
   )
+
+  // Append any present link the template didn't already position.
+  const footer = LINK_FIELDS
+    .filter(({ key }) => fields[key] && !template.includes(`{${key}}`))
+    .map(({ key, label }) => `${label}: ${fields[key]}`)
+  if (footer.length) out = `${out.trimEnd()}\n\n${footer.join('\n')}`
+
+  // Tidy any 3+ newline runs left by dropped lines.
+  return out.replace(/\n{3,}/g, '\n\n')
 }
 
 // Split a rendered message into Subject + body (first `Subject:` line wins).

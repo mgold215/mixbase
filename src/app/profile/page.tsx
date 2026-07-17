@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import Nav from '@/components/Nav'
-import { LogOut, Trash2, ArrowLeft, ExternalLink, Check } from 'lucide-react'
+import { LogOut, Trash2, ArrowLeft, ExternalLink, Check, Sparkles } from 'lucide-react'
 import Link from 'next/link'
+import { spotifySearchUrl, youtubeSearchUrl } from '@/lib/social-links'
 
 export default function ProfilePage() {
   const [email, setEmail] = useState('')
@@ -13,6 +14,15 @@ export default function ProfilePage() {
   const [saved, setSaved] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // Artist links — auto-included in every curator submission.
+  const [spotifyUrl, setSpotifyUrl] = useState('')
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+  const [savedSpotifyUrl, setSavedSpotifyUrl] = useState('')
+  const [savedYoutubeUrl, setSavedYoutubeUrl] = useState('')
+  const [linksSaving, setLinksSaving] = useState(false)
+  const [linksSaved, setLinksSaved] = useState(false)
+  const [linksError, setLinksError] = useState('')
   const [showDelete, setShowDelete] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -34,10 +44,47 @@ export default function ProfilePage() {
         setEmail(data.email ?? '')
         setArtistName(data.artist_name ?? '')
         setSavedArtistName(data.artist_name ?? '')
+        setSpotifyUrl(data.spotify_url ?? '')
+        setSavedSpotifyUrl(data.spotify_url ?? '')
+        setYoutubeUrl(data.youtube_url ?? '')
+        setSavedYoutubeUrl(data.youtube_url ?? '')
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }, [])
+
+  async function handleSaveLinks() {
+    setLinksSaving(true)
+    setLinksError('')
+    const res = await fetch('/api/auth/me', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spotify_url: spotifyUrl.trim(), youtube_url: youtubeUrl.trim() }),
+    })
+    setLinksSaving(false)
+    if (res.ok) {
+      setSavedSpotifyUrl(spotifyUrl.trim())
+      setSavedYoutubeUrl(youtubeUrl.trim())
+      setLinksSaved(true)
+      setTimeout(() => setLinksSaved(false), 2000)
+    } else {
+      const body = await res.json().catch(() => ({}))
+      setLinksError(body.error ?? "Couldn't save your links. Please try again.")
+    }
+  }
+
+  // Fill the link fields with keyless name-search URLs derived from the artist
+  // name — the same links the submission portal falls back to. The artist can
+  // then replace either with their exact profile URL.
+  function autoDetectLinks() {
+    const name = artistName.trim()
+    if (!name) { setLinksError('Add your artist / producer name above first.'); return }
+    setLinksError('')
+    setSpotifyUrl(spotifySearchUrl(name))
+    setYoutubeUrl(youtubeSearchUrl(name))
+  }
+
+  const hasLinkChanges = spotifyUrl.trim() !== savedSpotifyUrl || youtubeUrl.trim() !== savedYoutubeUrl
 
   async function handleSaveProfile() {
     setSaving(true)
@@ -165,6 +212,60 @@ export default function ProfilePage() {
                     </button>
                   </div>
                   {profileError && <p className="text-xs text-red-400 mt-2">{profileError}</p>}
+                </div>
+              </div>
+            </div>
+
+            {/* Artist links section */}
+            <div>
+              <h2 className="text-xs uppercase tracking-[0.14em] mb-3 font-semibold" style={{ color: 'var(--accent)' }}>Artist Links</h2>
+              <div className="rounded-xl p-5 space-y-4" style={sectionStyle}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Auto-included in every curator submission alongside your listening &amp; download links. Leave blank to use an
+                  automatic search link from your artist name, or paste your exact profile URLs.
+                </p>
+                <div>
+                  <label className="block text-xs uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Spotify</label>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    value={spotifyUrl}
+                    onChange={e => setSpotifyUrl(e.target.value)}
+                    placeholder="https://open.spotify.com/artist/…"
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>YouTube</label>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    value={youtubeUrl}
+                    onChange={e => setYoutubeUrl(e.target.value)}
+                    placeholder="https://youtube.com/@yourchannel"
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={inputStyle}
+                  />
+                </div>
+                {linksError && <p className="text-xs text-red-400">{linksError}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={autoDetectLinks}
+                    className="inline-flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg font-medium transition-colors"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                  >
+                    <Sparkles size={14} />
+                    Auto-detect from my name
+                  </button>
+                  <button
+                    onClick={handleSaveLinks}
+                    disabled={!hasLinkChanges || linksSaving}
+                    className="text-sm px-4 py-2 rounded-lg font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                    style={{ backgroundColor: linksSaved ? '#4ade80' : 'var(--accent)', color: '#0d0b08' }}
+                  >
+                    {linksSaved ? <Check size={14} /> : linksSaving ? 'Saving...' : 'Save links'}
+                  </button>
                 </div>
               </div>
             </div>
