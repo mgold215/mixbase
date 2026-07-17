@@ -357,7 +357,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
           onClick={closeVisualizer}
         >
           <div
-            className="w-full max-w-2xl rounded-2xl my-8"
+            className="w-full max-w-4xl rounded-2xl my-8"
             style={{ backgroundColor: 'var(--bg-page)', border: '1px solid var(--surface-2)' }}
             onClick={e => e.stopPropagation()}
           >

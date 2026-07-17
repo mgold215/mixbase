@@ -102,6 +102,10 @@ export default function Visualizer({
   const [libraryError, setLibraryError] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const previewRef = useRef<HTMLCanvasElement>(null)
+  // Measured width of the live-preview box. Landscape previews render at the
+  // box's full width (instead of a fixed 300px) so 16:9 formats fill the wide
+  // panel edge to edge, like the exported video fills a wide screen.
+  const [previewBoxW, setPreviewBoxW] = useState(0)
   const cancelledRef = useRef(false)
   // Mirrors status === 'rendering' for the preview rAF loop, which must not
   // re-init (and restart the loop position) every time status flips.
@@ -450,7 +454,21 @@ export default function Visualizer({
 
   const bpmNum = clampBpm(bpm)
 
-  // Live preview: run the selected effect in a small visible canvas via rAF so
+  // Track the preview box's width so landscape previews can fill it. Only
+  // material changes (>32px) update state — every update re-inits the preview
+  // loop from t = 0, so ignore sub-pixel/scrollbar jitter.
+  useEffect(() => {
+    const box = previewRef.current?.parentElement
+    if (!box || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = Math.round(entries[0]?.contentRect.width ?? 0)
+      if (w > 0) setPreviewBoxW(prev => (Math.abs(prev - w) > 32 ? w : prev))
+    })
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [artworkUrl])
+
+  // Live preview: run the selected effect in a visible canvas via rAF so
   // the user sees the motion before committing to a render. Paused (frames
   // skipped, loop kept alive) while a recording is in flight so the two loops
   // don't fight for the main thread.
@@ -460,7 +478,11 @@ export default function Visualizer({
     let disposed = false
     let raf = 0
     const cfg = FORMAT_CONFIG[format]
-    const PW = 300
+    // Landscape formats render at the preview box's full width so the wide
+    // canvas is sharp when displayed edge to edge; portrait/square formats are
+    // height-limited by the CSS cap, so 300px of intrinsic width is plenty.
+    const boxW = previewBoxW || canvas.parentElement?.clientWidth || 0
+    const PW = cfg.width > cfg.height ? Math.min(1024, Math.max(300, boxW)) : 300
     const PH = Math.round((PW * cfg.height) / cfg.width)
     canvas.width = PW
     canvas.height = PH
@@ -507,7 +529,7 @@ export default function Visualizer({
       disposed = true
       cancelAnimationFrame(raf)
     }
-  }, [artworkUrl, effect, format, bpmNum])
+  }, [artworkUrl, effect, format, bpmNum, previewBoxW])
 
   // One pin slot's UI: preview + Choose from Media + Remove. Shared by the
   // vertical (player + Short) and horizontal (Full-Length) slots below.
@@ -640,7 +662,7 @@ export default function Visualizer({
 
   if (!artworkUrl) {
     return (
-      <div className="max-w-2xl space-y-6">
+      <div className="max-w-4xl space-y-6">
         {projectVizSection}
         <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
           <Film size={40} style={{ color: 'var(--surface-3)' }} />
@@ -697,7 +719,7 @@ export default function Visualizer({
   })()
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-4xl space-y-6">
       {/* Hidden canvas used for frame rendering */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
@@ -785,7 +807,9 @@ export default function Visualizer({
             <canvas
               ref={previewRef}
               className="block"
-              style={{ maxWidth: '100%', maxHeight: '18rem', width: 'auto', height: 'auto' }}
+              style={cfg.width > cfg.height
+                ? { width: '100%', height: 'auto' }
+                : { maxWidth: '100%', maxHeight: '18rem', width: 'auto', height: 'auto' }}
             />
           </div>
         </div>
@@ -813,7 +837,11 @@ export default function Visualizer({
         {/* Free video result */}
         {status === 'done' && videoUrl && (
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--surface-2)' }}>
-            <video src={videoUrl} controls loop autoPlay muted playsInline className="w-full max-h-80 object-contain bg-black" />
+            <video
+              src={videoUrl}
+              controls loop autoPlay muted playsInline
+              className={cfg.width > cfg.height ? 'w-full bg-black' : 'w-full max-h-80 object-contain bg-black'}
+            />
             <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
               <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
                 {cfg.label} · {Math.round(cfg.width * RENDER_SCALE)}×{Math.round(cfg.height * RENDER_SCALE)} · WebM
