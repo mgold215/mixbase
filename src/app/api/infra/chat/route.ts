@@ -8,6 +8,7 @@ import { getSupabaseStatus } from '@/lib/infra/supabase'
 import { getGithubStatus } from '@/lib/infra/github'
 import { getStripeStatus } from '@/lib/infra/stripe'
 import { getSentryStatus } from '@/lib/infra/sentry'
+import { isReadonlySql } from '@/lib/infra/sql-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,16 +56,6 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
 ]
-
-// Guard: only allow a single read-only statement. Rejects writes, DDL, and
-// statement chaining before the query ever reaches the database.
-function isReadonlySql(sql: string): boolean {
-  const trimmed = sql.trim().replace(/;\s*$/, '')
-  if (trimmed.includes(';')) return false // no statement chaining
-  if (!/^(select|with|explain)\b/i.test(trimmed)) return false
-  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|do)\b/i.test(trimmed)) return false
-  return true
-}
 
 async function runReadonlySql(sql: string): Promise<string> {
   if (!isReadonlySql(sql)) return 'Rejected: only a single read-only SELECT/WITH/EXPLAIN statement is allowed.'
