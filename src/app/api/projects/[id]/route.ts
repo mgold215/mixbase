@@ -65,13 +65,29 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
       if (typeof body[key] !== 'string') {
         return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
       }
-      const { data: viz } = await supabaseAdmin
-        .from('mb_visualizers')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('video_url', body[key])
-        .limit(1)
-        .maybeSingle()
+      // The lookup itself can fail transiently (connection reset, PostgREST
+      // blip). That is NOT "unknown video" — swallowing the error here made a
+      // freshly saved render un-pinnable with a misleading 400. Retry once,
+      // then surface a 503 the client can retry, keeping 400 for the case
+      // where the row is genuinely absent.
+      let viz: { id: string } | null = null
+      let lookupError: { message: string } | null = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await supabaseAdmin
+          .from('mb_visualizers')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('video_url', body[key])
+          .limit(1)
+          .maybeSingle()
+        viz = res.data
+        lookupError = res.error
+        if (!lookupError) break
+      }
+      if (lookupError) {
+        console.error('[projects PATCH] visualizer lookup failed:', lookupError.message)
+        return NextResponse.json({ error: 'Could not verify the visualizer video. Try again.' }, { status: 503 })
+      }
       if (!viz) return NextResponse.json({ error: 'Unknown visualizer video' }, { status: 400 })
     }
   }
