@@ -29,17 +29,24 @@ export async function GET(
   if (ifNoneMatch) upstreamHeaders['If-None-Match'] = ifNoneMatch
 
   let upstream: Response
+  // Cap the wait for upstream *headers* at 30s so a stalled Supabase connection
+  // can't pin the request indefinitely — but clear the timer once headers
+  // arrive. AbortSignal.timeout() would keep ticking through body streaming and
+  // sever any transfer longer than 30s (a full-file WAV download, or a browser
+  // streaming a long mix over one open-ended Range request).
+  const connectAbort = new AbortController()
+  const connectTimer = setTimeout(() => connectAbort.abort(), 30000)
   try {
-    // Cap the upstream wait at 30s. Without it a stalled Supabase connection can
-    // pin a Railway worker for the full 60s maxDuration, starving other requests.
     upstream = await fetch(supabaseUrl, {
       headers: upstreamHeaders,
-      signal: AbortSignal.timeout(30000),
+      signal: connectAbort.signal,
     })
   } catch {
     // Network blip or timeout talking to Supabase — surface as 502 so the element
     // can retry rather than throwing a 500 that looks like a hard failure.
     return new NextResponse(null, { status: 502 })
+  } finally {
+    clearTimeout(connectTimer)
   }
 
   // 304 Not Modified — pass straight through (no body).
@@ -65,6 +72,22 @@ export async function GET(
 
   const contentLength = upstream.headers.get('Content-Length')
   if (contentLength) headers.set('Content-Length', contentLength)
+
+  // ?download=1 turns the response into an attachment (streamed, so even a
+  // 2 GB WAV never buffers in memory) saved under the original upload name
+  // passed as ?filename=. The name is header-sanitized: CR/LF/quotes stripped
+  // (header injection), ASCII fallback in filename= for old parsers, and the
+  // full UTF-8 name RFC 5987-encoded in filename*.
+  if (req.nextUrl.searchParams.get('download') === '1') {
+    const fallback = path[path.length - 1] ?? 'audio'
+    const clean = (req.nextUrl.searchParams.get('filename') ?? fallback)
+      .replace(/[\r\n"\\]/g, '')
+      .slice(0, 200) || fallback
+    const ascii = clean.replace(/[^\x20-\x7e]/g, '_')
+    const rfc5987 = encodeURIComponent(clean)
+      .replace(/['()*!]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+    headers.set('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987}`)
+  }
 
   // A 206 is only valid when it carries Content-Range. Mirror upstream's real
   // status rather than forcing 206 whenever the client merely *sent* a Range:

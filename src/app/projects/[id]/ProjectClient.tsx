@@ -876,6 +876,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                     </div>
                   </div>
                   <StatusBadge status={av.status} size="sm" />
+                  <a
+                    href={`${audioProxyUrl(av.audio_url)}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
+                    download={av.audio_filename ?? 'mix.wav'}
+                    className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
+                    title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
+                  >
+                    <Download size={13} />
+                  </a>
                   <button
                     onClick={() => restoreVersion(av)}
                     disabled={restoring}
@@ -1078,12 +1086,18 @@ function CurrentMixCard({
               {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
             </span>
             <div className="flex-1" />
-            {version.allow_download && (
-              <a href={vUrl} download={version.audio_filename ?? 'mix.wav'}
-                className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors" title="Download">
-                <Download size={13} />
-              </a>
-            )}
+            {/* Owner can always re-download the original upload (e.g. to submit
+                the WAV to a distributor) — ?download=1 makes the audio proxy
+                stream it as an attachment under its original filename. */}
+            <a
+              href={`${vUrl}?download=1&filename=${encodeURIComponent(version.audio_filename ?? 'mix.wav')}`}
+              download={version.audio_filename ?? 'mix.wav'}
+              className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+              title={`Download original file${version.audio_filename ? ` (${version.audio_filename})` : ''}`}
+            >
+              <Download size={13} />
+              Original
+            </a>
           </div>
         </div>
 
