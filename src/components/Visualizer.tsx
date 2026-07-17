@@ -349,13 +349,34 @@ export default function Visualizer({
     if (!projectId || settingViz) return
     setSettingViz(true)
     setVizError('')
+    // One PATCH attempt — resolves to null on success, an error message on
+    // failure. Kept as a closure so the retry below is a genuine re-request.
+    const attempt = async (): Promise<string | null> => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(slot === 'wide' ? { visualizer_wide_url: url } : { visualizer_url: url }),
+        })
+        if (res.ok) return null
+        const data = await res.json().catch(() => null) as { error?: string } | null
+        return data?.error || `Request failed (${res.status})`
+      } catch {
+        return 'Network error'
+      }
+    }
     try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(slot === 'wide' ? { visualizer_wide_url: url } : { visualizer_url: url }),
-      })
-      if (!res.ok) throw new Error()
+      let err = await attempt()
+      if (err) {
+        // Every merge redeploys prod, and pinning right after generating is
+        // exactly when a restart blip can land — one spaced retry absorbs it.
+        await new Promise(r => setTimeout(r, 1500))
+        err = await attempt()
+      }
+      if (err) {
+        setVizError(`Could not update the project visualizer (${err}). Try again.`)
+        return
+      }
       if (slot === 'wide') {
         setProjectVizWide(url)
         onWideVisualizerUpdated?.(url)
@@ -363,8 +384,6 @@ export default function Visualizer({
         setProjectViz(url)
         onVisualizerUpdated?.(url)
       }
-    } catch {
-      setVizError('Could not update the project visualizer. Try again.')
     } finally {
       setSettingViz(false)
     }
