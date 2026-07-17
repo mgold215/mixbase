@@ -7,7 +7,7 @@ import {
   ExternalLink, AlertTriangle, Trash2, Pencil, ListMusic, FileText,
 } from 'lucide-react'
 import {
-  type Curator, type SbSubmission, type Song, type FilterState, type CuratorType,
+  type Curator, type SbSubmission, type Song, type ArtistLinks, type FilterState, type CuratorType,
   type ContactMethod, type Confidence, type CuratorInsert,
   EMPTY_FILTERS, SUBMISSION_STATUSES, allGenres, applyFilters, resolveSend, actionLabel,
   buildMailto, copyToClipboard, renderTemplate, splitSubjectBody, loadTemplate, saveTemplate,
@@ -49,9 +49,10 @@ function ConfidenceBadge({ c }: { c: Curator }) {
 }
 
 export default function SubmitClient({
-  songs, initialCurators, initialSubmissions,
+  songs, artistLinks, initialCurators, initialSubmissions,
 }: {
   songs: Song[]
+  artistLinks: ArtistLinks
   initialCurators: Curator[]
   initialSubmissions: SbSubmission[]
   userId: string
@@ -127,7 +128,7 @@ export default function SubmitClient({
     setMessages((prev) => {
       const next = { ...prev }
       for (const c of selectedCurators) {
-        next[c.id] = renderTemplate(template, c, song, shareUrl, pitch)
+        next[c.id] = renderTemplate(template, c, song, shareUrl, pitch, artistLinks)
       }
       return next
     })
@@ -374,11 +375,32 @@ export default function SubmitClient({
                   className="w-full rounded-xl border px-3 py-2 text-sm outline-none" style={inputStyle}>
                   {songs.map((s) => <option key={s.project_id} value={s.project_id}>{s.title}{s.genre ? ` · ${s.genre}` : ''}</option>)}
                 </select>
-                <div className="mt-2 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  <ListMusic size={12} />
-                  {song?.share_token
-                    ? <>Curators receive this private listening link: <span style={{ color: 'var(--text-secondary)' }}>/share/{song.share_token}</span></>
-                    : <span style={{ color: '#ffb020' }}>This song has no share link yet — open the project once to generate one.</span>}
+                <div className="mt-2 space-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                    <span className="uppercase tracking-wide text-[10px]">Auto-included in every pitch</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <ListMusic size={12} />
+                    {song?.share_token
+                      ? <>Listen: <span style={{ color: 'var(--text-secondary)' }}>/share/{song.share_token}</span></>
+                      : <span style={{ color: '#ffb020' }}>No share link yet — open the project once to generate one.</span>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Download size={12} />
+                    {song?.download_url
+                      ? <>Download (WAV): <span style={{ color: 'var(--text-secondary)' }}>enabled</span></>
+                      : <span style={{ color: '#ffb020' }}>No audio uploaded yet — download link will be omitted.</span>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <ExternalLink size={12} />
+                    {artistLinks.spotify_url || artistLinks.youtube_url
+                      ? <>Spotify + YouTube: from your{' '}
+                          <Link href="/profile" className="underline" style={{ color: 'var(--accent)' }}>artist profile</Link>
+                        </>
+                      : <>Add your{' '}
+                          <Link href="/profile" className="underline" style={{ color: 'var(--accent)' }}>artist name or links</Link>
+                          {' '}to include Spotify + YouTube</>}
+                  </div>
                 </div>
                 <textarea value={pitch} onChange={(e) => setPitch(e.target.value)} placeholder="Optional: a 2–3 sentence pitch for this song (fills {pitch} in the message)."
                   className="mt-3 w-full rounded-xl border px-3 py-2 text-sm outline-none min-h-[60px]" style={inputStyle} />
@@ -491,7 +513,10 @@ export default function SubmitClient({
       {templateOpen && (
         <Modal title="Message template" onClose={() => setTemplateOpen(false)}>
           <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-            Keep the first line as <code style={{ color: 'var(--text)' }}>Subject:</code>. Fields: {'{curator_name} {track_title} {genre} {pitch} {track_url} {platform}'}
+            Keep the first line as <code style={{ color: 'var(--text)' }}>Subject:</code>. Fields: {'{curator_name} {track_title} {genre} {pitch} {track_url} {platform} {download_url} {spotify_url} {youtube_url}'}
+          </p>
+          <p className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+            An empty field drops its line. Any of the download / Spotify / YouTube links you don&apos;t place is appended automatically, so every pitch carries them.
           </p>
           <textarea value={template} onChange={(e) => setTemplate(e.target.value)}
             className="w-full rounded-xl border px-3 py-2 text-xs font-[family-name:var(--font-mono)] outline-none min-h-[260px]" style={inputStyle} />
