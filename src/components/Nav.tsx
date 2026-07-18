@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send, Rss } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send, Rss, MoreHorizontal } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -12,6 +12,15 @@ export default function Nav() {
   const { currentTrack } = usePlayer()
   const { theme, toggleTheme } = useTheme()
   const [artistName, setArtistName] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Close the overflow menu whenever navigation happens (adjust-during-render
+  // pattern — avoids a cascading-render setState inside an effect)
+  const [menuPath, setMenuPath] = useState(pathname)
+  if (menuPath !== pathname) {
+    setMenuPath(pathname)
+    if (menuOpen) setMenuOpen(false)
+  }
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -38,15 +47,20 @@ export default function Nav() {
     { href: '/player', label: 'Player' },
   ]
 
-  // Mobile bottom tab bar items
+  // Mobile bottom tab bar items. Pipeline and Submit live in the top-bar
+  // "more" menu instead — five tabs keeps the bar comfortable to hit.
   const tabs = [
     { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,    match: '/dashboard' },
     { href: '/feed',        label: 'Feed',        icon: Rss,           match: '/feed' },
     { href: '/collections', label: 'Collections', icon: Library,       match: '/collections' },
     { href: '/media',       label: 'Media',       icon: Images,        match: '/media' },
-    { href: '/submit',      label: 'Submit',      icon: Send,          match: '/submit' },
     { href: currentTrack ? `/player?track=${currentTrack.project_id}` : '/player', label: 'Player', icon: PlayCircle, match: '/player' },
-    { href: '/pipeline',    label: 'Pipeline',    icon: ClipboardList, match: '/pipeline' },
+  ]
+
+  // Mobile top-bar overflow menu (the tabs we pulled off the bottom bar)
+  const menuItems = [
+    { href: '/pipeline', label: 'Pipeline', icon: ClipboardList },
+    { href: '/submit',   label: 'Submit',   icon: Send },
   ]
 
   function isTabActive(tab: typeof tabs[number]) {
@@ -100,6 +114,18 @@ export default function Nav() {
         {/* Spacer on mobile to push logout to right */}
         <div className="flex-1 md:hidden" />
 
+        {/* Overflow menu (mobile only) — Pipeline & Submit */}
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className="p-1.5 rounded-md transition-colors mr-1 md:hidden"
+          style={{ color: menuOpen || menuItems.some(m => pathname.startsWith(m.href)) ? 'var(--accent)' : 'var(--text-muted)' }}
+          title="More"
+          aria-label="More"
+          aria-expanded={menuOpen}
+        >
+          <MoreHorizontal size={14} strokeWidth={1.5} />
+        </button>
+
         {/* Profile */}
         <Link
           href="/profile"
@@ -129,6 +155,34 @@ export default function Nav() {
           <LogOut size={14} strokeWidth={1.5} />
         </button>
       </nav>
+
+      {/* ── Overflow menu dropdown (mobile only) ── */}
+      {menuOpen && (
+        <>
+          {/* Backdrop — closes the menu on any outside tap */}
+          <div className="fixed inset-0 z-40 md:hidden" onClick={() => setMenuOpen(false)} />
+          <div
+            className="fixed top-12 right-3 z-50 rounded-xl border overflow-hidden md:hidden"
+            style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
+          >
+            {menuItems.map(({ href, label, icon: Icon }) => {
+              const active = pathname.startsWith(href)
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className="flex items-center gap-2.5 px-4 py-3 text-[13px] tracking-wide transition-colors"
+                  style={{ color: active ? 'var(--accent)' : 'var(--text)' }}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <Icon size={15} strokeWidth={active ? 2 : 1.5} />
+                  {label}
+                </Link>
+              )
+            })}
+          </div>
+        </>
+      )}
 
       {/* ── Bottom tab bar (mobile only, below md breakpoint, hidden on full player) ── */}
       <nav
