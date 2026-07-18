@@ -229,7 +229,11 @@ function PlayerPage() {
   const bars = useMemo(() => generateWaveform(current?.project_id ?? '', WAVEFORM_BARS), [current?.project_id])
 
   // ── Empty state ────────────────────────────────────────────────────────────────
-  if (!loading && tracks.length === 0) {
+  // Only when nothing is playing either. A feed track played via the URL queue
+  // is not in `tracks` (that list is the user's OWN uploads — possibly empty,
+  // possibly a degraded fetch) — expanding it must show the player, not
+  // "No tracks yet" over live audio.
+  if (!loading && tracks.length === 0 && !currentTrack) {
     return (
       <>
       <Nav />

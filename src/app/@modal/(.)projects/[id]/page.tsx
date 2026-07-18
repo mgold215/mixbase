@@ -12,7 +12,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
   const { id } = await params
   const userId = await getUserId()
 
-  const [projectRes, versionsRes, releaseRes] = await Promise.all([
+  const [projectRes, versionsRes, releaseRes, profileRes] = await Promise.all([
     supabaseAdmin.from('mb_projects').select('*').eq('id', id).eq('user_id', userId).single(),
     supabaseAdmin
       .from('mb_versions')
@@ -24,6 +24,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
       .select('*')
       .eq('project_id', id)
       .maybeSingle(),
+    supabaseAdmin.from('profiles').select('is_owner').eq('id', userId).maybeSingle(),
   ])
 
   if (projectRes.error || !projectRes.data) return null
@@ -35,6 +36,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
         initialVersions={versionsRes.data ?? []}
         initialRelease={releaseRes.data ?? null}
         inModal
+        ownerDefaults={profileRes.data?.is_owner === true}
       />
     </ModalShell>
   )

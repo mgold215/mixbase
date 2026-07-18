@@ -39,9 +39,11 @@ type Props = {
   initialVersions: VersionWithFeedback[]
   initialRelease: Release | null
   inModal?: boolean
+  /** Owner account only — pre-fills the artwork generator's house-style prompt */
+  ownerDefaults?: boolean
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease, inModal = false }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, inModal = false, ownerDefaults = false }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -556,6 +558,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               onFinalizedUpdated={handleFinalizedUpdated}
               showFinalize={false}
               showActions={false}
+              ownerDefaults={ownerDefaults}
             />
           </div>
 
@@ -816,6 +819,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               currentFinalized={finalizedArtwork}
               onArtworkUpdated={handleArtworkUpdated}
               onFinalizedUpdated={handleFinalizedUpdated}
+              ownerDefaults={ownerDefaults}
             />
           </div>
         )}
