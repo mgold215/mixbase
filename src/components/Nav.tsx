@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send, Rss } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -30,6 +30,7 @@ export default function Nav() {
   // Desktop top-nav links
   const links = [
     { href: '/dashboard', label: 'Projects' },
+    { href: '/feed', label: 'Feed' },
     { href: '/collections', label: 'Collections' },
     { href: '/media', label: 'Media' },
     { href: '/pipeline', label: 'Pipeline' },
@@ -40,6 +41,7 @@ export default function Nav() {
   // Mobile bottom tab bar items
   const tabs = [
     { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,    match: '/dashboard' },
+    { href: '/feed',        label: 'Feed',        icon: Rss,           match: '/feed' },
     { href: '/collections', label: 'Collections', icon: Library,       match: '/collections' },
     { href: '/media',       label: 'Media',       icon: Images,        match: '/media' },
     { href: '/submit',      label: 'Submit',      icon: Send,          match: '/submit' },

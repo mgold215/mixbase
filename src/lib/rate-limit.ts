@@ -98,6 +98,11 @@ export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 }
 // Chat (Claude): 20 per hour per user — caps Anthropic spend per account
 export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 
+// Feed comments: 30 per hour per user — every comment is visible to all
+// artists, so this stops a runaway client or spammy account from flooding the
+// community feed.
+export const feedCommentLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
+
 // SubmitBase writes (curator add/import + submission log): 120 per hour per
 // user. Generous enough for a real CSV import session, low enough to stop a
 // runaway client loop from flooding the directory or activity log.
