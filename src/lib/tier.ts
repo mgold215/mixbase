@@ -4,6 +4,7 @@
 
 import { supabaseAdmin } from './supabase'
 import { ensureUsageRpc, isMissingUsageRpc } from './schema-heal'
+import { planUsageRefund } from './usage-refund'
 
 export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
 
@@ -68,15 +69,19 @@ export async function getMonthUsage(userId: string): Promise<{ artworkGeneration
 export async function checkAndIncrementUsage(
   userId: string,
   feature: 'artwork' | 'video'
-): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean }> {
+): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean; month: string }> {
   const profile = await getUserProfile(userId)
   const tier = profile.subscription_tier
   const limits = TIER_LIMITS[tier]
   const limit = feature === 'artwork' ? limits.artworkGenerations : limits.videoGenerations
+  // Capture the reserved month and hand it back so the caller can refund the
+  // SAME month it reserved. A generation that spans 00:00 UTC on the 1st would
+  // otherwise refund currentMonth() (the new month) and leave the reserved slot
+  // (old month) burned. Callers thread this into refundUsage(..., gate.month).
   const month = currentMonth()
 
   // Zero-limit feature (e.g. free/pro video) — reject without touching the DB.
-  if (limit <= 0) return { allowed: false, used: 0, limit }
+  if (limit <= 0) return { allowed: false, used: 0, limit, month }
 
   // Atomic reserve: try_increment_usage takes a row lock so the limit check and
   // the increment are a single step — two concurrent generations on a user's
@@ -97,11 +102,11 @@ export async function checkAndIncrementUsage(
     // RPC still unavailable — fall back to the legacy (non-atomic) reserve so a
     // missing function degrades to previous behaviour rather than hard-blocking.
     console.error(`[tier] try_increment_usage failed for ${userId}:`, res.error.message)
-    return legacyCheckAndIncrement(userId, feature, limit)
+    return legacyCheckAndIncrement(userId, feature, limit, month)
   }
 
-  if (!res.data) return { allowed: false, used: 0, limit, error: true }
-  return { allowed: res.data.allowed, used: res.data.used, limit }
+  if (!res.data) return { allowed: false, used: 0, limit, error: true, month }
+  return { allowed: res.data.allowed, used: res.data.used, limit, month }
 }
 
 // Legacy read-check-then-increment path. Only reached if try_increment_usage is
@@ -111,18 +116,19 @@ async function legacyCheckAndIncrement(
   userId: string,
   feature: 'artwork' | 'video',
   limit: number,
-): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean }> {
+  month: string,
+): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean; month: string }> {
   const usage = await getMonthUsage(userId)
   const used = feature === 'artwork' ? usage.artworkGenerations : usage.videoGenerations
-  if (used >= limit) return { allowed: false, used, limit }
+  if (used >= limit) return { allowed: false, used, limit, month }
 
   const rpcName = feature === 'artwork' ? 'increment_artwork_usage' : 'increment_video_usage'
-  const { error: rpcError } = await supabaseAdmin.rpc(rpcName, { p_user_id: userId, p_month: currentMonth() })
+  const { error: rpcError } = await supabaseAdmin.rpc(rpcName, { p_user_id: userId, p_month: month })
   if (rpcError) {
     console.error(`[tier] ${rpcName} failed for ${userId}:`, rpcError.message)
-    return { allowed: false, used, limit, error: true }
+    return { allowed: false, used, limit, error: true, month }
   }
-  return { allowed: true, used: used + 1, limit }
+  return { allowed: true, used: used + 1, limit, month }
 }
 
 // Compensating decrement — releases a generation slot that checkAndIncrementUsage
@@ -135,14 +141,21 @@ async function legacyCheckAndIncrement(
 // monthly slot with no result — a free user (3 artworks/mo) could be locked out
 // for the month by two hiccups. This hands the slot back.
 //
+// Pass the SAME `month` checkAndIncrementUsage returned (gate.month). Defaults to
+// currentMonth() for back-compat, but a generation that straddles a UTC month
+// boundary must refund the reserved month, not the new one — otherwise the
+// reserved slot stays burned and the new month is spuriously credited.
+//
 // Best-effort and code-only (read-then-write, no decrement RPC needed). It runs
 // only on the rare failure path, where a benign read-modify-write race would at
 // worst under-count by one in the user's favour — strictly better than always
 // burning the slot. A refund failure is logged but never surfaced: the caller
-// already has a failed generation to report. The `current <= 0` guard keeps the
-// counter from ever going negative.
-export async function refundUsage(userId: string, feature: 'artwork' | 'video'): Promise<void> {
-  const month = currentMonth()
+// already has a failed generation to report.
+export async function refundUsage(
+  userId: string,
+  feature: 'artwork' | 'video',
+  month: string = currentMonth(),
+): Promise<void> {
   try {
     const { data } = await supabaseAdmin
       .from('mb_usage')
@@ -150,14 +163,9 @@ export async function refundUsage(userId: string, feature: 'artwork' | 'video'):
       .eq('user_id', userId)
       .eq('month', month)
       .single()
-    if (!data) return // no usage row → nothing was reserved → nothing to refund
 
-    const current = feature === 'artwork' ? data.artwork_generations : data.video_generations
-    if (current <= 0) return
-
-    const patch = feature === 'artwork'
-      ? { artwork_generations: current - 1 }
-      : { video_generations: current - 1 }
+    const patch = planUsageRefund(feature, data)
+    if (!patch) return // no row, or already at 0 → nothing to hand back
 
     const { error } = await supabaseAdmin
       .from('mb_usage')

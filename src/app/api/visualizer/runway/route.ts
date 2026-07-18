@@ -119,113 +119,130 @@ export async function POST(req: NextRequest) {
   // The video slot is now reserved. Video is the most expensive call in the app
   // and the tightest quota (studio: 10/mo), so every failure path below must hand
   // the slot back — a Runway error or timeout must not burn a paid generation.
-  const refund = () => refundUsage(userId, 'video')
+  // Refund the SAME month that was reserved (gate.month) so a generation that
+  // straddles a UTC month boundary can't refund the wrong month.
+  const refund = () => refundUsage(userId, 'video', gate.month)
 
-  // Create Runway task
-  const createRes = await fetch(`${RUNWAY_BASE}/image_to_video`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${RUNWAY_API_KEY}`,
-      'Content-Type': 'application/json',
-      'X-Runway-Version': '2024-11-06',
-    },
-    body: JSON.stringify({
-      model: apiModelId,
-      promptImage: imageUrl,
-      promptText,
-      duration: runwayDuration,
-      ratio: runwayRatio,
-    }),
-  })
-
-  if (!createRes.ok) {
-    await refund()
-    const errText = await createRes.text()
-    console.error('Runway create error:', createRes.status, errText)
-    try {
-      const errData = JSON.parse(errText)
-      if (errData.error?.includes('credits')) {
-        return NextResponse.json({ error: 'Runway account has no credits remaining. Add credits at dev.runwayml.com.' }, { status: 402 })
-      }
-      return NextResponse.json({ error: errData.error || 'Runway generation failed' }, { status: 502 })
-    } catch {
-      return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
-    }
-  }
-
-  const task = await createRes.json()
-  const taskId = task.id
-
-  // Poll for completion (max 5 minutes for slower models like Veo, every 3 seconds)
-  const maxAttempts = 100
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 3000))
-
-    const pollRes = await fetch(`${RUNWAY_BASE}/tasks/${taskId}`, {
+  // The whole create+poll region is wrapped so a network error or malformed-JSON
+  // throw (createRes.json / pollRes.json, or the fetches themselves) refunds the
+  // reserved slot instead of escaping uncaught as a 500 that silently burns the
+  // user's tightest quota. Every inner failure path refunds and RETURNS, so it
+  // never reaches this catch — the catch handles only a genuine throw, and can't
+  // double-refund.
+  try {
+    // Create Runway task
+    const createRes = await fetch(`${RUNWAY_BASE}/image_to_video`, {
+      method: 'POST',
       headers: {
         'Authorization': `Bearer ${RUNWAY_API_KEY}`,
+        'Content-Type': 'application/json',
         'X-Runway-Version': '2024-11-06',
       },
+      body: JSON.stringify({
+        model: apiModelId,
+        promptImage: imageUrl,
+        promptText,
+        duration: runwayDuration,
+        ratio: runwayRatio,
+      }),
     })
 
-    if (!pollRes.ok) {
-      console.warn(`Runway poll attempt ${i + 1} failed: ${pollRes.status}`)
-      continue
-    }
-
-    const pollData = await pollRes.json()
-
-    if (pollData.status === 'SUCCEEDED') {
-      const runwayUrl = pollData.output?.[0]
-      if (!runwayUrl) {
-        await refund()
-        return NextResponse.json({ error: 'No video in Runway response' }, { status: 502 })
-      }
-
-      // Runway-hosted URLs expire within hours, so persist the bytes to mf-video
-      // and index the result — that's what makes it findable in the Media library.
-      // If anything in the persistence path fails, fall back to the transient URL
-      // so the user still sees the video they paid for.
-      let videoUrl = runwayUrl
-      let saved = false
-      let visualizerId: string | null = null
-      if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
-        try {
-          const vidRes = await fetch(runwayUrl)
-          if (vidRes.ok) {
-            const bytes = Buffer.from(await vidRes.arrayBuffer())
-            const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
-            const stored = await storeVisualizer({
-              userId,
-              projectId,
-              bytes,
-              contentType,
-              kind: 'ai',
-              title: `${modelCfg.label} · ${runwayDuration}s`,
-              sourceImageUrl: imageUrl,
-            })
-            if (stored) {
-              videoUrl = stored.video_url
-              visualizerId = stored.id || null
-              saved = true
-            }
-          }
-        } catch (e) {
-          console.error('[runway] persist to Media failed:', e)
-        }
-      }
-
-      return NextResponse.json({ videoUrl, model: modelCfg.label, saved, visualizerId })
-    }
-
-    if (pollData.status === 'FAILED') {
+    if (!createRes.ok) {
       await refund()
-      const failReason = pollData.failure ?? 'Unknown'
-      return NextResponse.json({ error: `Runway task failed: ${failReason}` }, { status: 502 })
+      const errText = await createRes.text()
+      console.error('Runway create error:', createRes.status, errText)
+      try {
+        const errData = JSON.parse(errText)
+        if (errData.error?.includes('credits')) {
+          return NextResponse.json({ error: 'Runway account has no credits remaining. Add credits at dev.runwayml.com.' }, { status: 402 })
+        }
+        return NextResponse.json({ error: errData.error || 'Runway generation failed' }, { status: 502 })
+      } catch {
+        return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
+      }
     }
-    // PENDING or RUNNING — keep polling
-  }
 
-  await refund()
-  return NextResponse.json({ error: 'Runway generation timed out (5 min)' }, { status: 504 })
+    const task = await createRes.json()
+    const taskId = task.id
+
+    // Poll for completion (max 5 minutes for slower models like Veo, every 3 seconds)
+    const maxAttempts = 100
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 3000))
+
+      const pollRes = await fetch(`${RUNWAY_BASE}/tasks/${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${RUNWAY_API_KEY}`,
+          'X-Runway-Version': '2024-11-06',
+        },
+      })
+
+      if (!pollRes.ok) {
+        console.warn(`Runway poll attempt ${i + 1} failed: ${pollRes.status}`)
+        continue
+      }
+
+      const pollData = await pollRes.json()
+
+      if (pollData.status === 'SUCCEEDED') {
+        const runwayUrl = pollData.output?.[0]
+        if (!runwayUrl) {
+          await refund()
+          return NextResponse.json({ error: 'No video in Runway response' }, { status: 502 })
+        }
+
+        // Runway-hosted URLs expire within hours, so persist the bytes to mf-video
+        // and index the result — that's what makes it findable in the Media library.
+        // If anything in the persistence path fails, fall back to the transient URL
+        // so the user still sees the video they paid for.
+        let videoUrl = runwayUrl
+        let saved = false
+        let visualizerId: string | null = null
+        if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
+          try {
+            const vidRes = await fetch(runwayUrl)
+            if (vidRes.ok) {
+              const bytes = Buffer.from(await vidRes.arrayBuffer())
+              const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
+              const stored = await storeVisualizer({
+                userId,
+                projectId,
+                bytes,
+                contentType,
+                kind: 'ai',
+                title: `${modelCfg.label} · ${runwayDuration}s`,
+                sourceImageUrl: imageUrl,
+              })
+              if (stored) {
+                videoUrl = stored.video_url
+                visualizerId = stored.id || null
+                saved = true
+              }
+            }
+          } catch (e) {
+            console.error('[runway] persist to Media failed:', e)
+          }
+        }
+
+        return NextResponse.json({ videoUrl, model: modelCfg.label, saved, visualizerId })
+      }
+
+      if (pollData.status === 'FAILED') {
+        await refund()
+        const failReason = pollData.failure ?? 'Unknown'
+        return NextResponse.json({ error: `Runway task failed: ${failReason}` }, { status: 502 })
+      }
+      // PENDING or RUNNING — keep polling
+    }
+
+    await refund()
+    return NextResponse.json({ error: 'Runway generation timed out (5 min)' }, { status: 504 })
+  } catch (err) {
+    // Network blip or malformed JSON after the slot was reserved — refund so a
+    // transient failure doesn't burn the tightest, most expensive quota, then
+    // surface a retryable 502.
+    await refund()
+    console.error('[runway] uncaught error after slot reserved:', err instanceof Error ? err.message : err)
+    return NextResponse.json({ error: 'Video generation failed unexpectedly. Please try again.' }, { status: 502 })
+  }
 }

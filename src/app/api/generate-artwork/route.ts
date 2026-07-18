@@ -88,7 +88,9 @@ export async function POST(request: NextRequest) {
   // The artwork slot is now reserved (checkAndIncrementUsage incremented it).
   // Every failure path below must release it, or a provider/config hiccup would
   // permanently burn the user's monthly quota with nothing to show for it.
-  const refund = () => refundUsage(userId, 'artwork')
+  // Refund the SAME month that was reserved (gate.month) so a generation that
+  // straddles a UTC month boundary can't refund the wrong month.
+  const refund = () => refundUsage(userId, 'artwork', gate.month)
 
   const replicateToken = process.env.REPLICATE_API_TOKEN?.trim().replace(/^["']|["']$/g, '')
   if (!replicateToken) {
@@ -167,13 +169,26 @@ export async function POST(request: NextRequest) {
   // pixels are exactly what the user paid for; any text overlay belongs in
   // /api/finalize-artwork, not here. Preserving raw bytes also means Finalize
   // never has to deal with text already burned into the source.
-  const imageRes = await fetch(outputUrl)
-  if (!imageRes.ok) {
+  //
+  // The slot is reserved, so a throw fetching/reading the image (CDN blip,
+  // stream reset) between Replicate's succeeded prediction and the byte download
+  // must refund — the create/poll paths above already do, this was the one
+  // remaining un-guarded step that would 500 uncaught and burn the slot.
+  let imageBytes: Buffer
+  let contentType: string
+  try {
+    const imageRes = await fetch(outputUrl)
+    if (!imageRes.ok) {
+      await refund()
+      return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })
+    }
+    imageBytes = Buffer.from(await imageRes.arrayBuffer())
+    contentType = imageRes.headers.get('content-type') ?? 'image/jpeg'
+  } catch (err) {
     await refund()
-    return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })
+    console.error('[generate-artwork] image download failed:', err instanceof Error ? err.message : err)
+    return NextResponse.json({ error: 'Failed to download generated image. Please try again.' }, { status: 502 })
   }
-  const imageBytes = Buffer.from(await imageRes.arrayBuffer())
-  const contentType = imageRes.headers.get('content-type') ?? 'image/jpeg'
   const extension = contentType.includes('webp') ? 'webp'
     : contentType.includes('png') ? 'png'
     : 'jpg'
