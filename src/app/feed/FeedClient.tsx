@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import { Play, Pause, Music, MessageCircle, Send } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
@@ -26,21 +26,54 @@ export default function FeedClient({
   currentUserId: string
   loadError: boolean
 }) {
-  const { playUrl, togglePlay, currentUrl, isPlaying } = usePlayer()
+  const { playUrl, togglePlay, currentUrl, isPlaying, audioRef } = usePlayer()
   const [items, setItems] = useState(initialItems)
   const [openComments, setOpenComments] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [posting, setPosting] = useState<Set<string>>(new Set())
   const [errors, setErrors] = useState<Record<string, string>>({})
 
+  const playItem = useCallback((item: FeedItem) => {
+    playUrl(
+      audioProxyUrl(item.audio_url),
+      item.title,
+      item.artist,
+      item.artwork_url ? artworkProxyUrl(item.artwork_url) : undefined,
+      item.version_label
+    )
+  }, [playUrl])
+
   function handlePlay(item: FeedItem) {
-    const url = audioProxyUrl(item.audio_url)
-    if (currentUrl === url) {
+    if (currentUrl === audioProxyUrl(item.audio_url)) {
       togglePlay()
       return
     }
-    playUrl(url, item.title, item.artist, item.artwork_url ? artworkProxyUrl(item.artwork_url) : undefined, item.version_label)
+    playItem(item)
   }
+
+  // ── Continuous play through the feed ────────────────────────────────────────
+  // When a feed track finishes, start the next one in the list. The shared
+  // engine's own 'ended' handler runs first and stops custom-URL playback (it
+  // has no queue for them); this listener runs after and advances instead.
+  // Mirrored via refs so the once-mounted listener always sees fresh state.
+  const itemsRef = useRef(items)
+  useEffect(() => { itemsRef.current = items }, [items])
+  const currentUrlRef = useRef(currentUrl)
+  useEffect(() => { currentUrlRef.current = currentUrl }, [currentUrl])
+  const playItemRef = useRef(playItem)
+  useEffect(() => { playItemRef.current = playItem }, [playItem])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    const onEnded = () => {
+      const list = itemsRef.current
+      const idx = list.findIndex(it => audioProxyUrl(it.audio_url) === currentUrlRef.current)
+      if (idx >= 0 && idx + 1 < list.length) playItemRef.current(list[idx + 1])
+    }
+    audio.addEventListener('ended', onEnded)
+    return () => audio.removeEventListener('ended', onEnded)
+  }, [audioRef])
 
   function toggleComments(versionId: string) {
     setOpenComments(prev => {
@@ -110,13 +143,17 @@ export default function FeedClient({
             className="py-3"
             style={{ borderBottom: '1px solid var(--border)' }}
           >
-            <div className="flex items-center gap-3">
-              {/* Play / artwork */}
-              <button
-                onClick={() => handlePlay(item)}
-                className="relative shrink-0 group"
+            {/* Whole row is the play/pause target — one tap anywhere starts the track */}
+            <div
+              className="flex items-center gap-3 cursor-pointer group"
+              onClick={() => handlePlay(item)}
+              role="button"
+              aria-label={playing ? `Pause ${item.title}` : `Play ${item.title}`}
+            >
+              {/* Artwork with play/pause state */}
+              <div
+                className="relative shrink-0"
                 style={{ width: 48, height: 48, background: 'var(--surface-2)', borderRadius: 6, overflow: 'hidden' }}
-                aria-label={playing ? 'Pause' : `Play ${item.title}`}
               >
                 {item.artwork_url ? (
                   <Image src={artworkProxyUrl(item.artwork_url)} alt="" fill sizes="48px" className="object-cover" />
@@ -126,18 +163,18 @@ export default function FeedClient({
                   </span>
                 )}
                 <span
-                  className="absolute inset-0 flex items-center justify-center transition-opacity"
-                  style={{ background: 'rgba(0,0,0,0.45)', opacity: playing || isCurrent ? 1 : 0 }}
+                  className={`absolute inset-0 flex items-center justify-center transition-opacity ${playing || isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                  style={{ background: 'rgba(0,0,0,0.45)' }}
                 >
                   {playing
                     ? <Pause size={18} fill="#fff" style={{ color: '#fff' }} />
                     : <Play size={18} fill="#fff" style={{ color: '#fff' }} />}
                 </span>
-              </button>
+              </div>
 
               {/* Title / artist / meta */}
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate" style={{ color: 'var(--text)' }}>
+                <div className="text-sm font-medium truncate" style={{ color: isCurrent ? 'var(--accent)' : 'var(--text)' }}>
                   {item.title}
                   <span className="ml-2" style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
                     {item.version_label}
@@ -153,8 +190,8 @@ export default function FeedClient({
                   {timeAgo(item.created_at)}
                 </span>
                 <button
-                  onClick={() => toggleComments(item.version_id)}
-                  className="flex items-center gap-1 transition-colors"
+                  onClick={e => { e.stopPropagation(); toggleComments(item.version_id) }}
+                  className="flex items-center gap-1 p-1 -m-1 transition-colors"
                   style={{ color: commentsOpen ? 'var(--accent)' : 'var(--text-muted)' }}
                   aria-label="Comments"
                 >
