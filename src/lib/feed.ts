@@ -14,6 +14,15 @@ export type FeedComment = {
   created_at: string
 }
 
+/** An earlier mix of a feed item's project — playable from the
+ *  "listen to older mixes" browser. */
+export type OlderMix = {
+  version_id: string
+  version_label: string
+  audio_url: string
+  created_at: string
+}
+
 export type FeedItem = {
   version_id: string
   project_id: string
@@ -25,9 +34,17 @@ export type FeedItem = {
   audio_url: string
   created_at: string
   comments: FeedComment[]
+  /** Previous mixes of this project, newest first */
+  older: OlderMix[]
 }
 
 const FEED_LIMIT = 60
+// How many recent version rows to pull before grouping by project. The feed
+// shows one entry per project (its newest mix); the rest of a project's
+// versions inside this window become its "older mixes" browser.
+const RAW_VERSION_FETCH = 200
+// Older mixes shown per project — bounds the payload for version-heavy projects
+const OLDER_LIMIT = 15
 // Hard cap on comment rows fetched per feed load. Without an explicit limit
 // PostgREST silently truncates at its own default — and with ascending order
 // that would drop the NEWEST comments. Fetch newest-first with a stated cap,
@@ -56,7 +73,7 @@ export async function getFeed(): Promise<FeedItem[]> {
     .select('id, project_id, label, version_number, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
     .not('audio_url', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(FEED_LIMIT)
+    .limit(RAW_VERSION_FETCH)
   if (error) throw new Error(error.message)
 
   type ProjectJoin = { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; user_id?: string }
@@ -64,8 +81,27 @@ export async function getFeed(): Promise<FeedItem[]> {
     ...v,
     project: unwrapJoin(v.mb_projects) as ProjectJoin | null,
   }))
-  const versionIds = rows.map(v => v.id)
-  const uploaderIds = [...new Set(rows.map(v => v.project?.user_id).filter((id): id is string => !!id))]
+
+  // Group by project, preserving newest-first order: the first row seen for a
+  // project is its live mix (the feed entry); later rows are its older mixes.
+  // Re-uploading a mix bumps the project to the top instead of stacking
+  // near-duplicate entries down the feed.
+  type Row = (typeof rows)[number]
+  const grouped: { latest: Row; older: Row[] }[] = []
+  const idxByProject = new Map<string, number>()
+  for (const v of rows) {
+    const idx = idxByProject.get(v.project_id)
+    if (idx === undefined) {
+      if (grouped.length >= FEED_LIMIT) continue
+      idxByProject.set(v.project_id, grouped.length)
+      grouped.push({ latest: v, older: [] })
+    } else if (grouped[idx].older.length < OLDER_LIMIT) {
+      grouped[idx].older.push(v)
+    }
+  }
+
+  const versionIds = grouped.map(g => g.latest.id)
+  const uploaderIds = [...new Set(grouped.map(g => g.latest.project?.user_id).filter((id): id is string => !!id))]
 
   // Comments and uploader profiles are independent — fetch them concurrently.
   const fetchComments = () => versionIds.length > 0
@@ -125,7 +161,7 @@ export async function getFeed(): Promise<FeedItem[]> {
     commentsByVersion.set(c.version_id, list)
   }
 
-  return rows.map(v => ({
+  return grouped.map(({ latest: v, older }) => ({
     version_id: v.id,
     project_id: v.project_id,
     user_id: v.project?.user_id ?? '',
@@ -136,5 +172,11 @@ export async function getFeed(): Promise<FeedItem[]> {
     audio_url: v.audio_url,
     created_at: v.created_at,
     comments: commentsByVersion.get(v.id) ?? [],
+    older: older.map(o => ({
+      version_id: o.id,
+      version_label: o.label || `v${o.version_number}`,
+      audio_url: o.audio_url,
+      created_at: o.created_at,
+    })),
   }))
 }

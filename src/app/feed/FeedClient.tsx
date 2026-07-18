@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useState } from 'react'
 import Image from 'next/image'
-import { Play, Pause, Music, MessageCircle, Send } from 'lucide-react'
+import { Play, Pause, Music, MessageCircle, Send, History } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { audioProxyUrl, artworkProxyUrl } from '@/lib/supabase'
 import { timeAgo } from '@/lib/time'
@@ -33,13 +33,16 @@ export default function FeedClient({
     })))
   }, [items, setUrlQueue])
 
-  function handlePlay(item: FeedItem) {
-    const url = audioProxyUrl(item.audio_url)
+  // Play (or toggle) any mix belonging to a feed item — the live one or an
+  // older version. Metadata (title/artist/artwork) comes from the item; the
+  // label distinguishes which mix is playing.
+  function handlePlayMix(item: FeedItem, audioUrl: string, label: string) {
+    const url = audioProxyUrl(audioUrl)
     if (currentUrl === url) {
       togglePlay()
       return
     }
-    playUrl(url, item.title, item.artist, item.artwork_url ? artworkProxyUrl(item.artwork_url) : undefined, item.version_label)
+    playUrl(url, item.title, item.artist, item.artwork_url ? artworkProxyUrl(item.artwork_url) : undefined, label)
   }
 
   function handleCommentPosted(versionId: string, comment: FeedComment) {
@@ -66,21 +69,18 @@ export default function FeedClient({
 
   return (
     <div className="mt-4">
-      {items.map(item => {
-        const proxied = audioProxyUrl(item.audio_url)
-        return (
-          <FeedRow
-            key={item.version_id}
-            item={item}
-            isCurrent={currentUrl === proxied}
-            playing={currentUrl === proxied && isPlaying}
-            isMine={item.user_id === currentUserId}
-            currentUserId={currentUserId}
-            onPlay={handlePlay}
-            onCommentPosted={handleCommentPosted}
-          />
-        )
-      })}
+      {items.map(item => (
+        <FeedRow
+          key={item.project_id}
+          item={item}
+          currentUrl={currentUrl}
+          isPlaying={isPlaying}
+          isMine={item.user_id === currentUserId}
+          currentUserId={currentUserId}
+          onPlayMix={handlePlayMix}
+          onCommentPosted={handleCommentPosted}
+        />
+      ))}
     </div>
   )
 }
@@ -89,25 +89,29 @@ export default function FeedClient({
 // typing in one row's input re-renders that row only, not the whole list.
 const FeedRow = memo(function FeedRow({
   item,
-  isCurrent,
-  playing,
+  currentUrl,
+  isPlaying,
   isMine,
   currentUserId,
-  onPlay,
+  onPlayMix,
   onCommentPosted,
 }: {
   item: FeedItem
-  isCurrent: boolean
-  playing: boolean
+  currentUrl: string | null
+  isPlaying: boolean
   isMine: boolean
   currentUserId: string
-  onPlay: (item: FeedItem) => void
+  onPlayMix: (item: FeedItem, audioUrl: string, label: string) => void
   onCommentPosted: (versionId: string, comment: FeedComment) => void
 }) {
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const [olderOpen, setOlderOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
   const [error, setError] = useState('')
+
+  const isCurrent = currentUrl === audioProxyUrl(item.audio_url)
+  const playing = isCurrent && isPlaying
 
   async function submitComment() {
     const text = draft.trim()
@@ -137,11 +141,11 @@ const FeedRow = memo(function FeedRow({
           Keyboard-accessible: focusable, Enter/Space activate. */}
       <div
         className="flex items-center gap-3 cursor-pointer group rounded-md focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent)]"
-        onClick={() => onPlay(item)}
+        onClick={() => onPlayMix(item, item.audio_url, item.version_label)}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            onPlay(item)
+            onPlayMix(item, item.audio_url, item.version_label)
           }
         }}
         role="button"
@@ -199,6 +203,58 @@ const FeedRow = memo(function FeedRow({
           </button>
         </div>
       </div>
+
+      {/* Older mixes browser */}
+      {item.older.length > 0 && (
+        <button
+          onClick={() => setOlderOpen(o => !o)}
+          className="ml-[60px] mt-1.5 flex items-center gap-1.5 transition-colors"
+          style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: olderOpen ? 'var(--accent)' : 'var(--text-muted)' }}
+          aria-expanded={olderOpen}
+        >
+          <History size={11} strokeWidth={1.75} />
+          {olderOpen ? 'Hide older mixes' : `Listen to older mixes (${item.older.length})`}
+        </button>
+      )}
+      {olderOpen && (
+        <div className="ml-[60px] mt-1.5">
+          {item.older.map(o => {
+            const oCurrent = currentUrl === audioProxyUrl(o.audio_url)
+            const oPlaying = oCurrent && isPlaying
+            return (
+              <div
+                key={o.version_id}
+                className="flex items-center gap-2 py-1.5 cursor-pointer rounded-md focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent)]"
+                onClick={() => onPlayMix(item, o.audio_url, o.version_label)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onPlayMix(item, o.audio_url, o.version_label)
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={oPlaying ? `Pause ${item.title} ${o.version_label}` : `Play ${item.title} ${o.version_label}`}
+              >
+                <span className="flex items-center justify-center shrink-0" style={{ width: 16, color: oCurrent ? 'var(--accent)' : 'var(--text-muted)' }}>
+                  {oPlaying
+                    ? <Pause size={11} fill="currentColor" />
+                    : <Play size={11} fill="currentColor" />}
+                </span>
+                <span
+                  className="truncate"
+                  style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 11, color: oCurrent ? 'var(--accent)' : 'var(--text)' }}
+                >
+                  {o.version_label}
+                </span>
+                <span style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
+                  {timeAgo(o.created_at)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Comments */}
       {commentsOpen && (
