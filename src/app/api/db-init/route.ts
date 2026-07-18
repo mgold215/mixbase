@@ -90,12 +90,22 @@ create table if not exists mb_activity (
   created_at timestamptz default now()
 );
 
+create table if not exists mb_feed_comments (
+  id uuid primary key default gen_random_uuid(),
+  version_id uuid not null references mb_versions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  comment text not null,
+  created_at timestamptz default now()
+);
+
 create index if not exists idx_versions_project_id on mb_versions(project_id);
 create index if not exists idx_versions_share_token on mb_versions(share_token);
 create index if not exists idx_feedback_version_id on mb_feedback(version_id);
 create index if not exists idx_releases_project_id on mb_releases(project_id);
 create index if not exists idx_activity_project_id on mb_activity(project_id);
 create index if not exists idx_activity_created on mb_activity(created_at desc);
+create index if not exists idx_feed_comments_version_id on mb_feed_comments(version_id);
+create index if not exists idx_feed_comments_created on mb_feed_comments(created_at desc);
 
 alter table mb_projects disable row level security;
 alter table mb_versions disable row level security;

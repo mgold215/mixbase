@@ -8,6 +8,16 @@ import { announcePlay, onOtherSourcePlay, onSourceStop, claimMediaSession, canRe
 
 export type LoopMode = 'none' | 'all' | 'one'
 
+/** An entry in the URL-based queue (e.g. the community feed): everything
+ *  playUrl needs to start the track and label the mini player / lock screen. */
+export type UrlQueueEntry = {
+  url: string
+  title: string
+  artist?: string
+  artworkUrl?: string | null
+  versionLabel?: string
+}
+
 type PlayerCtx = {
   tracks: Track[]
   loading: boolean
@@ -38,6 +48,12 @@ type PlayerCtx = {
   /** Set the playback order (project ids) used by next/prev/auto-advance. The full
    *  player pushes its filtered/sorted list here so every surface follows one queue. */
   setQueue: (projectIds: string[]) => void
+  /** Set the URL-based queue used by next/prev/auto-advance while a playUrl
+   *  track is active (e.g. the community feed). Lives in the engine — not the
+   *  page — so continuous play keeps working after navigating away, the
+   *  mini-player/lock-screen transport follows it, and there is exactly ONE
+   *  end-of-track policy (loop modes keep precedence). */
+  setUrlQueue: (entries: UrlQueueEntry[]) => void
   playTrack: (projectId: string) => void
   /** Play any URL through the shared audio element (shows in mini player).
    *  Pass startAt (seconds) to begin playback at a position — e.g. jumping to a
@@ -92,6 +108,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Ordered project ids to advance through. Empty → fall back to tracks order.
   const queueRef = useRef<string[]>([])
   const setQueue = useCallback((projectIds: string[]) => { queueRef.current = projectIds }, [])
+  // URL-based queue (community feed). Consulted by next/prev/auto-advance ONLY
+  // while a playUrl track is active (currentProjectId === null), so it can
+  // never clobber the project queue — even when the same audio URL appears in
+  // both (a user's own upload showing in the feed).
+  const urlQueueRef = useRef<UrlQueueEntry[]>([])
+  const setUrlQueue = useCallback((entries: UrlQueueEntry[]) => { urlQueueRef.current = entries }, [])
+  // Live mirror of currentUrl for the (mount-once) engine listeners.
+  const currentUrlRef = useRef<string | null>(null)
   // Latest end-of-track handler, callable from the once-mounted engine listeners.
   const onEndedRef = useRef<() => void>(() => {})
 
@@ -119,6 +143,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // without re-subscribing on every track change.
   const currentProjectIdRef = useRef<string | null>(null)
   useEffect(() => { currentProjectIdRef.current = currentProjectId }, [currentProjectId])
+  useEffect(() => { currentUrlRef.current = currentUrl }, [currentUrl])
 
   // Stable ref to the most recent media session metadata so onPlay (a [] effect) can
   // re-apply it AFTER the iOS audio session activates — some iOS versions ignore metadata
@@ -545,6 +570,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.src = url
       setCurrentProjectId(projectId)
       setCurrentUrl(url)
+      // Sync the ref mirrors immediately (see playUrl) — keeps transport
+      // callbacks reading the truth during the same tick as a track switch.
+      currentProjectIdRef.current = projectId
+      currentUrlRef.current = url
       setCustomMeta(null)
       setCurrentTime(0)
       setDuration(0)
@@ -572,12 +601,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     setCurrentUrl(url)
     setCurrentProjectId(null)
+    // Sync the ref mirrors immediately — the effect-based mirrors lag a render,
+    // and transport callbacks (ended/next/prev) can fire inside that window.
+    currentUrlRef.current = url
+    currentProjectIdRef.current = null
     setCustomMeta({ title, artist, artwork_url: artworkUrl ?? null, versionLabel })
     mediaMetaRef.current = { title, artworkUrl: artworkUrl ?? null, artist }
     applyMediaSession(title, artworkUrl ?? null, true, artist)
     audio.volume = volume
     attemptPlay()
   }, [currentUrl, currentProjectId, volume, attemptPlay])
+
+  // Play a URL-queue entry (community feed etc.) through the normal playUrl path.
+  const playUrlEntry = useCallback((entry: UrlQueueEntry) => {
+    playUrl(entry.url, entry.title, entry.artist, entry.artworkUrl ?? undefined, entry.versionLabel ?? '')
+  }, [playUrl])
+
+  // Index of the active custom-URL track within the URL queue, or -1 when the
+  // engine is in project-queue mode (currentProjectId set) or the URL isn't
+  // queued. The project-mode check matters: a user's own upload can appear in
+  // the feed with the SAME audio URL as their project track — transport must
+  // follow whichever queue actually started playback.
+  const urlQueueIndex = useCallback((): number => {
+    if (currentProjectIdRef.current !== null) return -1
+    const url = currentUrlRef.current
+    if (!url) return -1
+    return urlQueueRef.current.findIndex(e => e.url === url)
+  }, [])
 
   const pause = useCallback(() => {
     playIntentRef.current = false
@@ -618,6 +668,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   ), [tracks])
 
   const next = useCallback(() => {
+    // URL-queue mode (feed playback): advance within the URL queue so the
+    // mini-player / lock-screen next button follows the feed, not the
+    // unrelated project queue.
+    const uqIdx = urlQueueIndex()
+    if (uqIdx !== -1) {
+      const uq = urlQueueRef.current
+      playUrlEntry(uq[(uqIdx + 1) % uq.length])
+      return
+    }
     const list = getQueue()
     if (list.length === 0) return
     const cur = currentProjectIdRef.current
@@ -627,14 +686,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       do { target = list[Math.floor(Math.random() * list.length)] } while (target === cur)
     }
     playTrack(target)
-  }, [getQueue, playTrack])
+  }, [getQueue, playTrack, urlQueueIndex, playUrlEntry])
 
   const prev = useCallback(() => {
     // Standard transport behaviour: first tap restarts the current track,
     // only within the first 3 seconds does it go to the previous one.
     const audio = audioRef.current
-    if (audio && audio.currentTime > 3 && currentProjectIdRef.current) {
+    const uqIdx = urlQueueIndex()
+    if (audio && audio.currentTime > 3 && (currentProjectIdRef.current || uqIdx !== -1)) {
       audio.currentTime = 0
+      return
+    }
+    if (uqIdx !== -1) {
+      const uq = urlQueueRef.current
+      playUrlEntry(uq[(uqIdx - 1 + uq.length) % uq.length])
       return
     }
     const list = getQueue()
@@ -643,7 +708,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const idx = cur ? list.indexOf(cur) : 0
     const target = list[((idx >= 0 ? idx : 0) - 1 + list.length) % list.length]
     playTrack(target)
-  }, [getQueue, playTrack])
+  }, [getQueue, playTrack, urlQueueIndex, playUrlEntry])
 
   // ── End-of-track policy: loop / auto-advance ────────────────────────────────
   // Runs via onEndedRef from the engine listener, so it fires no matter which page
@@ -665,13 +730,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return
     }
     const cur = currentProjectIdRef.current
-    if (!cur) { stop(); return } // custom URL (playUrl) — nothing to advance to
+    if (!cur) {
+      // Custom URL (playUrl). If it belongs to the URL queue (community feed),
+      // continuous play advances through it — from ANY page, since this policy
+      // lives in the engine. Loop 'one' was handled above; loop 'none' stops at
+      // the end of the queue, 'all' wraps.
+      const uqIdx = urlQueueIndex()
+      if (uqIdx === -1) { stop(); return } // one-off playUrl — nothing to advance to
+      const uq = urlQueueRef.current
+      const isLastUq = uqIdx === uq.length - 1
+      if (loopRef.current === 'none' && isLastUq) { stop(); return }
+      playUrlEntry(uq[(uqIdx + 1) % uq.length])
+      return
+    }
     const list = getQueue()
     const idx = list.indexOf(cur)
     const isLast = idx >= 0 && idx === list.length - 1
     if (loopRef.current === 'none' && isLast && !shuffleRef.current) { stop(); return }
     next()
-  }, [getQueue, next, attemptPlay])
+  }, [getQueue, next, attemptPlay, urlQueueIndex, playUrlEntry])
   useEffect(() => { onEndedRef.current = handleTrackEnd }, [handleTrackEnd])
 
   useEffect(() => {
@@ -723,6 +800,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setLoopMode,
       setShuffle,
       setQueue,
+      setUrlQueue,
       playTrack,
       playUrl,
       pause,

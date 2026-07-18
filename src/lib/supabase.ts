@@ -1,16 +1,47 @@
 import { createClient } from '@supabase/supabase-js'
+import { decodeJwt } from 'jose'
 
 // Hardcoded as fallbacks — these are public keys, safe to expose in client code
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
 export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU'
 
-// Server-only admin client — uses service role key if available, falls back to anon
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('[supabase] SUPABASE_SERVICE_ROLE_KEY not set — admin client falling back to anon key. Uploads and size-limited ops WILL FAIL in production.')
+// Extract the `role` claim from a Supabase JWT-style API key without verifying
+// it (we only need to know what PostgREST will treat it as). jose's decodeJwt
+// is runtime-agnostic — this module is pulled into the Edge middleware bundle,
+// where a hand-rolled Buffer decode would silently fail and false-alarm on a
+// perfectly good key. Returns null for anything that doesn't parse.
+function jwtRole(key: string): string | null {
+  try {
+    return (decodeJwt(key).role as string | undefined) ?? null
+  } catch {
+    return null
+  }
 }
+
+// True only when SUPABASE_SERVICE_ROLE_KEY will actually get service-role
+// power from Supabase. This catches BOTH failure modes we've been bitten by:
+// the variable being missing entirely, and the variable being set to the wrong
+// key (e.g. the anon key pasted in its place) — either way the admin client
+// degrades to anon: RLS-filtered reads come back empty and every server-side
+// write dies with an RLS violation while the app otherwise looks healthy.
+// New-style secret keys (sb_secret_...) aren't JWTs; trust the prefix.
+const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+export const serviceRoleKeyValid: boolean = !!rawServiceKey && (
+  rawServiceKey.startsWith('sb_secret_') || jwtRole(rawServiceKey) === 'service_role'
+)
+
+if (!serviceRoleKeyValid) {
+  console.error(
+    rawServiceKey
+      ? '[supabase] SUPABASE_SERVICE_ROLE_KEY is set but is NOT a service-role key (wrong key pasted?) — admin client is running as anon. All server-side writes WILL FAIL with RLS violations.'
+      : '[supabase] SUPABASE_SERVICE_ROLE_KEY not set — admin client falling back to anon key. Uploads and size-limited ops WILL FAIL in production.'
+  )
+}
+
+// Server-only admin client — uses service role key if available, falls back to anon
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY
+  rawServiceKey ?? SUPABASE_ANON_KEY
 )
 
 // ---- Type definitions ----

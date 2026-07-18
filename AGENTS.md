@@ -55,7 +55,7 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 - `/share/[token]` — Public share page (no auth required) with feedback form
 
 # Auth Model
-Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005).
+Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware validates the access token via `supabaseAdmin.auth.getUser()` and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005). Deliberate exception: the community feed (`/feed`, `GET /api/feed`, `mb_feed_comments`) is cross-user by design — every signed-in artist sees all users' uploads and comments (server-side via `supabaseAdmin`).
 
 Public routes (no auth required): `/login`, `/signup`, `/privacy`, `/support`, `/terms`, `/dmca`, `/share/`, `/api/auth`, `/api/audio`, `/api/health`, `/api/tus`, `/api/feedback`
 
