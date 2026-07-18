@@ -232,14 +232,15 @@ export async function proxy(request: NextRequest) {
 
   // A process whose SUPABASE_SERVICE_ROLE_KEY is missing or not actually a
   // service-role key runs every server-side query as anon: RLS silently
-  // filters reads and rejects writes with errors that surface to users as
-  // nonsense ("Track not found", raw RLS messages). Fail protected API writes
+  // filters reads to EMPTY and rejects writes. Fail ALL protected API calls
   // loudly at this single chokepoint instead of each route discovering its own
-  // cryptic variant. GETs pass through — degraded reads render empty rather
-  // than erroring, and blocking them would take down pages that still work.
-  if (!serviceRoleKeyValid && pathname.startsWith('/api/') && request.method !== 'GET' && request.method !== 'HEAD') {
+  // cryptic variant — a degraded GET (e.g. /api/tracks returning []) is not
+  // harmless: clients render it as truthful empty states ("No tracks yet")
+  // over real data. An honest 503 hits the clients' existing error/retry
+  // paths instead.
+  if (!serviceRoleKeyValid && pathname.startsWith('/api/')) {
     return NextResponse.json(
-      { error: 'Server is misconfigured (service key) — saving is temporarily unavailable' },
+      { error: 'Server is misconfigured (service key) — please try again shortly' },
       { status: 503 },
     )
   }
