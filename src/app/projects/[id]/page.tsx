@@ -10,7 +10,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { id } = await params
   const userId = await getUserId()
 
-  const [projectRes, versionsRes, releaseRes] = await Promise.all([
+  const [projectRes, versionsRes, releaseRes, profileRes] = await Promise.all([
     supabaseAdmin.from('mb_projects').select('*').eq('id', id).eq('user_id', userId).single(),
     supabaseAdmin
       .from('mb_versions')
@@ -22,6 +22,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       .select('*')
       .eq('project_id', id)
       .maybeSingle(),
+    supabaseAdmin.from('profiles').select('is_owner').eq('id', userId).maybeSingle(),
   ])
 
   if (projectRes.error || !projectRes.data) notFound()
@@ -33,6 +34,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         project={projectRes.data}
         initialVersions={versionsRes.data ?? []}
         initialRelease={releaseRes.data ?? null}
+        ownerDefaults={profileRes.data?.is_owner === true}
       />
     </div>
   )

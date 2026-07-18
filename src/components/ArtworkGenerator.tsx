@@ -30,6 +30,12 @@ const POSITION_GRID: Position[] = [
   'bottom-left', 'bottom-center', 'bottom-right',
 ]
 
+// The moodmixformat house style. This is the OWNER's personal aesthetic — it
+// pre-fills the prompt only on the owner account (profiles.is_owner); every
+// other artist starts from a blank prompt and their own ideas.
+const OWNER_HOUSE_PROMPT =
+  'a colossal futuristic building shaped like a giant retro cassette tape, its two tape reels forming vast circular glass atriums, weathered board-formed concrete and steel, hyper-realistic materials with natural imperfections, surreal ominous megastructure, photorealistic architectural photograph, looks like a real photo, no text, no watermark'
+
 type Props = {
   projectId: string
   projectTitle: string
@@ -42,6 +48,8 @@ type Props = {
   // dedicated Artwork tab, not on every embedded preview of this component.
   showFinalize?: boolean
   showActions?: boolean
+  /** Pre-fill the owner's house-style prompt (owner account only) */
+  ownerDefaults?: boolean
 }
 
 export default function ArtworkGenerator({
@@ -50,11 +58,16 @@ export default function ArtworkGenerator({
   onArtworkUpdated, onFinalizedUpdated,
   showFinalize = true,
   showActions = true,
+  ownerDefaults = false,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
   // Subject only — the photographic treatment (lens, light, weather, mood) is
   // layered on server-side by the Vary option so repeat runs look different.
-  const [prompt, setPrompt] = useState(`a colossal futuristic building shaped like a giant retro cassette tape, its two tape reels forming vast circular glass atriums, weathered board-formed concrete and steel, hyper-realistic materials with natural imperfections, surreal ominous megastructure, photorealistic architectural photograph, looks like a real photo, no text, no watermark — ${projectTitle}${genre ? `, ${genre}` : ''}`)
+  const [prompt, setPrompt] = useState(
+    ownerDefaults
+      ? `${OWNER_HOUSE_PROMPT} — ${projectTitle}${genre ? `, ${genre}` : ''}`
+      : ''
+  )
   const [model, setModel] = useState<string>(IMAGE_MODELS[0].id)
   const [vary, setVary] = useState(true)
   const [lastLook, setLastLook] = useState<string | null>(null)
@@ -422,7 +435,7 @@ export default function ArtworkGenerator({
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
             rows={3}
-            placeholder="Describe the artwork..."
+            placeholder="Describe the artwork — subject, style, mood (e.g. 'neon-lit rooftop at dusk, film grain, moody')"
             className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
           />
           {error && <p className="text-red-400 text-xs">{error}</p>}
