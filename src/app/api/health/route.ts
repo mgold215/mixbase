@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
 
 // GET /api/health
 // Returns 200 with service status. Checks Supabase connectivity so Railway's
@@ -15,14 +15,14 @@ export async function GET() {
     db = 'error'
   }
 
-  // Whether the service-role key is present in THIS process. Without it the
-  // admin client silently falls back to the anon key: reads come back empty
-  // (RLS-filtered) and every server-side write dies with an RLS violation —
-  // seen in prod as profile saves / project creates failing with
-  // "new row violates row-level security policy". Report it so a broken
-  // replica is visible from the outside instead of half-working quietly.
-  const serviceKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
-
-  const status = db === 'ok' && serviceKey ? 200 : 503
-  return Response.json({ ok: db === 'ok', db, service_key: serviceKey, ts: Date.now() }, { status })
+  // Whether THIS process holds a key that actually grants service-role power —
+  // not merely whether the variable is set. A missing key OR a wrong key (the
+  // anon key pasted into SUPABASE_SERVICE_ROLE_KEY) both degrade the admin
+  // client to anon: reads come back empty (RLS-filtered) and every server-side
+  // write dies with an RLS violation — seen in prod as profile saves, project
+  // creates and feed comments failing. Report it so a broken process is
+  // visible from the outside (and fails deploy health checks) instead of
+  // half-working quietly.
+  const status = db === 'ok' && serviceRoleKeyValid ? 200 : 503
+  return Response.json({ ok: db === 'ok', db, service_key: serviceRoleKeyValid, ts: Date.now() }, { status })
 }
