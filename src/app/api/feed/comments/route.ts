@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
 import { feedCommentLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
-import { publicArtistName, type FeedComment } from '@/lib/feed'
+import { publicArtistName, unwrapJoin, type FeedComment } from '@/lib/feed'
+import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from '@/lib/schema-heal'
 
 const MAX_COMMENT_LENGTH = 2000
 
@@ -13,9 +14,8 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // A process without real service-role power can't write anything — say so
-  // honestly instead of letting the failure surface as a misleading data
-  // error further down.
+  // Defense in depth behind the middleware chokepoint: a process without real
+  // service-role power can't write anything — say so honestly.
   if (!serviceRoleKeyValid) {
     console.error('[feed] comment rejected: server has no valid service-role key')
     return NextResponse.json({ error: 'Server is misconfigured — please try again shortly' }, { status: 503 })
@@ -39,22 +39,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Comment must be under ${MAX_COMMENT_LENGTH} characters` }, { status: 400 })
   }
 
-  // Insert directly — the FK on version_id enforces "track exists" atomically,
-  // so there's no pre-lookup whose failure modes (RLS, transient errors) could
-  // get misreported as a missing track.
-  const { data, error } = await supabaseAdmin
+  // Insert directly — the version_id FK enforces "track exists" atomically, so
+  // there's no pre-lookup whose failure modes could be misreported as a
+  // missing track. The FK embed pulls the owner + version number back in the
+  // same round-trip for the activity log. The commenter's profile is
+  // independent of the insert, so both run concurrently.
+  const runInsert = () => supabaseAdmin
     .from('mb_feed_comments')
     .insert({ version_id, user_id: userId, comment: text })
-    .select('id, version_id, user_id, comment, created_at')
+    .select('id, version_id, user_id, comment, created_at, mb_versions!inner(project_id, version_number, mb_projects!inner(user_id))')
     .single()
 
+  const parallel = await Promise.all([
+    runInsert(),
+    supabaseAdmin.from('profiles').select('artist_name, display_name').eq('id', userId).single(),
+  ])
+  let insertRes = parallel[0]
+  const profileRes = parallel[1]
+
+  // Deploy may have beaten migration 022 — heal the table and retry once.
+  if (insertRes.error && isMissingFeedCommentsTable(insertRes.error) && await ensureFeedCommentsTable()) {
+    insertRes = await runInsert()
+  }
+
+  const { data, error } = insertRes
   if (error || !data) {
-    // 23503 = foreign-key violation → the version really doesn't exist
+    // 23503 = FK violation. The insert has TWO FKs — only a version_id
+    // violation means the track is gone. A user_id violation (deleted account
+    // with a still-valid token) must not masquerade as a missing track.
     if (error?.code === '23503') {
-      return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+      const detail = `${error.details ?? ''} ${error.message ?? ''}`
+      if (detail.includes('version_id') || detail.includes('mb_versions')) {
+        return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+      }
+      return NextResponse.json({ error: 'Account not found — please sign in again' }, { status: 401 })
     }
     // 42501 = RLS violation → this process is writing as anon (bad key).
-    // Never report that as user/data error.
     if (error?.code === '42501') {
       console.error('[feed] comment insert hit RLS — admin client is running as anon')
       return NextResponse.json({ error: 'Server is misconfigured — please try again shortly' }, { status: 503 })
@@ -63,33 +83,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error?.message ?? 'Failed to save comment' }, { status: 500 })
   }
 
-  const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('artist_name, display_name')
-    .eq('id', userId)
-    .single()
-  const artist = publicArtistName(profile)
+  const artist = publicArtistName(profileRes.data)
 
   // Surface the comment in the track owner's activity feed. Best-effort:
   // failures here must never fail the comment itself.
   try {
-    const { data: version } = await supabaseAdmin
-      .from('mb_versions')
-      .select('project_id, version_number, mb_projects!inner(user_id)')
-      .eq('id', version_id)
-      .single()
-    if (version) {
-      const proj = Array.isArray(version.mb_projects) ? version.mb_projects[0] : version.mb_projects
-      const ownerId = (proj as { user_id?: string } | null)?.user_id ?? null
-      if (ownerId && ownerId !== userId) {
-        await supabaseAdmin.from('mb_activity').insert({
-          type: 'feedback_received',
-          project_id: version.project_id,
-          version_id,
-          user_id: ownerId,
-          description: `Feed comment from ${artist} on v${version.version_number}`,
-        })
-      }
+    const version = unwrapJoin(data.mb_versions) as { project_id: string; version_number: number; mb_projects: unknown } | null
+    const ownerId = (unwrapJoin(version?.mb_projects) as { user_id?: string } | null)?.user_id ?? null
+    if (version && ownerId && ownerId !== userId) {
+      await supabaseAdmin.from('mb_activity').insert({
+        type: 'feedback_received',
+        project_id: version.project_id,
+        version_id,
+        user_id: ownerId,
+        description: `Feed comment from ${artist} on v${version.version_number}`,
+      })
     }
   } catch (e) {
     console.warn('[feed] activity log for comment failed:', e instanceof Error ? e.message : e)

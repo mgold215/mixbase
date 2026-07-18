@@ -12,15 +12,10 @@ export default function Nav() {
   const { currentTrack } = usePlayer()
   const { theme, toggleTheme } = useTheme()
   const [artistName, setArtistName] = useState('')
+  // Overflow menu open state. No close-on-navigate handling is needed: Nav is
+  // rendered per page (not in the layout), so it remounts — and thus resets —
+  // on every route change, and every in-menu action already closes it.
   const [menuOpen, setMenuOpen] = useState(false)
-
-  // Close the overflow menu whenever navigation happens (adjust-during-render
-  // pattern — avoids a cascading-render setState inside an effect)
-  const [menuPath, setMenuPath] = useState(pathname)
-  if (menuPath !== pathname) {
-    setMenuPath(pathname)
-    if (menuOpen) setMenuOpen(false)
-  }
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -154,15 +149,12 @@ export default function Nav() {
         >
           <LogOut size={14} strokeWidth={1.5} />
         </button>
-      </nav>
-
-      {/* ── Overflow menu dropdown (mobile only) ── */}
-      {menuOpen && (
-        <>
-          {/* Backdrop — closes the menu on any outside tap */}
-          <div className="fixed inset-0 z-40 md:hidden" onClick={() => setMenuOpen(false)} />
+        {/* Overflow dropdown — absolutely positioned inside the bar so it stays
+            anchored to it wherever the bar is (the bar's inline position style
+            makes viewport-fixed coordinates unreliable here) */}
+        {menuOpen && (
           <div
-            className="fixed top-12 right-3 z-50 rounded-xl border overflow-hidden md:hidden"
+            className="absolute top-full right-3 mt-1 z-50 rounded-xl border overflow-hidden md:hidden"
             style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
           >
             {menuItems.map(({ href, label, icon: Icon }) => {
@@ -181,7 +173,12 @@ export default function Nav() {
               )
             })}
           </div>
-        </>
+        )}
+      </nav>
+
+      {/* Backdrop — closes the overflow menu on any outside tap */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-40 md:hidden" onClick={() => setMenuOpen(false)} />
       )}
 
       {/* ── Bottom tab bar (mobile only, below md breakpoint, hidden on full player) ── */}

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
 import { refreshSessionOnce } from '@/lib/refresh-session'
 import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
 import { isTransientAuthError } from '@/lib/auth-errors'
@@ -228,6 +228,20 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/favicon')
   ) {
     return NextResponse.next({ request: { headers: baseHeaders } })
+  }
+
+  // A process whose SUPABASE_SERVICE_ROLE_KEY is missing or not actually a
+  // service-role key runs every server-side query as anon: RLS silently
+  // filters reads and rejects writes with errors that surface to users as
+  // nonsense ("Track not found", raw RLS messages). Fail protected API writes
+  // loudly at this single chokepoint instead of each route discovering its own
+  // cryptic variant. GETs pass through — degraded reads render empty rather
+  // than erroring, and blocking them would take down pages that still work.
+  if (!serviceRoleKeyValid && pathname.startsWith('/api/') && request.method !== 'GET' && request.method !== 'HEAD') {
+    return NextResponse.json(
+      { error: 'Server is misconfigured (service key) — saving is temporarily unavailable' },
+      { status: 503 },
+    )
   }
 
   // Accept a Bearer access token as an alternative to the session cookie so the

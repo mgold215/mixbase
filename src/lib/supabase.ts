@@ -1,17 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
+import { decodeJwt } from 'jose'
 
 // Hardcoded as fallbacks — these are public keys, safe to expose in client code
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
 export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU'
 
 // Extract the `role` claim from a Supabase JWT-style API key without verifying
-// it (we only need to know what PostgREST will treat it as). Returns null for
-// anything that doesn't parse.
+// it (we only need to know what PostgREST will treat it as). jose's decodeJwt
+// is runtime-agnostic — this module is pulled into the Edge middleware bundle,
+// where a hand-rolled Buffer decode would silently fail and false-alarm on a
+// perfectly good key. Returns null for anything that doesn't parse.
 function jwtRole(key: string): string | null {
   try {
-    const payload = key.split('.')[1]
-    if (!payload) return null
-    return JSON.parse(Buffer.from(payload, 'base64').toString('utf8')).role ?? null
+    return (decodeJwt(key).role as string | undefined) ?? null
   } catch {
     return null
   }

@@ -3,6 +3,7 @@
 // Server-side only (supabaseAdmin). Shared by the /feed page and GET /api/feed.
 
 import { supabaseAdmin } from './supabase'
+import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from './schema-heal'
 
 export type FeedComment = {
   id: string
@@ -20,7 +21,6 @@ export type FeedItem = {
   title: string
   artist: string
   version_label: string
-  status: string
   artwork_url: string | null
   audio_url: string
   created_at: string
@@ -28,6 +28,11 @@ export type FeedItem = {
 }
 
 const FEED_LIMIT = 60
+// Hard cap on comment rows fetched per feed load. Without an explicit limit
+// PostgREST silently truncates at its own default — and with ascending order
+// that would drop the NEWEST comments. Fetch newest-first with a stated cap,
+// then restore chronological order in code, so growth drops oldest instead.
+const COMMENTS_LIMIT = 2000
 
 // Public display name for a profile. Never fall back to display_name when it
 // looks like an email — signup defaults display_name to the address, and the
@@ -39,10 +44,16 @@ export function publicArtistName(p?: { artist_name?: string | null; display_name
   return 'Artist'
 }
 
+/** Unwrap a PostgREST embedded relation that may come back as object or array. */
+export function unwrapJoin<T>(v: T | T[] | null | undefined): T | null {
+  if (v == null) return null
+  return Array.isArray(v) ? (v[0] ?? null) : v
+}
+
 export async function getFeed(): Promise<FeedItem[]> {
   const { data: versions, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
+    .select('id, project_id, label, version_number, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
     .not('audio_url', 'is', null)
     .order('created_at', { ascending: false })
     .limit(FEED_LIMIT)
@@ -51,28 +62,54 @@ export async function getFeed(): Promise<FeedItem[]> {
   type ProjectJoin = { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; user_id?: string }
   const rows = (versions ?? []).map(v => ({
     ...v,
-    project: (Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects) as ProjectJoin | null,
+    project: unwrapJoin(v.mb_projects) as ProjectJoin | null,
   }))
-
   const versionIds = rows.map(v => v.id)
-  const { data: comments } = versionIds.length > 0
-    ? await supabaseAdmin
+  const uploaderIds = [...new Set(rows.map(v => v.project?.user_id).filter((id): id is string => !!id))]
+
+  // Comments and uploader profiles are independent — fetch them concurrently.
+  const fetchComments = () => versionIds.length > 0
+    ? supabaseAdmin
         .from('mb_feed_comments')
         .select('id, version_id, user_id, comment, created_at')
         .in('version_id', versionIds)
-        .order('created_at', { ascending: true })
-    : { data: [] }
-  const commentRows = comments ?? []
+        .order('created_at', { ascending: false })
+        .limit(COMMENTS_LIMIT)
+    : Promise.resolve({ data: [], error: null })
 
-  // One profiles lookup for uploaders + commenters combined
-  const userIds = [...new Set([
-    ...rows.map(v => v.project?.user_id).filter((id): id is string => !!id),
-    ...commentRows.map(c => c.user_id),
-  ])]
-  const { data: profiles } = userIds.length > 0
-    ? await supabaseAdmin.from('profiles').select('id, artist_name, display_name').in('id', userIds)
-    : { data: [] }
-  const nameById = new Map((profiles ?? []).map(p => [p.id, publicArtistName(p)]))
+  const results = await Promise.all([
+    fetchComments(),
+    uploaderIds.length > 0
+      ? supabaseAdmin.from('profiles').select('id, artist_name, display_name').in('id', uploaderIds)
+      : Promise.resolve({ data: [] as { id: string; artist_name: string | null; display_name: string | null }[], error: null }),
+  ])
+  let commentsRes = results[0]
+  const profilesRes = results[1]
+
+  // Deploy may have beaten migration 022 — heal the table and retry once.
+  // A comments failure must never take down the whole feed either way.
+  if (commentsRes.error) {
+    if (isMissingFeedCommentsTable(commentsRes.error) && await ensureFeedCommentsTable()) {
+      commentsRes = await fetchComments()
+    }
+    if (commentsRes.error) {
+      console.error('[feed] comments query failed:', commentsRes.error.message)
+      commentsRes = { data: [], error: null }
+    }
+  }
+  // Restore chronological display order (query is newest-first for the cap)
+  const commentRows = [...(commentsRes.data ?? [])].reverse()
+
+  // Top-up: commenter profiles not already fetched as uploaders
+  const nameById = new Map((profilesRes.data ?? []).map(p => [p.id, publicArtistName(p)]))
+  const missingIds = [...new Set(commentRows.map(c => c.user_id))].filter(id => !nameById.has(id))
+  if (missingIds.length > 0) {
+    const { data: extra } = await supabaseAdmin
+      .from('profiles')
+      .select('id, artist_name, display_name')
+      .in('id', missingIds)
+    for (const p of extra ?? []) nameById.set(p.id, publicArtistName(p))
+  }
 
   const commentsByVersion = new Map<string, FeedComment[]>()
   for (const c of commentRows) {
@@ -95,7 +132,6 @@ export async function getFeed(): Promise<FeedItem[]> {
     title: v.project?.title ?? 'Untitled',
     artist: nameById.get(v.project?.user_id ?? '') ?? 'Artist',
     version_label: v.label || `v${v.version_number}`,
-    status: v.status ?? 'WIP',
     artwork_url: v.project?.finalized_artwork_url ?? v.project?.artwork_url ?? null,
     audio_url: v.audio_url,
     created_at: v.created_at,

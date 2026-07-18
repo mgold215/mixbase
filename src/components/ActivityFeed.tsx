@@ -2,6 +2,7 @@
 
 import { Play, Pause } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { timeAgo } from '@/lib/time'
 
 // Shape of activity rows from mb_activity table
 type Activity = {
@@ -27,15 +28,6 @@ function activityIcon(type: string) {
   return '\u00B7'                                    // middle dot
 }
 
-// Returns a relative time string like "2h ago"
-function timeAgo(date: string) {
-  const diff = Date.now() - new Date(date).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
-}
 
 // Formats a date string into a readable date/time like "Apr 12, 2026 3:45 PM"
 function formatDateTime(date: string) {

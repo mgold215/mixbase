@@ -23,6 +23,8 @@ export async function GET() {
   // creates and feed comments failing. Report it so a broken process is
   // visible from the outside (and fails deploy health checks) instead of
   // half-working quietly.
-  const status = db === 'ok' && serviceRoleKeyValid ? 200 : 503
-  return Response.json({ ok: db === 'ok', db, service_key: serviceRoleKeyValid, ts: Date.now() }, { status })
+  // `ok` must agree with the HTTP status — body-parsing monitors and the
+  // status-based Railway healthcheck may not contradict each other.
+  const ok = db === 'ok' && serviceRoleKeyValid
+  return Response.json({ ok, db, service_key: serviceRoleKeyValid, ts: Date.now() }, { status: ok ? 200 : 503 })
 }

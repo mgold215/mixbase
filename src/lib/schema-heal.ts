@@ -208,6 +208,53 @@ export function isMissingProfileSocialColumn(error: { message?: string } | null)
   return !!error?.message && /(spotify|youtube)_url/.test(error.message)
 }
 
+// ── mb_feed_comments (migration 022) ─────────────────────────────────────────
+// A deploy can beat migration 022 to production (or a fresh environment may
+// never have run it) — heal the table on the specific missing-relation error
+// so feed comments degrade for one request instead of until manual action.
+
+const FEED_COMMENTS_SQL = `
+create table if not exists mb_feed_comments (
+  id uuid primary key default gen_random_uuid(),
+  version_id uuid not null references mb_versions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  comment text not null,
+  created_at timestamptz default now()
+);
+create index if not exists idx_feed_comments_version_id on mb_feed_comments(version_id);
+create index if not exists idx_feed_comments_created on mb_feed_comments(created_at desc);
+alter table mb_feed_comments enable row level security;
+do $$ begin
+  create policy "feed_comments_read_authenticated" on mb_feed_comments for select using (auth.uid() is not null);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "feed_comments_insert_own" on mb_feed_comments for insert with check (user_id = auth.uid());
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "feed_comments_delete_own" on mb_feed_comments for delete using (user_id = auth.uid());
+exception when duplicate_object then null; end $$;`
+
+let feedCommentsEnsured: Promise<boolean> | null = null
+
+export function ensureFeedCommentsTable(): Promise<boolean> {
+  if (!feedCommentsEnsured) {
+    feedCommentsEnsured = runQuery(FEED_COMMENTS_SQL, 'mb_feed_comments table')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) feedCommentsEnsured = null
+        return ok
+      })
+  }
+  return feedCommentsEnsured
+}
+
+/** True when a PostgREST error is the missing-relation failure this heals. */
+export function isMissingFeedCommentsTable(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  if (error.code === '42P01' && !!error.message?.includes('mb_feed_comments')) return true
+  return !!error.message && error.message.includes('mb_feed_comments') && /does not exist|relation/.test(error.message)
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false
