@@ -15,6 +15,14 @@ export async function GET() {
     db = 'error'
   }
 
-  const status = db === 'ok' ? 200 : 503
-  return Response.json({ ok: db === 'ok', db, ts: Date.now() }, { status })
+  // Whether the service-role key is present in THIS process. Without it the
+  // admin client silently falls back to the anon key: reads come back empty
+  // (RLS-filtered) and every server-side write dies with an RLS violation —
+  // seen in prod as profile saves / project creates failing with
+  // "new row violates row-level security policy". Report it so a broken
+  // replica is visible from the outside instead of half-working quietly.
+  const serviceKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+  const status = db === 'ok' && serviceKey ? 200 : 503
+  return Response.json({ ok: db === 'ok', db, service_key: serviceKey, ts: Date.now() }, { status })
 }
