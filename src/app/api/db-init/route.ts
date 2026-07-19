@@ -195,6 +195,10 @@ alter table mb_collections     enable row level security;
 alter table mb_collection_items enable row level security;
 alter table mb_feedback        enable row level security;
 alter table mb_activity        enable row level security;
+-- Migration 022: feed comments. Its only protection from the public anon key
+-- (which holds default SELECT/INSERT/UPDATE/DELETE grants on public tables) is
+-- RLS being ON — a table created without it is world-read/write via PostgREST.
+alter table mb_feed_comments   enable row level security;
 
 drop policy if exists "users_own_projects"         on mb_projects;
 drop policy if exists "users_own_versions"         on mb_versions;
@@ -204,6 +208,9 @@ drop policy if exists "users_own_collection_items" on mb_collection_items;
 drop policy if exists "public_feedback_insert"     on mb_feedback;
 drop policy if exists "users_read_feedback"        on mb_feedback;
 drop policy if exists "users_own_activity"         on mb_activity;
+drop policy if exists "feed_comments_read_authenticated" on mb_feed_comments;
+drop policy if exists "feed_comments_insert_own"         on mb_feed_comments;
+drop policy if exists "feed_comments_delete_own"         on mb_feed_comments;
 
 create policy "users_own_projects" on mb_projects
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -237,6 +244,19 @@ create policy "users_read_feedback" on mb_feedback
 create policy "users_own_activity" on mb_activity
   using (project_id in (select id from mb_projects where user_id = auth.uid()))
   with check (project_id in (select id from mb_projects where user_id = auth.uid()));
+
+-- Migration 022: feed comments — readable by every signed-in artist, writable/
+-- deletable only by their author. (Server routes use the service-role key and
+-- bypass RLS; these policies cover the iOS app, which talks to PostgREST
+-- directly with the user's JWT.)
+create policy "feed_comments_read_authenticated" on mb_feed_comments
+  for select using (auth.uid() is not null);
+
+create policy "feed_comments_insert_own" on mb_feed_comments
+  for insert with check (user_id = auth.uid());
+
+create policy "feed_comments_delete_own" on mb_feed_comments
+  for delete using (user_id = auth.uid());
 
 -- Migration 017: atomic usage metering + unique version numbers
 create or replace function public.try_increment_usage(
