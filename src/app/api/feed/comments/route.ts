@@ -41,13 +41,17 @@ export async function POST(request: NextRequest) {
 
   // Insert directly — the version_id FK enforces "track exists" atomically, so
   // there's no pre-lookup whose failure modes could be misreported as a
-  // missing track. The FK embed pulls the owner + version number back in the
-  // same round-trip for the activity log. The commenter's profile is
-  // independent of the insert, so both run concurrently.
+  // missing track. Read back ONLY the comment's own columns: an earlier version
+  // pulled the track owner via an `mb_versions!inner(...mb_projects!inner(...))`
+  // embed in the same RETURNING, but that embed reads ANOTHER artist's rows, so
+  // when it came back empty the whole `.single()` failed to coerce and PostgREST
+  // rolled the insert back — commenting on anyone else's track died with
+  // "Cannot coerce the result to a single JSON object" and saved nothing. The
+  // owner (for the activity log) is fetched separately below, best-effort.
   const runInsert = () => supabaseAdmin
     .from('mb_feed_comments')
     .insert({ version_id, user_id: userId, comment: text })
-    .select('id, version_id, user_id, comment, created_at, mb_versions!inner(project_id, version_number, mb_projects!inner(user_id))')
+    .select('id, version_id, user_id, comment, created_at')
     .single()
 
   const parallel = await Promise.all([
@@ -86,9 +90,15 @@ export async function POST(request: NextRequest) {
   const artist = publicArtistName(profileRes.data)
 
   // Surface the comment in the track owner's activity feed. Best-effort:
-  // failures here must never fail the comment itself.
+  // failures here must never fail the comment itself. Fetched in a SEPARATE
+  // service-role query (not embedded in the insert's RETURNING) so reading the
+  // other artist's track can never roll back the comment write.
   try {
-    const version = unwrapJoin(data.mb_versions) as { project_id: string; version_number: number; mb_projects: unknown } | null
+    const { data: version } = await supabaseAdmin
+      .from('mb_versions')
+      .select('project_id, version_number, mb_projects(user_id)')
+      .eq('id', version_id)
+      .maybeSingle()
     const ownerId = (unwrapJoin(version?.mb_projects) as { user_id?: string } | null)?.user_id ?? null
     if (version && ownerId && ownerId !== userId) {
       await supabaseAdmin.from('mb_activity').insert({
