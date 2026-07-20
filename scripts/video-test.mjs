@@ -42,6 +42,24 @@ function run(bin, args) {
   })
 }
 
+// Run ffmpeg writing the container to stdout (a non-seekable pipe) and save it.
+// This produces the same header shape as a browser MediaRecorder blob: the
+// muxer can't seek back to write the duration, so the file carries none.
+function runToFile(bin, args, dest) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const chunks = []
+    let err = ''
+    p.stdout.on('data', d => chunks.push(d))
+    p.stderr.on('data', d => { err = (err + d).slice(-3000) })
+    p.on('close', async c => {
+      if (c !== 0) return reject(new Error(err.slice(-500)))
+      await (await import('fs/promises')).writeFile(dest, Buffer.concat(chunks))
+      resolve()
+    })
+  })
+}
+
 function probeStreams(file) {
   return new Promise((resolve, reject) => {
     const p = spawn(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_streams', file])
@@ -90,14 +108,18 @@ const dir = await mkdtemp(join(tmpdir(), 'mb-videotest-'))
 const vizFile = join(dir, 'viz.mp4')
 const audio20 = join(dir, 'audio20.wav')
 const audio100 = join(dir, 'audio100.wav')
+const vizWebm = join(dir, 'viz.webm')
 // Moving test pattern ≈ a landscape visualizer loop.
 await run(FFMPEG, ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', vizFile])
+// Same clip as a MediaRecorder-style webm: streamed to a pipe so the container
+// carries NO duration metadata — the shape every free-effects visualizer has.
+await runToFile(FFMPEG, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-c:v', 'libvpx', '-f', 'webm', '-'], vizWebm)
 await run(FFMPEG, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=20', audio20])
 await run(FFMPEG, ['-y', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=100', audio100])
 
 // Serve them over HTTP — the renderer fetches URLs exactly like production.
 const server = createServer(async (req, res) => {
-  const map = { '/viz.mp4': vizFile, '/audio20.wav': audio20, '/audio100.wav': audio100 }
+  const map = { '/viz.mp4': vizFile, '/viz.webm': vizWebm, '/audio20.wav': audio20, '/audio100.wav': audio100 }
   const file = map[req.url]
   if (!file) { res.writeHead(404); return res.end() }
   res.writeHead(200)
@@ -163,6 +185,28 @@ try {
 
     const dur = await probeDuration(outFile)
     check('shorts: container duration sane', Math.abs(dur - 15) < 0.75, `${dur.toFixed(2)}s`)
+  }
+
+  // ── 5. Duration-less webm visualizer (MediaRecorder shape) ─────────────────
+  // Regression: free-effects pins are browser-recorded webm with no duration
+  // metadata; probeDuration must fall back to decode-measuring and the Short
+  // must still render. Before the fallback this threw "Could not determine
+  // visualizer duration".
+  {
+    const webmDur = await probeDuration(join(dir, 'viz.webm'), 'visualizer')
+    check('webm: duration measured despite missing metadata', Math.abs(webmDur - 4) < 0.5, `${webmDur.toFixed(2)}s`)
+
+    const out = await buildFinalVideo({
+      visualizerUrl: `${base}/viz.webm`,
+      audioUrl: `${base}/audio100.wav`,
+      title: 'PLAY',
+      artist: 'moodmixformat',
+      format: 'shorts',
+      startSec: 30,
+      clipSeconds: 15,
+    })
+    check('webm shorts: dimensions 1080×1920', out.width === 1080 && out.height === 1920)
+    check('webm shorts: clip length respected', Math.abs(out.durationSec - 15) < 0.75, `${out.durationSec.toFixed(2)}s`)
   }
 } finally {
   server.close()
