@@ -141,6 +141,31 @@ async function probeJson(file: string): Promise<{
   })
 }
 
+// Decode the file to a null sink and read the final timestamp. Slower than a
+// metadata probe but works on files that carry no duration in the header —
+// most importantly the free-effects visualizers, which browsers record with
+// MediaRecorder as streamed webm (duration is unwritable in a non-seekable
+// stream, so ffprobe reports nothing for format or streams).
+function measureDurationByDecoding(file: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(FFMPEG, ['-v', 'error', '-i', file, '-f', 'null', '-progress', 'pipe:1', '-'])
+    let micros = 0
+    let err = ''
+    proc.stdout.on('data', (d: Buffer) => {
+      for (const line of d.toString().split('\n')) {
+        const m = line.match(/^out_time_ms=(\d+)/) // misnamed by ffmpeg: microseconds
+        if (m) micros = Math.max(micros, Number(m[1]))
+      }
+    })
+    proc.stderr.on('data', (d: Buffer) => { err = (err + d.toString()).slice(-1500) })
+    proc.on('error', reject)
+    proc.on('close', code => {
+      if (code === 0 && micros > 0) resolve(micros / 1e6)
+      else reject(new Error(`Could not measure duration by decoding: ${err || `ffmpeg exited ${code}`}`))
+    })
+  })
+}
+
 export async function probeDuration(file: string, label = 'media'): Promise<number> {
   const info = await probeJson(file)
   const fromFormat = parseFloat(info.format?.duration ?? '')
@@ -149,7 +174,11 @@ export async function probeDuration(file: string, label = 'media'): Promise<numb
     const d = parseFloat(s.duration ?? '')
     if (Number.isFinite(d) && d > 0) return d
   }
-  throw new Error(`Could not determine ${label} duration`)
+  try {
+    return await measureDurationByDecoding(file)
+  } catch {
+    throw new Error(`Could not determine ${label} duration`)
+  }
 }
 
 async function download(url: string, dest: string): Promise<void> {
