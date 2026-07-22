@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { Download, Film, Sparkles, Check, MonitorPlay, X } from 'lucide-react'
 import { visualizerKindLabel } from '@/lib/visualizer-kinds'
+import { saveMedia } from '@/lib/download'
 import { EFFECTS, EFFECT_IDS, domLayerFactory, type EffectId, type DrawFrame } from '@/lib/free-effects'
 
 type Format = 'canvas' | 'youtube' | 'square' | 'story'
@@ -435,11 +436,11 @@ export default function Visualizer({
     }
   }
 
+  // saveMedia handles the platform differences: share sheet on phones (so the
+  // clip can go straight to Photos), forced attachment download on desktop. A
+  // bare cross-origin <a download> would just open the video inline.
   function download(url: string, suffix: string, ext: 'webm' | 'mp4') {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${projectTitle.replace(/\s+/g, '-').toLowerCase()}-${format}-${suffix}.${ext}`
-    a.click()
+    void saveMedia(url, `${projectTitle}-${format}-${suffix}`, ext).catch(() => {})
   }
 
   function resetFormat(f: Format) {

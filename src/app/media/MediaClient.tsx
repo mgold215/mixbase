@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Check, X, ExternalLink, Download, Film, Trash2 } from 'lucide-react'
-import { downloadImage } from '@/lib/download'
+import { downloadImage, saveMedia } from '@/lib/download'
 import { visualizerKindLabel, availableKinds, filterByKind } from '@/lib/visualizer-kinds'
 
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
@@ -164,7 +164,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => downloadImage(v.video_url, v.title || 'visualizer')}
+                        onClick={() => saveMedia(v.video_url, v.title || 'visualizer', 'mp4').catch(() => {})}
                         className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium py-1.5 rounded-lg transition-colors"
                         style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
                       >
