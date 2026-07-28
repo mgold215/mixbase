@@ -3,15 +3,18 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send, Rss, MoreHorizontal, Bell } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, Images, Sun, Moon, UserCircle, Send, Rss, MoreHorizontal, Bell, MessageSquare, Star } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { timeAgo } from '@/lib/time'
+import { notificationHref, type NotificationSource } from '@/lib/notifications'
 
 type NotificationItem = {
   id: string
   description: string | null
   project_id: string | null
+  version_id: string | null
+  source: NotificationSource
   created_at: string
 }
 
@@ -220,22 +223,39 @@ export default function Nav() {
               </p>
             ) : (
               <div className="max-h-80 overflow-y-auto">
-                {notifications.map(n => (
-                  <Link
-                    key={n.id}
-                    href={n.project_id ? `/projects/${n.project_id}` : '/dashboard'}
-                    className="block px-4 py-2.5 transition-colors hover:bg-white/5"
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                    onClick={() => setNotifOpen(false)}
-                  >
-                    <p className="text-xs leading-snug" style={{ color: 'var(--text)' }}>
-                      {n.description ?? 'New activity on your mix'}
-                    </p>
-                    <p className="mt-0.5" style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
-                      {timeAgo(n.created_at)}
-                    </p>
-                  </Link>
-                ))}
+                {notifications.map(n => {
+                  // Icon distinguishes the two sources. The DESTINATION is
+                  // deliberately identical for both (notificationHref) so a
+                  // misclassified legacy row costs an icon, never a dead link.
+                  const SourceIcon = n.source === 'feed_comment' ? MessageSquare : Star
+                  return (
+                    <Link
+                      key={n.id}
+                      href={notificationHref(n)}
+                      className="flex items-start gap-2 px-4 py-2.5 transition-colors hover:bg-white/5"
+                      style={{ borderBottom: '1px solid var(--border)' }}
+                      onClick={() => setNotifOpen(false)}
+                    >
+                      <SourceIcon
+                        size={11}
+                        className="mt-0.5 flex-shrink-0"
+                        style={{ color: 'var(--text-muted)' }}
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1">
+                        {/* break-words + line-clamp: the description embeds a
+                            reviewer-supplied name, so one row must never be
+                            able to overflow the panel or push the rest out. */}
+                        <span className="block text-xs leading-snug break-words line-clamp-3" style={{ color: 'var(--text)' }}>
+                          {n.description ?? 'New activity on your mix'}
+                        </span>
+                        <span className="block mt-0.5" style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
+                          {timeAgo(n.created_at)}
+                        </span>
+                      </span>
+                    </Link>
+                  )
+                })}
               </div>
             )}
           </div>

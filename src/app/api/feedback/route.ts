@@ -3,6 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 
+// Caps for the two free-text fields on this PUBLIC, unauthenticated route.
+// Both are stored in unbounded `text` columns, and `reviewer_name` is also
+// interpolated into the mb_activity description that the nav bell renders and
+// re-polls every 60s (src/components/Nav.tsx) — so an uncapped name is a
+// persistent payload in the victim's UI that they cannot clear. 80 chars is a
+// display name; 2000 matches MAX_COMMENT_LENGTH on the feed-comment route.
+const MAX_REVIEWER_NAME_LENGTH = 80
+const MAX_COMMENT_LENGTH = 2000
+
 // POST /api/feedback — submit feedback for a shared version (public route)
 export async function POST(request: NextRequest) {
   const limit = feedbackLimiter.check(ipKey(request))
@@ -14,8 +23,15 @@ export async function POST(request: NextRequest) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { version_id, reviewer_name, rating, comment, timestamp_seconds } = body
 
-  if (!version_id || !comment?.trim()) {
+  // Public route — `comment` may be any JSON type. `comment?.trim()` only guards
+  // null/undefined, so a number or array reached `.trim` as undefined and threw
+  // an uncaught TypeError (500) on an unauthenticated endpoint.
+  const commentText = typeof comment === 'string' ? comment.trim() : ''
+  if (!version_id || !commentText) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
+  }
+  if (commentText.length > MAX_COMMENT_LENGTH) {
+    return NextResponse.json({ error: `Comment must be under ${MAX_COMMENT_LENGTH} characters` }, { status: 400 })
   }
 
   // Public endpoint — validate the id shape before it reaches a DB insert/lookup so a
@@ -42,13 +58,19 @@ export async function POST(request: NextRequest) {
     ts = Math.min(Math.floor(timestamp_seconds), 86400)
   }
 
+  // One sanitized name used EVERYWHERE below. The insert and the activity-log
+  // description previously derived it separately (`.trim()` vs raw), so the
+  // stored name and the notification text could disagree.
+  const rawName = typeof reviewer_name === 'string' ? reviewer_name.trim() : ''
+  const safeName = (rawName || 'Anonymous').slice(0, MAX_REVIEWER_NAME_LENGTH)
+
   const { data, error } = await supabaseAdmin
     .from('mb_feedback')
     .insert({
       version_id,
-      reviewer_name: reviewer_name?.trim() || 'Anonymous',
+      reviewer_name: safeName,
       rating: rating || null,
-      comment: comment.trim(),
+      comment: commentText,
       timestamp_seconds: ts,
     })
     .select()
@@ -73,7 +95,7 @@ export async function POST(request: NextRequest) {
       project_id: version.project_id,
       version_id,
       user_id: projectUserId,
-      description: `Feedback from ${reviewer_name || 'Anonymous'} on v${version.version_number}`,
+      description: `Feedback from ${safeName} on v${version.version_number}`,
     })
   }
 

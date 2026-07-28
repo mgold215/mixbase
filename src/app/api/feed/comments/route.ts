@@ -4,6 +4,7 @@ import { feedCommentLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 import { publicArtistName, unwrapJoin, type FeedComment } from '@/lib/feed'
 import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from '@/lib/schema-heal'
+import { FEED_COMMENT_TYPE, FEED_COMMENT_PREFIX } from '@/lib/notifications'
 
 const MAX_COMMENT_LENGTH = 2000
 
@@ -102,11 +103,15 @@ export async function POST(request: NextRequest) {
     const ownerId = (unwrapJoin(version?.mb_projects) as { user_id?: string } | null)?.user_id ?? null
     if (version && ownerId && ownerId !== userId) {
       await supabaseAdmin.from('mb_activity').insert({
-        type: 'feedback_received',
+        // Distinct from share-page feedback so the bell can label the two
+        // sources apart without parsing this description. Legacy rows (written
+        // when both sources used 'feedback_received') still classify correctly
+        // via the FEED_COMMENT_PREFIX fallback in src/lib/notifications.ts.
+        type: FEED_COMMENT_TYPE,
         project_id: version.project_id,
         version_id,
         user_id: ownerId,
-        description: `Feed comment from ${artist} on v${version.version_number}`,
+        description: `${FEED_COMMENT_PREFIX}${artist} on v${version.version_number}`,
       })
     }
   } catch (e) {

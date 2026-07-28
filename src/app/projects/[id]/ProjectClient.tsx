@@ -12,6 +12,7 @@ import { trackShareUrl } from '@/lib/share-url'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
+import type { FeedComment } from '@/lib/feed'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
@@ -38,12 +39,15 @@ type Props = {
   project: Project
   initialVersions: VersionWithFeedback[]
   initialRelease: Release | null
+  /** Comments other artists left in the community feed, keyed by version id.
+   *  Server-loaded for EVERY version of this project, not just the current mix. */
+  initialFeedComments?: Record<string, FeedComment[]>
   inModal?: boolean
   /** Owner account only — pre-fills the artwork generator's house-style prompt */
   ownerDefaults?: boolean
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease, inModal = false, ownerDefaults = false }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -110,6 +114,20 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setVisualizerWide(url)
     syncAfterMutation()
   }
+
+  // ?v=<version_id> — set by a notification link so the page can open the note
+  // that was clicked. Read the same way as the tab hash below (not
+  // useSearchParams) to avoid a Suspense/CSR bailout on this page.
+  //
+  // Validated as a UUID before use: the value is URL-supplied, and it is only
+  // ever compared against version ids we already loaded — never interpolated
+  // into a CSS selector or a redirect, both of which turn a crafted value into
+  // a thrown SyntaxError or an open redirect.
+  const [highlightVersionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    const v = new URLSearchParams(window.location.search).get('v')
+    return v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : null
+  })
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer' | 'video'>(() => {
@@ -705,6 +723,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             ) : (
               <CurrentMixCard
                 version={currentMix}
+                feedComments={initialFeedComments[currentMix.id] ?? []}
                 projectTitle={projectForm.title || project.title}
                 artwork={artwork}
                 currentUrl={currentUrl}
@@ -737,6 +756,15 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 </button>
               </div>
             )}
+
+            {/* Notes left on mixes that are no longer current. Without this the
+                notifications bell links here for feedback the page can't show. */}
+            <EarlierMixNotes
+              versions={archivedVersions}
+              feedCommentsByVersion={initialFeedComments}
+              parseMixLabel={parseMixLabel}
+              highlightVersionId={highlightVersionId}
+            />
 
             {/* Release Pipeline */}
             <div className="mt-10 mb-2">
@@ -912,6 +940,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
 type CurrentMixCardProps = {
   version: VersionWithFeedback
+  /** Community-feed comments on THIS version (other artists). */
+  feedComments: FeedComment[]
   projectTitle: string
   artwork: string | null
   currentUrl: string | null
@@ -932,7 +962,7 @@ type CurrentMixCardProps = {
 }
 
 function CurrentMixCard({
-  version, projectTitle, artwork,
+  version, feedComments, projectTitle, artwork,
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
   onUpdateStatus, onUpdateNotes, onSummarizeFeedback, parseMixLabel,
@@ -1240,7 +1270,131 @@ function CurrentMixCard({
             </div>
           </div>
         )}
+
+        {/* Community-feed comments from other artists. Kept visually distinct
+            from share-page Feedback above: that is a curator/client responding
+            to a link you sent; this is a peer replying in the public feed. */}
+        {feedComments.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <MessageSquare size={10} className="text-[var(--text-muted)]" />
+              <span className="text-[11px] text-[var(--text-muted)]">From other artists</span>
+            </div>
+            <div className="space-y-1.5">
+              {feedComments.map(c => (
+                <div key={c.id} className="rounded-xl px-3 py-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{c.artist}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">
+                      {new Date(c.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{c.comment}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+// ── Notes on earlier mixes ───────────────────────────────────────────────────
+// The project page used to render notes for the CURRENT mix only: feedback was
+// read inside CurrentMixCard, and archived versions appeared solely in the
+// restore modal, which shows no notes at all. So a curator's feedback on v3
+// became invisible the moment v4 was uploaded — even though the loader had
+// already fetched it, and even though the notifications bell links here. This
+// section is the fix: every note on every earlier mix, from both sources.
+
+type EarlierMixNotesProps = {
+  versions: VersionWithFeedback[]
+  feedCommentsByVersion: Record<string, FeedComment[]>
+  parseMixLabel: (filename: string) => string | null
+  highlightVersionId: string | null
+}
+
+function EarlierMixNotes({ versions, feedCommentsByVersion, parseMixLabel, highlightVersionId }: EarlierMixNotesProps) {
+  const withNotes = versions
+    .map(v => ({
+      version: v,
+      feedback: v.mb_feedback ?? [],
+      comments: feedCommentsByVersion[v.id] ?? [],
+    }))
+    .filter(g => g.feedback.length + g.comments.length > 0)
+
+  // A notification deep-links with ?v=<version_id>. Treat it strictly as a
+  // hint: mb_activity.version_id has no foreign key and version deletion does
+  // not clean it up, so it may not match anything here. Opening the section
+  // when it DOES match is the whole benefit; a miss just leaves it collapsed.
+  // Derived at mount rather than in an effect — highlightVersionId is read once
+  // from the URL, so there is nothing to synchronize afterwards.
+  const [open, setOpen] = useState(
+    () => highlightVersionId != null && withNotes.some(g => g.version.id === highlightVersionId),
+  )
+
+  if (withNotes.length === 0) return null
+
+  const total = withNotes.reduce((s, g) => s + g.feedback.length + g.comments.length, 0)
+
+  return (
+    <div className="mt-5">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+      >
+        <MessageSquare size={12} />
+        Notes on earlier mixes ({total})
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-4">
+          {withNotes.map(({ version: v, feedback, comments }) => (
+            <div
+              key={v.id}
+              className="rounded-xl p-3"
+              style={{
+                backgroundColor: 'var(--surface)',
+                border: `1px solid ${v.id === highlightVersionId ? '#2dd4bf66' : 'var(--border)'}`,
+              }}
+            >
+              <p className="text-[11px] text-[var(--text-muted)] mb-2">
+                {v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`}
+                {' · '}
+                {new Date(v.created_at).toLocaleDateString()}
+              </p>
+              <div className="space-y-1.5">
+                {feedback.map(f => (
+                  <div key={f.id} className="rounded-lg px-3 py-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{f.reviewer_name}</span>
+                      {f.rating && (
+                        <div className="flex gap-0.5 flex-shrink-0">
+                          {[1, 2, 3, 4, 5].map(st => (
+                            <Star key={st} size={9} className={st <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{f.comment}</p>
+                  </div>
+                ))}
+                {comments.map(c => (
+                  <div key={c.id} className="rounded-lg px-3 py-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{c.artist}</span>
+                      <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">from the feed</span>
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{c.comment}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

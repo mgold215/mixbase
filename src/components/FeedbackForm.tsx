@@ -82,7 +82,8 @@ export default function FeedbackForm({ versionId, currentTime, onSubmitted }: Pr
           type="text"
           placeholder="Your name (optional)"
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={e => setName(e.target.value.slice(0, 80))}
+          maxLength={80}
           className="w-full bg-[#0f0f0f] border border-[#222] rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40"
         />
       </div>

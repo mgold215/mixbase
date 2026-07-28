@@ -3,6 +3,7 @@
 import { Play, Pause } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { timeAgo } from '@/lib/time'
+import { SHARE_FEEDBACK_TYPE, FEED_COMMENT_TYPE } from '@/lib/notifications'
 
 // Shape of activity rows from mb_activity table
 type Activity = {
@@ -23,7 +24,8 @@ type Project = {
 function activityIcon(type: string) {
   if (type === 'version_upload') return '\u2191'    // up arrow
   if (type === 'status_change') return '\u2192'     // right arrow
-  if (type === 'feedback_received') return '\u2605'  // star
+  if (type === SHARE_FEEDBACK_TYPE) return '\u2605'  // star
+  if (type === FEED_COMMENT_TYPE) return '\u201C'    // left double quote
   if (type === 'release_created') return '\u25C6'    // diamond
   return '\u00B7'                                    // middle dot
 }

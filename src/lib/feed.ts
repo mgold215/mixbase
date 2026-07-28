@@ -4,6 +4,7 @@
 
 import { supabaseAdmin } from './supabase'
 import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from './schema-heal'
+import { publicArtistName } from './display-name'
 
 export type FeedComment = {
   id: string
@@ -51,20 +52,89 @@ const OLDER_LIMIT = 15
 // then restore chronological order in code, so growth drops oldest instead.
 const COMMENTS_LIMIT = 2000
 
-// Public display name for a profile. Never fall back to display_name when it
+// Public display name for a profile. Never falls back to display_name when it
 // looks like an email — signup defaults display_name to the address, and the
-// feed is visible to every user.
-export function publicArtistName(p?: { artist_name?: string | null; display_name?: string | null } | null): string {
-  if (p?.artist_name?.trim()) return p.artist_name.trim()
-  const dn = p?.display_name?.trim()
-  if (dn && !dn.includes('@')) return dn
-  return 'Artist'
-}
+// feed is visible to every user. Lives in its own dependency-free module so a
+// bare node contract test can import it; re-exported here for existing callers.
+export { publicArtistName }
 
 /** Unwrap a PostgREST embedded relation that may come back as object or array. */
 export function unwrapJoin<T>(v: T | T[] | null | undefined): T | null {
   if (v == null) return null
   return Array.isArray(v) ? (v[0] ?? null) : v
+}
+
+// Explicit projection — never select('*'). These rows are serialized into the
+// owner's project page; the commenter's profiles row must never be embedded,
+// because display_name defaults to the signup EMAIL (see publicArtistName).
+const FEED_COMMENT_COLS = 'id, version_id, user_id, comment, created_at'
+
+// Cap on how many of a project's versions we ask about at once. The PostgREST
+// filter serializes as ?version_id=in.(uuid,uuid,…) at ~39 bytes per id, so an
+// unbounded list on a version-heavy project builds a request line long enough
+// to be rejected by the proxy — turning a page that renders today into an
+// error. Versions arrive newest-first, so the cap keeps the mixes that matter.
+const PROJECT_VERSION_SCAN = 100
+
+/**
+ * Feed comments other artists left on a specific project's versions.
+ *
+ * TOTAL: never throws and never rejects. Unlike getFeed() (which throws and is
+ * caught by the /feed page), this is awaited inside the project page's render
+ * path, where a throw would 500 a page that currently survives its own queries
+ * failing. Every failure degrades to "no comments".
+ *
+ * Callers must pass version ids they have ALREADY established the caller owns —
+ * this runs with the service-role client, which bypasses RLS.
+ */
+export async function getFeedCommentsForVersions(versionIds: string[]): Promise<FeedComment[]> {
+  const ids = versionIds.slice(0, PROJECT_VERSION_SCAN)
+  if (ids.length === 0) return []
+
+  const fetchComments = () => supabaseAdmin
+    .from('mb_feed_comments')
+    .select(FEED_COMMENT_COLS)
+    .in('version_id', ids)
+    .order('created_at', { ascending: false })
+    .limit(COMMENTS_LIMIT)
+
+  try {
+    let res = await fetchComments()
+
+    // Deploy may have beaten migration 022 — heal the table and retry once,
+    // the same pair the feed itself uses.
+    if (res.error && isMissingFeedCommentsTable(res.error) && await ensureFeedCommentsTable()) {
+      res = await fetchComments()
+    }
+    if (res.error) {
+      console.error('[project] feed comments query failed:', res.error.message)
+      return []
+    }
+
+    // Query is newest-first for the cap; restore chronological display order.
+    const rows = [...(res.data ?? [])].reverse()
+    if (rows.length === 0) return []
+
+    // Name top-up. Ignoring the error is deliberate: a profiles failure degrades
+    // every name to the neutral fallback, it does not drop the comments.
+    const { data: profiles } = await supabaseAdmin
+      .from('profiles')
+      .select('id, artist_name, display_name')
+      .in('id', [...new Set(rows.map(c => c.user_id))])
+    const nameById = new Map((profiles ?? []).map(p => [p.id, publicArtistName(p)]))
+
+    return rows.map(c => ({
+      id: c.id,
+      version_id: c.version_id,
+      user_id: c.user_id,
+      artist: nameById.get(c.user_id) ?? 'Artist',
+      comment: c.comment,
+      created_at: c.created_at,
+    }))
+  } catch (e) {
+    console.error('[project] feed comments load threw:', e instanceof Error ? e.message : e)
+    return []
+  }
 }
 
 export async function getFeed(): Promise<FeedItem[]> {
