@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -116,18 +116,26 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   }
 
   // ?v=<version_id> — set by a notification link so the page can open the note
-  // that was clicked. Read the same way as the tab hash below (not
-  // useSearchParams) to avoid a Suspense/CSR bailout on this page.
+  // that was clicked.
+  //
+  // useSearchParams, NOT a useState initializer reading window.location: the
+  // bell is rendered ON this page, so the most likely click is a notification
+  // for the project already open. That is a search-params-only navigation,
+  // which does not remount this component — an initializer would never re-run
+  // and the deep link would silently do nothing in exactly its commonest case.
+  // Reading the hook also keeps server and client renders in agreement (the
+  // page is force-dynamic), instead of rendering collapsed on the server and
+  // expanded on the client.
   //
   // Validated as a UUID before use: the value is URL-supplied, and it is only
   // ever compared against version ids we already loaded — never interpolated
-  // into a CSS selector or a redirect, both of which turn a crafted value into
-  // a thrown SyntaxError or an open redirect.
-  const [highlightVersionId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null
-    const v = new URLSearchParams(window.location.search).get('v')
-    return v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : null
-  })
+  // into a CSS selector or a redirect, both of which would turn a crafted
+  // value into a thrown SyntaxError or an open redirect.
+  const rawHighlight = useSearchParams().get('v')
+  const highlightVersionId =
+    rawHighlight && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawHighlight)
+      ? rawHighlight
+      : null
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer' | 'video'>(() => {
@@ -760,6 +768,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             {/* Notes left on mixes that are no longer current. Without this the
                 notifications bell links here for feedback the page can't show. */}
             <EarlierMixNotes
+              // Remount when the deep-link target changes: the auto-open state
+              // is computed in a useState initializer, and a search-params-only
+              // navigation would otherwise leave it stale.
+              key={highlightVersionId ?? 'none'}
               versions={archivedVersions}
               feedCommentsByVersion={initialFeedComments}
               parseMixLabel={parseMixLabel}

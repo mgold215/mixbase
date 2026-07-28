@@ -26,7 +26,14 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const read = (p) => readFileSync(join(root, p), 'utf8')
+const readRaw = (p) => readFileSync(join(root, p), 'utf8')
+
+// Strip // and /* */ comments before scanning. Without this a check can pass on
+// code that exists only inside a comment — e.g. deleting the ?v= UUID guard but
+// leaving the regex in the comment above it still satisfied the old assertion.
+const stripComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+const read = (p) => stripComments(readRaw(p))
 
 let failures = 0
 function check(name, cond) {
@@ -142,7 +149,14 @@ const client = read('src/app/projects/[id]/ProjectClient.tsx')
 check('project client renders notes for earlier mixes', /function EarlierMixNotes\(/.test(client))
 check('earlier-mix notes are mounted', /<EarlierMixNotes/.test(client))
 check('current mix renders feed comments', /feedComments\.map\(/.test(client))
-check('?v= is UUID-validated before use', /highlightVersionId/.test(client) && /\{8\}-\[0-9a-f\]\{4\}/.test(client))
+check('?v= is UUID-validated before use (in real code, not a comment)',
+  /highlightVersionId/.test(client) && /\{8\}-\[0-9a-f\]\{4\}/.test(client))
+check('?v= falls back to null when it fails validation', /\?\s*rawHighlight\s*\n?\s*:\s*null/.test(client))
+// Reactivity: the bell renders ON this page, so a notification for the project
+// already open is a search-params-only nav that does not remount the component.
+check('?v= is read reactively via useSearchParams', /useSearchParams\(\)\.get\(\s*['"]v['"]\s*\)/.test(client))
+check('earlier-mix notes remount when the deep-link target changes',
+  /key=\{highlightVersionId/.test(client))
 
 // The feed loader must never leak a raw profile row as a name.
 const feed = read('src/lib/feed.ts')
@@ -152,8 +166,17 @@ check('comment loader projects explicit columns (never select(\'*\'))',
 check('comment loader resolves names through publicArtistName',
   /nameById\.set|new Map\(\(profiles \?\? \[\]\)\.map\(p => \[p\.id, publicArtistName\(p\)\]\)\)/.test(feed))
 check('comment loader caps the version-id list', /PROJECT_VERSION_SCAN/.test(feed))
-check('comment loader is total (wrapped in try/catch)',
-  /getFeedCommentsForVersions[\s\S]{0,2000}?try\s*\{[\s\S]{0,3000}?\}\s*catch/.test(feed))
+// "Total" means the catch RETURNS a fallback. A `catch (e) { throw e }` also
+// matches "has a try/catch" but would 500 the project page — the single thing
+// this loader exists to prevent. Assert the catch body returns and never
+// rethrows.
+const loaderBody = (feed.match(/export async function getFeedCommentsForVersions[\s\S]*?\n\}/) ?? [''])[0]
+const catchBody = (loaderBody.match(/\}\s*catch\s*\([^)]*\)\s*\{([\s\S]*?)\n  \}/) ?? ['', ''])[1]
+check('comment loader has a catch block', catchBody.length > 0)
+check('comment loader CATCH returns a fallback (does not 500 the page)', /return\s*\[\s*\]/.test(catchBody))
+check('comment loader CATCH never rethrows', !/\bthrow\b/.test(catchBody))
+check('comment loader never throws on the query-error path',
+  /if \(res\.error\)[\s\S]{0,200}?return \[\]/.test(loaderBody))
 
 if (failures > 0) {
   console.error(`\nnotification-loop: ${failures} check(s) failed`)

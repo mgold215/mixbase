@@ -92,8 +92,23 @@ check('feedback: activity description does NOT interpolate raw reviewer_name',
   !/Feedback from \$\{reviewer_name/.test(fb))
 
 // ── The client form should agree with the server (defence in depth only) ─────
+// Scope the assertion to the NAME input specifically. A looser check passed on
+// the comment textarea's pre-existing maxLength even with the name field
+// uncapped, which is the field that actually reaches the notification bell.
 const form = read('src/components/FeedbackForm.tsx')
-check('feedback form: name input has a maxLength', /maxLength=\{\s*\d+\s*\}[\s\S]{0,400}?placeholder="What do you think/.test(form) || /placeholder="Your name[\s\S]{0,400}?maxLength=\{\s*\d+\s*\}/.test(form))
+const nameInput = (form.match(/placeholder="Your name[\s\S]{0,500}?\/>/) ?? [''])[0]
+check('feedback form: the NAME input exists', nameInput.length > 0)
+check('feedback form: the NAME input has its own maxLength', /maxLength=\{\s*\d+\s*\}/.test(nameInput))
+check('feedback form: the NAME input also slices on change', /\.slice\(\s*0\s*,\s*\d+\s*\)/.test(nameInput))
+
+// ── 0 stars means "no rating", not an invalid rating ─────────────────────────
+// FeedbackForm initialises rating to 0 and posts it raw. `0 != null` is true,
+// so a naive range guard rejected EVERY unrated submission — a listener could
+// not leave a comment without also clicking a star. Reproduced live before the
+// fix: POST {comment, rating: 0} → 400 "Rating must be a whole number from 1 to 5".
+check('feedback: 0 stars is normalised to "no rating"', /rating\s*!==\s*0/.test(fb))
+check('feedback: the range guard is gated on hasRating', /hasRating\s*&&/.test(fb))
+check('feedback: an unrated row stores null', /rating:\s*hasRating\s*\?\s*rating\s*:\s*null/.test(fb))
 
 // ── Read-side defence: the bell must not render an unbounded description ─────
 // Caps at the write site protect future rows; rows already in production keep

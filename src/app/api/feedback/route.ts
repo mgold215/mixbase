@@ -42,7 +42,14 @@ export async function POST(request: NextRequest) {
 
   // Rating is optional, but if present it must be a whole number 1–5 — the UI
   // renders it as stars. This is a public route, so don't trust the value.
-  if (rating != null && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) {
+  //
+  // 0 means "no star clicked", not an invalid rating. FeedbackForm initialises
+  // its rating state to 0 and posts it raw, and `0 != null` is true, so the
+  // range check below rejected EVERY unrated submission with "Rating must be a
+  // whole number from 1 to 5" — i.e. a listener could not leave a comment at
+  // all without also clicking a star. Normalise first, then validate.
+  const hasRating = rating != null && rating !== 0
+  if (hasRating && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) {
     return NextResponse.json({ error: 'Rating must be a whole number from 1 to 5' }, { status: 400 })
   }
 
@@ -69,7 +76,7 @@ export async function POST(request: NextRequest) {
     .insert({
       version_id,
       reviewer_name: safeName,
-      rating: rating || null,
+      rating: hasRating ? rating : null,
       comment: commentText,
       timestamp_seconds: ts,
     })
