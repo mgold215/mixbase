@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
+import { publicArtistName } from '@/lib/display-name'
 import { getUserId } from '@/lib/auth'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 import CollectionClient, { type TrackMeta } from './CollectionClient'
@@ -78,7 +79,7 @@ export default async function CollectionPage({ params }: Props) {
     .select('artist_name, display_name')
     .eq('id', userId)
     .single()
-  if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
+  if (profile) artistName = publicArtistName(profile, 'mixBASE')
 
   // Coalesce finalized → source so listing UI continues to show the rendered
   // cover (with text overlay) when present, source artwork otherwise.
