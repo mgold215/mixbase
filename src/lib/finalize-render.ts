@@ -1,4 +1,7 @@
-import sharp from 'sharp'
+// sharp 0.35 ships real ESM types: `Sharp`/`OverlayOptions` are named exports
+// now, not members of a `sharp` namespace (the legacy `export = sharp` entry no
+// longer resolves under `moduleResolution: bundler`).
+import sharp, { type OverlayOptions, type Sharp } from 'sharp'
 import { join } from 'path'
 
 // Real Futura Bold, passed straight to libvips' Pango text rasteriser via
@@ -34,7 +37,7 @@ export const FILTERS: Filter[] = ['none', 'warm', 'golden', 'sepia', 'cool', 'ic
 // black (matching the JPEG encoder's flatten background) so transparent artwork
 // renders identically regardless of filter.
 const FLATTEN_BG = { r: 0, g: 0, b: 0 }
-function applyFilter(img: sharp.Sharp, filter: Filter): sharp.Sharp {
+function applyFilter(img: Sharp, filter: Filter): Sharp {
   switch (filter) {
     case 'warm':   return img.flatten({ background: FLATTEN_BG }).recomb([[1.12, 0, 0], [0, 1.04, 0], [0, 0, 0.88]])
     case 'golden': return img.flatten({ background: FLATTEN_BG }).recomb([[1.20, 0, 0], [0, 1.05, 0], [0, 0, 0.80]]).modulate({ saturation: 1.1 })
@@ -164,7 +167,7 @@ export async function buildTextOverlay(
 
   const Rw = blockWR
   const Rh = titleTopR + titleHR
-  const blockLayers: sharp.OverlayOptions[] = [
+  const blockLayers: OverlayOptions[] = [
     { input: artistLine.buf, top: artistTopR, left: artistLeftR },
   ]
   if (ruleHR > 0) {
