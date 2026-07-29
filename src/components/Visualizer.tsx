@@ -86,6 +86,7 @@ export default function Visualizer({
   const [aiVideoUrl, setAiVideoUrl] = useState<string | null>(null)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiModelLabel, setAiModelLabel] = useState('')
+  const [downloadErr, setDownloadErr] = useState<string | null>(null)
   const [freeSave, setFreeSave] = useState<SaveStatus>('idle')
   // Persisted mf-video URL of the last free render — the blob: URL plays
   // locally, but only the stored URL can be pinned as the project visualizer.
@@ -439,8 +440,13 @@ export default function Visualizer({
   // saveMedia handles the platform differences: share sheet on phones (so the
   // clip can go straight to Photos), forced attachment download on desktop. A
   // bare cross-origin <a download> would just open the video inline.
+  // A swallowed rejection here is indistinguishable from "nothing happened" —
+  // the exact failure that hid the blocked blob: download. Surface it.
   function download(url: string, suffix: string, ext: 'webm' | 'mp4') {
-    void saveMedia(url, `${projectTitle}-${format}-${suffix}`, ext).catch(() => {})
+    setDownloadErr(null)
+    void saveMedia(url, `${projectTitle}-${format}-${suffix}`, ext).catch(() => {
+      setDownloadErr("Couldn't save the file. Try again, or use Save to Media.")
+    })
   }
 
   function resetFormat(f: Format) {
@@ -874,6 +880,7 @@ export default function Visualizer({
                 {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
               </span>
               {freeSave === 'saved' && pinButton(freeSavedUrl, format === 'youtube' ? 'wide' : 'canvas')}
+              {downloadErr && <span className="text-[11px] w-full" style={{ color: '#f87171' }}>{downloadErr}</span>}
               <button
                 onClick={() => download(videoUrl, 'free', 'webm')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -989,6 +996,7 @@ export default function Visualizer({
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRatio} · {selectedDuration}s · {aiModelLabel}</span>
               {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
               {aiSaved && pinButton(aiVideoUrl, aiSlot)}
+              {downloadErr && <span className="text-[11px] w-full" style={{ color: '#f87171' }}>{downloadErr}</span>}
               <button
                 onClick={() => download(aiVideoUrl, 'ai', 'mp4')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"

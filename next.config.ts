@@ -41,7 +41,12 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       `img-src 'self' data: blob: ${SUPABASE_ORIGIN} https://*.replicate.delivery https://replicate.delivery`,
       `media-src 'self' blob: ${SUPABASE_ORIGIN} https://*.runwayml.com https://*.cloudfront.net https://*.replicate.delivery`,
-      `connect-src 'self' ${SUPABASE_ORIGIN} https://api.replicate.com`,
+      // `blob:` is NOT a network destination — it can only address bytes this
+      // page itself put in memory, so it adds no exfiltration reach (unlike a
+      // CDN wildcard, which anyone can register a bucket on). Needed because
+      // 'self' does not cover blob: for connect-src: without it the touch
+      // share-sheet path can't read a freshly recorded visualizer.
+      `connect-src 'self' blob: ${SUPABASE_ORIGIN} https://api.replicate.com`,
       "font-src 'self'",
       "frame-ancestors 'self'",
     ].join('; '),

@@ -12,6 +12,12 @@
 //    `?download=<filename>` (the server answers with Content-Disposition:
 //    attachment), which streams straight to disk — no fetching a 300 MB video
 //    into memory. Non-Supabase URLs fall back to a fetched blob: anchor.
+//  - A `blob:` URL is ALREADY local bytes this page created, so it needs no
+//    fetch at all — and must not get one. `new URL('blob:…').hostname` is '',
+//    so it used to fall through to blobDownload() and fetch itself, which the
+//    CSP `connect-src` blocks (verified on production: 'self' does NOT cover
+//    blob:). That silently killed every free-visualizer download. Anchor it
+//    directly instead: no CSP surface, no second copy in memory, no revoke race.
 
 function safeFileName(baseName: string, ext: string): string {
   const safe = baseName.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'mixbase'
@@ -37,6 +43,11 @@ function supabaseAttachmentUrl(url: string, filename: string): string | null {
   } catch {
     return null
   }
+}
+
+/** In-memory bytes this page already holds — never needs (or survives) a fetch. */
+function isBlobUrl(url: string): boolean {
+  return url.startsWith('blob:')
 }
 
 function isTouchDevice(): boolean {
@@ -103,6 +114,14 @@ export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp
   }
 
   const filename = safeFileName(baseName, extFrom(url, null, fallbackExt))
+
+  // Same-origin in-memory bytes: anchor straight at them. Must come before the
+  // blobDownload() fallback, whose fetch() the CSP blocks for blob: URLs.
+  if (isBlobUrl(url)) {
+    anchorDownload(url, filename)
+    return
+  }
+
   const attachment = supabaseAttachmentUrl(url, filename)
   if (attachment) {
     // Server-side Content-Disposition: streamed to disk, works at any size.
