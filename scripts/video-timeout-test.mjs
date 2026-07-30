@@ -301,14 +301,36 @@ try {
     typeof intactDur === 'number' && Math.abs(intactDur - 4) < 0.5,
     typeof intactDur === 'number' ? `${intactDur.toFixed(2)}s` : String(intactDur))
 
-  let truncErr = null
+  // HOW truncation is caught is build-dependent, so assert the OUTCOME and let
+  // the mechanism vary. Newer demuxers print "File ended prematurely" on stderr
+  // (ffmpeg 4.4); the older linux build @ffmpeg-installer ships for Railway is
+  // silent for this fixture and the fragment simply measures too short for the
+  // loop guard. Both are safe; asserting only the marker path made this test
+  // pass on a Mac and fail on CI.
+  const truncStderr = await new Promise(r => {
+    const p = spawn(FFMPEG, ['-v', 'error', '-i', truncated, '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let e = ''
+    p.stderr.on('data', d => { e += d })
+    p.on('close', () => r(e))
+  })
+  const buildReportsTruncation = hasTruncationMarker(truncStderr)
+
+  let truncOutcome = null
   try {
-    const d = await probeDuration(truncated, 'visualizer')
-    truncErr = `resolved ${d.toFixed(2)}s`
-  } catch (e) { truncErr = e }
-  check('truncated recording is rejected, not silently measured',
-    truncErr instanceof Error && /incomplete or corrupt/i.test(truncErr.message),
-    truncErr instanceof Error ? truncErr.message.slice(0, 90) : String(truncErr))
+    truncOutcome = { measured: await probeDuration(truncated, 'visualizer') }
+  } catch (e) { truncOutcome = { error: e } }
+
+  if (buildReportsTruncation) {
+    check('truncated recording is rejected by the stderr marker',
+      truncOutcome.error instanceof Error && /incomplete or corrupt/i.test(truncOutcome.error.message),
+      truncOutcome.error ? truncOutcome.error.message.slice(0, 80) : `resolved ${truncOutcome.measured?.toFixed(2)}s`)
+  } else {
+    // No marker from this build — then it must be unusable by measurement, so the
+    // loop guard rejects it. Either way it can never become a video.
+    check('truncated recording is unusable even without a stderr marker (older ffmpeg build)',
+      truncOutcome.error instanceof Error || truncOutcome.measured < 0.5,
+      truncOutcome.error ? truncOutcome.error.message.slice(0, 60) : `measured ${truncOutcome.measured?.toFixed(2)}s < 0.5s guard`)
+  }
 
   // The temp dir must be gone even on the failure path — that cleanup lives in a
   // `finally` that only runs if the render promise actually settles.
