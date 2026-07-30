@@ -2,6 +2,9 @@ import { randomUUID } from 'crypto'
 import { buildFinalVideo, type VideoFormat, type BuildVideoArgs } from '@/lib/video-render'
 import { storeVisualizer } from '@/lib/visualizer-store'
 import { ensureVideoBucketLimit } from '@/lib/schema-heal'
+// Relative extension-full import (not the @/ alias) so the smoke test can
+// exercise the retention rules under plain Node type-stripping.
+import { shouldReapJob } from './video-job-policy.ts'
 
 // ── In-process video render jobs ─────────────────────────────────────────────
 // A full-song encode takes minutes, far beyond an acceptable HTTP request, so
@@ -32,15 +35,15 @@ const jobs = new Map<string, VideoJob>()
 // starve the web server. Per-user single-flight keeps one person from queueing
 // several multi-minute encodes at once.
 const MAX_CONCURRENT = 2
-const JOB_TTL_MS = 60 * 60 * 1000
+
+// Retention rules (JOB_TTL_MS / STUCK_JOB_MS / shouldReapJob) live in
+// ./video-job-policy.ts — single-sourced so the tested predicate is the one that
+// actually runs here.
 
 function pruneJobs() {
   const now = Date.now()
   for (const [id, job] of jobs) {
-    const finished = job.status === 'done' || job.status === 'error'
-    if ((finished && now - job.createdAt > JOB_TTL_MS) || now - job.createdAt > 6 * JOB_TTL_MS) {
-      jobs.delete(id)
-    }
+    if (shouldReapJob(job, now)) jobs.delete(id)
   }
 }
 
