@@ -232,6 +232,24 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
+  // Per-mix opt-in that puts a "Download" button on the public share page, so
+  // the people you send the link to can grab the full-quality original.
+  // Optimistic — revert on failure so the switch can't lie about the DB.
+  async function updateAllowDownload(versionId: string, allow: boolean) {
+    setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: allow } : v))
+    try {
+      const res = await fetch(`/api/versions/${versionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allow_download: allow }),
+      })
+      if (!res.ok) throw new Error('save failed')
+    } catch {
+      setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: !allow } : v))
+      flashError('Could not change the download setting — reverted.')
+    }
+  }
+
   function parseMixLabel(filename: string): string | null {
     const nameWithoutExt = filename.replace(/\.[^.]+$/, '')
     const match = nameWithoutExt.match(/mix\s+[\d]+(?:\.[\d]+)*/i)
@@ -748,6 +766,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onUpdateStatus={updateStatus}
                 onUpdateNotes={updateNotes}
                 onSummarizeFeedback={summarizeFeedback}
+                onToggleAllowDownload={updateAllowDownload}
+                shareEnabled={Boolean(project.share_token)}
                 parseMixLabel={parseMixLabel}
               />
             )}
@@ -970,6 +990,9 @@ type CurrentMixCardProps = {
   onUpdateStatus: (id: string, status: Version['status']) => void
   onUpdateNotes: (id: string, field: 'private_notes' | 'public_notes', value: string) => void
   onSummarizeFeedback: (id: string) => void
+  onToggleAllowDownload: (id: string, allow: boolean) => void
+  /** Project has a share link, so the download toggle actually reaches someone. */
+  shareEnabled: boolean
   parseMixLabel: (filename: string) => string | null
 }
 
@@ -977,7 +1000,8 @@ function CurrentMixCard({
   version, feedComments, projectTitle, artwork,
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
-  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, parseMixLabel,
+  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
+  shareEnabled, parseMixLabel,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1145,6 +1169,23 @@ function CurrentMixCard({
               Original
             </a>
           </div>
+
+          {/* Opt this mix's original into the public share page, so whoever you
+              send the link to can download the same full-quality file. */}
+          {shareEnabled && (
+            <label
+              className="flex items-center gap-2 mt-2.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer select-none"
+              title="Adds a Download button to this project's public share page"
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(version.allow_download)}
+                onChange={e => onToggleAllowDownload(version.id, e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[var(--accent)] cursor-pointer"
+              />
+              Let people with the share link download this file
+            </label>
+          )}
         </div>
 
         {version.change_log && (

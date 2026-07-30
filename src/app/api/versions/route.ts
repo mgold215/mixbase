@@ -61,7 +61,10 @@ export async function POST(request: NextRequest) {
         project_id, version_number: nextVersion, audio_url, audio_filename,
         duration_seconds, file_size_bytes, label,
         status: status ?? 'WIP', private_notes, public_notes, change_log,
-        allow_download: allow_download ?? false,
+        // Share links are private tokens the artist hands out deliberately, so
+        // new mixes are downloadable from the share page by default; the
+        // per-mix checkbox on the project page turns it back off.
+        allow_download: allow_download ?? true,
       })
       .select()
       .single()

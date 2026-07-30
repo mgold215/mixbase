@@ -63,7 +63,9 @@ check('share page: PROJECT_PUBLIC_COLS defined', PROJ !== null)
 
 const verCols = cols(VER)
 // Rendered by ShareClient / generateMetadata — must stay selected.
-for (const c of ['id', 'audio_url', 'label', 'version_number', 'status', 'public_notes']) {
+// allow_download gates the share page's "Download <FORMAT>" button — dropping it
+// from the projection would silently kill the feature (undefined → falsy).
+for (const c of ['id', 'audio_url', 'label', 'version_number', 'status', 'public_notes', 'allow_download']) {
   check(`version select includes rendered column "${c}"`, verCols.includes(c))
 }
 // Owner-private — must NEVER reach the anonymous payload.

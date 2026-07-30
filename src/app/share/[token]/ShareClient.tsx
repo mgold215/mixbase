@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react'
 import Image from 'next/image'
-import { Play, Pause, Music, MessageSquare, ChevronDown } from 'lucide-react'
+import { Play, Pause, Music, MessageSquare, ChevronDown, Download } from 'lucide-react'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
@@ -22,10 +22,22 @@ type Props = {
     version_number: number
     status: string | null
     public_notes: string | null
+    allow_download: boolean
     // to-one project embed; supabase-js types embeds loosely
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mb_projects: any
   }
+}
+
+// The share page never receives mb_versions.audio_filename (the artist's own
+// upload name can carry private context — "clientX-rough-DONTSEND.wav"), so the
+// saved file is named after the public track title, taking its extension from
+// the storage path so the bytes land as the format that was actually uploaded.
+function downloadFileName(audioUrl: string, title: string): string {
+  const ext = audioUrl.split('?')[0].split('.').pop()
+  const safeExt = ext && /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'wav'
+  const safeTitle = title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'mix'
+  return `${safeTitle}.${safeExt}`
 }
 
 export default function ShareClient({ version }: Props) {
@@ -45,6 +57,12 @@ export default function ShareClient({ version }: Props) {
   const title: string = project?.title ?? 'Untitled'
   const audioUrl = audioProxyUrl(version.audio_url)
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
+  // Original-quality download, when the artist enabled it on this mix. The
+  // audio proxy is same-origin, so the `download` attribute is honoured and
+  // ?download=1 makes it a streamed attachment — a 2 GB WAV never buffers.
+  const downloadName = downloadFileName(version.audio_url, title)
+  const downloadHref = `${audioUrl}?download=1&filename=${encodeURIComponent(downloadName)}`
+  const downloadLabel = downloadName.split('.').pop()!.toUpperCase()
 
   // Keep the muted visualizer loop in step with the audio: runs while the
   // track plays, freezes on pause — same behavior as the app's full player.
@@ -223,6 +241,22 @@ export default function ShareClient({ version }: Props) {
                 : <Play size={32} fill="#000" className="text-black ml-1" />}
             </button>
           </div>
+
+          {/* Download the full-quality original — only when the artist ticked
+              "Allow download" on this mix. */}
+          {version.allow_download && (
+            <div className="flex justify-center">
+              <a
+                href={downloadHref}
+                download={downloadName}
+                className="flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-xs text-white/55 hover:text-white hover:border-white/35 transition-colors"
+                title={`Download the full-quality file (${downloadName})`}
+              >
+                <Download size={13} />
+                Download {downloadLabel}
+              </a>
+            </div>
+          )}
         </div>
 
         {/* Public notes from artist */}
