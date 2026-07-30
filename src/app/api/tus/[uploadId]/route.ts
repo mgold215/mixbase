@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isSafeUploadId } from '@/lib/validators'
 
 export const maxDuration = 300
 
@@ -12,6 +13,7 @@ function serviceKey() {
 
 type Ctx = { params: Promise<{ uploadId: string }> }
 
+
 // PATCH — forward one chunk to Supabase TUS using the service-role key.
 // tus-js-client sends chunks of chunkSize (8 MB), each as a separate PATCH request.
 // Railway allows each 8 MB request through; stitching happens at Supabase.
@@ -20,6 +22,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const { uploadId } = await ctx.params
+  if (!isSafeUploadId(uploadId)) {
+    return NextResponse.json({ error: 'Invalid upload id' }, { status: 400 })
+  }
   const url = `${SUPABASE_TUS_BASE}/${uploadId}`
 
   const forwardHeaders: Record<string, string> = {
@@ -51,6 +56,9 @@ export async function HEAD(req: NextRequest, ctx: Ctx) {
     return new NextResponse(null, { status: 401 })
   }
   const { uploadId } = await ctx.params
+  if (!isSafeUploadId(uploadId)) {
+    return new NextResponse(null, { status: 400 })
+  }
   const url = `${SUPABASE_TUS_BASE}/${uploadId}`
 
   const upstream = await fetch(url, {

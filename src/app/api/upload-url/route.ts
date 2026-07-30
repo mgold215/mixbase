@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { uploadLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { ownsProject } from '@/lib/ownership'
+import { isUuid } from '@/lib/validators'
 
 // Buckets the client is allowed to request a signed upload URL for.
 const ALLOWED_BUCKETS = ['mf-audio', 'mf-artwork'] as const
@@ -36,9 +38,26 @@ export async function POST(req: NextRequest) {
   }
   const safeFilename = normalized.replace(/^\/+/, '')
 
+  // Rejecting `..` is NOT enough on its own: every key in these buckets is a
+  // perfectly ordinary `<projectId>/<timestamp>.<ext>` path, so traversal was
+  // never needed to reach someone else's object — you just ask for their key.
+  // And those keys are not secret: GET /api/feed hands every signed-in user the
+  // `audio_url` and `artwork_url` of every other user's uploads. Without an
+  // ownership check this route would mint a valid upload URL for a stranger's
+  // object in a public-read bucket. Same gate /api/tus already applies to the
+  // chunked path that large files take.
+  const projectId = safeFilename.split('/')[0]
+  if (!isUuid(projectId) || !(await ownsProject(projectId, userId))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const { data, error } = await supabaseAdmin.storage
     .from(targetBucket)
-    .createSignedUploadUrl(safeFilename, { upsert: true })
+    // No overwrites. Every caller builds a fresh `<projectId>/<Date.now()>` key,
+    // so nothing here needs upsert — and signing WITH it stamps overwrite
+    // authorization into the token itself (storage-js sends `x-upsert` at the
+    // sign step), which is what turned a stray key into a defacement primitive.
+    .createSignedUploadUrl(safeFilename, { upsert: false })
 
   if (error || !data) {
     return NextResponse.json({ error: error?.message ?? 'Failed to create signed URL' }, { status: 500 })
