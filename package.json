@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:renderers",
-    "test:renderers": "node scripts/verify-token-test.mjs && node scripts/auth-errors-test.mjs && node scripts/artwork-models-test.mjs && node scripts/upload-ownership-test.mjs && node scripts/share-projection-test.mjs && node scripts/public-input-caps-test.mjs && node scripts/notification-loop-test.mjs && node scripts/db-init-rls-test.mjs && node scripts/profiles-rls-test.mjs && node scripts/schema-heal-parity-test.mjs && node scripts/infra-sql-guard-test.mjs && node scripts/bpm-test.mjs && node scripts/submit-links-test.mjs && node scripts/usage-refund-test.mjs && node scripts/effects-test.mjs && node scripts/finalize-test.mjs && node scripts/video-test.mjs && node scripts/video-timeout-test.mjs",
+    "test:renderers": "node scripts/verify-token-test.mjs && node scripts/auth-errors-test.mjs && node scripts/artwork-models-test.mjs && node scripts/upload-ownership-test.mjs && node scripts/share-projection-test.mjs && node scripts/download-default-test.mjs && node scripts/public-input-caps-test.mjs && node scripts/notification-loop-test.mjs && node scripts/db-init-rls-test.mjs && node scripts/profiles-rls-test.mjs && node scripts/schema-heal-parity-test.mjs && node scripts/infra-sql-guard-test.mjs && node scripts/bpm-test.mjs && node scripts/submit-links-test.mjs && node scripts/usage-refund-test.mjs && node scripts/effects-test.mjs && node scripts/finalize-test.mjs && node scripts/video-test.mjs && node scripts/video-timeout-test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "HEADED=1 playwright test",
     "prepare": "husky || true"

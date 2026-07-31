@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureVersionUniqueIndex } from '@/lib/schema-heal'
+import { resolveAllowDownload } from '@/lib/version-defaults'
 
 // POST /api/versions — create a new version under a project (user must own the project)
 export async function POST(request: NextRequest) {
@@ -48,12 +49,16 @@ export async function POST(request: NextRequest) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const { data: existing } = await supabaseAdmin
       .from('mb_versions')
-      .select('version_number')
+      .select('version_number, allow_download')
       .eq('project_id', project_id)
       .order('version_number', { ascending: false })
       .limit(1)
 
     nextVersion = (existing?.[0]?.version_number ?? 0) + 1
+    // Same row we already read for the version number — inheriting the download
+    // choice costs no extra round trip. See resolveAllowDownload for why this is
+    // inherited instead of defaulted to a constant.
+    const previousAllowDownload = existing?.[0]?.allow_download
 
     const insert = await supabaseAdmin
       .from('mb_versions')
@@ -61,10 +66,7 @@ export async function POST(request: NextRequest) {
         project_id, version_number: nextVersion, audio_url, audio_filename,
         duration_seconds, file_size_bytes, label,
         status: status ?? 'WIP', private_notes, public_notes, change_log,
-        // Share links are private tokens the artist hands out deliberately, so
-        // new mixes are downloadable from the share page by default; the
-        // per-mix checkbox on the project page turns it back off.
-        allow_download: allow_download ?? true,
+        allow_download: resolveAllowDownload(allow_download, previousAllowDownload),
       })
       .select()
       .single()

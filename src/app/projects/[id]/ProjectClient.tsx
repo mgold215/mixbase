@@ -234,19 +234,32 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   // Per-mix opt-in that puts a "Download" button on the public share page, so
   // the people you send the link to can grab the full-quality original.
-  // Optimistic — revert on failure so the switch can't lie about the DB.
+  // Optimistic, then reconciled against the server exactly like updateStatus:
+  // this switch states what the artist is offering the public, so it must never
+  // end up showing the opposite of what the DB holds. Reverting to `!allow`
+  // rather than the captured previous value did exactly that when a failed
+  // request settled after a successful one, and without syncAfterMutation()
+  // nothing ever corrected it.
   async function updateAllowDownload(versionId: string, allow: boolean) {
+    const prevAllow = versions.find(v => v.id === versionId)?.allow_download ?? false
     setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: allow } : v))
+    const revert = () =>
+      setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: prevAllow } : v))
     try {
       const res = await fetch(`/api/versions/${versionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ allow_download: allow }),
       })
-      if (!res.ok) throw new Error('save failed')
+      if (res.ok) {
+        syncAfterMutation()
+      } else {
+        revert()
+        flashError('Could not change the download setting — reverted.')
+      }
     } catch {
-      setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: !allow } : v))
-      flashError('Could not change the download setting — reverted.')
+      revert()
+      flashError('Could not change the download setting — check your connection.')
     }
   }
 
