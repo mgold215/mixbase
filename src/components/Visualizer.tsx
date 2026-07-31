@@ -535,15 +535,27 @@ export default function Visualizer({
         return
       }
       const start = performance.now()
+      // The effects are authored on a 30fps frame grid (that's what the
+      // recording sweeps), so draw at most 30 preview frames per second: on a
+      // 120Hz display an unthrottled rAF loop does 4× the canvas work for
+      // zero visual gain and starves the main thread — that's the button-paint
+      // jank seen while a Runway generation is in flight. Skipping ticks that
+      // land on the same frame index also quantizes t to the exact frame
+      // positions the recording uses.
+      const totalFrames = cfg.duration * 30
+      let lastFrame = -1
       const loop = () => {
         if (disposed) return
         if (!renderingRef.current) {
           const elapsed = (performance.now() - start) / 1000
-          const t = (elapsed % cfg.duration) / cfg.duration
-          try {
-            draw(ctx, t, Math.floor(t * cfg.duration * 30))
-          } catch {
-            return // stop the preview quietly; recording has its own error path
+          const frame = Math.floor(elapsed * 30) % totalFrames
+          if (frame !== lastFrame) {
+            lastFrame = frame
+            try {
+              draw(ctx, frame / totalFrames, frame)
+            } catch {
+              return // stop the preview quietly; recording has its own error path
+            }
           }
         }
         raf = requestAnimationFrame(loop)

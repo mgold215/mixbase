@@ -272,6 +272,13 @@ const kenburns: EffectDef = {
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
+    // Thin letterbox bars + a fixed two-point color grade (warm key from one
+    // corner, cool fill from the opposite) so the drift reads as graded
+    // footage rather than a bare pan. Gradients are static — cached on first
+    // frame like the vignette; only their alpha breathes per frame.
+    const barH = Math.round(p.H * 0.05)
+    let warm: CanvasGradient | undefined
+    let cool: CanvasGradient | undefined
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
@@ -279,8 +286,42 @@ const kenburns: EffectDef = {
       const panX = 0.028 * p.W * loopSin(t, 1, phase + 1.7)
       const panY = 0.02 * p.H * loopSin(t, 1, phase + 3.9)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, panY)
+      // Soft lens bloom that breathes with the zoom
+      drawCover(
+        ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
+        scale * 1.03, panX, panY, 0,
+        0.09 + 0.05 * loopSin(t, 1, phase + 0.9), 'screen',
+      )
+      const maxDim = Math.max(p.W, p.H)
+      if (!warm) {
+        warm = ctx.createRadialGradient(p.W * 0.85, p.H * 0.18, 0, p.W * 0.85, p.H * 0.18, maxDim * 0.9)
+        warm.addColorStop(0, 'rgba(255,183,112,0.16)')
+        warm.addColorStop(1, 'rgba(255,183,112,0)')
+      }
+      if (!cool) {
+        cool = ctx.createRadialGradient(p.W * 0.12, p.H * 0.85, 0, p.W * 0.12, p.H * 0.85, maxDim * 0.9)
+        cool.addColorStop(0, 'rgba(84,120,255,0.14)')
+        cool.addColorStop(1, 'rgba(84,120,255,0)')
+      }
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.75 + 0.25 * loopSin(t, 1, phase + 2.1)
+      ctx.fillStyle = warm
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.globalAlpha = 0.75 + 0.25 * loopSin(t, 1, phase + 5.2)
+      ctx.fillStyle = cool
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.42, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.07, fr)
+      // Letterbox bars last so nothing draws over them
+      ctx.save()
+      ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, p.W, barH)
+      ctx.fillRect(0, p.H - barH, p.W, barH)
+      ctx.restore()
     }
   },
 }
@@ -358,17 +399,31 @@ const drone: EffectDef = {
       for (const r of rows) {
         ctx.drawImage(scratch.canvas, r.sx + jx * (r.sw / p.W), r.sy + jy, r.sw, r.sh, 0, r.dy, p.W, r.dh)
       }
-      // Atmospheric haze over the far ground, thinning as the drone dives
+      // Far-field motion blur: the orbit sweeps the distant ground sideways
+      // fastest at the horizon, so ghost the far rows along the sweep
+      // direction with distance-weighted offset and alpha. This is what makes
+      // the spin read as camera velocity instead of a rotating texture.
+      ctx.save()
+      for (const r of rows) {
+        if (r.dy >= p.H * 0.45) break
+        const w = 1 - r.dy / (p.H * 0.45)
+        ctx.globalAlpha = 0.3 * w
+        ctx.drawImage(scratch.canvas, r.sx, r.sy, r.sw, r.sh, dir * p.W * 0.008 * w, r.dy, p.W, r.dh)
+      }
+      ctx.restore()
+      // Atmospheric haze over the far ground, thinning as the drone dives —
+      // warm at the horizon line, cooling as it falls toward the camera.
       if (!fog) {
-        fog = ctx.createLinearGradient(0, 0, 0, p.H * 0.5)
-        fog.addColorStop(0, 'rgba(185,205,255,0.20)')
+        fog = ctx.createLinearGradient(0, 0, 0, p.H * 0.55)
+        fog.addColorStop(0, 'rgba(255,214,170,0.18)')
+        fog.addColorStop(0.45, 'rgba(185,205,255,0.13)')
         fog.addColorStop(1, 'rgba(185,205,255,0)')
       }
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
       ctx.globalAlpha = 1 - 0.7 * ((zoom - 1.05) / 0.5)
       ctx.fillStyle = fog
-      ctx.fillRect(0, 0, p.W, p.H * 0.5)
+      ctx.fillRect(0, 0, p.W, p.H * 0.55)
       ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.45, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
@@ -388,14 +443,19 @@ const parallax: EffectDef = {
     // Backdrop blur: two bilinear downscale passes ≈ cheap gaussian; the
     // upscale at draw time keeps it soft. Pre-rendered once — only the pan
     // animates, so no per-frame cost.
-    const aW = Math.max(8, Math.round(p.W / 4))
-    const aH = Math.max(8, Math.round(p.H / 4))
+    const aW = Math.max(16, Math.round(p.W / 2))
+    const aH = Math.max(16, Math.round(p.H / 2))
     const a = p.createLayer(aW, aH)
     drawCover(a.ctx, p.image, p.imageWidth, p.imageHeight, aW, aH, 1)
-    const bW = Math.max(4, Math.round(aW / 3))
-    const bH = Math.max(4, Math.round(aH / 3))
+    const bW = Math.max(4, Math.round(aW / 4))
+    const bH = Math.max(4, Math.round(aH / 4))
     const b = p.createLayer(bW, bH)
     b.ctx.drawImage(a.canvas, 0, 0, aW, aH, 0, 0, bW, bH)
+    // Upscale back into the half-res buffer before the final 2× stretch — one
+    // giant bilinear jump straight from the tiny buffer leaves blocky diamond
+    // artifacts; the intermediate high-quality hop reads as a true lens blur.
+    a.ctx.imageSmoothingQuality = 'high'
+    a.ctx.drawImage(b.canvas, 0, 0, bW, bH, 0, 0, aW, aH)
     // Foreground card: the artwork contain-fit, floating over its own blur
     const imgAspect = p.imageWidth / p.imageHeight
     let cardW = p.W * 0.52
@@ -406,14 +466,32 @@ const parallax: EffectDef = {
       cardW = cardH * imgAspect
     }
     const corner = Math.min(cardW, cardH) * 0.045
+    // Floor reflection: the card's bottom strip mirrored and faded out, built
+    // once (the card content is static — only the transform animates). The
+    // fade is baked in with a destination-out gradient so drawing it per
+    // frame is a single drawImage.
+    const reflH = Math.max(2, Math.round(cardH * 0.4))
+    const refl = p.createLayer(Math.max(2, Math.round(cardW)), reflH)
+    refl.ctx.save()
+    refl.ctx.translate(0, cardH)
+    refl.ctx.scale(1, -1)
+    refl.ctx.drawImage(p.image, 0, 0, cardW, cardH)
+    refl.ctx.restore()
+    refl.ctx.globalCompositeOperation = 'destination-out'
+    const rg = refl.ctx.createLinearGradient(0, 0, 0, reflH)
+    rg.addColorStop(0, 'rgba(0,0,0,0.35)')
+    rg.addColorStop(1, 'rgba(0,0,0,1)')
+    refl.ctx.fillStyle = rg
+    refl.ctx.fillRect(0, 0, cardW, reflH)
+    refl.ctx.globalCompositeOperation = 'source-over'
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const bgPanX = 0.035 * p.W * loopSin(t, 1, phase + 1.1)
       const bgPanY = 0.02 * p.H * loopSin(t, 1, phase + 3.3)
-      drawCover(ctx, b.canvas, bW, bH, p.W, p.H, 1.16 + 0.04 * loopSin(t, 1, phase), bgPanX, bgPanY)
+      drawCover(ctx, a.canvas, aW, aH, p.W, p.H, 1.16 + 0.04 * loopSin(t, 1, phase), bgPanX, bgPanY)
       ctx.save()
-      ctx.globalAlpha = 0.34
+      ctx.globalAlpha = 0.42
       ctx.globalCompositeOperation = 'source-over'
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, p.W, p.H)
@@ -423,6 +501,16 @@ const parallax: EffectDef = {
       const py = 0.02 * p.H * loopSin(t, 2, phase + 4.2)
       const tilt = 0.035 * loopSin(t, 1, phase + 5.1)
       const cs = 1 + 0.022 * loopSin(t, 1, phase + 2.4)
+      // Faded floor reflection just below the card (drawn first so the ground
+      // shadow sits over its root, seating the card on a surface)
+      ctx.save()
+      ctx.globalAlpha = 0.32
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.translate(p.W / 2 + px, p.H / 2 + py)
+      ctx.rotate(tilt)
+      ctx.scale(cs, cs)
+      ctx.drawImage(refl.canvas, -cardW / 2, cardH / 2 + cardH * 0.015, cardW, reflH)
+      ctx.restore()
       // Soft ground shadow under the card
       ctx.save()
       ctx.globalCompositeOperation = 'source-over'
@@ -498,7 +586,7 @@ const dust: EffectDef = {
       const scale = 1.09 + 0.05 * loopSin(t, 1, phase)
       const panY = 0.015 * p.H * loopSin(t, 1, phase + 2.4)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, 0, panY)
-      // Warm light leak orbiting slowly off-center
+      // Warm key light leak orbiting slowly off-center
       const lx = p.W * (0.5 + 0.55 * loopSin(t, 1, phase + 0.6))
       const ly = p.H * (0.25 + 0.3 * loopSin(t, 1, phase + 2.7))
       const lr = Math.max(p.W, p.H) * 0.85
@@ -510,8 +598,31 @@ const dust: EffectDef = {
       ctx.globalAlpha = 0.55 + 0.35 * loopSin(t, 1, phase + 4.5)
       ctx.fillStyle = g
       ctx.fillRect(0, 0, p.W, p.H)
+      // Cool fill leak counter-orbiting low in the frame — the warm/cool
+      // opposition is what makes the light feel placed instead of pasted
+      const cx2 = p.W * (0.5 - 0.55 * loopSin(t, 1, phase + 0.6))
+      const cy2 = p.H * (0.8 + 0.15 * loopSin(t, 1, phase + 3.4))
+      const g2 = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, lr * 0.8)
+      g2.addColorStop(0, 'rgba(92,140,255,0.18)')
+      g2.addColorStop(1, 'rgba(92,140,255,0)')
+      ctx.globalAlpha = 0.55 + 0.35 * loopSin(t, 1, phase + 1.4)
+      ctx.fillStyle = g2
+      ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      // Bokeh dust
+      // Anamorphic streak through the key light — a radial glow squashed to a
+      // thin horizontal blade, alpha locked to the leak's pulse
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.3 + 0.2 * loopSin(t, 1, phase + 4.5)
+      ctx.translate(lx, ly)
+      ctx.scale(1, 0.055)
+      const streak = ctx.createRadialGradient(0, 0, 0, 0, 0, p.W * 0.45)
+      streak.addColorStop(0, 'rgba(255,224,186,0.5)')
+      streak.addColorStop(1, 'rgba(255,224,186,0)')
+      ctx.fillStyle = streak
+      ctx.fillRect(-p.W * 0.45, -p.W * 0.45, p.W * 0.9, p.W * 0.9)
+      ctx.restore()
+      // Bokeh dust — wide soft halo, tighter glow, bright core
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
       ctx.fillStyle = 'rgb(255,236,205)'
@@ -519,6 +630,10 @@ const dust: EffectDef = {
         const x = pt.x0 * p.W + pt.ax * loopSin(t, pt.cx, pt.p1)
         const y = pt.y0 * p.H + pt.ay * loopSin(t, pt.cy, pt.p2)
         const a = pt.a * (0.55 + 0.45 * loopSin(t, pt.tw, pt.p3))
+        ctx.globalAlpha = a * 0.1
+        ctx.beginPath()
+        ctx.arc(x, y, pt.r * 6, 0, Math.PI * 2)
+        ctx.fill()
         ctx.globalAlpha = a * 0.3
         ctx.beginPath()
         ctx.arc(x, y, pt.r * 3, 0, Math.PI * 2)
@@ -544,14 +659,33 @@ const pulse: EffectDef = {
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
     const beats = snapBeats(p.duration, p.bpm)
+    const minDim = Math.min(p.W, p.H)
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const kick = beatPulse(t, beats, 6)
       const scale = 1.07 + 0.05 * kick
+      // Sub-bass squash: a felt-not-seen vertical compression on the hit
+      ctx.save()
+      ctx.translate(p.W / 2, p.H / 2)
+      ctx.scale(1, 1 + 0.014 * kick)
+      ctx.translate(-p.W / 2, -p.H / 2)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale)
       // Bloom: an enlarged screen-composited copy that flares on the kick
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.05, 0, 0, 0, 0.22 * kick, 'screen')
+      ctx.restore()
+      // Shockwave ring: expands out from the center as the kick decays and
+      // thins/fades as it travels — reads as the beat physically radiating
+      const ring = 1 - kick
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.28 * Math.pow(kick, 0.55)
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = Math.max(1, minDim * (0.012 * kick + 0.002))
+      ctx.beginPath()
+      ctx.arc(p.W / 2, p.H / 2, minDim * (0.16 + 0.5 * ring), 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
       // Sink slightly darker between beats so the kick reads as light
       ctx.save()
       ctx.globalAlpha = 0.1 * (1 - kick)
@@ -577,6 +711,10 @@ const strobe: EffectDef = {
     const bars = Math.max(1, Math.round(beats / 4))
     const red = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#ff0040')
     const cyan = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#00e0ff')
+    // Lighting-gel colors for the downbeat flash — cycles per bar (bar count
+    // is a whole number per loop, so the cycle is seamless), seeded start.
+    const GELS = ['#ffffff', '#ff2a55', '#2ad8ff', '#ffb02a']
+    const gelOffset = Math.floor(rng() * GELS.length)
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
@@ -585,18 +723,25 @@ const strobe: EffectDef = {
       const flash = beatPulse(t, bars, 14)
       const rot = 0.015 * loopSin(t, 1, phase)
       const scale = 1.09 + 0.06 * kick
-      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, 0, 0, rot)
+      // Handheld camera knock on the kick — deterministic per frame
+      const shx = (fr() - 0.5) * 0.01 * p.W * kick
+      const shy = (fr() - 0.5) * 0.007 * p.H * kick
+      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, shx, shy, rot)
       // RGB split flares with the bar flash, ticks with each kick
       const d = p.W * (0.014 * flash + 0.004 * kick)
       if (d > 0.3) {
         const a = Math.min(1, flash + kick * 0.4) * 0.5
-        drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale, -d, 0, rot, a, 'screen')
-        drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale, d, 0, rot, a, 'screen')
+        drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale, shx - d, shy, rot, a, 'screen')
+        drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale, shx + d, shy, rot, a, 'screen')
       }
       if (flash > 0.02) {
+        // Screen-composited gel flash: lifts highlights toward the gel color
+        // instead of milking the whole frame toward flat white
+        const bi = Math.min(bars - 1, Math.floor(t * bars))
         ctx.save()
-        ctx.globalAlpha = 0.45 * flash
-        ctx.fillStyle = '#fff'
+        ctx.globalCompositeOperation = 'screen'
+        ctx.globalAlpha = 0.55 * flash
+        ctx.fillStyle = GELS[(bi + gelOffset) % GELS.length]
         ctx.fillRect(0, 0, p.W, p.H)
         ctx.restore()
       }
@@ -631,20 +776,35 @@ const zoomblur: EffectDef = {
       const scale = 1.1 + 0.05 * kick + 0.02 * loopSin(t, 1, phase)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale)
       if (e > 0.02) {
-        // Radial smear: stacked enlarged ghosts with a slight vortex twist
-        const steps = 5
+        // Radial smear: stacked enlarged ghosts with a slight vortex twist.
+        // More, finer steps with a gentler alpha falloff read as one
+        // continuous light-trail instead of visible stacked copies.
+        const steps = 8
         for (let i = 1; i <= steps; i++) {
           const k = i / steps
-          const ga = 0.22 * e * (1 - k * 0.55)
+          const ga = 0.16 * e * (1 - k * 0.7)
           drawCover(
             ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
-            scale * (1 + 0.14 * e * k), 0, 0, 0.02 * e * k, ga,
+            scale * (1 + 0.15 * e * k), 0, 0, 0.024 * e * k, ga,
           )
         }
         // Spectral fringe: red pulled outward, cyan pushed inward
         const d = 1 + 0.05 * e
         drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale * d, 0, 0, 0, 0.3 * e, 'screen')
         drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale / d, 0, 0, 0, 0.3 * e, 'screen')
+        // Hot core at burst peaks — the warp reads as light rushing at the
+        // lens, so give it a source to rush from
+        if (e > 0.55) {
+          const ca = 0.3 * ((e - 0.55) / 0.45)
+          const cg = ctx.createRadialGradient(p.W / 2, p.H / 2, 0, p.W / 2, p.H / 2, Math.min(p.W, p.H) * 0.4)
+          cg.addColorStop(0, `rgba(255,246,230,${ca.toFixed(4)})`)
+          cg.addColorStop(1, 'rgba(255,246,230,0)')
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.fillStyle = cg
+          ctx.fillRect(0, 0, p.W, p.H)
+          ctx.restore()
+        }
       }
       drawVignette(ctx, p.W, p.H, 0.4, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
@@ -661,23 +821,64 @@ const liquid: EffectDef = {
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
-    const src = p.createLayer(p.W, p.H)
+    // The displacement is done in SOURCE space: the artwork renders into a
+    // buffer overscanned by M on every side, and each destination band
+    // samples from a wave-shifted source position. Destination bands tile
+    // 0..H edge to edge, so the wave can never expose background at the
+    // frame edges (shifting bands in destination space left black scallops
+    // wherever |dx| pushed a band off-canvas).
+    const M = Math.ceil(p.W * 0.03) + 2
+    const SW = p.W + 2 * M
+    const SH = p.H + 2 * M
+    const src = p.createLayer(SW, SH)
     const bandH = Math.max(2, Math.round(p.H / 140))
     const k = (Math.PI * 2 * 3.5) / p.H // spatial wave frequency
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
-      // Render the (slightly overscanned) artwork once, then re-draw it in
-      // horizontal bands offset by a travelling sine — the classic cheap
+      // Render the overscanned artwork once, then re-draw it in horizontal
+      // bands sampled at a travelling-sine offset — the classic cheap
       // "liquid" displacement.
-      fillBg(src.ctx, p.W, p.H)
-      drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, 1.1 + 0.02 * loopSin(t, 1, phase))
+      fillBg(src.ctx, SW, SH)
+      drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, SW, SH, 1.04 + 0.02 * loopSin(t, 1, phase))
       fillBg(ctx, p.W, p.H)
       const amp = p.W * 0.02 * (0.75 + 0.25 * loopSin(t, 2, phase + 1.3))
       const travel = Math.PI * 2 * t // one full wave cycle per loop
       for (let y = 0; y < p.H; y += bandH) {
         const dx = amp * Math.sin(y * k + travel * 3 + phase)
-        ctx.drawImage(src.canvas, 0, y, p.W, bandH, dx, y, p.W, bandH)
+        // Secondary slower vertical swell so the water moves in two axes
+        const dy = amp * 0.22 * Math.sin(y * k * 0.6 + travel * 2 + phase + 1.7)
+        const sh = Math.min(bandH, p.H - y)
+        ctx.drawImage(src.canvas, M - dx, M + y - dy, p.W, sh, 0, y, p.W, sh)
       }
+      // Caustic light bands sweeping the frame — each band travels a whole
+      // number of widths per loop and is drawn tiled at x ± W, so the wrap is
+      // seamless. Slight tilt keeps them from reading as a screen wipe.
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.translate(p.W / 2, p.H / 2)
+      ctx.rotate(0.26)
+      const diag = Math.hypot(p.W, p.H)
+      for (let i = 0; i < 3; i++) {
+        const speed = i === 1 ? -1 : i + 1 // whole widths per loop
+        const cx = ((((speed * t + i * 0.37 + phase / (Math.PI * 2)) % 1) + 1) % 1) * diag - diag / 2
+        const bw = diag * (0.09 + 0.05 * i)
+        for (const ox of [-diag, 0, diag]) {
+          const lg = ctx.createLinearGradient(cx + ox - bw, 0, cx + ox + bw, 0)
+          lg.addColorStop(0, 'rgba(190,235,255,0)')
+          lg.addColorStop(0.5, 'rgba(190,235,255,0.07)')
+          lg.addColorStop(1, 'rgba(190,235,255,0)')
+          ctx.fillStyle = lg
+          ctx.fillRect(cx + ox - bw, -diag / 2, bw * 2, diag)
+        }
+      }
+      ctx.restore()
+      // Faint aqua cast pulls the grade underwater
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.05
+      ctx.fillStyle = '#2ec8d8'
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.38, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
     }
@@ -697,6 +898,8 @@ const orbit: EffectDef = {
     // Extra zoom needed so the rotated cover never shows a corner
     const ratio = Math.max(p.W / p.H, p.H / p.W)
     const bleed = Math.cos(rotMax) + ratio * Math.sin(rotMax)
+    const dir = rng() < 0.5 ? -1 : 1
+    const minDim = Math.min(p.W, p.H)
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
@@ -704,6 +907,25 @@ const orbit: EffectDef = {
       const scale = bleed * (1.035 + 0.025 * loopSin(t, 2, phase + 2.2))
       const panX = 0.012 * p.W * loopSin(t, 1, phase + 4.1)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, 0, rot)
+      // Breathing bloom so the sway has a light source to answer to
+      drawCover(
+        ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
+        scale * 1.04, panX, 0, rot,
+        0.07 + 0.04 * loopSin(t, 2, phase + 0.8), 'screen',
+      )
+      // Rim light circling the frame exactly once per loop (inherently
+      // seamless) — a soft moving key that gives the float dimensionality
+      const ang = dir * Math.PI * 2 * t + phase
+      const lx = p.W / 2 + p.W * 0.42 * Math.cos(ang)
+      const ly = p.H / 2 + p.H * 0.42 * Math.sin(ang)
+      const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, minDim * 0.75)
+      lg.addColorStop(0, 'rgba(255,244,224,0.13)')
+      lg.addColorStop(1, 'rgba(255,244,224,0)')
+      ctx.save()
+      ctx.globalCompositeOperation = 'screen'
+      ctx.fillStyle = lg
+      ctx.fillRect(0, 0, p.W, p.H)
+      ctx.restore()
       drawVignette(ctx, p.W, p.H, 0.48, vig)
       drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
     }
