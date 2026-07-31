@@ -3,6 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 
+// Caps for the two free-text fields on this PUBLIC, unauthenticated route.
+// Both are stored in unbounded `text` columns, and `reviewer_name` is also
+// interpolated into the mb_activity description that the nav bell renders and
+// re-polls every 60s (src/components/Nav.tsx) — so an uncapped name is a
+// persistent payload in the victim's UI that they cannot clear. 80 chars is a
+// display name; 2000 matches MAX_COMMENT_LENGTH on the feed-comment route.
+const MAX_REVIEWER_NAME_LENGTH = 80
+const MAX_COMMENT_LENGTH = 2000
+
 // POST /api/feedback — submit feedback for a shared version (public route)
 export async function POST(request: NextRequest) {
   const limit = feedbackLimiter.check(ipKey(request))
@@ -14,8 +23,15 @@ export async function POST(request: NextRequest) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { version_id, reviewer_name, rating, comment, timestamp_seconds } = body
 
-  if (!version_id || !comment?.trim()) {
+  // Public route — `comment` may be any JSON type. `comment?.trim()` only guards
+  // null/undefined, so a number or array reached `.trim` as undefined and threw
+  // an uncaught TypeError (500) on an unauthenticated endpoint.
+  const commentText = typeof comment === 'string' ? comment.trim() : ''
+  if (!version_id || !commentText) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
+  }
+  if (commentText.length > MAX_COMMENT_LENGTH) {
+    return NextResponse.json({ error: `Comment must be under ${MAX_COMMENT_LENGTH} characters` }, { status: 400 })
   }
 
   // Public endpoint — validate the id shape before it reaches a DB insert/lookup so a
@@ -26,7 +42,14 @@ export async function POST(request: NextRequest) {
 
   // Rating is optional, but if present it must be a whole number 1–5 — the UI
   // renders it as stars. This is a public route, so don't trust the value.
-  if (rating != null && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) {
+  //
+  // 0 means "no star clicked", not an invalid rating. FeedbackForm initialises
+  // its rating state to 0 and posts it raw, and `0 != null` is true, so the
+  // range check below rejected EVERY unrated submission with "Rating must be a
+  // whole number from 1 to 5" — i.e. a listener could not leave a comment at
+  // all without also clicking a star. Normalise first, then validate.
+  const hasRating = rating != null && rating !== 0
+  if (hasRating && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) {
     return NextResponse.json({ error: 'Rating must be a whole number from 1 to 5' }, { status: 400 })
   }
 
@@ -42,13 +65,19 @@ export async function POST(request: NextRequest) {
     ts = Math.min(Math.floor(timestamp_seconds), 86400)
   }
 
+  // One sanitized name used EVERYWHERE below. The insert and the activity-log
+  // description previously derived it separately (`.trim()` vs raw), so the
+  // stored name and the notification text could disagree.
+  const rawName = typeof reviewer_name === 'string' ? reviewer_name.trim() : ''
+  const safeName = (rawName || 'Anonymous').slice(0, MAX_REVIEWER_NAME_LENGTH)
+
   const { data, error } = await supabaseAdmin
     .from('mb_feedback')
     .insert({
       version_id,
-      reviewer_name: reviewer_name?.trim() || 'Anonymous',
-      rating: rating || null,
-      comment: comment.trim(),
+      reviewer_name: safeName,
+      rating: hasRating ? rating : null,
+      comment: commentText,
       timestamp_seconds: ts,
     })
     .select()
@@ -73,7 +102,7 @@ export async function POST(request: NextRequest) {
       project_id: version.project_id,
       version_id,
       user_id: projectUserId,
-      description: `Feedback from ${reviewer_name || 'Anonymous'} on v${version.version_number}`,
+      description: `Feedback from ${safeName} on v${version.version_number}`,
     })
   }
 

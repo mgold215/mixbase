@@ -8,6 +8,7 @@ import {
   isMissingVisualizerColumn,
 } from '@/lib/schema-heal'
 import type { AlbumPlayerTrack } from '@/components/AlbumPlayer'
+import { publicArtistName } from '@/lib/display-name'
 
 type ProjectRow = {
   title: string | null
@@ -91,7 +92,7 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
       .select('artist_name, display_name')
       .eq('id', collection.user_id)
       .single()
-    if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
+    if (profile) artistName = publicArtistName(profile, 'mixBASE')
   }
 
   const tracks: AlbumPlayerTrack[] = rows.flatMap(row => {

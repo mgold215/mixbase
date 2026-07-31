@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -12,6 +12,7 @@ import { trackShareUrl } from '@/lib/share-url'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
+import type { FeedComment } from '@/lib/feed'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
   Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
@@ -38,12 +39,15 @@ type Props = {
   project: Project
   initialVersions: VersionWithFeedback[]
   initialRelease: Release | null
+  /** Comments other artists left in the community feed, keyed by version id.
+   *  Server-loaded for EVERY version of this project, not just the current mix. */
+  initialFeedComments?: Record<string, FeedComment[]>
   inModal?: boolean
   /** Owner account only — pre-fills the artwork generator's house-style prompt */
   ownerDefaults?: boolean
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease, inModal = false, ownerDefaults = false }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -110,6 +114,28 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setVisualizerWide(url)
     syncAfterMutation()
   }
+
+  // ?v=<version_id> — set by a notification link so the page can open the note
+  // that was clicked.
+  //
+  // useSearchParams, NOT a useState initializer reading window.location: the
+  // bell is rendered ON this page, so the most likely click is a notification
+  // for the project already open. That is a search-params-only navigation,
+  // which does not remount this component — an initializer would never re-run
+  // and the deep link would silently do nothing in exactly its commonest case.
+  // Reading the hook also keeps server and client renders in agreement (the
+  // page is force-dynamic), instead of rendering collapsed on the server and
+  // expanded on the client.
+  //
+  // Validated as a UUID before use: the value is URL-supplied, and it is only
+  // ever compared against version ids we already loaded — never interpolated
+  // into a CSS selector or a redirect, both of which would turn a crafted
+  // value into a thrown SyntaxError or an open redirect.
+  const rawHighlight = useSearchParams().get('v')
+  const highlightVersionId =
+    rawHighlight && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawHighlight)
+      ? rawHighlight
+      : null
 
   // Tab state — persists in URL hash
   const [activeTab, setActiveTab] = useState<'versions' | 'artwork' | 'visualizer' | 'video'>(() => {
@@ -203,6 +229,37 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       }
     } catch {
       flashError('Notes did not save — check your connection and retry.')
+    }
+  }
+
+  // Per-mix opt-in that puts a "Download" button on the public share page, so
+  // the people you send the link to can grab the full-quality original.
+  // Optimistic, then reconciled against the server exactly like updateStatus:
+  // this switch states what the artist is offering the public, so it must never
+  // end up showing the opposite of what the DB holds. Reverting to `!allow`
+  // rather than the captured previous value did exactly that when a failed
+  // request settled after a successful one, and without syncAfterMutation()
+  // nothing ever corrected it.
+  async function updateAllowDownload(versionId: string, allow: boolean) {
+    const prevAllow = versions.find(v => v.id === versionId)?.allow_download ?? false
+    setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: allow } : v))
+    const revert = () =>
+      setVersions(prev => prev.map(v => v.id === versionId ? { ...v, allow_download: prevAllow } : v))
+    try {
+      const res = await fetch(`/api/versions/${versionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allow_download: allow }),
+      })
+      if (res.ok) {
+        syncAfterMutation()
+      } else {
+        revert()
+        flashError('Could not change the download setting — reverted.')
+      }
+    } catch {
+      revert()
+      flashError('Could not change the download setting — check your connection.')
     }
   }
 
@@ -705,6 +762,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             ) : (
               <CurrentMixCard
                 version={currentMix}
+                feedComments={initialFeedComments[currentMix.id] ?? []}
                 projectTitle={projectForm.title || project.title}
                 artwork={artwork}
                 currentUrl={currentUrl}
@@ -721,6 +779,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onUpdateStatus={updateStatus}
                 onUpdateNotes={updateNotes}
                 onSummarizeFeedback={summarizeFeedback}
+                onToggleAllowDownload={updateAllowDownload}
+                shareEnabled={Boolean(project.share_token)}
                 parseMixLabel={parseMixLabel}
               />
             )}
@@ -737,6 +797,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 </button>
               </div>
             )}
+
+            {/* Notes left on mixes that are no longer current. Without this the
+                notifications bell links here for feedback the page can't show. */}
+            <EarlierMixNotes
+              // Remount when the deep-link target changes: the auto-open state
+              // is computed in a useState initializer, and a search-params-only
+              // navigation would otherwise leave it stale.
+              key={highlightVersionId ?? 'none'}
+              versions={archivedVersions}
+              feedCommentsByVersion={initialFeedComments}
+              parseMixLabel={parseMixLabel}
+              highlightVersionId={highlightVersionId}
+            />
 
             {/* Release Pipeline */}
             <div className="mt-10 mb-2">
@@ -912,6 +985,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
 type CurrentMixCardProps = {
   version: VersionWithFeedback
+  /** Community-feed comments on THIS version (other artists). */
+  feedComments: FeedComment[]
   projectTitle: string
   artwork: string | null
   currentUrl: string | null
@@ -928,14 +1003,18 @@ type CurrentMixCardProps = {
   onUpdateStatus: (id: string, status: Version['status']) => void
   onUpdateNotes: (id: string, field: 'private_notes' | 'public_notes', value: string) => void
   onSummarizeFeedback: (id: string) => void
+  onToggleAllowDownload: (id: string, allow: boolean) => void
+  /** Project has a share link, so the download toggle actually reaches someone. */
+  shareEnabled: boolean
   parseMixLabel: (filename: string) => string | null
 }
 
 function CurrentMixCard({
-  version, projectTitle, artwork,
+  version, feedComments, projectTitle, artwork,
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
-  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, parseMixLabel,
+  onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
+  shareEnabled, parseMixLabel,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1103,6 +1182,23 @@ function CurrentMixCard({
               Original
             </a>
           </div>
+
+          {/* Opt this mix's original into the public share page, so whoever you
+              send the link to can download the same full-quality file. */}
+          {shareEnabled && (
+            <label
+              className="flex items-center gap-2 mt-2.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer select-none"
+              title="Adds a Download button to this project's public share page"
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(version.allow_download)}
+                onChange={e => onToggleAllowDownload(version.id, e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[var(--accent)] cursor-pointer"
+              />
+              Let people with the share link download this file
+            </label>
+          )}
         </div>
 
         {version.change_log && (
@@ -1240,7 +1336,131 @@ function CurrentMixCard({
             </div>
           </div>
         )}
+
+        {/* Community-feed comments from other artists. Kept visually distinct
+            from share-page Feedback above: that is a curator/client responding
+            to a link you sent; this is a peer replying in the public feed. */}
+        {feedComments.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <MessageSquare size={10} className="text-[var(--text-muted)]" />
+              <span className="text-[11px] text-[var(--text-muted)]">From other artists</span>
+            </div>
+            <div className="space-y-1.5">
+              {feedComments.map(c => (
+                <div key={c.id} className="rounded-xl px-3 py-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{c.artist}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">
+                      {new Date(c.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{c.comment}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+// ── Notes on earlier mixes ───────────────────────────────────────────────────
+// The project page used to render notes for the CURRENT mix only: feedback was
+// read inside CurrentMixCard, and archived versions appeared solely in the
+// restore modal, which shows no notes at all. So a curator's feedback on v3
+// became invisible the moment v4 was uploaded — even though the loader had
+// already fetched it, and even though the notifications bell links here. This
+// section is the fix: every note on every earlier mix, from both sources.
+
+type EarlierMixNotesProps = {
+  versions: VersionWithFeedback[]
+  feedCommentsByVersion: Record<string, FeedComment[]>
+  parseMixLabel: (filename: string) => string | null
+  highlightVersionId: string | null
+}
+
+function EarlierMixNotes({ versions, feedCommentsByVersion, parseMixLabel, highlightVersionId }: EarlierMixNotesProps) {
+  const withNotes = versions
+    .map(v => ({
+      version: v,
+      feedback: v.mb_feedback ?? [],
+      comments: feedCommentsByVersion[v.id] ?? [],
+    }))
+    .filter(g => g.feedback.length + g.comments.length > 0)
+
+  // A notification deep-links with ?v=<version_id>. Treat it strictly as a
+  // hint: mb_activity.version_id has no foreign key and version deletion does
+  // not clean it up, so it may not match anything here. Opening the section
+  // when it DOES match is the whole benefit; a miss just leaves it collapsed.
+  // Derived at mount rather than in an effect — highlightVersionId is read once
+  // from the URL, so there is nothing to synchronize afterwards.
+  const [open, setOpen] = useState(
+    () => highlightVersionId != null && withNotes.some(g => g.version.id === highlightVersionId),
+  )
+
+  if (withNotes.length === 0) return null
+
+  const total = withNotes.reduce((s, g) => s + g.feedback.length + g.comments.length, 0)
+
+  return (
+    <div className="mt-5">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+      >
+        <MessageSquare size={12} />
+        Notes on earlier mixes ({total})
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-4">
+          {withNotes.map(({ version: v, feedback, comments }) => (
+            <div
+              key={v.id}
+              className="rounded-xl p-3"
+              style={{
+                backgroundColor: 'var(--surface)',
+                border: `1px solid ${v.id === highlightVersionId ? '#2dd4bf66' : 'var(--border)'}`,
+              }}
+            >
+              <p className="text-[11px] text-[var(--text-muted)] mb-2">
+                {v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`}
+                {' · '}
+                {new Date(v.created_at).toLocaleDateString()}
+              </p>
+              <div className="space-y-1.5">
+                {feedback.map(f => (
+                  <div key={f.id} className="rounded-lg px-3 py-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{f.reviewer_name}</span>
+                      {f.rating && (
+                        <div className="flex gap-0.5 flex-shrink-0">
+                          {[1, 2, 3, 4, 5].map(st => (
+                            <Star key={st} size={9} className={st <= f.rating! ? 'text-[#2dd4bf] fill-[#2dd4bf]' : 'text-[var(--text-muted)]'} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{f.comment}</p>
+                  </div>
+                ))}
+                {comments.map(c => (
+                  <div key={c.id} className="rounded-lg px-3 py-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-xs font-medium text-[var(--text-secondary)] truncate">{c.artist}</span>
+                      <span className="text-[10px] text-[var(--text-muted)] flex-shrink-0">from the feed</span>
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words">{c.comment}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

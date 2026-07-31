@@ -25,12 +25,21 @@ function jwtRole(key: string): string | null {
 // degrades to anon: RLS-filtered reads come back empty and every server-side
 // write dies with an RLS violation while the app otherwise looks healthy.
 // New-style secret keys (sb_secret_...) aren't JWTs; trust the prefix.
-const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+// .trim() matters: a stray leading/trailing space or newline from pasting the
+// key into a Railway variable breaks BOTH the prefix test and the JWT parse, so
+// a perfectly good key reads as invalid and the middleware 503s every /api/*
+// route — a total outage with a misleading cause.
+const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || undefined
 export const serviceRoleKeyValid: boolean = !!rawServiceKey && (
   rawServiceKey.startsWith('sb_secret_') || jwtRole(rawServiceKey) === 'service_role'
 )
 
-if (!serviceRoleKeyValid) {
+// Server-side only. This module is also pulled into the client bundle (it
+// exports SUPABASE_URL/audioProxyUrl), where the service key is absent BY
+// DESIGN — so firing there printed a guaranteed false alarm in every visitor's
+// console, leaked internal env-var names, and taught us to ignore the one
+// signal that catches a genuinely misconfigured deploy.
+if (!serviceRoleKeyValid && typeof window === 'undefined') {
   console.error(
     rawServiceKey
       ? '[supabase] SUPABASE_SERVICE_ROLE_KEY is set but is NOT a service-role key (wrong key pasted?) — admin client is running as anon. All server-side writes WILL FAIL with RLS violations.'

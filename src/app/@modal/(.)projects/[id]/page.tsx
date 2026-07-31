@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
 import ModalShell from '@/components/ModalShell'
 import ProjectClient from '@/app/projects/[id]/ProjectClient'
+import { getFeedCommentsForVersions, type FeedComment } from '@/lib/feed'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,12 +30,21 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
 
   if (projectRes.error || !projectRes.data) return null
 
+  // Same shape as the full page: fetched AFTER the ownership gate above, keyed
+  // to this project's own versions. Kept in sync so the modal doesn't quietly
+  // hide notes the full page shows.
+  const versions = versionsRes.data ?? []
+  const feedComments = await getFeedCommentsForVersions(versions.map(v => v.id))
+  const feedCommentsByVersion: Record<string, FeedComment[]> = {}
+  for (const c of feedComments) (feedCommentsByVersion[c.version_id] ??= []).push(c)
+
   return (
     <ModalShell>
       <ProjectClient
         project={projectRes.data}
-        initialVersions={versionsRes.data ?? []}
+        initialVersions={versions}
         initialRelease={releaseRes.data ?? null}
+        initialFeedComments={feedCommentsByVersion}
         inModal
         ownerDefaults={profileRes.data?.is_owner === true}
       />

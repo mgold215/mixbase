@@ -78,6 +78,15 @@ export default function VideoFinalizer({
 
   const pollJob = useCallback((format: VideoFormat, jobId: string) => {
     stopPolling(format)
+    // Stall backstop. The server now fails every render stage on its own
+    // deadline, so a job that reports the same progress/stage for this long has
+    // stopped existing in a way the poll can't see (process replaced mid-render,
+    // OOM kill) — previously the bar just spun at whatever % it reached, and the
+    // poll ran every 2.5s for as long as the tab stayed open. Comfortably longer
+    // than the slowest real no-progress window, which is the final upload.
+    const STALL_GIVE_UP_MS = 15 * 60 * 1000
+    let lastKey = ''
+    let lastChangeAt = Date.now()
     pollTimers.current[format] = setInterval(async () => {
       try {
         const res = await fetch(`/api/finalize-video?job=${jobId}`)
@@ -97,6 +106,20 @@ export default function VideoFinalizer({
           setJobs(j => ({ ...j, [format]: undefined }))
           setErrors(e => ({ ...e, [format]: data.error ?? 'Render failed. Try again.' }))
         } else {
+          const key = `${data.status}:${data.progress}:${data.stage}`
+          if (key !== lastKey) {
+            lastKey = key
+            lastChangeAt = Date.now()
+          } else if (data.status === 'rendering' && Date.now() - lastChangeAt > STALL_GIVE_UP_MS) {
+            // Only while RENDERING, where progress provably advances (ffmpeg
+            // reports per second of output). The upload phase legitimately sits
+            // at one number while a ~380 MB file transfers, so treating that as
+            // a stall would abandon a healthy render on a slow connection.
+            stopPolling(format)
+            setJobs(j => ({ ...j, [format]: undefined }))
+            setErrors(e => ({ ...e, [format]: 'Render stopped responding — try again.' }))
+            return
+          }
           setJobs(j => ({ ...j, [format]: { jobId, status: data.status, progress: data.progress, stage: data.stage } }))
         }
       } catch {

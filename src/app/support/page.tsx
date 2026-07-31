@@ -19,7 +19,7 @@ export default function SupportPage() {
     },
     {
       q: 'Can I download my audio files?',
-      a: 'Yes. On any version you can enable "Allow download" so listeners on your share page can download the file. Your own files are always accessible from within the app.',
+      a: 'Yes. Your own files are always downloadable from within the app via the "Original" link on any mix — you get back exactly the file you uploaded, at full WAV quality. To let the people you share a link with download it too, tick "Let people with the share link download this file" on the mix; a Download button then appears on the share page.',
     },
     {
       q: 'What audio formats are supported?',

@@ -208,6 +208,36 @@ export function isMissingProfileSocialColumn(error: { message?: string } | null)
   return !!error?.message && /(spotify|youtube)_url/.test(error.message)
 }
 
+// ── Migration 023: notification read cursor on profiles ──────────────────────
+// GET /api/notifications reads profiles.activity_seen_at to decide which
+// mb_activity rows are unread, and POST writes it when the bell is opened. Same
+// deploy-beats-the-migration race as 021: PostgREST rejects the whole
+// select/update when the column is missing, which silently pins the unread
+// badge at zero (a read error there is indistinguishable from "nothing new").
+// Heal on that specific failure and retry. Idempotent ALTER, memoized.
+
+const ACTIVITY_SEEN_SQL =
+  'alter table public.profiles add column if not exists activity_seen_at timestamptz default now();'
+
+let activitySeenEnsured: Promise<boolean> | null = null
+
+export function ensureActivitySeenColumn(): Promise<boolean> {
+  if (!activitySeenEnsured) {
+    activitySeenEnsured = runQuery(ACTIVITY_SEEN_SQL, 'profiles activity_seen_at column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) activitySeenEnsured = null
+        return ok
+      })
+  }
+  return activitySeenEnsured
+}
+
+/** True when a PostgREST error is the missing-column failure this heals. */
+export function isMissingActivitySeenColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /activity_seen_at/.test(error.message)
+}
+
 // ── mb_feed_comments (migration 022) ─────────────────────────────────────────
 // A deploy can beat migration 022 to production (or a fresh environment may
 // never have run it) — heal the table on the specific missing-relation error

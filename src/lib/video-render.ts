@@ -1,7 +1,10 @@
 import { spawn } from 'child_process'
-import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
+import { createWriteStream } from 'fs'
+import { mkdtemp, rm, writeFile, readFile, stat } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { Readable, Transform } from 'stream'
+import { pipeline } from 'stream/promises'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import ffprobeInstaller from '@ffprobe-installer/ffprobe'
 // Relative extension-full import (not the @/ alias) so the smoke test can
@@ -103,13 +106,186 @@ export function flashWindows(totalSec: number): FlashWindow[] {
   return windows
 }
 
+// ── Watchdog budgets ─────────────────────────────────────────────────────────
+// Every ffmpeg/ffprobe child gets a deadline. These bound a WEDGED process —
+// they are not performance targets, so the multiples are deliberately generous:
+// a render that legitimately needed longer than its budget would already be an
+// unacceptable user experience. 1080p30 libx264 veryfast runs near realtime on
+// a shared Railway vCPU, so 6× realtime for the main encode leaves large
+// headroom while still turning "hangs forever" into "fails in bounded time".
+export type RenderStage = 'probe' | 'measure' | 'loop' | 'final'
+
+const clampMs = (min: number, want: number, max: number) =>
+  Math.min(max, Math.max(min, Math.round(Number.isFinite(want) ? want : 0)))
+
+export function videoStageTimeoutMs(stage: RenderStage, workSeconds = 0): number {
+  const work = Number.isFinite(workSeconds) && workSeconds > 0 ? workSeconds : 0
+  switch (stage) {
+    // Metadata read on a local temp file: milliseconds of real work.
+    case 'probe': return 30_000
+    // Decode-to-null. Runs ~100× realtime in practice; 2× realtime is a
+    // pathological floor, and the 10 min ceiling caps a bogus work estimate.
+    case 'measure': return clampMs(120_000, work * 2_000, 10 * 60_000)
+    // Encoding the short loop unit (a few seconds of video).
+    case 'loop': return clampMs(120_000, work * 20_000, 15 * 60_000)
+    // Encoding the whole song with overlays — the long pole.
+    case 'final': return clampMs(300_000, work * 6_000, 90 * 60_000)
+  }
+}
+
+/**
+ * Idle budget: how long a stage may go SILENT on its `-progress pipe:1` stream
+ * before we treat the child as wedged. This is the primary detector and it is
+ * strictly better than the wall-clock ceiling above on both counts — it fires
+ * minutes after a real wedge instead of tens of minutes, and it can never kill
+ * a slow-but-advancing encode, however loaded the box is. ffmpeg emits a
+ * progress block roughly per second of output, so these tolerate a ~100×
+ * slowdown between blocks. 0 means "this stage has no progress stream" (a
+ * metadata probe), where only the wall-clock ceiling applies.
+ */
+// Once the child has exited, its pipes drain in milliseconds (measured: ~5-40ms
+// even for a 283 MB mp4). This only has to be long enough that a slow disk never
+// trips it.
+const EXIT_DRAIN_GRACE_MS = 30_000
+
+export function videoStageIdleMs(stage: RenderStage): number {
+  switch (stage) {
+    case 'probe': return 0
+    case 'measure': return 120_000
+    case 'loop': return 180_000
+    case 'final': return 180_000
+  }
+}
+
+// Downloading the pinned visualizer + the mix from Supabase Storage. IDLE-based,
+// not a total-time budget: `mf-audio` allows 2 GB and a Shorts render
+// legitimately clips 30s out of an hour-long DJ mix, so any wall clock loose
+// enough for a ~1 GB input is far too loose to catch a hang — and one tight
+// enough to catch a hang would kill the big download. Aborting only when NO
+// bytes have arrived for a minute bounds the stall at any file size. (An
+// unbounded fetch is its own silent hang: node's body timeout only fires between
+// chunks, so a slow-drip server stalls forever.)
+const DOWNLOAD_IDLE_MS = 60_000
+
+// Truncated media that ffmpeg still DECODES: it exits 0 and reports a short
+// duration, so the exit code and the duration checks both pass and we would
+// happily build a complete-looking video out of a fragment.
+//
+// Exactly ONE marker, and the narrowness is the point — measured against
+// ffmpeg 4.4 rather than assumed:
+//
+//   • 'File ended prematurely' is DEMUXER-level and means the container really
+//     was cut short. A truncated MediaRecorder webm prints it; an intact one
+//     prints nothing. That is the case that matters, because the pinned
+//     visualizer is browser-recorded webm and it drives the loop math.
+//
+//   • 'Invalid data found when processing input' / 'Error while decoding stream'
+//     are DECODE-level: ffmpeg logs them, continues, and still exits 0. A
+//     perfectly healthy MP3 carrying as little as 32 bytes of trailing NUL
+//     padding (or Lyrics3v2, or an ID3v2 footer) emits them while decoding
+//     byte-for-byte the same audio as the clean file. Matching those rejected
+//     working renders — and only YouTube ones, since Shorts stop before EOF, so
+//     it would have looked random. Never re-add them.
+//
+//   • 'Truncating packet' is logged at warning level and cannot appear at
+//     `-v error` at all.
+//
+// Formats whose truncation ffmpeg treats as fatal (mp4/m4a: "moov atom not
+// found") exit non-zero and are already caught by the exit-code branch.
+const TRUNCATION_MARKERS = ['File ended prematurely']
+
+export function hasTruncationMarker(stderr: string): boolean {
+  return TRUNCATION_MARKERS.some(m => stderr.includes(m))
+}
+
 // ── Small process helpers ────────────────────────────────────────────────────
 
-function run(bin: string, args: string[], onStdout?: (line: string) => void): Promise<void> {
+// Node's spawn `timeout` option does fire killSignal at the deadline, but the
+// promise here is settled by `close`, which waits for the stdio pipes to drain.
+// A process that survives the signal — or that leaves a descendant holding
+// stderr — never emits `close`, so the await hangs forever anyway. So we arm our
+// OWN timer that SIGKILLs the child AND rejects the promise directly. Settling
+// is the part that matters: it's what lets buildFinalVideo's `finally` delete
+// the temp dir and lets the job release its concurrency slot. (Rejecting after
+// a resolve is a no-op, so the race is harmless.)
+// SIGKILL rather than the default SIGTERM: ffmpeg CATCHES SIGTERM and exits 255,
+// which is indistinguishable from a genuine encode failure — and a truly wedged
+// ffmpeg may never process it at all, which is precisely the case we are
+// defending against.
+//
+// Returns `touch()`, which resets the idle timer; callers call it whenever the
+// child reports progress.
+function armDeadline(
+  proc: ReturnType<typeof spawn>,
+  timeoutMs: number,
+  idleMs: number,
+  label: string,
+  reject: (err: Error) => void,
+): () => void {
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+  let drainTimer: ReturnType<typeof setTimeout> | undefined
+  let closed = false
+  const fail = (message: string) => {
+    try { proc.kill('SIGKILL') } catch { /* already gone */ }
+    reject(new Error(message))
+  }
+  const hard = setTimeout(
+    () => fail(`${label} timed out after ${Math.round(timeoutMs / 1000)}s and was killed`),
+    timeoutMs,
+  )
+  hard.unref?.()
+  const touch = () => {
+    if (idleMs <= 0 || closed) return
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(
+      () => fail(`${label} stopped reporting progress for ${Math.round(idleMs / 1000)}s and was killed`),
+      idleMs,
+    )
+    idleTimer.unref?.()
+  }
+  touch()
+
+  const clearAll = () => { clearTimeout(hard); clearTimeout(idleTimer); clearTimeout(drainTimer) }
+  proc.on('close', () => { closed = true; clearAll() })
+  proc.on('error', () => { closed = true; clearAll() })
+  proc.on('exit', () => {
+    // `exit` means the child itself is gone; callers settle on `close`, which
+    // additionally waits for the stdio pipes to drain. A surviving descendant
+    // holding stderr can withhold `close` indefinitely — the exact hang this
+    // watchdog exists to bound — so don't simply stand down here. Draining after
+    // the child is gone takes milliseconds, so give it a short grace and then
+    // settle anyway. (ffmpeg/ffprobe don't fork, so this is belt-and-braces.)
+    clearTimeout(hard)
+    clearTimeout(idleTimer)
+    if (closed) return
+    drainTimer = setTimeout(
+      () => fail(`${label} exited but its output never closed`),
+      EXIT_DRAIN_GRACE_MS,
+    )
+    drainTimer.unref?.()
+  })
+  return touch
+}
+
+// Taking the stage (rather than raw milliseconds) keeps the wall-clock ceiling
+// and the idle budget derived from one source, so a call site can't set one and
+// forget the other.
+function run(
+  bin: string,
+  args: string[],
+  stage: RenderStage,
+  workSeconds: number,
+  onStdout?: (line: string) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const name = bin.split('/').pop() ?? 'ffmpeg'
     let stderrTail = ''
+    const touch = armDeadline(
+      proc, videoStageTimeoutMs(stage, workSeconds), videoStageIdleMs(stage), name, reject,
+    )
     proc.stdout.on('data', (d: Buffer) => {
+      touch()
       if (onStdout) for (const line of d.toString().split('\n')) onStdout(line)
     })
     proc.stderr.on('data', (d: Buffer) => {
@@ -117,8 +293,16 @@ function run(bin: string, args: string[], onStdout?: (line: string) => void): Pr
     })
     proc.on('error', reject)
     proc.on('close', code => {
-      if (code === 0) resolve()
-      else reject(new Error(`${bin.split('/').pop()} exited ${code}: ${stderrTail.slice(-1500)}`))
+      if (code !== 0) {
+        return reject(new Error(`${name} exited ${code}: ${stderrTail.slice(-1500)}`))
+      }
+      // ffmpeg exits 0 on truncated input, reporting it ONLY on stderr — which
+      // this path used to discard. Encoding a full-length video out of a
+      // fragment is worse than failing, so refuse it.
+      if (hasTruncationMarker(stderrTail)) {
+        return reject(new Error(`Source media is incomplete or corrupt: ${stderrTail.trim().slice(-300)}`))
+      }
+      resolve()
     })
   })
 }
@@ -131,6 +315,7 @@ async function probeJson(file: string): Promise<{
     const proc = spawn(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file])
     let out = ''
     let err = ''
+    armDeadline(proc, videoStageTimeoutMs('probe'), videoStageIdleMs('probe'), 'ffprobe', reject)
     proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
     proc.stderr.on('data', (d: Buffer) => { err = (err + d.toString()).slice(-2000) })
     proc.on('error', reject)
@@ -146,12 +331,20 @@ async function probeJson(file: string): Promise<{
 // most importantly the free-effects visualizers, which browsers record with
 // MediaRecorder as streamed webm (duration is unwritable in a non-seekable
 // stream, so ffprobe reports nothing for format or streams).
-function measureDurationByDecoding(file: string): Promise<number> {
+function measureDurationByDecoding(file: string, maxSeconds: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const proc = spawn(FFMPEG, ['-v', 'error', '-i', file, '-f', 'null', '-progress', 'pipe:1', '-'])
     let micros = 0
     let err = ''
+    const touch = armDeadline(
+      proc,
+      videoStageTimeoutMs('measure', maxSeconds),
+      videoStageIdleMs('measure'),
+      'ffmpeg duration measure',
+      reject,
+    )
     proc.stdout.on('data', (d: Buffer) => {
+      touch()
       for (const line of d.toString().split('\n')) {
         const m = line.match(/^out_time_ms=(\d+)/) // misnamed by ffmpeg: microseconds
         if (m) micros = Math.max(micros, Number(m[1]))
@@ -160,13 +353,26 @@ function measureDurationByDecoding(file: string): Promise<number> {
     proc.stderr.on('data', (d: Buffer) => { err = (err + d.toString()).slice(-1500) })
     proc.on('error', reject)
     proc.on('close', code => {
-      if (code === 0 && micros > 0) resolve(micros / 1e6)
-      else reject(new Error(`Could not measure duration by decoding: ${err || `ffmpeg exited ${code}`}`))
+      if (code !== 0 || micros <= 0) {
+        return reject(new Error(`Could not measure duration by decoding: ${err || `ffmpeg exited ${code}`}`))
+      }
+      // A truncated recording decodes "successfully" to a short duration, which
+      // would sail through every downstream check and yield a full-length video
+      // built from a fragment. ffmpeg only tells us on stderr, which this path
+      // used to discard on success.
+      if (hasTruncationMarker(err)) {
+        return reject(new Error(`Media file is incomplete or corrupt: ${err.trim().slice(-300)}`))
+      }
+      resolve(micros / 1e6)
     })
   })
 }
 
-export async function probeDuration(file: string, label = 'media'): Promise<number> {
+export async function probeDuration(
+  file: string,
+  label = 'media',
+  maxSeconds = MAX_SONG_SECONDS,
+): Promise<number> {
   const info = await probeJson(file)
   const fromFormat = parseFloat(info.format?.duration ?? '')
   if (Number.isFinite(fromFormat) && fromFormat > 0) return fromFormat
@@ -175,18 +381,55 @@ export async function probeDuration(file: string, label = 'media'): Promise<numb
     if (Number.isFinite(d) && d > 0) return d
   }
   try {
-    return await measureDurationByDecoding(file)
-  } catch {
+    return await measureDurationByDecoding(file, maxSeconds)
+  } catch (e) {
+    // Keep a corruption diagnosis — it tells the user something actionable,
+    // unlike the generic "could not determine duration".
+    if (e instanceof Error && /incomplete or corrupt|timed out/.test(e.message)) throw e
     throw new Error(`Could not determine ${label} duration`)
   }
 }
 
+// Streams to disk rather than buffering the whole response. `mf-audio` allows
+// files up to 2 GB, and a Shorts render legitimately clips 30s out of an
+// hour-long DJ mix — so the previous `arrayBuffer()` could try to hold ~1 GB in
+// one Buffer and OOM the container, taking down every other user's requests
+// with it. Streaming keeps memory flat regardless of file size, which removes
+// the vector without imposing a size limit that would break that workflow.
 async function download(url: string, dest: string): Promise<void> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Download failed (${res.status}) for ${url.split('?')[0]}`)
-  const bytes = Buffer.from(await res.arrayBuffer())
-  if (bytes.length === 0) throw new Error('Downloaded file is empty')
-  await writeFile(dest, bytes)
+  const label = url.split('?')[0]
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bump = () => {
+    clearTimeout(timer)
+    timer = setTimeout(
+      () => controller.abort(new Error(`Download stalled for ${DOWNLOAD_IDLE_MS / 1000}s: ${label}`)),
+      DOWNLOAD_IDLE_MS,
+    )
+    timer.unref?.()
+  }
+  bump()
+  try {
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.ok) throw new Error(`Download failed (${res.status}) for ${label}`)
+    if (!res.body) throw new Error(`Download returned no body for ${label}`)
+    // The heartbeat lives INSIDE the pipeline. Attaching a bare 'data' listener
+    // would flip the stream into flowing mode and drop bytes before the write
+    // stream is wired up; a pass-through transform sees every chunk without
+    // touching flow control.
+    const heartbeat = new Transform({
+      transform(chunk, _enc, cb) { bump(); cb(null, chunk) },
+    })
+    await pipeline(
+      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+      heartbeat,
+      createWriteStream(dest),
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+  const { size } = await stat(dest)
+  if (size === 0) throw new Error('Downloaded file is empty')
 }
 
 // ffmpeg -progress pipe:1 emits `out_time_ms=<µs>` lines (misnamed: microseconds).
@@ -265,7 +508,7 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-r', '30',
       '-progress', 'pipe:1',
       unitFile,
-    ], progressParser(L, f => report(0.03 + f * 0.15, 'Building seamless loop')))
+    ], 'loop', L, progressParser(L, f => report(0.03 + f * 0.15, 'Building seamless loop')))
 
     const unitDur = await probeDuration(unitFile)
     if (unitDur < 0.2) throw new Error('Loop unit came out empty')
@@ -328,7 +571,7 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
       '-t', outDur.toFixed(3),
       '-progress', 'pipe:1',
       outFile,
-    ], progressParser(outDur, f => report(0.2 + f * 0.75, 'Rendering full video')))
+    ], 'final', outDur, progressParser(outDur, f => report(0.2 + f * 0.75, 'Rendering full video')))
 
     report(0.96, 'Finishing')
     const bytes = await readFile(outFile)

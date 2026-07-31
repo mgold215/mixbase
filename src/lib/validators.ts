@@ -38,3 +38,24 @@ export function isSupabaseStorageUrl(value: unknown): value is string {
   }
   return url.protocol === 'https:' && url.hostname === SUPABASE_HOST
 }
+
+// A TUS resumable-upload id, safe to interpolate into the upstream Storage URL.
+//
+// `/api/tus/[uploadId]` concatenates this into a URL it then authenticates with
+// the SERVICE-ROLE key, and URL parsing collapses `..` segments — so a decoded
+// `../../rest/v1/<table>` would re-aim an authenticated PATCH/HEAD at a
+// different Supabase API root. Deliberately the narrowest possible guard rather
+// than a character allow-list: Supabase's ids are base64/base64url, whose
+// alphabets contain no `.` at all, and a raw `/` could never have matched that
+// single-segment dynamic route in the first place — so this rejects nothing a
+// real upload would ever send.
+// Percent-encoded dot segments are included deliberately: the WHATWG URL parser
+// decodes `%2e` before resolving, so `%2e%2e` collapses exactly like `..`, and
+// Next decodes a route segment once — so `/api/tus/%252e%252e` arrives here as
+// `%2e%2e`. Base64/base64url contain no `%` either, so this still rejects
+// nothing a real upload would send.
+export function isSafeUploadId(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false
+  if (value.includes('/') || value.includes('\\') || value.includes('%')) return false
+  return !value.includes('..')
+}

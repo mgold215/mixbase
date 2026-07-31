@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { albumShareUrl } from '@/lib/share-url'
+import { publicArtistName } from '@/lib/display-name'
 import { ensureCollectionShareToken, isMissingCollectionShareToken } from '@/lib/schema-heal'
 
 // POST /api/collections/[id]/share — return the collection's share token AND
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     .select('artist_name, display_name')
     .eq('id', userId)
     .single()
-  const artistName = profile?.artist_name || profile?.display_name || 'mixBASE'
+  const artistName = publicArtistName(profile, 'mixBASE')
 
   return NextResponse.json({
     share_token: token,

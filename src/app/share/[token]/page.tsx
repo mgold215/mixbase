@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cache } from 'react'
 import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
+import { publicArtistName } from '@/lib/display-name'
 import { notFound } from 'next/navigation'
 import ShareClient from './ShareClient'
 
@@ -15,7 +16,10 @@ export const dynamic = 'force-dynamic'
 // particular this keeps mb_versions.private_notes (the artist's own notes) and
 // every mb_feedback row (owner-read-only per RLS: another reviewer's name,
 // rating, comment) out of the payload. share-projection-test.mjs locks this.
-const VERSION_PUBLIC_COLS = 'id, audio_url, label, version_number, status, public_notes'
+// allow_download is the artist's per-mix opt-in for letting share recipients
+// save the original upload (the full-quality WAV). It gates the download button
+// in ShareClient — a boolean flag, not owner-private content.
+const VERSION_PUBLIC_COLS = 'id, audio_url, label, version_number, status, public_notes, allow_download'
 const PROJECT_PUBLIC_COLS = 'id, user_id, title, artwork_url, finalized_artwork_url, visualizer_url'
 
 const getShareData = cache(async (token: string) => {
@@ -45,7 +49,7 @@ const getShareData = cache(async (token: string) => {
         .select('artist_name, display_name')
         .eq('id', project.user_id)
         .single()
-      if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
+      if (profile) artistName = publicArtistName(profile, 'mixBASE')
     }
     return { version, artistName }
   }
@@ -68,7 +72,7 @@ const getShareData = cache(async (token: string) => {
       .select('artist_name, display_name')
       .eq('id', legacyProject.user_id)
       .single()
-    if (profile) artistName = profile.artist_name || profile.display_name || 'mixBASE'
+    if (profile) artistName = publicArtistName(profile, 'mixBASE')
   }
   return { version, artistName }
 })

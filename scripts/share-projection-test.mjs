@@ -63,7 +63,9 @@ check('share page: PROJECT_PUBLIC_COLS defined', PROJ !== null)
 
 const verCols = cols(VER)
 // Rendered by ShareClient / generateMetadata — must stay selected.
-for (const c of ['id', 'audio_url', 'label', 'version_number', 'status', 'public_notes']) {
+// allow_download gates the share page's "Download <FORMAT>" button — dropping it
+// from the projection would silently kill the feature (undefined → falsy).
+for (const c of ['id', 'audio_url', 'label', 'version_number', 'status', 'public_notes', 'allow_download']) {
   check(`version select includes rendered column "${c}"`, verCols.includes(c))
 }
 // Owner-private — must NEVER reach the anonymous payload.
@@ -92,6 +94,43 @@ for (const c of ['id', 'user_id', 'title', 'type', 'cover_url']) {
 for (const c of ['notes', 'release_date', 'share_token', '*']) {
   check(`collection select excludes non-rendered "${c}"`, !collCols.includes(c))
 }
+
+// ── Artist name must never fall through to the signup EMAIL ──────────────────
+// A correct projection still leaks if the TRANSFORM is wrong. `display_name`
+// is legitimately selected (it is the name we show when there's no artist_name),
+// but `handle_new_user` (006_multi_user_auth.sql:203-209) seeds it with
+//   coalesce(raw_user_meta_data->>'full_name', new.email)
+// and the signup route never sets full_name — so for app-created accounts
+// display_name IS the email address. `artist_name` is optional at signup
+// (src/app/signup/page.tsx has no `required` on that input), so the naive chain
+//   profile.artist_name || profile.display_name || 'mixBASE'
+// published the artist's address to anonymous viewers — in the page body, the
+// <title>, and the OpenGraph tags (so also to link-preview crawlers).
+// publicArtistName() (src/lib/display-name.ts) is the single guard: it refuses
+// any display_name containing '@'. This asserts the guard is actually wired,
+// not just available.
+const NAME_SURFACES = [
+  ['share page', 'src/app/share/[token]/page.tsx'],
+  ['album share loader', 'src/lib/album-share.ts'],
+  ['collection share URL route', 'src/app/api/collections/[id]/share/route.ts'],
+  ['collections page', 'src/app/collections/[id]/page.tsx'],
+]
+for (const [label, path] of NAME_SURFACES) {
+  const src = read(path)
+  // Only meaningful for a surface that actually resolves an artist name.
+  if (!/artist_name/.test(src)) continue
+  check(`${label}: no raw display_name fallback`, !/display_name\s*\|\|/.test(src))
+  check(`${label}: routes the name through publicArtistName()`, /publicArtistName\s*\(/.test(src))
+}
+
+// The guard itself must keep rejecting emails. Imported directly — display-name.ts
+// is dependency-free precisely so this runs with no env and no network.
+const { publicArtistName } = await import('../src/lib/display-name.ts')
+check('guard: email display_name is refused', publicArtistName({ artist_name: null, display_name: 'me@example.com' }, 'mixBASE') === 'mixBASE')
+check('guard: real artist_name wins', publicArtistName({ artist_name: 'Nova', display_name: 'me@example.com' }) === 'Nova')
+check('guard: non-email display_name still used', publicArtistName({ artist_name: '  ', display_name: 'Nova Lee' }) === 'Nova Lee')
+check('guard: whitespace-only artist_name falls through', publicArtistName({ artist_name: '   ', display_name: 'a@b.co' }, 'mixBASE') === 'mixBASE')
+check('guard: null profile uses caller fallback', publicArtistName(null, 'mixBASE') === 'mixBASE')
 
 if (failures > 0) {
   console.error(`\nshare-projection: ${failures} check(s) failed`)
