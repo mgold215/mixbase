@@ -22,8 +22,9 @@ If you see this value changed, flag it immediately.
 `SUPABASE_SERVICE_ROLE_KEY` must only appear in server-side route handlers (`/api/`).
 It must never be referenced in `'use client'` components or passed to the browser.
 
-### 5. `/api/tus` and `/api/audio` must stay in PUBLIC_PATHS
-Check `src/middleware.ts` if either route was modified. These must remain whitelisted.
+### 5. PUBLIC_PATHS rules (middleware is `src/proxy.ts`, not `src/middleware.ts`)
+- `/api/audio` must STAY in `PUBLIC_PATHS` — share pages and the iOS lock screen fetch it cookie-less.
+- `/api/tus` must stay OUT of `PUBLIC_PATHS`. It is deliberately authenticated: it proxies to Supabase Storage with the service-role key, and when it was public it allowed anonymous arbitrary upload/overwrite. The POST validates session + project ownership + bucket allow-list. Flag any change that re-adds it to the public list.
 
 ## How to respond
 For each violation found: quote the exact line, explain why it breaks the architecture, provide corrected code.
