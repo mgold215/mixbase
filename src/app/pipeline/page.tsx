@@ -23,7 +23,7 @@ export default async function PipelinePage() {
       .order('title'),
     supabaseAdmin
       .from('mb_versions')
-      .select('id, project_id, version_number, label, status, mb_projects!inner(user_id)')
+      .select('id, project_id, version_number, label, status, audio_url, audio_filename, mb_projects!inner(user_id)')
       .eq('mb_projects.user_id', userId)
       .order('version_number', { ascending: false }),
   ])
@@ -35,6 +35,8 @@ export default async function PipelinePage() {
     version_number: v.version_number,
     label: v.label,
     status: v.status,
+    audio_url: v.audio_url,
+    audio_filename: v.audio_filename,
   }))
 
   return (

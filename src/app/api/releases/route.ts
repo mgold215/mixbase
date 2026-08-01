@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { ownsProject, ownsVersion } from '@/lib/ownership'
+import { ensureDistroKidColumns, isMissingDistroKidColumn } from '@/lib/schema-heal'
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
@@ -27,6 +28,9 @@ export async function POST(request: NextRequest) {
   const { title, release_date, project_id, genre, label, isrc, notes, final_version_id } = body
 
   if (!title?.trim()) return NextResponse.json({ error: 'Title is required' }, { status: 400 })
+  if (body.release_type != null && !['single', 'ep', 'album'].includes(body.release_type)) {
+    return NextResponse.json({ error: 'Invalid release_type' }, { status: 400 })
+  }
 
   // Both ids are optional, but when present they must be UUIDs this user owns.
   // GET reads releases back joined with mb_projects(title, artwork_url) via the
@@ -40,11 +44,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid final_version_id' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
+  // DistroKid metadata (migration 025) — all optional at create time; the
+  // pipeline's details editor fills them in later via PATCH.
+  const meta: Record<string, unknown> = {}
+  for (const key of ['artist_name', 'release_type', 'featured_artists', 'songwriters', 'producers', 'language', 'secondary_genre', 'version_info', 'upc'] as const) {
+    if (body[key] != null) meta[key] = body[key]
+  }
+  for (const key of ['explicit', 'instrumental'] as const) {
+    if (body[key] != null) meta[key] = !!body[key]
+  }
+
+  const insertRelease = () => supabaseAdmin
     .from('mb_releases')
-    .insert({ title: title.trim(), release_date, project_id, genre, label, isrc, notes, final_version_id, user_id: userId })
+    .insert({ title: title.trim(), release_date, project_id, genre, label, isrc, notes, final_version_id, user_id: userId, ...meta })
     .select()
     .single()
+
+  // Heal-and-retry if the deploy beat migration 025 to production.
+  let { data, error } = await insertRelease()
+  if (error && isMissingDistroKidColumn(error) && await ensureDistroKidColumns()) {
+    ({ data, error } = await insertRelease())
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

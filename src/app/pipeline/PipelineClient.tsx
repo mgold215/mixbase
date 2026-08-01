@@ -3,9 +3,10 @@
 import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check } from 'lucide-react'
-import { displayArtworkUrl, type Release } from '@/lib/supabase'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, type ReleaseStatusKey } from '@/lib/release-plan'
+import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
 
 // Tailwind classes for each release-status badge tone.
 const STATUS_TONE: Record<ReleaseStatusKey, string> = {
@@ -17,7 +18,7 @@ const STATUS_TONE: Record<ReleaseStatusKey, string> = {
 type ReleaseWithProject = Release & {
   mb_projects: { title: string; artwork_url: string | null; finalized_artwork_url: string | null } | null
 }
-type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string }
+type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string; audio_url: string; audio_filename: string | null }
 
 type Props = {
   initialReleases: ReleaseWithProject[]
@@ -148,6 +149,37 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     }
   }
 
+  // Save one metadata field (details editor). Merges the server's canonical row
+  // back into state — the PATCH response has every column but not the
+  // mb_projects join, so the spread keeps the joined artwork/title intact.
+  async function updateField(releaseId: string, field: string, value: string | boolean | null) {
+    try {
+      const res = await fetch(`/api/releases/${releaseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (!res.ok) throw new Error('update failed')
+      const data = await res.json()
+      setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, ...data } : r))
+    } catch {
+      flashError('Could not save that field — please try again.')
+    }
+  }
+
+  // Which DistroKid field chip was just copied — keyed "releaseId:label" and
+  // held in the parent for the same remount reason as copiedPlanId.
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+  async function copyFieldValue(key: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedField(key)
+      setTimeout(() => setCopiedField(prev => (prev === key ? null : prev)), 1500)
+    } catch {
+      flashError('Clipboard unavailable — copy the full sheet instead.')
+    }
+  }
+
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release?')) return
     // Only drop the release from the UI once the server confirms the delete,
@@ -181,6 +213,112 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     .filter(r => r.release_date && new Date(r.release_date).getTime() < todayMs)
     .sort((a, b) => new Date(b.release_date!).getTime() - new Date(a.release_date!).getTime())
 
+  // ── Waterfall planner ──────────────────────────────────────────────────────
+  // Plans a whole run at once: ordered tracks + start Friday + cadence →
+  // POST /api/releases/waterfall creates one linked, dated release per track.
+  type WfTrack = { title: string; project_id: string; final_version_id: string }
+  const emptyWfTrack: WfTrack = { title: '', project_id: '', final_version_id: '' }
+  const [showWaterfall, setShowWaterfall] = useState(false)
+  const [wfShared, setWfShared] = useState({ artist_name: '', genre: '', label: '', songwriters: '', start_date: '', cadence_days: 28 })
+  const [wfTracks, setWfTracks] = useState<WfTrack[]>([{ ...emptyWfTrack }, { ...emptyWfTrack }])
+  const [wfSaving, setWfSaving] = useState(false)
+  const [wfError, setWfError] = useState<string | null>(null)
+
+  // Live schedule preview so the dates are visible before anything is created.
+  const wfPreviewDates = wfShared.start_date ? waterfallDates(wfShared.start_date, wfTracks.length, wfShared.cadence_days) : []
+
+  function setWfTrack(index: number, patch: Partial<WfTrack>) {
+    setWfTracks(prev => prev.map((t, i) => {
+      if (i !== index) return t
+      const next = { ...t, ...patch }
+      // Picking a project auto-fills an empty title and clears a stale version.
+      if (patch.project_id !== undefined && patch.project_id !== t.project_id) {
+        next.final_version_id = ''
+        if (!t.title.trim()) next.title = projects.find(p => p.id === patch.project_id)?.title ?? t.title
+      }
+      return next
+    }))
+  }
+
+  function moveWfTrack(index: number, dir: -1 | 1) {
+    setWfTracks(prev => {
+      const j = index + dir
+      if (j < 0 || j >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[j]] = [next[j], next[index]]
+      return next
+    })
+  }
+
+  async function handleCreateWaterfall(e: FormEvent) {
+    e.preventDefault()
+    setWfSaving(true)
+    setWfError(null)
+    try {
+      const res = await fetch('/api/releases/waterfall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tracks: wfTracks.map(t => ({
+            title: t.title,
+            project_id: t.project_id || null,
+            final_version_id: t.final_version_id || null,
+          })),
+          start_date: wfShared.start_date,
+          cadence_days: wfShared.cadence_days,
+          artist_name: wfShared.artist_name,
+          genre: wfShared.genre,
+          label: wfShared.label,
+          songwriters: wfShared.songwriters,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        // Attach the joined-project shape the board expects, same as handleCreate.
+        const created = (data as Release[]).map(r => ({
+          ...r,
+          mb_projects: r.project_id && projects.find(p => p.id === r.project_id)
+            ? { title: projects.find(p => p.id === r.project_id)!.title, artwork_url: null, finalized_artwork_url: null }
+            : null,
+        }))
+        setReleases(prev => [...created, ...prev])
+        setShowWaterfall(false)
+        setWfShared({ artist_name: '', genre: '', label: '', songwriters: '', start_date: '', cadence_days: 28 })
+        setWfTracks([{ ...emptyWfTrack }, { ...emptyWfTrack }])
+      } else {
+        setWfError(data.error ?? 'Failed to plan the waterfall')
+      }
+    } catch {
+      setWfError('Network error — please try again')
+    }
+    setWfSaving(false)
+  }
+
+  // One inline-editable metadata field. Uncontrolled (defaultValue + onBlur
+  // PATCH) on purpose: ReleaseCard remounts on every parent render, so
+  // controlled per-keystroke state here would need to live in the parent —
+  // the DOM holds the draft instead, and a save/error re-render restores the
+  // canonical value.
+  function MetaInput({ release, field, label, placeholder }: { release: Release; field: keyof Release & string; label: string; placeholder?: string }) {
+    const value = (release[field] as string | null) ?? ''
+    return (
+      <div>
+        <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">{label}</label>
+        <input
+          type="text"
+          defaultValue={value}
+          placeholder={placeholder}
+          onBlur={e => {
+            const v = e.target.value.trim()
+            if (v !== value) updateField(release.id, field, v || null)
+          }}
+          className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none"
+          style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+        />
+      </div>
+    )
+  }
+
   function ReleaseCard({ release }: { release: ReleaseWithProject }) {
     const isExpanded = expandedId === release.id
     const pct = releaseCompletionPercent(release)
@@ -188,6 +326,30 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     // Readiness judgment (At risk / Due soon / Ready) — null when nothing to flag.
     const status = getReleaseStatus(release, todayStr)
     const copiedPlan = copiedPlanId === release.id
+
+    // ── DistroKid prep inputs ──
+    // The tracklist for this drop (new track + earlier waterfall tracks),
+    // the file that would be uploaded (explicit link, else the project's
+    // latest version — matching the create form's "Latest / none" semantics),
+    // and the readiness issues derived from all of it.
+    const wfTotal = release.waterfall_group_id ? releases.filter(r => r.waterfall_group_id === release.waterfall_group_id).length : 0
+    const tracklist = distroKidTracklist(release, releases)
+    const finalVersion = versions.find(v => v.id === release.final_version_id)
+      ?? (release.project_id ? versions.find(v => v.project_id === release.project_id) : undefined)
+    const artworkUrl = displayArtworkUrl(release.mb_projects ?? {})
+    const issues = validateForDistroKid(release, { hasFinalVersion: !!finalVersion, hasArtwork: !!artworkUrl, tracklist, todayStr })
+    const dkFields = distroKidFields(release, tracklist)
+    const copiedSheet = copiedField === `${release.id}:__sheet`
+
+    const copySheet = () =>
+      copyMarkdown(
+        buildDistroKidSheet(release, tracklist, issues, release.mb_projects?.title ?? null),
+        `${release.title} — DistroKid sheet.md`,
+        () => {
+          setCopiedField(`${release.id}:__sheet`)
+          setTimeout(() => setCopiedField(prev => (prev === `${release.id}:__sheet` ? null : prev)), 2000)
+        },
+      )
 
     // Export the whole release plan — checklist state, date, metadata, notes —
     // as one Markdown doc the musician can paste into a distributor checklist,
@@ -237,6 +399,14 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Waterfall membership — which drop of the run this release is */}
+            {release.waterfall_group_id && release.waterfall_position && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 text-sky-400 bg-sky-400/10">
+                <Droplets size={10} />
+                Drop {release.waterfall_position}/{wfTotal}
+              </span>
+            )}
+
             {/* Readiness status — only rendered when there's something to flag */}
             {status && (
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_TONE[status.key]}`}>
@@ -359,6 +529,155 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
               </div>
             </div>
 
+            {/* Release details — every field DistroKid's upload form asks for,
+                editable inline (saved on blur). This is the data the prep
+                panel below validates and exports. */}
+            <div>
+              <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Release Details</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <MetaInput release={release} field="artist_name" label="Artist name" placeholder="As on your Spotify profile" />
+                <MetaInput release={release} field="featured_artists" label="Featured artists" placeholder="feat. …" />
+                <MetaInput release={release} field="songwriters" label="Songwriters (legal names)" placeholder="Jane Doe, John Smith" />
+                <MetaInput release={release} field="producers" label="Producers" placeholder="Optional" />
+                <MetaInput release={release} field="genre" label="Primary genre" placeholder="e.g. Afrobeats" />
+                <MetaInput release={release} field="secondary_genre" label="Secondary genre" placeholder="Optional" />
+                <MetaInput release={release} field="language" label="Language" placeholder="English" />
+                <MetaInput release={release} field="version_info" label="Version" placeholder="Radio Edit, Remix…" />
+                <MetaInput release={release} field="label" label="Record label" placeholder="e.g. Independent" />
+                <MetaInput release={release} field="isrc" label="ISRC (this track)" placeholder="Paste after DistroKid assigns it" />
+                <MetaInput release={release} field="upc" label="UPC" placeholder="Blank = DistroKid assigns" />
+                <div>
+                  <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">Release type</label>
+                  <select
+                    value={release.release_type}
+                    onChange={e => updateField(release.id, 'release_type', e.target.value)}
+                    className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none appearance-none"
+                    style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                  >
+                    <option value="single" style={{ backgroundColor: 'var(--surface)' }}>Single</option>
+                    <option value="ep" style={{ backgroundColor: 'var(--surface)' }}>EP</option>
+                    <option value="album" style={{ backgroundColor: 'var(--surface)' }}>Album</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-5 mt-3">
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
+                  <input type="checkbox" checked={release.explicit} onChange={() => updateField(release.id, 'explicit', !release.explicit)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
+                  Explicit lyrics
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
+                  <input type="checkbox" checked={release.instrumental} onChange={() => updateField(release.id, 'instrumental', !release.instrumental)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
+                  Instrumental
+                </label>
+              </div>
+            </div>
+
+            {/* DistroKid prep — readiness issues, this drop's tracklist, and
+                every form answer as a click-to-copy chip in upload order. */}
+            <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'var(--surface-2)' }}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1.5">
+                  <Droplets size={12} />
+                  DistroKid Prep
+                </p>
+                <div className="flex items-center gap-4 flex-wrap">
+                  <button onClick={copySheet} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                    {copiedSheet ? <Check size={12} /> : <ClipboardList size={12} />}
+                    {copiedSheet ? 'Copied!' : 'Copy sheet'}
+                  </button>
+                  {finalVersion && (
+                    <a
+                      href={audioProxyUrl(finalVersion.audio_url)}
+                      download={finalVersion.audio_filename ?? true}
+                      className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                    >
+                      <Download size={12} />
+                      Final mix
+                    </a>
+                  )}
+                  {artworkUrl && (
+                    <a href={artworkUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                      <ExternalLink size={12} />
+                      Artwork
+                    </a>
+                  )}
+                  <a
+                    href="https://distrokid.com/new/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
+                  >
+                    <ExternalLink size={12} />
+                    Open DistroKid
+                  </a>
+                </div>
+              </div>
+
+              {/* Readiness — errors block a clean submission, warnings are conventions */}
+              {issues.length > 0 ? (
+                <div className="space-y-1.5">
+                  {issues.map((iss, i) => (
+                    <div key={i} className={`flex items-start gap-2 text-xs ${iss.level === 'error' ? 'text-red-400' : 'text-amber-400'}`}>
+                      {iss.level === 'error' ? <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /> : <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />}
+                      <span>{iss.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                  <Check size={12} />
+                  Everything DistroKid needs is ready — copy the sheet and submit.
+                </p>
+              )}
+
+              {/* Waterfall tracklist for this drop */}
+              {tracklist.length > 1 && (
+                <div>
+                  <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1.5">Tracklist for this drop</p>
+                  <div className="space-y-1">
+                    {tracklist.map(t => (
+                      <div key={t.releaseId} className="flex items-center gap-2 text-xs">
+                        <span className="text-[var(--text-muted)] w-4 text-right">{t.trackNumber}.</span>
+                        <span className="text-[var(--text)] truncate">{t.title}{t.versionInfo ? ` (${t.versionInfo})` : ''}</span>
+                        {t.isNew ? (
+                          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-[#2dd4bf] bg-[#2dd4bf]/10 flex-shrink-0">NEW</span>
+                        ) : (
+                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0 ${t.isrc ? 'text-[var(--text-muted)] bg-[var(--surface)]' : 'text-red-400 bg-red-400/10'}`}>
+                            {t.isrc ? `reuse ISRC ${t.isrc}` : 'ISRC missing'}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Click-to-copy form answers, in DistroKid's upload order */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                {dkFields.map(f => {
+                  const key = `${release.id}:${f.label}`
+                  const copied = copiedField === key
+                  return (
+                    <button
+                      key={f.label}
+                      type="button"
+                      onClick={() => f.value && copyFieldValue(key, f.value)}
+                      disabled={!f.value}
+                      title={f.value ? 'Click to copy' : 'Not set yet'}
+                      className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors disabled:opacity-40 hover:bg-[var(--surface)]"
+                      style={{ border: '1px solid var(--border)' }}
+                    >
+                      <span className="min-w-0 flex items-baseline gap-1.5">
+                        <span className="text-[var(--text-muted)] flex-shrink-0">{f.label}</span>
+                        <span className="text-[var(--text)] truncate">{f.value || '—'}</span>
+                      </span>
+                      {copied ? <Check size={11} className="text-[#2dd4bf] flex-shrink-0" /> : <Copy size={11} className="text-[var(--text-muted)] flex-shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
             {/* Notes */}
             {release.notes && (
               <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
@@ -366,11 +685,6 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
                 <p className="text-sm text-[var(--text-secondary)]">{release.notes}</p>
               </div>
             )}
-
-            {/* Metadata */}
-            <div className="flex gap-4 text-xs text-[var(--text-muted)]">
-              {release.isrc && <span>ISRC: {release.isrc}</span>}
-            </div>
 
             <div className="flex justify-end gap-4">
               <button
@@ -411,14 +725,216 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <h1 className="text-2xl font-bold text-[var(--text)]">Release Pipeline</h1>
           <p className="text-[var(--text-muted)] text-sm mt-0.5">Track every step — from mix to campaign</p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
-        >
-          <Plus size={16} />
-          Add Release
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false) }}
+            className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-sky-400 bg-sky-400/10 hover:bg-sky-400/20"
+          >
+            <Droplets size={16} />
+            Plan Waterfall
+          </button>
+          <button
+            onClick={() => { setShowForm(!showForm); setShowWaterfall(false) }}
+            className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+          >
+            <Plus size={16} />
+            Add Release
+          </button>
+        </div>
       </div>
+
+      {/* Waterfall planner — ordered tracks + start Friday + cadence in, one
+          linked release per drop out. Each later drop's DistroKid prep panel
+          automatically carries the earlier tracks with reuse-ISRC flags. */}
+      {showWaterfall && (
+        <div className="rounded-2xl p-6 mb-6" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <h2 className="text-sm font-semibold text-[var(--text)] mb-1 flex items-center gap-2"><Droplets size={14} className="text-sky-400" /> Plan a Waterfall Run</h2>
+          <p className="text-xs text-[var(--text-muted)] mb-4">One single at a time — each new drop re-releases the earlier tracks so their streams and playlist placements carry over. Drop dates snap to Fridays.</p>
+          <form onSubmit={handleCreateWaterfall} className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">Artist name</label>
+                <input
+                  type="text"
+                  value={wfShared.artist_name}
+                  onChange={e => setWfShared(p => ({ ...p, artist_name: e.target.value }))}
+                  placeholder="As on your Spotify profile"
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">Primary genre</label>
+                <input
+                  type="text"
+                  value={wfShared.genre}
+                  onChange={e => setWfShared(p => ({ ...p, genre: e.target.value }))}
+                  placeholder="e.g. Afrobeats"
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">Record label</label>
+                <input
+                  type="text"
+                  value={wfShared.label}
+                  onChange={e => setWfShared(p => ({ ...p, label: e.target.value }))}
+                  placeholder="e.g. Independent"
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">Songwriters (legal names)</label>
+                <input
+                  type="text"
+                  value={wfShared.songwriters}
+                  onChange={e => setWfShared(p => ({ ...p, songwriters: e.target.value }))}
+                  placeholder="Jane Doe, John Smith"
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">First drop <span className="text-[#2dd4bf]">*</span></label>
+                <input
+                  type="date"
+                  value={wfShared.start_date}
+                  onChange={e => setWfShared(p => ({ ...p, start_date: e.target.value }))}
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                />
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {releaseDatePresets(todayStr).map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => setWfShared(prev => ({ ...prev, start_date: p.date }))}
+                      title={p.friendly}
+                      className={`rounded-full px-2.5 py-1 text-xs transition-colors ${wfShared.start_date === p.date ? 'text-[#2dd4bf] bg-[#2dd4bf]/10' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+                      style={{ border: '1px solid var(--border)' }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1.5">Cadence</label>
+                <select
+                  value={wfShared.cadence_days}
+                  onChange={e => setWfShared(p => ({ ...p, cadence_days: Number(e.target.value) }))}
+                  className="w-full rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none appearance-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                >
+                  <option value={14} style={{ backgroundColor: 'var(--surface)' }}>Every 2 weeks</option>
+                  <option value={21} style={{ backgroundColor: 'var(--surface)' }}>Every 3 weeks</option>
+                  <option value={28} style={{ backgroundColor: 'var(--surface)' }}>Every 4 weeks</option>
+                  <option value={42} style={{ backgroundColor: 'var(--surface)' }}>Every 6 weeks</option>
+                  <option value={56} style={{ backgroundColor: 'var(--surface)' }}>Every 8 weeks</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Ordered tracks — drop order, top first */}
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">Tracks in drop order</label>
+              <div className="space-y-2">
+                {wfTracks.map((t, i) => {
+                  const trackVersions = t.project_id ? versions.filter(v => v.project_id === t.project_id) : []
+                  return (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--text-muted)] w-10 flex-shrink-0">
+                        {wfPreviewDates[i]
+                          ? new Date(wfPreviewDates[i]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          : `#${i + 1}`}
+                      </span>
+                      <input
+                        type="text"
+                        value={t.title}
+                        onChange={e => setWfTrack(i, { title: e.target.value })}
+                        placeholder={`Track ${i + 1} title`}
+                        className="flex-1 min-w-0 rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+                        style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                      />
+                      <select
+                        value={t.project_id}
+                        onChange={e => setWfTrack(i, { project_id: e.target.value })}
+                        className="w-36 rounded-xl px-2 py-2 text-sm text-[var(--text)] focus:outline-none appearance-none"
+                        style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                      >
+                        <option value="" style={{ backgroundColor: 'var(--surface)' }}>Project…</option>
+                        {projects.map(p => (
+                          <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--surface)' }}>{p.title}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={t.final_version_id}
+                        onChange={e => setWfTrack(i, { final_version_id: e.target.value })}
+                        disabled={!t.project_id || trackVersions.length === 0}
+                        className="w-36 rounded-xl px-2 py-2 text-sm text-[var(--text)] focus:outline-none appearance-none disabled:opacity-40"
+                        style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                      >
+                        <option value="" style={{ backgroundColor: 'var(--surface)' }}>Latest / none</option>
+                        {trackVersions.map(v => (
+                          <option key={v.id} value={v.id} style={{ backgroundColor: 'var(--surface)' }}>
+                            {v.label ? v.label : `Version ${v.version_number}`} — {v.status}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <button type="button" onClick={() => moveWfTrack(i, -1)} disabled={i === 0} className="p-1 text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-30 transition-colors" aria-label="Move up">
+                          <ArrowUp size={14} />
+                        </button>
+                        <button type="button" onClick={() => moveWfTrack(i, 1)} disabled={i === wfTracks.length - 1} className="p-1 text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-30 transition-colors" aria-label="Move down">
+                          <ArrowDown size={14} />
+                        </button>
+                        <button type="button" onClick={() => setWfTracks(prev => prev.filter((_, j) => j !== i))} disabled={wfTracks.length <= 2} className="p-1 text-[var(--text-muted)] hover:text-red-400 disabled:opacity-30 transition-colors" aria-label="Remove track">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              {wfTracks.length < 12 && (
+                <button
+                  type="button"
+                  onClick={() => setWfTracks(prev => [...prev, { ...emptyWfTrack }])}
+                  className="flex items-center gap-1.5 mt-2 text-xs text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
+                >
+                  <Plus size={12} />
+                  Add track
+                </button>
+              )}
+            </div>
+
+            {wfError && (
+              <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-xl px-3 py-2">{wfError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={wfSaving || !wfShared.start_date || wfTracks.some(t => !t.title.trim())}
+                className="flex-1 bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold rounded-xl py-2.5 transition-colors"
+              >
+                {wfSaving ? 'Planning...' : `Create ${wfTracks.length} Linked Releases`}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowWaterfall(false); setWfError(null) }}
+                className="px-5 py-2.5 text-sm text-[var(--text-muted)] hover:text-[var(--text)] rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Create form */}
       {showForm && (
