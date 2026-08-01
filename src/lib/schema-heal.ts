@@ -129,6 +129,81 @@ export function isMissingUsageRpc(error: { code?: string; message?: string } | n
   return error?.code === 'PGRST202' || !!error?.message?.includes('try_increment_usage')
 }
 
+// ── Migration 018: lock the usage RPC's execute grant to service_role ────────
+// try_increment_usage is SECURITY DEFINER, so it bypasses mb_usage RLS by
+// design. A freshly created function carries a default EXECUTE grant to PUBLIC,
+// which lets ANY anon or authenticated caller reach it via POST /rest/v1/rpc
+// and inflate — or exhaust — any user's monthly quota. Migration 018 revokes
+// that grant, and so does the revoke bundled into USAGE_RPC_SQL above. But both
+// only run on the CREATE-FUNCTION path (ensureUsageRpc / db-init's SCHEMA_SQL),
+// which fires ONLY when the function is absent. A production that created the
+// function under migration 017 — before the revoke text existed — keeps the
+// PUBLIC grant forever, because the calls succeed and no error ever triggers the
+// create-path heal (verified live: anon can POST the RPC and reach the function
+// body). This heal re-asserts the lockdown on its own. A REVOKE/GRANT is
+// idempotent and safe to run against the already-present function, so it closes
+// the grant on every environment, with no manual migration step, the first time
+// a generation runs after a deploy. It deliberately does NOT re-create the
+// function, so it can never race or diverge from the canonical definition.
+const USAGE_RPC_GRANTS_SQL = `
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
+grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;
+-- handle_new_user is a SECURITY DEFINER signup trigger, never meant to be
+-- client-callable. It isn't reachable over /rest/v1/rpc (no-arg trigger shape),
+-- but migration 018 revokes its PUBLIC grant too; applying the whole of 018 here
+-- keeps the two in lockstep. No service_role grant — only its trigger fires it.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;`
+
+let usageRpcGrantsEnsured: Promise<boolean> | null = null
+
+export function ensureUsageRpcGrants(): Promise<boolean> {
+  if (!usageRpcGrantsEnsured) {
+    usageRpcGrantsEnsured = runQuery(USAGE_RPC_GRANTS_SQL, 'try_increment_usage grants')
+      .catch(() => false)
+      .then(ok => {
+        // Only cache success — a transient failure should retry next generation.
+        if (!ok) usageRpcGrantsEnsured = null
+        return ok
+      })
+  }
+  return usageRpcGrantsEnsured
+}
+
+// ── Migration 025: lock mb_usage's own write door ────────────────────────────
+// mb_usage is the server-side tier-limit enforcement point. Migration 007 gave
+// it INSERT/UPDATE policies scoped `user_id = auth.uid()`, and anon/authenticated
+// hold the default table write grants — so any signed-in user could PATCH their
+// own usage row to 0 over PostgREST and reset their paid-generation quota (no
+// `>= 0` guard meant a negative value was a permanent bypass). Every app write
+// goes through the service-role key (SECURITY DEFINER RPCs + supabaseAdmin),
+// which bypasses RLS, so dropping the client write policies breaks nothing.
+// This is the table-door twin of the RPC-door lockdown above; it heals the same
+// way (migrations are applied by hand, so a deploy can't rely on 025 having run)
+// — idempotent, memoized per process, fired from the generation path.
+const USAGE_TABLE_LOCK_SQL = `
+alter table public.mb_usage enable row level security;
+drop policy if exists "Users can insert their own usage" on public.mb_usage;
+drop policy if exists "Users can update their own usage" on public.mb_usage;
+do $$ begin
+  alter table public.mb_usage
+    add constraint mb_usage_nonneg_counts
+    check (artwork_generations >= 0 and video_generations >= 0);
+exception when duplicate_object then null; end $$;`
+
+let usageTableLockEnsured: Promise<boolean> | null = null
+
+export function ensureUsageTableWriteLock(): Promise<boolean> {
+  if (!usageTableLockEnsured) {
+    usageTableLockEnsured = runQuery(USAGE_TABLE_LOCK_SQL, 'mb_usage write lockdown')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) usageTableLockEnsured = null
+        return ok
+      })
+  }
+  return usageTableLockEnsured
+}
+
 // ── Migration 019: collection share token ────────────────────────────────────
 // The public /share/album/[token] page and the collection Share button both
 // select mb_collections.share_token. A deploy can reach production before the

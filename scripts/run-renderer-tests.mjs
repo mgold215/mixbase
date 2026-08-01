@@ -52,6 +52,8 @@ const SUITES = [
   'db-init-rls-test.mjs',
   'profiles-rls-test.mjs',
   'schema-heal-parity-test.mjs',
+  'usage-rpc-grants-test.mjs',
+  'usage-table-rls-test.mjs',
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
   'submit-links-test.mjs',

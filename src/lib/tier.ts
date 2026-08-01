@@ -3,7 +3,7 @@
 // All functions use supabaseAdmin (service-role key), bypassing RLS — server-side only.
 
 import { supabaseAdmin } from './supabase'
-import { ensureUsageRpc, isMissingUsageRpc } from './schema-heal'
+import { ensureUsageRpc, isMissingUsageRpc, ensureUsageRpcGrants, ensureUsageTableWriteLock } from './schema-heal'
 import { planUsageRefund } from './usage-refund'
 
 export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
@@ -104,6 +104,16 @@ export async function checkAndIncrementUsage(
     console.error(`[tier] try_increment_usage failed for ${userId}:`, res.error.message)
     return legacyCheckAndIncrement(userId, feature, limit, month)
   }
+
+  // The RPC answered, so the function exists on this environment. Re-assert the
+  // two usage-write lockdowns once per process — both bypass the app entirely
+  // via direct PostgREST: the RPC's default PUBLIC execute grant (migration 018)
+  // and mb_usage's own client INSERT/UPDATE policies (migration 025), either of
+  // which lets a signed-in user inflate or reset their quota. Fire-and-forget:
+  // the reserve already succeeded and these are pure hardening, so they must not
+  // block the caller.
+  void ensureUsageRpcGrants()
+  void ensureUsageTableWriteLock()
 
   if (!res.data) return { allowed: false, used: 0, limit, error: true, month }
   return { allowed: res.data.allowed, used: res.data.used, limit, month }

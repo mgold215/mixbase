@@ -287,6 +287,20 @@ end; $$;
 revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
 grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;
 
+-- Migration 025: mb_usage is the tier-limit enforcement point, written only via
+-- the service-role key (SECURITY DEFINER RPCs above + supabaseAdmin). Migration
+-- 007's client INSERT/UPDATE policies let any signed-in user PATCH their own
+-- usage row to 0 over PostgREST and reset their paid quota. Drop them (own-row
+-- SELECT stays for the UI) and guard the counters non-negative.
+alter table public.mb_usage enable row level security;
+drop policy if exists "Users can insert their own usage" on public.mb_usage;
+drop policy if exists "Users can update their own usage" on public.mb_usage;
+do $$ begin
+  alter table public.mb_usage
+    add constraint mb_usage_nonneg_counts
+    check (artwork_generations >= 0 and video_generations >= 0);
+exception when duplicate_object then null; end $$;
+
 with ranked as (
   select id, row_number() over (
     partition by project_id order by version_number asc, created_at asc, id asc
