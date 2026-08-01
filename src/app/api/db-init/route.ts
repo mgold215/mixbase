@@ -297,6 +297,24 @@ update public.mb_versions v set version_number = ranked.rn
 
 create unique index if not exists mb_versions_project_version_uidx
   on public.mb_versions (project_id, version_number);
+
+-- Migration 025: DistroKid submission metadata + waterfall sequencing
+alter table mb_releases add column if not exists artist_name      text;
+alter table mb_releases add column if not exists release_type     text not null default 'single';
+alter table mb_releases add column if not exists featured_artists text;
+alter table mb_releases add column if not exists songwriters      text;
+alter table mb_releases add column if not exists producers        text;
+alter table mb_releases add column if not exists explicit         boolean not null default false;
+alter table mb_releases add column if not exists instrumental     boolean not null default false;
+alter table mb_releases add column if not exists language         text not null default 'English';
+alter table mb_releases add column if not exists secondary_genre  text;
+alter table mb_releases add column if not exists version_info     text;
+alter table mb_releases add column if not exists upc              text;
+alter table mb_releases add column if not exists waterfall_group_id uuid;
+alter table mb_releases add column if not exists waterfall_position integer;
+
+create index if not exists idx_releases_waterfall_group
+  on mb_releases(waterfall_group_id, waterfall_position);
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.
