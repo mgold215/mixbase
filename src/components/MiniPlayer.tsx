@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -22,7 +23,18 @@ export default function MiniPlayer() {
   // player (collection album player, share-page player) is the active audio source —
   // this transport drives the app-wide queue, so tapping "next" here while a
   // collection is playing would jump to the wrong track and hijack playback.
-  if (!currentTrack || externalSourceActive || pathname.startsWith('/player')) return null
+  const visible = !!currentTrack && !externalSourceActive && !pathname.startsWith('/player')
+
+  // While the bar is showing, stamp <html> so globals.css can grow
+  // --player-bottom by the bar's height — page content scrolls clear of it
+  // instead of the last element being stuck underneath at max scroll.
+  useEffect(() => {
+    if (!visible) return
+    document.documentElement.setAttribute('data-mini-player', '')
+    return () => document.documentElement.removeAttribute('data-mini-player')
+  }, [visible])
+
+  if (!visible || !currentTrack) return null
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 

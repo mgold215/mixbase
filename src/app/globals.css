@@ -75,6 +75,19 @@ body {
     --player-bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom, 0px));
   }
 
+  /* While the mini player is showing (MiniPlayer stamps this attribute on
+     <html>), page content needs clearance for it on top of the tab bar —
+     otherwise the last element (e.g. the collection page's Add Track button)
+     sits exactly behind the mini player at max scroll and can never be
+     reached. The /player page never gets the attribute (the mini player hides
+     itself there), so its bottom: var(--player-bottom) is unaffected. */
+  :root[data-mini-player] {
+    --player-bottom: calc(var(--tab-bar-height) + var(--mini-player-height) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* This unlayered rule intentionally beats Tailwind's layered pb-* utilities
+     on the same element, so it is the single source of truth for how much
+     bottom clearance mobile pages get. */
   .min-h-screen {
     min-height: calc(100dvh - var(--player-bottom));
     padding-bottom: var(--player-bottom);
