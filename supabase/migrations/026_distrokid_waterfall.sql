@@ -1,4 +1,4 @@
--- 025: DistroKid submission metadata + waterfall release sequencing.
+-- 026: DistroKid submission metadata + waterfall release sequencing.
 -- Everything DistroKid's upload form asks for lives on the release row, so the
 -- pipeline can generate a copy-ready submission sheet and validate readiness.
 -- All statements are additive/idempotent (safe to re-run; iOS Codable ignores

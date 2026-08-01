@@ -17,7 +17,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     'title', 'release_date', 'project_id', 'genre', 'label', 'isrc', 'notes', 'final_version_id',
     'mixing_done', 'mastering_done', 'artwork_ready', 'dsp_submitted', 'social_posts_done', 'press_release_done',
     'dsp_spotify', 'dsp_apple_music', 'dsp_tidal', 'dsp_bandcamp', 'dsp_soundcloud', 'dsp_youtube', 'dsp_amazon',
-    // DistroKid metadata + waterfall sequencing (migration 025). waterfall_*
+    // DistroKid metadata + waterfall sequencing (migration 026). waterfall_*
     // is PATCHable so a release can be detached from a run (set both null);
     // group ids are only ever compared within this user's own rows, so a
     // forged uuid can't reach anyone else's data.
@@ -50,7 +50,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     .select()
     .single()
 
-  // Heal-and-retry if the deploy beat migration 025 to production.
+  // Heal-and-retry if the deploy beat migration 026 to production.
   let { data, error } = await updateRelease()
   if (error && isMissingDistroKidColumn(error) && await ensureDistroKidColumns()) {
     ({ data, error } = await updateRelease())

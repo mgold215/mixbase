@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     ...shared,
   }))
 
-  // Heal-and-retry if the deploy beat migration 025 to production — this route
+  // Heal-and-retry if the deploy beat migration 026 to production — this route
   // always writes the new columns, so it would 500 on every call until healed.
   let { data, error } = await supabaseAdmin.from('mb_releases').insert(rows).select()
   if (error && isMissingDistroKidColumn(error) && await ensureDistroKidColumns()) {

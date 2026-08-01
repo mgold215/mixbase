@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid final_version_id' }, { status: 400 })
   }
 
-  // DistroKid metadata (migration 025) — all optional at create time; the
+  // DistroKid metadata (migration 026) — all optional at create time; the
   // pipeline's details editor fills them in later via PATCH.
   const meta: Record<string, unknown> = {}
   for (const key of ['artist_name', 'release_type', 'featured_artists', 'songwriters', 'producers', 'language', 'secondary_genre', 'version_info', 'upc'] as const) {
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     .select()
     .single()
 
-  // Heal-and-retry if the deploy beat migration 025 to production.
+  // Heal-and-retry if the deploy beat migration 026 to production.
   let { data, error } = await insertRelease()
   if (error && isMissingDistroKidColumn(error) && await ensureDistroKidColumns()) {
     ({ data, error } = await insertRelease())

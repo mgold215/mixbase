@@ -312,7 +312,7 @@ update public.mb_versions v set version_number = ranked.rn
 create unique index if not exists mb_versions_project_version_uidx
   on public.mb_versions (project_id, version_number);
 
--- Migration 025: DistroKid submission metadata + waterfall sequencing
+-- Migration 026: DistroKid submission metadata + waterfall sequencing
 alter table mb_releases add column if not exists artist_name      text;
 alter table mb_releases add column if not exists release_type     text not null default 'single';
 alter table mb_releases add column if not exists featured_artists text;

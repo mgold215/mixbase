@@ -135,7 +135,7 @@ export type Release = {
   dsp_soundcloud: boolean
   dsp_youtube: boolean
   dsp_amazon: boolean
-  // DistroKid submission metadata (migration 025)
+  // DistroKid submission metadata (migration 026)
   artist_name: string | null
   release_type: 'single' | 'ep' | 'album'
   featured_artists: string | null

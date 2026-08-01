@@ -360,7 +360,7 @@ export function isMissingFeedCommentsTable(error: { code?: string; message?: str
   return !!error.message && error.message.includes('mb_feed_comments') && /does not exist|relation/.test(error.message)
 }
 
-// ── Migration 025: DistroKid metadata + waterfall sequencing ─────────────────
+// ── Migration 026: DistroKid metadata + waterfall sequencing ─────────────────
 // The release routes write these mb_releases columns (details editor PATCH,
 // waterfall POST). Same deploy-beats-the-migration race as the other heals:
 // PostgREST rejects the whole insert/update when a referenced column is
