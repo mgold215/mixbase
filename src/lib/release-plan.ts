@@ -56,7 +56,8 @@ export function releaseCompletionPercent(release: Release): number {
 
 // Parse a YYYY-MM-DD string to a UTC-midnight millisecond value, or null if
 // blank/malformed. Date.UTC reads no clock, so this stays pure and testable.
-function ymdUtc(dateStr: string | null): number | null {
+// Exported for reuse by the DistroKid/waterfall helpers in distrokid.ts.
+export function ymdUtc(dateStr: string | null): number | null {
   if (!dateStr) return null
   const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (!m) return null
@@ -115,13 +116,13 @@ export type DatePreset = { label: string; date: string; friendly: string }
 
 // Advance a UTC-midnight ms value to the next Friday on or after it. Friday is
 // weekday 5 (Sun = 0). Pure — operates only on the passed ms, reads no clock.
-function nextFriday(ms: number): number {
+export function nextFriday(ms: number): number {
   const add = (5 - new Date(ms).getUTCDay() + 7) % 7 // 0 when already a Friday
   return ms + add * 86_400_000
 }
 
 // Render a UTC-midnight ms value back to the YYYY-MM-DD column format.
-function toYmd(ms: number): string {
+export function toYmd(ms: number): string {
   const d = new Date(ms)
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 }

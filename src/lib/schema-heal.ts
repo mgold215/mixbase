@@ -360,6 +360,49 @@ export function isMissingFeedCommentsTable(error: { code?: string; message?: str
   return !!error.message && error.message.includes('mb_feed_comments') && /does not exist|relation/.test(error.message)
 }
 
+// ── Migration 026: DistroKid metadata + waterfall sequencing ─────────────────
+// The release routes write these mb_releases columns (details editor PATCH,
+// waterfall POST). Same deploy-beats-the-migration race as the other heals:
+// PostgREST rejects the whole insert/update when a referenced column is
+// missing. Idempotent ALTERs, memoized per process.
+
+const DISTROKID_SQL = `
+alter table mb_releases add column if not exists artist_name      text;
+alter table mb_releases add column if not exists release_type     text not null default 'single';
+alter table mb_releases add column if not exists featured_artists text;
+alter table mb_releases add column if not exists songwriters      text;
+alter table mb_releases add column if not exists producers        text;
+alter table mb_releases add column if not exists explicit         boolean not null default false;
+alter table mb_releases add column if not exists instrumental     boolean not null default false;
+alter table mb_releases add column if not exists language         text not null default 'English';
+alter table mb_releases add column if not exists secondary_genre  text;
+alter table mb_releases add column if not exists version_info     text;
+alter table mb_releases add column if not exists upc              text;
+alter table mb_releases add column if not exists waterfall_group_id uuid;
+alter table mb_releases add column if not exists waterfall_position integer;
+create index if not exists idx_releases_waterfall_group
+  on mb_releases(waterfall_group_id, waterfall_position);`
+
+let distroKidEnsured: Promise<boolean> | null = null
+
+export function ensureDistroKidColumns(): Promise<boolean> {
+  if (!distroKidEnsured) {
+    distroKidEnsured = runQuery(DISTROKID_SQL, 'mb_releases DistroKid columns')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) distroKidEnsured = null
+        return ok
+      })
+  }
+  return distroKidEnsured
+}
+
+/** True when a PostgREST error is the missing-column failure this heals. */
+export function isMissingDistroKidColumn(error: { message?: string } | null): boolean {
+  return !!error?.message &&
+    /(artist_name|release_type|featured_artists|songwriters|producers|instrumental|secondary_genre|version_info|waterfall_group_id|waterfall_position)/.test(error.message)
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false

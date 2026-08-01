@@ -135,6 +135,22 @@ export type Release = {
   dsp_soundcloud: boolean
   dsp_youtube: boolean
   dsp_amazon: boolean
+  // DistroKid submission metadata (migration 026)
+  artist_name: string | null
+  release_type: 'single' | 'ep' | 'album'
+  featured_artists: string | null
+  songwriters: string | null
+  producers: string | null
+  explicit: boolean
+  instrumental: boolean
+  language: string
+  secondary_genre: string | null
+  version_info: string | null
+  upc: string | null
+  // Waterfall sequencing: releases sharing a group id form one run;
+  // position is 1-based in drop order (1 = first single).
+  waterfall_group_id: string | null
+  waterfall_position: number | null
   created_at: string
   updated_at: string
 }
