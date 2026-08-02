@@ -530,6 +530,31 @@ export function isMissingLibraryTracksTable(error: { code?: string; message?: st
   return !!error.message && error.message.includes('mb_library_tracks') && /does not exist|relation|schema cache/.test(error.message)
 }
 
+// ── Profile save fallback (RLS-degraded admin client) ────────────────────────
+// PATCH /api/auth/me writes profiles through supabaseAdmin. If that client is
+// degraded (service key missing/rotated/wrong), the upsert dies on RLS because
+// profiles deliberately has no INSERT policy and read/update are own-row-only
+// (migration 024). This routes the same upsert through the Management SQL
+// channel, which authorizes with SUPABASE_MANAGEMENT_TOKEN instead of the
+// service key — so the user's save still lands while the key gets fixed.
+const PROFILE_UPSERT_COLS = new Set(['artist_name', 'display_name', 'spotify_url', 'youtube_url'])
+
+export async function upsertProfileViaManagementSql(
+  userId: string,
+  updates: Record<string, string>,
+): Promise<boolean> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) return false
+  const entries = Object.entries(updates).filter(([key]) => PROFILE_UPSERT_COLS.has(key))
+  if (entries.length === 0) return false
+
+  const escape = (value: string) => `'${value.replace(/'/g, "''")}'`
+  const cols = entries.map(([key]) => key).join(', ')
+  const vals = entries.map(([, value]) => escape(value)).join(', ')
+  const sets = entries.map(([key, value]) => `${key} = ${escape(value)}`).join(', ')
+  const sql = `insert into profiles (id, ${cols}) values ('${userId}', ${vals}) on conflict (id) do update set ${sets};`
+  return runQuery(sql, 'profiles upsert fallback')
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false

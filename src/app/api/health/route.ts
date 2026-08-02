@@ -17,11 +17,23 @@ export async function GET() {
   void ensureSecurityHeals()
 
   let db: 'ok' | 'error' = 'ok'
+  // Whether the admin client demonstrably has service-role POWER at runtime —
+  // a degraded client (anon) still "succeeds" on RLS-filtered reads, it just
+  // sees zero rows. A head-count on profiles separates the two: service sees
+  // every row, anon sees none. Reported for diagnosis; deliberately NOT part
+  // of `ok` so a fresh/empty database can't fail deploy health checks.
+  let adminPower = false
 
   try {
     // Lightweight query — just check the connection, don't scan rows
-    const { error } = await supabaseAdmin.from('profiles').select('id').limit(1)
+    const { count, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
     if (error) db = 'error'
+    adminPower = !error && (count ?? 0) > 0
+    if (!error && !adminPower) {
+      console.error('[health] admin client sees ZERO profiles — service key is likely degraded to anon')
+    }
   } catch {
     db = 'error'
   }
@@ -37,5 +49,8 @@ export async function GET() {
   // `ok` must agree with the HTTP status — body-parsing monitors and the
   // status-based Railway healthcheck may not contradict each other.
   const ok = db === 'ok' && serviceRoleKeyValid
-  return Response.json({ ok, db, service_key: serviceRoleKeyValid, ts: Date.now() }, { status: ok ? 200 : 503 })
+  return Response.json(
+    { ok, db, service_key: serviceRoleKeyValid, admin_power: adminPower, ts: Date.now() },
+    { status: ok ? 200 : 503 }
+  )
 }
