@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { ensureProfileSocialColumns, isMissingProfileSocialColumn } from '@/lib/schema-heal'
+import { ensureProfileSocialColumns, isMissingProfileSocialColumn, upsertProfileViaManagementSql } from '@/lib/schema-heal'
 import { isHttpUrl } from '@/lib/social-links'
 
 const PROFILE_COLS = 'artist_name, display_name, spotify_url, youtube_url'
@@ -79,7 +79,24 @@ export async function PATCH(request: NextRequest) {
     ({ error } = await runUpsert())
   }
 
+  // An RLS violation here is impossible with real service-role power — it
+  // means the admin client is degraded (service key missing/rotated/wrong).
+  // profiles has no INSERT policy by design (migration 024), so the upsert
+  // dies as "new row violates row-level security". Land the user's save
+  // through the Management SQL channel (independent credential) and log
+  // loudly so the broken key gets fixed instead of hiding behind the fallback.
+  if (error && (error.code === '42501' || /row-level security/i.test(error.message ?? ''))) {
+    console.error(
+      '[auth/me] profiles upsert hit RLS — SUPABASE_SERVICE_ROLE_KEY is NOT acting as service_role. ' +
+      'Falling back to management SQL. Fix the key in Railway variables.'
+    )
+    if (await upsertProfileViaManagementSql(userId, updates)) {
+      error = null
+    }
+  }
+
   if (error) {
+    console.error('[auth/me] profile save failed:', error.code ?? '', error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
