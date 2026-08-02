@@ -41,7 +41,7 @@ Password: (paste MIXBASE_REVIEW_PASSWORD from ~/.env.secrets into App Store Conn
 ## App Review Notes
 mixBase is a music production tool for managing mix versions and releases.
 
-Getting started: sign in with the demo account above (or tap "Sign in with Apple"). The demo account is pre-loaded with 3 sample projects — "Midnight Drive", "Golden Hour" (two versions, so you can A/B compare a demo vs. a master), and "Nightshift" (released) — each with playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.
+Getting started: sign in with the demo account above (or tap "Sign in with Apple"). The demo account is pre-loaded with 3 real released tracks by the developer (moodmixformat) — "KICK IT W/U", "LIVE IT UP", and "TAKE TIME" — each with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.
 
 AI features work in-app on the demo account (no API key needed): the demo account is provisioned at the top "studio" tier, so AI artwork generation (Media / project artwork) and AI visualizer video generation both function within their monthly quotas. AI generation runs entirely on our server — no paid keys are shipped in the app binary.
 
