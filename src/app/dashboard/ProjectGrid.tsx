@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Music } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import DashPlayButton from '@/components/DashPlayButton'
 import AddToPipelineButton from '@/components/AddToPipelineButton'
 
@@ -204,7 +204,7 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
                     <Image src={project.artwork_url} alt={project.title} fill className="object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <Music size={14} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+                      <CassetteIcon size={14} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
                     </div>
                   )}
                 </div>

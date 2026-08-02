@@ -4,7 +4,8 @@ import { useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Play, Pause, SkipBack, SkipForward, Maximize2, Music } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Maximize2 } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { formatDuration } from '@/lib/supabase'
 
@@ -76,7 +77,7 @@ export default function MiniPlayer() {
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <Music size={16} className="text-[#444]" />
+              <CassetteIcon size={16} className="text-[#444]" />
             </div>
           )}
         </div>

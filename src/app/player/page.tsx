@@ -5,9 +5,9 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Music,
-  Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown,
+  Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown,
 } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl } from '@/lib/supabase'
 import { trackShareUrl } from '@/lib/share-url'
@@ -355,7 +355,7 @@ function PlayerPage() {
                 <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 relative">
                   {t.artwork_url
                     ? <Image src={t.artwork_url} alt={t.title} fill className="object-cover" unoptimized />
-                    : <div className="w-full h-full flex items-center justify-center"><Music size={16} className="text-[#444]" /></div>}
+                    : <div className="w-full h-full flex items-center justify-center"><CassetteIcon size={16} className="text-[#444]" /></div>}
                   {active && isPlaying && !buffering && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/45">
                       <div className="flex gap-[3px] items-end h-5">
@@ -417,7 +417,7 @@ function PlayerPage() {
                 <Image src={current.artwork_url} alt={current.title} fill className="object-cover" unoptimized />
               ) : (
                 <div className="absolute inset-0 bg-[#111] flex items-center justify-center">
-                  <Music size={80} className="text-[#222]" />
+                  <CassetteIcon size={80} className="text-[#222]" />
                 </div>
               )}
               {/* Project visualizer — loops over the artwork while the track plays

@@ -2,7 +2,8 @@
 
 import { memo, useEffect, useState } from 'react'
 import Image from 'next/image'
-import { Play, Pause, Music, MessageCircle, Send, History } from 'lucide-react'
+import { Play, Pause, MessageCircle, Send, History } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { audioProxyUrl, artworkProxyUrl } from '@/lib/supabase'
 import { timeAgo } from '@/lib/time'
@@ -161,7 +162,7 @@ const FeedRow = memo(function FeedRow({
             <Image src={artworkProxyUrl(item.artwork_url)} alt="" fill sizes="48px" className="object-cover" />
           ) : (
             <span className="absolute inset-0 flex items-center justify-center">
-              <Music size={16} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+              <CassetteIcon size={16} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
             </span>
           )}
           <span

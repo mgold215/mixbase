@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react'
 import Image from 'next/image'
-import { Play, Pause, Music, MessageSquare, ChevronDown, Download } from 'lucide-react'
+import { Play, Pause, MessageSquare, ChevronDown, Download } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
@@ -174,7 +175,7 @@ export default function ShareClient({ version }: Props) {
             <Image src={artworkUrl} alt={title} fill className="object-cover" unoptimized />
           ) : (
             <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-              <Music size={64} className="text-[#333]" />
+              <CassetteIcon size={64} className="text-[#333]" />
             </div>
           )}
           {/* Project visualizer — loops over the artwork while the track plays

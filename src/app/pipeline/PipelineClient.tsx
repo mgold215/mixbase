@@ -7,6 +7,7 @@ import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Che
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
+import CassetteIcon from '@/components/CassetteIcon'
 
 // Tailwind classes for each release-status badge tone.
 const STATUS_TONE: Record<ReleaseStatusKey, string> = {
@@ -201,7 +202,7 @@ function ReleaseCard({
           {displayArtworkUrl(release.mb_projects ?? {}) ? (
             <Image src={displayArtworkUrl(release.mb_projects ?? {})!} alt={release.title} fill className="object-cover" />
           ) : (
-            <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)] text-lg">♪</div>
+            <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)]"><CassetteIcon size={20} /></div>
           )}
         </div>
 

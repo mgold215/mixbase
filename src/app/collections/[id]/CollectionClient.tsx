@@ -4,7 +4,8 @@ import { useState, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Plus, Trash2, Music, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2, Pencil } from 'lucide-react'
+import { ArrowLeft, Play, Plus, Trash2, Search, X, GripVertical, ImageIcon, ChevronDown, FileText, Check, Sparkles, Share2, Pencil } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { buildCollectionExport, COLLECTION_TYPE_LABEL } from '@/lib/collection-export'
 import { IMAGE_MODELS } from '@/lib/artwork-models'
@@ -441,7 +442,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 <Image src={coverUrl} alt="Cover" fill className="object-cover" unoptimized />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-1">
-                  <Music size={22} style={{ color: 'var(--surface-3)' }} />
+                  <CassetteIcon size={22} style={{ color: 'var(--surface-3)' }} />
                 </div>
               )}
               {/* Hover overlay */}
@@ -719,7 +720,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                     <Image src={item.mb_projects.artwork_url} alt="" fill className="object-cover" unoptimized />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <Music size={14} style={{ color: 'var(--surface-3)' }} />
+                      <CassetteIcon size={14} style={{ color: 'var(--surface-3)' }} />
                     </div>
                   )}
                 </div>
@@ -820,7 +821,7 @@ export default function CollectionClient({ collection, initialItems, allProjects
                         <Image src={p.artwork_url} alt="" fill className="object-cover" unoptimized />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
-                          <Music size={11} style={{ color: 'var(--surface-3)' }} />
+                          <CassetteIcon size={11} style={{ color: 'var(--surface-3)' }} />
                         </div>
                       )}
                     </div>
