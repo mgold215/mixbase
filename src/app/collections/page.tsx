@@ -3,7 +3,7 @@ import { getUserId } from '@/lib/auth'
 import Link from 'next/link'
 import Image from 'next/image'
 import Nav from '@/components/Nav'
-import { Music } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import NewCollectionButton from './NewCollectionButton'
 
 export const dynamic = 'force-dynamic'
@@ -44,7 +44,7 @@ export default async function CollectionsPage() {
 
         {collections.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-            <Music size={48} style={{ color: 'var(--surface-3)' }} />
+            <CassetteIcon size={48} style={{ color: 'var(--surface-3)' }} />
             <p style={{ color: 'var(--text-muted)' }}>No collections yet. Create an album, EP, or playlist.</p>
           </div>
         ) : (
@@ -76,7 +76,7 @@ export default async function CollectionsPage() {
                             <Image src={artworks[i]} alt="" fill className="object-cover" unoptimized />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center">
-                              <Music size={14} style={{ color: 'var(--surface-3)' }} />
+                              <CassetteIcon size={14} style={{ color: 'var(--surface-3)' }} />
                             </div>
                           )}
                         </div>

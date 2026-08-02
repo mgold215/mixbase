@@ -16,10 +16,10 @@ import { analyzeFile } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
 import type { FeedComment } from '@/lib/feed'
 import {
-  ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Music,
-  Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
+  ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
   Sparkles, History, X, ClipboardList, Copy, FileText,
 } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
 import type { Release } from '@/lib/supabase'
 
@@ -758,7 +758,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             {/* Current mix */}
             {currentMix === null ? (
               <div className="text-center py-16 text-[var(--text-muted)]">
-                <Music size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
+                <CassetteIcon size={32} className="mx-auto mb-3 text-[#2a2a2a]" />
                 <p className="text-sm">No mixes yet — upload your first mix above</p>
               </div>
             ) : (

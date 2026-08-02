@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ChangeEvent } from 'react'
 import Image from 'next/image'
-import { Play, Pause, Music, SkipBack, SkipForward } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward } from 'lucide-react'
+import CassetteIcon from '@/components/CassetteIcon'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
@@ -269,7 +270,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
             <Image src={coverUrl} alt={title} fill className="object-cover" unoptimized />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
-              <Music size={56} className="text-[#333]" />
+              <CassetteIcon size={56} className="text-[#333]" />
             </div>
           )}
         </div>
@@ -338,7 +339,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
               />
             ) : (
               <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-                <Music size={64} className="text-[#333]" />
+                <CassetteIcon size={64} className="text-[#333]" />
               </div>
             )}
             {/* Track visualizer loops over the artwork while playing */}
@@ -435,7 +436,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                   <Image src={coverUrl} alt={title} fill className="object-cover" unoptimized />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <Music size={20} className="text-[#333]" />
+                    <CassetteIcon size={20} className="text-[#333]" />
                   </div>
                 )}
               </div>
@@ -499,7 +500,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                         <Image src={track.artworkUrl} alt="" fill className="object-cover" unoptimized />
                       ) : (
                         <span className="absolute inset-0 flex items-center justify-center">
-                          <Music size={14} className="text-[#333]" />
+                          <CassetteIcon size={14} className="text-[#333]" />
                         </span>
                       )}
                     </span>
