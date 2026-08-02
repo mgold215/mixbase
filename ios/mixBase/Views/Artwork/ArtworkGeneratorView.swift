@@ -1,51 +1,41 @@
 import SwiftUI
 
 // MARK: - ArtworkGeneratorView
-// Flow for generating AI artwork for a project.
-// 1. Enter a prompt description (or tap "Auto" to generate one with Claude)
-// 2. Pick a style (Photographic, Abstract, Illustration, Minimal, Cinematic)
-// 3. Tap "Generate" to create artwork via Replicate/FLUX
-// 4. Browse results in a horizontal scroll
-// 5. Tap to select, then "Apply" to set it as the project artwork
+// Flow for generating AI artwork for a project — matching the web Artwork tab:
+// 1. Describe the artwork (or tap "Auto" to build a prompt from track metadata)
+// 2. Pick an image model (FLUX Ultra, Seedream, Imagen, Recraft, ...)
+// 3. Optionally toggle "Vary the look" for a randomized photographic treatment
+// 4. Generate — the server creates the image AND applies it to the project
+// Generation is tier-gated server-side; limit errors surface with upgrade copy.
 
 struct ArtworkGeneratorView: View {
 
     // The project this artwork will be applied to
     let projectId: UUID
 
-    // Dismiss the view after applying artwork
+    // Lets the presenting screen update its artwork immediately on success
+    var onGenerated: ((String) -> Void)? = nil
+
     @Environment(\.dismiss) private var dismiss
 
     // The prompt description text
     @State private var prompt = ""
 
-    // Available style options for the segmented control
-    private let styles = ["Photographic", "Abstract", "Illustration", "Minimal", "Cinematic"]
+    // Selected image model (ids mirror the server registry)
+    @State private var selectedModelId = MixbaseAPI.imageModels[0].id
 
-    // Currently selected style index
-    @State private var selectedStyleIndex = 0
+    // Randomized photographic look (lens/light/weather/mood) on top of the prompt
+    @State private var varyLook = false
 
-    // Generated image URLs from the AI service
-    @State private var generatedImageUrls: [String] = []
+    // The artwork the server generated and applied
+    @State private var generatedArtworkUrl: String?
 
-    // Which generated image the user has selected (by index)
-    @State private var selectedImageIndex: Int?
-
-    // Loading state while generating
     @State private var isGenerating = false
-
-    // Loading state while applying (uploading + updating project)
-    @State private var isApplying = false
-
-    // Error message to display
-    @State private var errorMessage: String?
-
-    // Whether auto-prompt is loading
     @State private var isAutoPrompting = false
+    @State private var errorMessage: String?
 
     var body: some View {
         ZStack {
-            // Dark background
             Color(hex: "#080808")
                 .ignoresSafeArea()
 
@@ -57,7 +47,6 @@ struct ArtworkGeneratorView: View {
                             .font(.headline)
                             .foregroundColor(Color(hex: "#f0f0f0"))
 
-                        // Text field for the prompt with an "Auto" button
                         HStack(spacing: 8) {
                             TextField("e.g. Neon city skyline at night, vinyl textures...", text: $prompt, axis: .vertical)
                                 .foregroundColor(Color(hex: "#f0f0f0"))
@@ -66,7 +55,7 @@ struct ArtworkGeneratorView: View {
                                 .cornerRadius(10)
                                 .lineLimit(3...6)
 
-                            // "Auto" button — uses Claude to generate a prompt
+                            // "Auto" — builds a prompt from the track's title/genre/BPM
                             Button(action: autoGeneratePrompt) {
                                 if isAutoPrompting {
                                     ProgressView()
@@ -87,30 +76,29 @@ struct ArtworkGeneratorView: View {
                     }
                     .padding(.horizontal)
 
-                    // MARK: - Style Picker
+                    // MARK: - Model Picker
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Style")
+                        Text("Model")
                             .font(.headline)
                             .foregroundColor(Color(hex: "#f0f0f0"))
                             .padding(.horizontal)
 
-                        // Segmented control for style selection
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
-                                ForEach(0..<styles.count, id: \.self) { index in
-                                    Button(action: { selectedStyleIndex = index }) {
-                                        Text(styles[index])
+                                ForEach(MixbaseAPI.imageModels) { model in
+                                    Button(action: { selectedModelId = model.id }) {
+                                        Text(model.label)
                                             .font(.caption)
                                             .fontWeight(.medium)
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 8)
                                             .foregroundColor(
-                                                selectedStyleIndex == index
+                                                selectedModelId == model.id
                                                     ? Color(hex: "#080808")
                                                     : Color(hex: "#f0f0f0")
                                             )
                                             .background(
-                                                selectedStyleIndex == index
+                                                selectedModelId == model.id
                                                     ? Color(hex: "#2dd4bf")
                                                     : Color(hex: "#222222")
                                             )
@@ -122,6 +110,21 @@ struct ArtworkGeneratorView: View {
                         }
                     }
 
+                    // MARK: - Vary Toggle
+                    Toggle(isOn: $varyLook) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Vary the look")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                            Text("Adds a randomized lens, light and mood treatment")
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .tint(Color(hex: "#2dd4bf"))
+                    .padding(.horizontal)
+
                     // MARK: - Generate Button
                     Button(action: generateArtwork) {
                         HStack {
@@ -130,7 +133,7 @@ struct ArtworkGeneratorView: View {
                                     .tint(Color(hex: "#080808"))
                             } else {
                                 Image(systemName: "paintbrush.pointed")
-                                Text("Generate")
+                                Text(generatedArtworkUrl == nil ? "Generate" : "Generate Another")
                             }
                         }
                         .font(.headline)
@@ -147,7 +150,7 @@ struct ArtworkGeneratorView: View {
                     .disabled(prompt.isEmpty || isGenerating)
                     .padding(.horizontal)
 
-                    // MARK: - Error Message
+                    // MARK: - Error Message (incl. tier-limit upgrade copy)
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.caption)
@@ -161,7 +164,7 @@ struct ArtworkGeneratorView: View {
                             ProgressView()
                                 .tint(Color(hex: "#2dd4bf"))
                                 .scaleEffect(1.5)
-                            Text("Generating artwork...")
+                            Text("Generating artwork — this can take up to a minute...")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                         }
@@ -169,70 +172,42 @@ struct ArtworkGeneratorView: View {
                         .padding(.vertical, 40)
                     }
 
-                    // MARK: - Generated Results
-                    if !generatedImageUrls.isEmpty {
+                    // MARK: - Result
+                    // The server already applied this as the project artwork.
+                    if let urlString = generatedArtworkUrl, let url = URL(string: urlString) {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Results")
-                                .font(.headline)
-                                .foregroundColor(Color(hex: "#f0f0f0"))
-                                .padding(.horizontal)
-
-                            // Horizontal scroll of generated images
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(0..<generatedImageUrls.count, id: \.self) { index in
-                                        if let url = URL(string: generatedImageUrls[index]) {
-                                            AsyncImage(url: url) { image in
-                                                image
-                                                    .resizable()
-                                                    .aspectRatio(contentMode: .fill)
-                                            } placeholder: {
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .fill(Color(hex: "#1a1a1a"))
-                                                    .overlay(ProgressView().tint(.gray))
-                                            }
-                                            .frame(width: 200, height: 200)
-                                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                                            // Teal border on the selected image
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(
-                                                        selectedImageIndex == index
-                                                            ? Color(hex: "#2dd4bf")
-                                                            : Color.clear,
-                                                        lineWidth: 3
-                                                    )
-                                            )
-                                            .onTapGesture {
-                                                selectedImageIndex = index
-                                            }
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal)
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                Text("Applied as project artwork")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(Color(hex: "#f0f0f0"))
                             }
-                        }
+                            .padding(.horizontal)
 
-                        // MARK: - Apply Button
-                        if selectedImageIndex != nil {
-                            Button(action: applyArtwork) {
-                                HStack {
-                                    if isApplying {
-                                        ProgressView()
-                                            .tint(Color(hex: "#080808"))
-                                    } else {
-                                        Image(systemName: "checkmark.circle")
-                                        Text("Apply")
-                                    }
-                                }
-                                .font(.headline)
-                                .foregroundColor(Color(hex: "#080808"))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color(hex: "#2dd4bf"))
-                                .cornerRadius(12)
+                            AsyncImage(url: url) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color(hex: "#1a1a1a"))
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay(ProgressView().tint(.gray))
                             }
-                            .disabled(isApplying)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .padding(.horizontal)
+
+                            Button(action: { dismiss() }) {
+                                Text("Done")
+                                    .font(.headline)
+                                    .foregroundColor(Color(hex: "#080808"))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(Color(hex: "#2dd4bf"))
+                                    .cornerRadius(12)
+                            }
                             .padding(.horizontal)
                         }
                     }
@@ -248,15 +223,14 @@ struct ArtworkGeneratorView: View {
     }
 
     // MARK: - Auto Generate Prompt
-    // Uses Claude (via ArtworkService) to create a descriptive prompt automatically
+    // Builds a prompt from the track's metadata — instant, no API call.
     private func autoGeneratePrompt() {
         isAutoPrompting = true
         errorMessage = nil
 
         Task {
             do {
-                let autoPrompt = try await ArtworkService.shared.autoGeneratePrompt(projectId: projectId)
-                prompt = autoPrompt
+                prompt = try await ArtworkService.shared.autoGeneratePrompt(projectId: projectId)
             } catch {
                 errorMessage = "Failed to auto-generate prompt: \(error.localizedDescription)"
             }
@@ -265,49 +239,25 @@ struct ArtworkGeneratorView: View {
     }
 
     // MARK: - Generate Artwork
-    // Calls ArtworkService to generate images using the prompt + selected style
+    // One server call generates the image, saves it and applies it to the project.
     private func generateArtwork() {
         isGenerating = true
         errorMessage = nil
-        generatedImageUrls = []
-        selectedImageIndex = nil
 
         Task {
             do {
-                let style = styles[selectedStyleIndex]
-                let urls = try await ArtworkService.shared.generateArtwork(
+                let artworkUrl = try await ArtworkService.shared.generateArtwork(
+                    projectId: projectId,
                     prompt: prompt,
-                    style: style
+                    model: selectedModelId,
+                    vary: varyLook
                 )
-                generatedImageUrls = urls
+                generatedArtworkUrl = artworkUrl
+                onGenerated?(artworkUrl)
             } catch {
-                errorMessage = "Failed to generate artwork: \(error.localizedDescription)"
+                errorMessage = error.localizedDescription
             }
             isGenerating = false
-        }
-    }
-
-    // MARK: - Apply Artwork
-    // Uploads the selected image and updates the project's artwork_url
-    private func applyArtwork() {
-        guard let index = selectedImageIndex, index < generatedImageUrls.count else { return }
-
-        isApplying = true
-        errorMessage = nil
-
-        Task {
-            do {
-                let imageUrl = generatedImageUrls[index]
-                try await ArtworkService.shared.applyArtwork(
-                    imageUrl: imageUrl,
-                    projectId: projectId
-                )
-                // Success — go back to the project detail
-                dismiss()
-            } catch {
-                errorMessage = "Failed to apply artwork: \(error.localizedDescription)"
-            }
-            isApplying = false
         }
     }
 }

@@ -9,6 +9,7 @@ import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { trackShareUrl } from '@/lib/share-url'
+import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -862,7 +863,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
                   {release.release_date && (
                     <p className="text-xs text-[var(--text-muted)] mt-4">
-                      Target date: {new Date(release.release_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                      Target date: {formatReleaseDate(release.release_date, { month: 'long', day: 'numeric', year: 'numeric' })}
                     </p>
                   )}
                 </div>

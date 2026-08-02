@@ -20,9 +20,13 @@ class AuthService: ObservableObject {
     private let supabaseURL = Config.supabaseURL
     private let supabaseAnonKey = Config.supabaseAnonKey
 
-    // Guards against firing two concurrent refreshes (launch + foreground), which
-    // would race over Supabase's rotating refresh tokens and invalidate the session.
-    private var isRefreshing = false
+    // Coalesces concurrent refreshes (launch + foreground + a 401 retry) into one
+    // network call. Callers AWAIT the in-flight refresh rather than skipping it —
+    // skipping meant a 401-triggered retry could re-fire with the stale token
+    // before the launch refresh landed, which is what made Home load empty on
+    // cold start. Two concurrent refreshes would also race over Supabase's
+    // rotating refresh tokens and invalidate the session.
+    private var refreshTask: Task<Bool, Never>? = nil
 
     // Refresh once the access token is within this window of expiring.
     private let refreshLeeway: TimeInterval = 5 * 60 // 5 minutes
@@ -230,11 +234,19 @@ class AuthService: ObservableObject {
     // a momentary blip can't log the user out.
     @discardableResult
     func refreshSession() async -> Bool {
-        // Collapse concurrent refreshes into the first one.
-        if isRefreshing { return isAuthenticated }
-        isRefreshing = true
-        defer { isRefreshing = false }
+        // Collapse concurrent refreshes into the first one — and WAIT for it, so
+        // every caller resumes with the refreshed token already applied.
+        if let inFlight = refreshTask {
+            return await inFlight.value
+        }
+        let task = Task { await performRefresh() }
+        refreshTask = task
+        let result = await task.value
+        refreshTask = nil
+        return result
+    }
 
+    private func performRefresh() async -> Bool {
         guard let refreshToken = KeychainService.load(forKey: "refresh_token") else {
             signOut()
             return false

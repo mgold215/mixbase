@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X, ListMusic } from 'lucide-react'
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
-import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, type ReleaseStatusKey } from '@/lib/release-plan'
+import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
 import type { ArtistCatalog, CatalogRelease } from '@/lib/catalog'
 
@@ -487,7 +487,7 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
             </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-[var(--text-muted)]">
               {release.release_date && (
-                <span>{new Date(release.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                <span>{formatReleaseDate(release.release_date)}</span>
               )}
               {release.label && <span>{release.label}</span>}
               {release.genre && <span>{release.genre}</span>}
@@ -1069,7 +1069,7 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
                     <div key={i} className="flex items-center gap-2">
                       <span className="text-xs text-[var(--text-muted)] w-10 flex-shrink-0">
                         {wfPreviewDates[i]
-                          ? new Date(wfPreviewDates[i]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          ? formatReleaseDate(wfPreviewDates[i], { month: 'short', day: 'numeric' })
                           : `#${i + 1}`}
                       </span>
                       <input
