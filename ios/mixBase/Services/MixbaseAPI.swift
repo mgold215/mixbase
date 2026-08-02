@@ -205,6 +205,26 @@ final class MixbaseAPI {
         _ = try await requestData(path: "/api/library/\(id.uuidString.lowercased())", method: "DELETE")
     }
 
+    // MARK: - Community Feed (cross-user by design)
+
+    /// Recent uploads across ALL artists — one entry per project (newest mix),
+    /// with inter-artist comments and that project's older mixes.
+    func fetchFeed() async throws -> [FeedItem] {
+        let data = try await requestData(path: "/api/feed", method: "GET")
+        return try decoder.decode([FeedItem].self, from: data)
+    }
+
+    /// Leave a comment on another artist's upload. Returns the saved comment
+    /// (with this user's public artist name filled in server-side).
+    func postFeedComment(versionId: UUID, comment: String) async throws -> FeedComment {
+        let body: [String: Any] = [
+            "version_id": versionId.uuidString.lowercased(),
+            "comment": comment,
+        ]
+        let data = try await requestData(path: "/api/feed/comments", method: "POST", body: body)
+        return try decoder.decode(FeedComment.self, from: data)
+    }
+
     // MARK: - Core request plumbing
 
     /// Perform a request and parse the response as a JSON object.

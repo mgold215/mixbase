@@ -54,6 +54,9 @@
 		/* Views - Visualizer */
 		A1000000E0 /* VisualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000E0; };
 
+		/* Views - Feed */
+		A1000000F0 /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000F0; };
+
 		/* Models - Curator */
 		A100000016 /* Curator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000016; };
 
@@ -117,6 +120,7 @@
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
 		B100000081 /* ArtworkLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkLibraryView.swift; sourceTree = "<group>"; };
 		B1000000E0 /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
+		B1000000F0 /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B1000000D0 /* SubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmitView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
@@ -221,6 +225,7 @@
 				E100000023 /* Pipeline */,
 				E100000024 /* Artwork */,
 				E100000029 /* Visualizer */,
+				E10000002A /* Feed */,
 				E100000025 /* Settings */,
 				E100000028 /* Submit */,
 				E100000026 /* Components */,
@@ -295,6 +300,15 @@
 				B1000000E0 /* VisualizerView.swift */,
 			);
 			path = Visualizer;
+			sourceTree = "<group>";
+		};
+
+		E10000002A /* Feed */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000F0 /* FeedView.swift */,
+			);
+			path = Feed;
 			sourceTree = "<group>";
 		};
 
@@ -454,6 +468,7 @@
 				A1000000E0 /* VisualizerView.swift in Sources */,
 				A100000081 /* ArtworkLibraryView.swift in Sources */,
 				A100000072 /* ReleasedLibraryView.swift in Sources */,
+				A1000000F0 /* FeedView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

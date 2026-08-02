@@ -121,10 +121,20 @@ struct HomeView: View {
                     await loadDashboardData()
                 }
             }
-            // No leading toolbar item: iOS 26 collapses non-interactive leading
-            // items into a dead "…" glass button. The brand lives in the content
-            // header instead; only the (working) settings gear stays up top.
+            // Leading item is the community feed — interactive, so iOS 26 shows
+            // a real button instead of collapsing it into a dead "…".
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    NavigationLink(destination: FeedView()) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                            Text("mixBASE Feed")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink(destination: SettingsView()) {
                         Image(systemName: "gear")
@@ -212,10 +222,18 @@ struct HomeView: View {
     }
 
     // MARK: - Your Tracks Carousel
+    // "moodmixformat's Tracks" when the artist name is set (matches the web);
+    // plain "Your Tracks" otherwise.
+    private var tracksSectionTitle: String {
+        let name = audioService.artistName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, name.lowercased() != "mixbase" else { return "Your Tracks" }
+        return "\(name)'s Tracks"
+    }
+
     private var yourTracksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Your Tracks")
+                Text(tracksSectionTitle)
                     .font(.headline)
                     .foregroundColor(Color(hex: "#f0f0f0"))
                 Spacer()
