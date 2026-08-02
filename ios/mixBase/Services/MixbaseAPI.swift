@@ -153,6 +153,58 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/collections/\(collectionId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    // MARK: - Released Library (mb_library_tracks via /api/library)
+
+    /// Everything the artist has put out — ISRCs, UPCs, dates, project links.
+    func fetchLibraryTracks() async throws -> [LibraryTrack] {
+        let data = try await requestData(path: "/api/library", method: "GET")
+        return try decoder.decode([LibraryTrack].self, from: data)
+    }
+
+    /// Sync the discography from Spotify/Deezer (server-side, upsert).
+    /// Returns a human-readable summary of what changed.
+    func syncLibrary(artist: String) async throws -> String {
+        let json = try await requestJSON(path: "/api/library", method: "POST", body: ["artist": artist])
+        let total = json["total"] as? Int ?? 0
+        let created = json["created"] as? Int ?? 0
+        let updated = json["updated"] as? Int ?? 0
+        let name = json["artistName"] as? String ?? artist
+        let source = (json["source"] as? String) == "spotify" ? "Spotify" : "Deezer"
+        return "Synced \(total) track\(total == 1 ? "" : "s") for \(name) via \(source) — \(created) new, \(updated) updated."
+    }
+
+    enum IsrcLookup {
+        case found(LibraryTrack)
+        case notFound(String)
+    }
+
+    /// Targeted MusicBrainz lookup for one track's missing ISRC.
+    func findIsrc(trackId: UUID) async throws -> IsrcLookup {
+        let data = try await requestData(
+            path: "/api/library/find-isrc",
+            method: "POST",
+            body: ["track_id": trackId.uuidString.lowercased()]
+        )
+        if let track = try? decoder.decode(LibraryTrack.self, from: data) {
+            return .found(track)
+        }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return .notFound(json?["message"] as? String ?? "No ISRC found for this track.")
+    }
+
+    /// Link (or unlink, with nil) the project holding a track's original file.
+    /// Returns the updated row.
+    func linkLibraryTrack(id: UUID, projectId: UUID?) async throws -> LibraryTrack {
+        let body: [String: Any] = ["project_id": projectId?.uuidString.lowercased() ?? NSNull()]
+        let data = try await requestData(path: "/api/library/\(id.uuidString.lowercased())", method: "PATCH", body: body)
+        return try decoder.decode(LibraryTrack.self, from: data)
+    }
+
+    /// Remove a track from the released library.
+    func deleteLibraryTrack(id: UUID) async throws {
+        _ = try await requestData(path: "/api/library/\(id.uuidString.lowercased())", method: "DELETE")
+    }
+
     // MARK: - Core request plumbing
 
     /// Perform a request and parse the response as a JSON object.
