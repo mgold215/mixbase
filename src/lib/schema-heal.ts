@@ -472,6 +472,59 @@ export function isMissingDistroKidColumn(error: { message?: string } | null): bo
 // A missing token is a deliberate, quiet opt-out (local dev). A token that IS
 // present and REJECTED is a broken deployment, so report that one to Sentry —
 // it is the only signal that distinguishes "healing" from "pretending to heal".
+// ── Migration 027: released-track library ────────────────────────────────────
+// /api/library reads and writes mb_library_tracks on every visit to /library.
+// Same deploy-beats-the-migration race as the other heals — create the table
+// on the specific missing-relation error and retry. Policy creation is guarded
+// with do-blocks because CREATE POLICY has no IF NOT EXISTS (mirrors the
+// mb_feed_comments heal).
+
+const LIBRARY_TRACKS_SQL = `
+create table if not exists mb_library_tracks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null,
+  artist_name text,
+  isrc text,
+  upc text,
+  release_title text,
+  release_date date,
+  release_type text,
+  source text,
+  source_url text,
+  project_id uuid references mb_projects(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists idx_library_tracks_user on mb_library_tracks(user_id);
+create index if not exists idx_library_tracks_user_isrc on mb_library_tracks(user_id, isrc);
+alter table mb_library_tracks enable row level security;
+do $$ begin
+  create policy "users_own_library_tracks" on mb_library_tracks
+    using (auth.uid() = user_id) with check (auth.uid() = user_id);
+exception when duplicate_object then null; end $$;`
+
+let libraryTracksEnsured: Promise<boolean> | null = null
+
+export function ensureLibraryTracksTable(): Promise<boolean> {
+  if (!libraryTracksEnsured) {
+    libraryTracksEnsured = runQuery(LIBRARY_TRACKS_SQL, 'mb_library_tracks table')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) libraryTracksEnsured = null
+        return ok
+      })
+  }
+  return libraryTracksEnsured
+}
+
+/** True when a PostgREST error is the missing-relation failure this heals. */
+export function isMissingLibraryTracksTable(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  if (error.code === '42P01' && !!error.message?.includes('mb_library_tracks')) return true
+  return !!error.message && error.message.includes('mb_library_tracks') && /does not exist|relation|schema cache/.test(error.message)
+}
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false

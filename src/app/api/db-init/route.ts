@@ -329,6 +329,33 @@ alter table mb_releases add column if not exists waterfall_position integer;
 
 create index if not exists idx_releases_waterfall_group
   on mb_releases(waterfall_group_id, waterfall_position);
+
+-- Migration 027: released-track library
+create table if not exists mb_library_tracks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null,
+  artist_name text,
+  isrc text,
+  upc text,
+  release_title text,
+  release_date date,
+  release_type text,
+  source text,
+  source_url text,
+  project_id uuid references mb_projects(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_library_tracks_user on mb_library_tracks(user_id);
+create index if not exists idx_library_tracks_user_isrc on mb_library_tracks(user_id, isrc);
+
+alter table mb_library_tracks enable row level security;
+
+drop policy if exists "users_own_library_tracks" on mb_library_tracks;
+create policy "users_own_library_tracks" on mb_library_tracks
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.

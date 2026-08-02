@@ -7,7 +7,6 @@ import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Che
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
-import type { ArtistCatalog, CatalogRelease } from '@/lib/catalog'
 
 // Tailwind classes for each release-status badge tone.
 const STATUS_TONE: Record<ReleaseStatusKey, string> = {
@@ -21,12 +20,17 @@ type ReleaseWithProject = Release & {
 }
 type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string; audio_url: string; audio_filename: string | null }
 
+// A released-library row as the pipeline needs it: the ISRC/UPC source of
+// truth for waterfall re-releases, matched by title (synced on /library).
+type LibraryTrackLite = { title: string; isrc: string | null; upc: string | null }
+
 type Props = {
   initialReleases: ReleaseWithProject[]
   projects: { id: string; title: string }[]
   versions: VersionLite[]
-  // Seeds the waterfall-form prefill + catalog search; null when unavailable.
+  // Seeds the waterfall-form prefill; null when unavailable.
   profile: { artist_name: string | null; spotify_url: string | null } | null
+  libraryTracks: LibraryTrackLite[]
 }
 
 function daysUntil(dateStr: string | null): string | null {
@@ -128,12 +132,13 @@ type ReleaseCardProps = {
   updateReleaseDate: (releaseId: string, value: string) => void
   toggleCheck: (releaseId: string, field: string, current: boolean) => void
   deleteRelease: (id: string) => void
+  libraryByTitle: Map<string, LibraryTrackLite>
 }
 
 function ReleaseCard({
   release, releases, versions, todayStr,
   expandedId, setExpandedId, copiedPlanId, setCopiedPlanId, copiedField, setCopiedField,
-  copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease,
+  copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease, libraryByTitle,
 }: ReleaseCardProps) {
   const isExpanded = expandedId === release.id
   const pct = releaseCompletionPercent(release)
@@ -148,7 +153,12 @@ function ReleaseCard({
   // latest version — matching the create form's "Latest / none" semantics),
   // and the readiness issues derived from all of it.
   const wfTotal = release.waterfall_group_id ? releases.filter(r => r.waterfall_group_id === release.waterfall_group_id).length : 0
-  const tracklist = distroKidTracklist(release, releases)
+  // Tracks whose row has no ISRC yet fall back to the released library's
+  // title match — the ISRC synced from Spotify/Deezer on /library — so
+  // waterfall re-releases are complete without hand-copying codes around.
+  const tracklist = distroKidTracklist(release, releases).map(t =>
+    t.isrc ? t : { ...t, isrc: libraryByTitle.get(t.title.trim().toLowerCase())?.isrc ?? null },
+  )
   const finalVersion = versions.find(v => v.id === release.final_version_id)
     ?? (release.project_id ? versions.find(v => v.project_id === release.project_id) : undefined)
   const artworkUrl = displayArtworkUrl(release.mb_projects ?? {})
@@ -523,7 +533,7 @@ function ReleaseCard({
   )
 }
 
-export default function PipelineClient({ initialReleases, projects, versions, profile }: Props) {
+export default function PipelineClient({ initialReleases, projects, versions, profile, libraryTracks }: Props) {
   const [releases, setReleases] = useState(initialReleases)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -690,10 +700,16 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
 
   // Everything the module-scope ReleaseCard needs from this board, bundled so
   // the two call sites below stay in lockstep.
+  // Released-library ISRC/UPC lookup by title — the fallback source for
+  // waterfall re-release codes (synced from Spotify/Deezer on /library).
+  const libraryByTitle = new Map(
+    libraryTracks.map(t => [t.title.trim().toLowerCase(), t] as const),
+  )
+
   const cardProps = {
     releases, versions, todayStr,
     expandedId, setExpandedId, copiedPlanId, setCopiedPlanId, copiedField, setCopiedField,
-    copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease,
+    copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease, libraryByTitle,
   }
 
   // ── Waterfall planner ──────────────────────────────────────────────────────
@@ -791,78 +807,9 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
     setWfSaving(false)
   }
 
-  // ── Catalog import (Spotify / Deezer) ─────────────────────────────────────
-  // Pulls the artist's released discography — dates, UPCs, per-track ISRCs —
-  // so past releases can be imported and waterfall re-releases reuse the
-  // right ISRCs. Public catalog data via /api/catalog; no account linking.
-  const [showImport, setShowImport] = useState(false)
-  const [importQuery, setImportQuery] = useState(
-    () => profile?.spotify_url?.trim() || profile?.artist_name?.trim() || lastWith(r => r.artist_name),
-  )
-  const [importLoading, setImportLoading] = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
-  const [catalog, setCatalog] = useState<ArtistCatalog | null>(null)
-  const [importingTitle, setImportingTitle] = useState<string | null>(null)
-
-  async function fetchCatalog() {
-    setImportLoading(true)
-    setImportError(null)
-    try {
-      const res = await fetch(`/api/catalog?artist=${encodeURIComponent(importQuery.trim())}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Catalog lookup failed')
-      setCatalog(data)
-    } catch (e) {
-      setCatalog(null)
-      setImportError(e instanceof Error ? e.message : 'Catalog lookup failed — please try again')
-    }
-    setImportLoading(false)
-  }
-
-  // A catalog release already on the board, matched by title (case-insensitive).
-  function matchExisting(title: string): ReleaseWithProject | undefined {
-    const t = title.trim().toLowerCase()
-    return releases.find(r => r.title.trim().toLowerCase() === t)
-  }
-
-  // Import a released drop as a pipeline row: metadata filled from the source
-  // and every pre-launch box ticked (it's already out — the value is having
-  // its ISRC/UPC on file for the next waterfall run).
-  async function importCatalogRelease(rel: CatalogRelease) {
-    setImportingTitle(rel.title)
-    try {
-      const firstIsrc = rel.tracks[0]?.isrc ?? null
-      const trackNotes = rel.tracks.length > 1
-        ? 'Imported track ISRCs:\n' + rel.tracks.map(t => `${t.trackNumber}. ${t.title} — ${t.isrc ?? '—'}`).join('\n')
-        : null
-      const res = await fetch('/api/releases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: rel.title,
-          // The DB column is a date — sources sometimes report year-only precision.
-          release_date: rel.releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(rel.releaseDate) ? rel.releaseDate : null,
-          artist_name: catalog?.artistName ?? null,
-          isrc: firstIsrc,
-          upc: rel.upc,
-          release_type: rel.releaseType,
-          notes: trackNotes,
-        }),
-      })
-      const created = await res.json()
-      if (!res.ok) throw new Error(created.error ?? 'Import failed')
-      const res2 = await fetch(`/api/releases/${created.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mixing_done: true, mastering_done: true, artwork_ready: true, dsp_submitted: true }),
-      })
-      const finalRow = res2.ok ? await res2.json() : created
-      setReleases(prev => [{ ...finalRow, mb_projects: null }, ...prev])
-    } catch (e) {
-      flashError(e instanceof Error ? e.message : 'Could not import that release.')
-    }
-    setImportingTitle(null)
-  }
+  // Past releases are reference material, not work — collapsed by default so
+  // the board stays focused on what's upcoming.
+  const [showPast, setShowPast] = useState(false)
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
@@ -882,22 +829,22 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
           <p className="text-[var(--text-muted)] text-sm mt-0.5">Track every step — from mix to campaign</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button
-            onClick={() => { setShowImport(!showImport); setShowWaterfall(false); setShowForm(false) }}
+          <Link
+            href="/library"
             className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-violet-400 bg-violet-400/10 hover:bg-violet-400/20"
           >
             <ListMusic size={16} />
-            Import Catalog
-          </button>
+            Released Library
+          </Link>
           <button
-            onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false); setShowImport(false) }}
+            onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false) }}
             className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-sky-400 bg-sky-400/10 hover:bg-sky-400/20"
           >
             <Droplets size={16} />
             Plan Waterfall
           </button>
           <button
-            onClick={() => { setShowForm(!showForm); setShowWaterfall(false); setShowImport(false) }}
+            onClick={() => { setShowForm(!showForm); setShowWaterfall(false) }}
             className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
           >
             <Plus size={16} />
@@ -905,122 +852,6 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
           </button>
         </div>
       </div>
-
-      {/* Catalog import — the artist's released discography with ISRCs/UPCs,
-          importable as pipeline rows. The key waterfall enabler: re-releases
-          must reuse the original ISRCs, and this is where they come from. */}
-      {showImport && (
-        <div className="rounded-2xl p-6 mb-6" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-          <h2 className="text-sm font-semibold text-[var(--text)] mb-1 flex items-center gap-2"><ListMusic size={14} className="text-violet-400" /> Import Released Catalog</h2>
-          <p className="text-xs text-[var(--text-muted)] mb-4">
-            Pulls your released songs with their ISRCs, UPCs, and dates from Spotify or Deezer (public catalog data — no login needed).
-            Import past drops so the next waterfall release reuses the right ISRCs.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={importQuery}
-              onChange={e => setImportQuery(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && importQuery.trim() && !importLoading) fetchCatalog() }}
-              placeholder="Artist name or Spotify artist link"
-              className="flex-1 rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
-              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-            />
-            <button
-              onClick={fetchCatalog}
-              disabled={importLoading || !importQuery.trim()}
-              className="bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold px-5 rounded-xl transition-colors"
-            >
-              {importLoading ? 'Fetching…' : 'Fetch'}
-            </button>
-          </div>
-
-          {importError && (
-            <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-xl px-3 py-2 mt-3">{importError}</p>
-          )}
-
-          {catalog && (
-            <div className="mt-4 space-y-3">
-              <p className="text-xs text-[var(--text-muted)]">
-                {catalog.releases.length} release{catalog.releases.length === 1 ? '' : 's'} for{' '}
-                <span className="text-[var(--text)] font-medium">{catalog.artistName}</span>
-                {' '}via {catalog.source === 'spotify' ? 'Spotify' : 'Deezer'}
-                {catalog.artistUrl && (
-                  <a href={catalog.artistUrl} target="_blank" rel="noreferrer" className="ml-2 text-[var(--text-muted)] hover:text-[var(--accent)] underline underline-offset-2">view profile</a>
-                )}
-              </p>
-              {catalog.releases.map(rel => {
-                const existing = matchExisting(rel.title)
-                const firstIsrc = rel.tracks[0]?.isrc ?? null
-                const canBackfill = existing && !existing.isrc && !!firstIsrc
-                return (
-                  <div key={rel.url ?? `${rel.title}-${rel.releaseDate}`} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-[var(--text)] truncate">{rel.title}</span>
-                        <div className="flex items-center gap-2.5 mt-0.5 text-xs text-[var(--text-muted)]">
-                          {rel.releaseDate && <span>{rel.releaseDate}</span>}
-                          <span className="uppercase text-[10px] tracking-wider">{rel.releaseType}</span>
-                          {rel.upc && (
-                            <button
-                              type="button"
-                              onClick={() => copyFieldValue(`cat:${rel.title}:upc`, rel.upc!)}
-                              title="Copy UPC"
-                              className="flex items-center gap-1 hover:text-[var(--text)] transition-colors"
-                            >
-                              UPC {rel.upc}
-                              {copiedField === `cat:${rel.title}:upc` ? <Check size={10} className="text-[#2dd4bf]" /> : <Copy size={10} />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {existing && !canBackfill ? (
-                        <span className="text-xs text-emerald-400 flex items-center gap-1 flex-shrink-0"><Check size={12} /> In pipeline</span>
-                      ) : canBackfill ? (
-                        <button
-                          onClick={() => updateFields(existing!.id, { isrc: firstIsrc, upc: rel.upc })}
-                          className="text-xs font-semibold text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
-                        >
-                          Fill ISRC on “{existing!.title}”
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => importCatalogRelease(rel)}
-                          disabled={importingTitle === rel.title}
-                          className="text-xs font-semibold text-[#2dd4bf] bg-[#2dd4bf]/10 hover:bg-[#2dd4bf]/20 disabled:opacity-40 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
-                        >
-                          {importingTitle === rel.title ? 'Importing…' : 'Add to pipeline'}
-                        </button>
-                      )}
-                    </div>
-                    <div className="mt-2 space-y-1">
-                      {rel.tracks.map(t => (
-                        <div key={t.trackNumber} className="flex items-center gap-2 text-xs">
-                          <span className="text-[var(--text-muted)] w-4 text-right flex-shrink-0">{t.trackNumber}.</span>
-                          <span className="text-[var(--text-secondary)] truncate">{t.title}</span>
-                          {t.isrc ? (
-                            <button
-                              type="button"
-                              onClick={() => copyFieldValue(`cat:${rel.title}:${t.trackNumber}`, t.isrc!)}
-                              title="Copy ISRC"
-                              className="flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
-                            >
-                              {t.isrc}
-                              {copiedField === `cat:${rel.title}:${t.trackNumber}` ? <Check size={10} className="text-[#2dd4bf]" /> : <Copy size={10} />}
-                            </button>
-                          ) : (
-                            <span className="text-[var(--text-muted)] opacity-50 flex-shrink-0">no ISRC</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Waterfall planner — ordered tracks + start Friday + cadence in, one
           linked release per drop out. Each later drop's DistroKid prep panel
@@ -1385,10 +1216,19 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
           )}
           {past.length > 0 && (
             <div>
-              <h2 className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">Past</h2>
-              <div className="space-y-3 opacity-60">
-                {past.map(r => <ReleaseCard key={r.id} release={r} {...cardProps} />)}
-              </div>
+              <button
+                onClick={() => setShowPast(p => !p)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)] uppercase tracking-wider mb-3 transition-colors"
+                aria-expanded={showPast}
+              >
+                {showPast ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                Past ({past.length})
+              </button>
+              {showPast && (
+                <div className="space-y-3 opacity-60">
+                  {past.map(r => <ReleaseCard key={r.id} release={r} {...cardProps} />)}
+                </div>
+              )}
             </div>
           )}
         </div>

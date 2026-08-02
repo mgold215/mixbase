@@ -200,6 +200,24 @@ async function fetchSpotifyCatalog(query: string): Promise<ArtistCatalog> {
 // catalog can't turn one request into hundreds of upstream calls.
 const DEEZER_ISRC_CAP = 150
 
+// Deezer reports failures — including "Quota limit exceeded" (code 4) — as
+// HTTP 200 bodies with an `error` envelope. Reading those as data is exactly
+// how ISRCs silently came back empty: every throttled /track call looked like
+// a track without an ISRC. This wrapper surfaces the envelope and retries
+// quota trips with a backoff sized to Deezer's 50-requests-per-5s window.
+async function getDeezerJson(url: string, attempts = 4): Promise<any> {
+  for (let attempt = 1; ; attempt++) {
+    const data: any = await getJson(url)
+    if (!data?.error) return data
+    const isQuota = data.error.code === 4 || /quota/i.test(String(data.error.message ?? ''))
+    if (isQuota && attempt < attempts) {
+      await new Promise(r => setTimeout(r, 1500 * attempt))
+      continue
+    }
+    throw new CatalogError(`Deezer error: ${data.error.message ?? 'unknown'}`)
+  }
+}
+
 /**
  * Pure mapper from raw Deezer payloads (artist + FULL album objects, whose
  * track entries have been annotated with `isrc` where fetched).
@@ -233,20 +251,22 @@ export function mapDeezerCatalog(artist: any, albums: any[]): ArtistCatalog {
 
 async function fetchDeezerCatalog(name: string): Promise<ArtistCatalog> {
   const api = 'https://api.deezer.com'
-  const found: any = await getJson(`${api}/search/artist?q=${encodeURIComponent(name)}&limit=5`)
+  const found = await getDeezerJson(`${api}/search/artist?q=${encodeURIComponent(name)}&limit=5`)
   const candidates: any[] = found?.data ?? []
   if (!candidates.length) throw new CatalogError(`No artist found for "${name}"`, 404)
   const artist = candidates.find(a => a?.name?.toLowerCase() === name.trim().toLowerCase()) ?? candidates[0]
 
-  const albumList: any = await getJson(`${api}/artist/${artist.id}/albums?limit=100`)
+  const albumList = await getDeezerJson(`${api}/artist/${artist.id}/albums?limit=100`)
   const albumIds: number[] = (albumList?.data ?? []).map((a: any) => a.id)
 
-  // Full album objects (UPC + tracklist) — small concurrent batches to stay
-  // well inside Deezer's 50-requests-per-5s public quota.
+  // Full album objects (UPC + tracklist) — small paced batches to stay inside
+  // Deezer's 50-requests-per-5s public quota (quota trips retry via the
+  // wrapper, but not tripping it at all is faster).
   const albums: any[] = []
-  for (let i = 0; i < albumIds.length; i += 10) {
-    const batch = await Promise.all(albumIds.slice(i, i + 10).map(id => getJson(`${api}/album/${id}`).catch(() => null)))
+  for (let i = 0; i < albumIds.length; i += 5) {
+    const batch = await Promise.all(albumIds.slice(i, i + 5).map(id => getDeezerJson(`${api}/album/${id}`).catch(() => null)))
     albums.push(...batch.filter(Boolean))
+    if (i + 5 < albumIds.length) await new Promise(r => setTimeout(r, 400))
   }
 
   // The embedded tracklist is truncated on long albums — fetch the full list
@@ -254,7 +274,7 @@ async function fetchDeezerCatalog(name: string): Promise<ArtistCatalog> {
   for (const album of albums) {
     const embedded: any[] = album?.tracks?.data ?? []
     if (album?.nb_tracks > embedded.length) {
-      const full: any = await getJson(`${api}/album/${album.id}/tracks?limit=100`).catch(() => null)
+      const full = await getDeezerJson(`${api}/album/${album.id}/tracks?limit=100`).catch(() => null)
       if (full?.data?.length) album.tracks = { data: full.data }
     }
   }
@@ -263,11 +283,12 @@ async function fetchDeezerCatalog(name: string): Promise<ArtistCatalog> {
   // so the cap spends its budget on the releases a waterfall actually reuses.
   albums.sort((a, b) => String(b?.release_date ?? '').localeCompare(String(a?.release_date ?? '')))
   const pending: any[] = albums.flatMap(a => a?.tracks?.data ?? []).slice(0, DEEZER_ISRC_CAP)
-  for (let i = 0; i < pending.length; i += 10) {
-    await Promise.all(pending.slice(i, i + 10).map(async t => {
-      const full: any = await getJson(`${api}/track/${t.id}`).catch(() => null)
+  for (let i = 0; i < pending.length; i += 5) {
+    await Promise.all(pending.slice(i, i + 5).map(async t => {
+      const full = await getDeezerJson(`${api}/track/${t.id}`).catch(() => null)
       if (full?.isrc) t.isrc = full.isrc
     }))
+    if (i + 5 < pending.length) await new Promise(r => setTimeout(r, 400))
   }
 
   return mapDeezerCatalog(artist, albums)
@@ -311,6 +332,91 @@ export async function fetchArtistCatalog(query: string): Promise<ArtistCatalog> 
     return fetchDeezerCatalog(name)
   }
   return fetchDeezerCatalog(q)
+}
+
+// ── Library flattening ───────────────────────────────────────────────────────
+
+// One row per RECORDING for the released library. A waterfall re-releases the
+// same track (same ISRC) on several releases — the library wants it once,
+// attributed to its ORIGINAL drop (that release is the ISRC's home).
+export type LibraryTrackRow = {
+  title: string
+  artist_name: string
+  isrc: string | null
+  upc: string | null
+  release_title: string
+  release_date: string | null // strict YYYY-MM-DD or null (DB column is a date)
+  release_type: string
+  source: string
+  source_url: string | null
+}
+
+/** Pure: flatten a fetched catalog into deduped library rows, oldest release wins per recording. */
+export function flattenCatalogTracks(catalog: ArtistCatalog): LibraryTrackRow[] {
+  // Oldest release first so the first occurrence of a recording is its original drop.
+  const oldestFirst = [...catalog.releases].sort((a, b) => (a.releaseDate ?? '9999').localeCompare(b.releaseDate ?? '9999'))
+  const byKey = new Map<string, LibraryTrackRow>()
+  for (const rel of oldestFirst) {
+    for (const t of rel.tracks) {
+      const key = t.isrc?.trim() ? `isrc:${t.isrc.trim()}` : `title:${t.title.trim().toLowerCase()}`
+      if (byKey.has(key)) continue
+      byKey.set(key, {
+        title: t.title,
+        artist_name: catalog.artistName,
+        isrc: t.isrc?.trim() || null,
+        upc: rel.upc,
+        release_title: rel.title,
+        release_date: rel.releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(rel.releaseDate) ? rel.releaseDate : null,
+        release_type: rel.releaseType,
+        source: catalog.source,
+        source_url: rel.url,
+      })
+    }
+  }
+  return [...byKey.values()]
+}
+
+// ── MusicBrainz single-track ISRC lookup ────────────────────────────────────
+// Second keyless source for filling ISRC gaps one track at a time (their open
+// API asks for a descriptive User-Agent and ~1 req/s — fine for a per-row
+// "Find ISRC" button, deliberately not used for bulk sync).
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- raw upstream JSON */
+
+const MB_HEADERS = { 'User-Agent': 'mixBASE/1.0 (https://mixbase.app)' }
+
+/**
+ * Pure: pick the recording ids worth an ISRC lookup from a MusicBrainz
+ * recording-search payload — exact title match and the artist in the credit,
+ * best search score first. (Search results never include ISRCs; each id needs
+ * a follow-up lookup with inc=isrcs.)
+ */
+export function pickMusicBrainzRecordingIds(payload: any, title: string, artist: string): string[] {
+  const recs: any[] = payload?.recordings ?? []
+  const t = title.trim().toLowerCase()
+  const a = artist.trim().toLowerCase()
+  return recs
+    .filter(r => String(r?.title ?? '').toLowerCase() === t)
+    .filter(r => (r?.['artist-credit'] ?? []).some((c: any) => String(c?.name ?? c?.artist?.name ?? '').toLowerCase() === a))
+    .sort((x, y) => (y?.score ?? 0) - (x?.score ?? 0))
+    .map(r => r?.id)
+    .filter(Boolean)
+}
+
+export async function findIsrcViaMusicBrainz(title: string, artist: string): Promise<string | null> {
+  const esc = (s: string) => s.replace(/["\\]/g, ' ').trim()
+  const query = `recording:"${esc(title)}" AND artist:"${esc(artist)}"`
+  const search = await getJson(
+    `https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(query)}&fmt=json&limit=10`,
+    MB_HEADERS,
+  )
+  // Check up to 3 matching recordings, paced to MusicBrainz's ~1 req/s ask.
+  for (const id of pickMusicBrainzRecordingIds(search, title, artist).slice(0, 3)) {
+    await new Promise(r => setTimeout(r, 1100))
+    const rec: any = await getJson(`https://musicbrainz.org/ws/2/recording/${id}?fmt=json&inc=isrcs`, MB_HEADERS).catch(() => null)
+    if (rec?.isrcs?.length) return rec.isrcs[0]
+  }
+  return null
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

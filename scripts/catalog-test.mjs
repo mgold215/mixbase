@@ -10,7 +10,7 @@
 //
 // Run: node scripts/catalog-test.mjs   (also part of `npm run test:renderers`)
 
-import { parseSpotifyArtistId, mapSpotifyCatalog, mapDeezerCatalog } from '../src/lib/catalog.ts'
+import { parseSpotifyArtistId, mapSpotifyCatalog, mapDeezerCatalog, flattenCatalogTracks, pickMusicBrainzRecordingIds } from '../src/lib/catalog.ts'
 
 let failures = 0
 function check(name, cond, detail = '') {
@@ -97,6 +97,39 @@ const sparse = mapSpotifyCatalog({}, [{ tracks: {} }, {}], new Map())
 check('spotify: sparse payload survives', sparse.releases.length === 2 && sparse.artistName === 'Unknown artist')
 const dzSparse = mapDeezerCatalog({}, [{}])
 check('deezer: sparse payload survives', dzSparse.releases.length === 1 && dzSparse.releases[0].tracks.length === 0)
+
+// ── flattenCatalogTracks ─────────────────────────────────────────────────────
+// The waterfall shape: "Old Single" appears on its own 2024 drop AND re-released
+// on 2025's "New Drop" under the SAME ISRC. The library must hold it ONCE,
+// attributed to the ORIGINAL (oldest) release — that release is the ISRC's home.
+const flat = flattenCatalogTracks(sp)
+check('flatten: one row per recording', flat.length === 2, `got ${flat.length}`)
+const oldSingle = flat.find(r => r.title === 'Old Single')
+check('flatten: re-released track attributed to ORIGINAL drop', oldSingle?.release_title === 'Old Single' && oldSingle?.release_date === '2024-03-01')
+check('flatten: original drop UPC kept', oldSingle?.upc === '198000000001')
+check('flatten: artist carried onto rows', flat.every(r => r.artist_name === 'Test Artist'))
+check('flatten: source carried onto rows', flat.every(r => r.source === 'spotify'))
+// Year-only precision must not reach the DB's date column
+const yearOnly = flattenCatalogTracks(mapSpotifyCatalog(spotifyArtist, [{ ...spotifyAlbums[0], release_date: '2024' }], isrcs))
+check('flatten: year-only date → null (DB column is a date)', yearOnly[0].release_date === null)
+// Without ISRCs the same title on two releases still dedupes by title
+const noIsrcFlat = flattenCatalogTracks(mapSpotifyCatalog(spotifyArtist, spotifyAlbums, new Map()))
+check('flatten: no-ISRC dedupe falls back to title', noIsrcFlat.length === 2)
+
+// ── pickMusicBrainzRecordingIds ──────────────────────────────────────────────
+const mbPayload = {
+  recordings: [
+    { id: 'r-wrong-title', score: 100, title: 'Other Song', 'artist-credit': [{ name: 'Test Artist' }] },
+    { id: 'r-wrong-artist', score: 99, title: 'My Song', 'artist-credit': [{ name: 'Someone Else' }] },
+    { id: 'r-low', score: 80, title: 'My Song', 'artist-credit': [{ artist: { name: 'Test Artist' } }] },
+    { id: 'r-best', score: 95, title: 'my song', 'artist-credit': [{ name: 'test artist' }] },
+  ],
+}
+const ids = pickMusicBrainzRecordingIds(mbPayload, 'My Song', 'Test Artist')
+check('musicbrainz: only exact title+artist matches', ids.length === 2 && !ids.includes('r-wrong-title') && !ids.includes('r-wrong-artist'))
+check('musicbrainz: best score first', ids[0] === 'r-best')
+check('musicbrainz: nested artist.name credit accepted', ids.includes('r-low'))
+check('musicbrainz: empty payload survives', pickMusicBrainzRecordingIds({}, 'X', 'Y').length === 0)
 
 if (failures) {
   console.error(`\n❌ ${failures} check(s) failed`)
