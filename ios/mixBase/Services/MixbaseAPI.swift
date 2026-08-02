@@ -270,11 +270,19 @@ final class MixbaseAPI {
             throw MixbaseAPIError.invalidResponse("Not an HTTP response")
         }
         guard (200...299).contains(http.statusCode) else {
-            // Prefer the server's human-readable error (e.g. "Monthly artwork
-            // limit reached (3/3). Upgrade to generate more.")
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let message = json["error"] as? String {
-                throw MixbaseAPIError.serverError(message)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Monthly tier limits come back with `upgrade: true`. On iOS there
+                // is no in-app purchase, so we must NOT surface the web's
+                // "Upgrade to generate more" copy — App Store Guideline 3.1.1
+                // forbids steering users to an external purchase. Show neutral,
+                // purchase-free copy instead.
+                if (json["upgrade"] as? Bool) == true {
+                    throw MixbaseAPIError.serverError("You've reached this month's limit for AI generations. It resets at the start of next month.")
+                }
+                // Otherwise prefer the server's own human-readable error.
+                if let message = json["error"] as? String {
+                    throw MixbaseAPIError.serverError(message)
+                }
             }
             throw MixbaseAPIError.httpError(statusCode: http.statusCode)
         }
