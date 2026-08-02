@@ -71,14 +71,22 @@ function anchorDownload(href: string, filename: string): void {
   a.remove()
 }
 
+/** Abandon an unread response body so the transfer stops instead of streaming on. */
+async function discard(res: Response): Promise<void> {
+  try { await res.body?.cancel() } catch { /* already consumed or closed */ }
+}
+
 async function blobDownload(url: string, baseName: string, fallbackExt: string): Promise<void> {
   const res = await fetch(url)
-  if (!res.ok) throw new Error('Download failed')
+  if (!res.ok) { await discard(res); throw new Error('Download failed') }
   const blob = await res.blob()
   const filename = safeFileName(baseName, extFrom(url, blob.type || null, fallbackExt))
   const objectUrl = URL.createObjectURL(blob)
   anchorDownload(objectUrl, filename)
-  URL.revokeObjectURL(objectUrl)
+  // Revoking synchronously can kill the transfer before the browser has
+  // started reading it (Firefox/Safari). Release on a later turn instead —
+  // the page may be gone by then, which is fine: the URL dies with it.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
 /**
@@ -94,9 +102,15 @@ export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp
   if (isTouchDevice() && typeof navigator !== 'undefined' && typeof navigator.canShare === 'function') {
     try {
       const res = await fetch(url)
-      if (!res.ok) throw new Error('Fetch failed')
+      if (!res.ok) { await discard(res); throw new Error('Fetch failed') }
       const size = Number(res.headers.get('content-length') ?? '0')
-      if (size > MAX_SHARE_BYTES) throw new Error('Too large to share in-memory')
+      if (size > MAX_SHARE_BYTES) {
+        // Cancel before falling through, or the giant body keeps streaming in
+        // the background while the attachment path downloads the SAME file
+        // again — two full transfers of a ~380 MB render, usually on cellular.
+        await discard(res)
+        throw new Error('Too large to share in-memory')
+      }
       const blob = await res.blob()
       if (blob.size > MAX_SHARE_BYTES) throw new Error('Too large to share in-memory')
       const type = blob.type || (fallbackExt === 'mp4' ? 'video/mp4' : '')

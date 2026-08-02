@@ -1,10 +1,21 @@
 import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
+import { ensureSecurityHeals } from '@/lib/schema-heal'
 
 // GET /api/health
 // Returns 200 with service status. Checks Supabase connectivity so Railway's
 // health check and external monitors can detect database outages, not just
 // "process is running."
 export async function GET() {
+  // Re-assert the usage-RPC grant + mb_usage write lockdowns. This lives here
+  // because Railway hits /api/health on every deploy, making it the only path
+  // guaranteed to run — the generation path that previously owned these heals
+  // is gated behind a paid user action, and as a result the lockdown had still
+  // not been applied to production weeks after shipping (confirmed live via
+  // pg_proc.proacl). Fire-and-forget and attempt-capped: it never blocks,
+  // delays, or changes the health response, and a persistently failing heal
+  // cannot turn this public endpoint into a Management-API amplifier.
+  void ensureSecurityHeals()
+
   let db: 'ok' | 'error' = 'ok'
 
   try {

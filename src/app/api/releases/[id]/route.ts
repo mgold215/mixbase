@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { ownsProject, ownsVersion } from '@/lib/ownership'
 import { ensureDistroKidColumns, isMissingDistroKidColumn } from '@/lib/schema-heal'
+import { coerceReleaseNulls } from '@/lib/distrokid'
 
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -37,10 +38,14 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     return NextResponse.json({ error: 'Invalid final_version_id' }, { status: 400 })
   }
 
-  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  let patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
   }
+  // Clearing a NOT NULL column (Language, Release type, Explicit, Instrumental)
+  // means "back to the default", not a null write that Postgres would reject
+  // with a 23502 and a hard 500. See RELEASE_COLUMN_DEFAULTS.
+  patch = coerceReleaseNulls(patch)
 
   const updateRelease = () => supabaseAdmin
     .from('mb_releases')

@@ -677,6 +677,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playUrlEntry(uq[(uqIdx + 1) % uq.length])
       return
     }
+    // A one-off playUrl that is NOT in the URL queue — e.g. an older mix opened
+    // from the feed, where the queue only holds each track's latest version.
+    // There is nothing to advance to, and falling through to the project queue
+    // would teleport the listener out of the feed into their OWN uploads.
+    // handleTrackEnd already stops here; the transport buttons must agree.
+    if (currentProjectIdRef.current === null) return
     const list = getQueue()
     if (list.length === 0) return
     const cur = currentProjectIdRef.current
@@ -702,6 +708,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playUrlEntry(uq[(uqIdx - 1 + uq.length) % uq.length])
       return
     }
+    // Same one-off playUrl guard as next() — no queue to step back through.
+    if (currentProjectIdRef.current === null) return
     const list = getQueue()
     if (list.length === 0) return
     const cur = currentProjectIdRef.current

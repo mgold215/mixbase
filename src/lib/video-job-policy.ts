@@ -19,6 +19,23 @@ export const JOB_TTL_MS = 60 * 60 * 1000
 export const STUCK_JOB_MS = 6 * JOB_TTL_MS
 
 /**
+ * Wall-clock budget for the post-render UPLOAD phase (bucket-limit heal +
+ * storeVisualizer).
+ *
+ * Every ffmpeg stage settles under its own deadline, but the upload that
+ * follows had none: `ensureVideoBucketLimit()` is a Management-API fetch with
+ * no signal, and `storeVisualizer()` pushes up to ~380 MB to Supabase. Either
+ * can hang indefinitely, and a job parked in `'uploading'` still counts toward
+ * BOTH `activeCount()` (a global MAX_CONCURRENT slot) and `activeJobForUser()`
+ * (the per-user single-flight) — so one stalled socket 409s that user with
+ * `user_busy` and taxes everyone else until STUCK_JOB_MS reaps it 6 hours later.
+ *
+ * Generous enough that a slow-but-real upload of the largest supported render
+ * finishes comfortably; the point is that the phase always settles.
+ */
+export const UPLOAD_PHASE_MS = 15 * 60 * 1000
+
+/**
  * Whether a job should be dropped from the in-process map. Pure — the caller
  * supplies `now`, so the whole retention state space is unit-testable without
  * waiting hours.

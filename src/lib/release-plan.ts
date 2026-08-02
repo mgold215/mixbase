@@ -64,6 +64,28 @@ export function ymdUtc(dateStr: string | null): number | null {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
+/**
+ * Format a YYYY-MM-DD release date for display, on the SAME UTC calendar basis
+ * the rest of this module computes on.
+ *
+ * `new Date('2026-08-07').toLocaleDateString('en-US', …)` parses the string as
+ * UTC midnight and then renders it in the viewer's local zone — so at any
+ * negative UTC offset it prints the PREVIOUS day. Every US user saw a Friday
+ * drop date as Thursday, directly contradicting the planner's own "drop dates
+ * snap to Fridays" promise. Pinning `timeZone: 'UTC'` makes the rendered day
+ * match the stored day for every viewer, everywhere.
+ *
+ * Returns '' for a blank/malformed date so callers can render it directly.
+ */
+export function formatReleaseDate(
+  dateStr: string | null,
+  opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' },
+): string {
+  const ms = ymdUtc(dateStr)
+  if (ms === null) return ''
+  return new Date(ms).toLocaleDateString('en-US', { ...opts, timeZone: 'UTC' })
+}
+
 // Whole-day difference from `todayStr` to `dateStr` (positive = future), or null
 // if either side is blank/malformed. Both parsed on the same UTC calendar basis.
 function daysUntilDate(todayStr: string, dateStr: string | null): number | null {
