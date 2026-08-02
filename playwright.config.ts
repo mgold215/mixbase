@@ -30,11 +30,15 @@ export default defineConfig({
   },
 
   projects: [
-    // Setup: login once and save cookie
+    // Setup: login once and save cookie. `storageState: undefined` does NOT
+    // override the global setting — Playwright merges `use` objects, so an
+    // undefined value inherits the parent's .auth.json path, which doesn't
+    // exist yet on a fresh run and fails the whole suite with ENOENT. An
+    // explicit empty state is the documented way to start unauthenticated.
     {
       name: 'setup',
       testMatch: /global-setup\.ts/,
-      use: { storageState: undefined }, // No stored auth during setup
+      use: { storageState: { cookies: [], origins: [] } },
     },
     // All tests depend on the login setup
     {
