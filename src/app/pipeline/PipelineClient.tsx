@@ -3,10 +3,11 @@
 import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X, ListMusic } from 'lucide-react'
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
+import type { ArtistCatalog, CatalogRelease } from '@/lib/catalog'
 
 // Tailwind classes for each release-status badge tone.
 const STATUS_TONE: Record<ReleaseStatusKey, string> = {
@@ -24,6 +25,8 @@ type Props = {
   initialReleases: ReleaseWithProject[]
   projects: { id: string; title: string }[]
   versions: VersionLite[]
+  // Seeds the waterfall-form prefill + catalog search; null when unavailable.
+  profile: { artist_name: string | null; spotify_url: string | null } | null
 }
 
 function daysUntil(dateStr: string | null): string | null {
@@ -54,7 +57,7 @@ async function copyMarkdown(md: string, filename: string, onCopied: () => void) 
   }
 }
 
-export default function PipelineClient({ initialReleases, projects, versions }: Props) {
+export default function PipelineClient({ initialReleases, projects, versions, profile }: Props) {
   const [releases, setReleases] = useState(initialReleases)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -149,22 +152,28 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     }
   }
 
-  // Save one metadata field (details editor). Merges the server's canonical row
-  // back into state — the PATCH response has every column but not the
-  // mb_projects join, so the spread keeps the joined artwork/title intact.
-  async function updateField(releaseId: string, field: string, value: string | boolean | null) {
+  // Save metadata fields (details editor, catalog backfill). Merges the
+  // server's canonical row back into state — the PATCH response has every
+  // column but not the mb_projects join, so the spread keeps the joined
+  // artwork/title intact. Returns whether the save landed.
+  async function updateFields(releaseId: string, patch: Record<string, string | boolean | null>): Promise<boolean> {
     try {
       const res = await fetch(`/api/releases/${releaseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
+        body: JSON.stringify(patch),
       })
       if (!res.ok) throw new Error('update failed')
       const data = await res.json()
       setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, ...data } : r))
+      return true
     } catch {
-      flashError('Could not save that field — please try again.')
+      flashError('Could not save — please try again.')
+      return false
     }
+  }
+  function updateField(releaseId: string, field: string, value: string | boolean | null) {
+    return updateFields(releaseId, { [field]: value })
   }
 
   // Which DistroKid field chip was just copied — keyed "releaseId:label" and
@@ -219,7 +228,21 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   type WfTrack = { title: string; project_id: string; final_version_id: string }
   const emptyWfTrack: WfTrack = { title: '', project_id: '', final_version_id: '' }
   const [showWaterfall, setShowWaterfall] = useState(false)
-  const [wfShared, setWfShared] = useState({ artist_name: '', genre: '', label: '', songwriters: '', start_date: '', cadence_days: 28 })
+
+  // Prefill the run's shared fields from the profile and, failing that, the
+  // most recently created release that has each field — artist, label, and
+  // songwriters rarely change between runs, so a new waterfall starts filled.
+  const recentFirst = [...initialReleases].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+  const lastWith = (pick: (r: Release) => string | null) =>
+    recentFirst.map(pick).find(v => v && v.trim())?.trim() ?? ''
+  const [wfShared, setWfShared] = useState(() => ({
+    artist_name: profile?.artist_name?.trim() || lastWith(r => r.artist_name),
+    genre: lastWith(r => r.genre),
+    label: lastWith(r => r.label),
+    songwriters: lastWith(r => r.songwriters),
+    start_date: '',
+    cadence_days: 28,
+  }))
   const [wfTracks, setWfTracks] = useState<WfTrack[]>([{ ...emptyWfTrack }, { ...emptyWfTrack }])
   const [wfSaving, setWfSaving] = useState(false)
   const [wfError, setWfError] = useState<string | null>(null)
@@ -292,6 +315,79 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
       setWfError('Network error — please try again')
     }
     setWfSaving(false)
+  }
+
+  // ── Catalog import (Spotify / Deezer) ─────────────────────────────────────
+  // Pulls the artist's released discography — dates, UPCs, per-track ISRCs —
+  // so past releases can be imported and waterfall re-releases reuse the
+  // right ISRCs. Public catalog data via /api/catalog; no account linking.
+  const [showImport, setShowImport] = useState(false)
+  const [importQuery, setImportQuery] = useState(
+    () => profile?.spotify_url?.trim() || profile?.artist_name?.trim() || lastWith(r => r.artist_name),
+  )
+  const [importLoading, setImportLoading] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [catalog, setCatalog] = useState<ArtistCatalog | null>(null)
+  const [importingTitle, setImportingTitle] = useState<string | null>(null)
+
+  async function fetchCatalog() {
+    setImportLoading(true)
+    setImportError(null)
+    try {
+      const res = await fetch(`/api/catalog?artist=${encodeURIComponent(importQuery.trim())}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Catalog lookup failed')
+      setCatalog(data)
+    } catch (e) {
+      setCatalog(null)
+      setImportError(e instanceof Error ? e.message : 'Catalog lookup failed — please try again')
+    }
+    setImportLoading(false)
+  }
+
+  // A catalog release already on the board, matched by title (case-insensitive).
+  function matchExisting(title: string): ReleaseWithProject | undefined {
+    const t = title.trim().toLowerCase()
+    return releases.find(r => r.title.trim().toLowerCase() === t)
+  }
+
+  // Import a released drop as a pipeline row: metadata filled from the source
+  // and every pre-launch box ticked (it's already out — the value is having
+  // its ISRC/UPC on file for the next waterfall run).
+  async function importCatalogRelease(rel: CatalogRelease) {
+    setImportingTitle(rel.title)
+    try {
+      const firstIsrc = rel.tracks[0]?.isrc ?? null
+      const trackNotes = rel.tracks.length > 1
+        ? 'Imported track ISRCs:\n' + rel.tracks.map(t => `${t.trackNumber}. ${t.title} — ${t.isrc ?? '—'}`).join('\n')
+        : null
+      const res = await fetch('/api/releases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: rel.title,
+          // The DB column is a date — sources sometimes report year-only precision.
+          release_date: rel.releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(rel.releaseDate) ? rel.releaseDate : null,
+          artist_name: catalog?.artistName ?? null,
+          isrc: firstIsrc,
+          upc: rel.upc,
+          release_type: rel.releaseType,
+          notes: trackNotes,
+        }),
+      })
+      const created = await res.json()
+      if (!res.ok) throw new Error(created.error ?? 'Import failed')
+      const res2 = await fetch(`/api/releases/${created.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mixing_done: true, mastering_done: true, artwork_ready: true, dsp_submitted: true }),
+      })
+      const finalRow = res2.ok ? await res2.json() : created
+      setReleases(prev => [{ ...finalRow, mb_projects: null }, ...prev])
+    } catch (e) {
+      flashError(e instanceof Error ? e.message : 'Could not import that release.')
+    }
+    setImportingTitle(null)
   }
 
   // One inline-editable metadata field. Uncontrolled (defaultValue + onBlur
@@ -725,16 +821,23 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <h1 className="text-2xl font-bold text-[var(--text)]">Release Pipeline</h1>
           <p className="text-[var(--text-muted)] text-sm mt-0.5">Track every step — from mix to campaign</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <button
-            onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false) }}
+            onClick={() => { setShowImport(!showImport); setShowWaterfall(false); setShowForm(false) }}
+            className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-violet-400 bg-violet-400/10 hover:bg-violet-400/20"
+          >
+            <ListMusic size={16} />
+            Import Catalog
+          </button>
+          <button
+            onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false); setShowImport(false) }}
             className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-sky-400 bg-sky-400/10 hover:bg-sky-400/20"
           >
             <Droplets size={16} />
             Plan Waterfall
           </button>
           <button
-            onClick={() => { setShowForm(!showForm); setShowWaterfall(false) }}
+            onClick={() => { setShowForm(!showForm); setShowWaterfall(false); setShowImport(false) }}
             className="flex items-center gap-2 bg-[#2dd4bf] hover:bg-[#14b8a6] text-[#0a0a0a] text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
           >
             <Plus size={16} />
@@ -742,6 +845,122 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           </button>
         </div>
       </div>
+
+      {/* Catalog import — the artist's released discography with ISRCs/UPCs,
+          importable as pipeline rows. The key waterfall enabler: re-releases
+          must reuse the original ISRCs, and this is where they come from. */}
+      {showImport && (
+        <div className="rounded-2xl p-6 mb-6" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <h2 className="text-sm font-semibold text-[var(--text)] mb-1 flex items-center gap-2"><ListMusic size={14} className="text-violet-400" /> Import Released Catalog</h2>
+          <p className="text-xs text-[var(--text-muted)] mb-4">
+            Pulls your released songs with their ISRCs, UPCs, and dates from Spotify or Deezer (public catalog data — no login needed).
+            Import past drops so the next waterfall release reuses the right ISRCs.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={importQuery}
+              onChange={e => setImportQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && importQuery.trim() && !importLoading) fetchCatalog() }}
+              placeholder="Artist name or Spotify artist link"
+              className="flex-1 rounded-xl px-3 py-2 text-sm text-[var(--text)] focus:outline-none"
+              style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+            />
+            <button
+              onClick={fetchCatalog}
+              disabled={importLoading || !importQuery.trim()}
+              className="bg-[#2dd4bf] hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed text-[#0a0a0a] text-sm font-semibold px-5 rounded-xl transition-colors"
+            >
+              {importLoading ? 'Fetching…' : 'Fetch'}
+            </button>
+          </div>
+
+          {importError && (
+            <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-xl px-3 py-2 mt-3">{importError}</p>
+          )}
+
+          {catalog && (
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-[var(--text-muted)]">
+                {catalog.releases.length} release{catalog.releases.length === 1 ? '' : 's'} for{' '}
+                <span className="text-[var(--text)] font-medium">{catalog.artistName}</span>
+                {' '}via {catalog.source === 'spotify' ? 'Spotify' : 'Deezer'}
+                {catalog.artistUrl && (
+                  <a href={catalog.artistUrl} target="_blank" rel="noreferrer" className="ml-2 text-[var(--text-muted)] hover:text-[var(--accent)] underline underline-offset-2">view profile</a>
+                )}
+              </p>
+              {catalog.releases.map(rel => {
+                const existing = matchExisting(rel.title)
+                const firstIsrc = rel.tracks[0]?.isrc ?? null
+                const canBackfill = existing && !existing.isrc && !!firstIsrc
+                return (
+                  <div key={rel.url ?? `${rel.title}-${rel.releaseDate}`} className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-[var(--text)] truncate">{rel.title}</span>
+                        <div className="flex items-center gap-2.5 mt-0.5 text-xs text-[var(--text-muted)]">
+                          {rel.releaseDate && <span>{rel.releaseDate}</span>}
+                          <span className="uppercase text-[10px] tracking-wider">{rel.releaseType}</span>
+                          {rel.upc && (
+                            <button
+                              type="button"
+                              onClick={() => copyFieldValue(`cat:${rel.title}:upc`, rel.upc!)}
+                              title="Copy UPC"
+                              className="flex items-center gap-1 hover:text-[var(--text)] transition-colors"
+                            >
+                              UPC {rel.upc}
+                              {copiedField === `cat:${rel.title}:upc` ? <Check size={10} className="text-[#2dd4bf]" /> : <Copy size={10} />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {existing && !canBackfill ? (
+                        <span className="text-xs text-emerald-400 flex items-center gap-1 flex-shrink-0"><Check size={12} /> In pipeline</span>
+                      ) : canBackfill ? (
+                        <button
+                          onClick={() => updateFields(existing!.id, { isrc: firstIsrc, upc: rel.upc })}
+                          className="text-xs font-semibold text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                        >
+                          Fill ISRC on “{existing!.title}”
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => importCatalogRelease(rel)}
+                          disabled={importingTitle === rel.title}
+                          className="text-xs font-semibold text-[#2dd4bf] bg-[#2dd4bf]/10 hover:bg-[#2dd4bf]/20 disabled:opacity-40 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                        >
+                          {importingTitle === rel.title ? 'Importing…' : 'Add to pipeline'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {rel.tracks.map(t => (
+                        <div key={t.trackNumber} className="flex items-center gap-2 text-xs">
+                          <span className="text-[var(--text-muted)] w-4 text-right flex-shrink-0">{t.trackNumber}.</span>
+                          <span className="text-[var(--text-secondary)] truncate">{t.title}</span>
+                          {t.isrc ? (
+                            <button
+                              type="button"
+                              onClick={() => copyFieldValue(`cat:${rel.title}:${t.trackNumber}`, t.isrc!)}
+                              title="Copy ISRC"
+                              className="flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
+                            >
+                              {t.isrc}
+                              {copiedField === `cat:${rel.title}:${t.trackNumber}` ? <Check size={10} className="text-[#2dd4bf]" /> : <Copy size={10} />}
+                            </button>
+                          ) : (
+                            <span className="text-[var(--text-muted)] opacity-50 flex-shrink-0">no ISRC</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Waterfall planner — ordered tracks + start Friday + cadence in, one
           linked release per drop out. Each later drop's DistroKid prep panel

@@ -25,7 +25,7 @@ Each entry: the file or area, the trap, and why it's shaped the way it is.
 
 ## Rate limits
 
-All rate limits are in-process and **reset on every deploy — intentionally**. Don't move them to Redis/DB or flag the reset as a bug. Current limits: login 10/15min·IP, signup 5/hr·IP, artwork 10/hr·user, upload-url 30/hr·user, feedback 20/hr·IP, feed comments 30/hr·user, chat 20/hr·user, final video 6/hr·user + max 2 concurrent renders/process.
+All rate limits are in-process and **reset on every deploy — intentionally**. Don't move them to Redis/DB or flag the reset as a bug. Current limits: login 10/15min·IP, signup 5/hr·IP, artwork 10/hr·user, upload-url 30/hr·user, feedback 20/hr·IP, feed comments 30/hr·user, chat 20/hr·user, final video 6/hr·user + max 2 concurrent renders/process, catalog lookup 10/hr·user.
 
 ## Database & RLS
 

@@ -54,7 +54,7 @@ All relevant tests must pass before telling the user a fix is done.
 - `POST /api/finalize-artwork` — `sharp` + `opentype.js` text overlay. **Gotcha:** the bundled font is traced via `outputFileTracingIncludes` in `next.config.ts` — removing that config crashes the route on Railway.
 - `GET|POST /api/visualizer/runway` — Runway Gen-4 Turbo / Gen-4.5 / Seedance 2 / Veo 3/3.1 image-to-video
 - `POST|GET /api/finalize-video` — finished YouTube (1080p) / Shorts (9:16) renders: loops the pinned visualizer seamlessly for the song, flashes the artwork text lockup, muxes the current mix. In-process async jobs (POST starts, GET polls; lost on deploy by design). ffmpeg via `@ffmpeg-installer` (npm-hosted, 2018 build — **no xfade**; crossfade is trim/concat/fade/overlay in `src/lib/video-render.ts`). Outputs → `mf-video` + `mb_visualizers` kind `youtube`/`shorts`. Bucket limit raised to 500 MB via SQL (migration 016 + `ensureVideoBucketLimit` heal).
-- In-process rate limits (reset on deploy, intentional): login 10/15min·IP, signup 5/hr·IP, artwork 10/hr·user, upload-url 30/hr·user, feedback 20/hr·IP, feed comments 30/hr·user, chat 20/hr·user, final video 6/hr·user (+ max 2 concurrent renders/process)
+- In-process rate limits (reset on deploy, intentional): login 10/15min·IP, signup 5/hr·IP, artwork 10/hr·user, upload-url 30/hr·user, feedback 20/hr·IP, feed comments 30/hr·user, chat 20/hr·user, final video 6/hr·user (+ max 2 concurrent renders/process), catalog lookup 10/hr·user
 
 ## Security
 - Headers set in `next.config.ts`: X-Frame-Options SAMEORIGIN, nosniff, Referrer-Policy, Permissions-Policy, HSTS 1yr, CSP (self + Supabase + Replicate).

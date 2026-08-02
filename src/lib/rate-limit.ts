@@ -103,6 +103,11 @@ export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 // community feed.
 export const feedCommentLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// Catalog lookups (Spotify/Deezer discography + ISRC pull): 10 per hour per
+// user — each lookup fans out into dozens of upstream API calls, and a
+// catalog rarely changes mid-session.
+export const catalogLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
+
 // SubmitBase writes (curator add/import + submission log): 120 per hour per
 // user. Generous enough for a real CSV import session, low enough to stop a
 // runaway client loop from flooding the directory or activity log.
