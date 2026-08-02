@@ -79,6 +79,40 @@ struct ProjectDetailView: View {
                             .padding(.horizontal)
                         }
 
+                        // MARK: - Visualizer (Spotify-Canvas-style loop for this track)
+                        NavigationLink(destination: VisualizerView(
+                            projectId: project.id,
+                            projectTitle: project.title,
+                            artworkUrl: project.artworkUrl,
+                            pinnedUrl: project.visualizerUrl,
+                            onPinChanged: { url in self.project?.visualizerUrl = url }
+                        )) {
+                            HStack {
+                                Image(systemName: "sparkles.tv")
+                                Text(project.visualizerUrl == nil ? "Create Visualizer" : "Visualizer")
+                                Spacer()
+                                if project.visualizerUrl != nil {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "pin.fill")
+                                        Text("Pinned")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(Color(hex: "#111111"))
+                            .cornerRadius(10)
+                        }
+                        .padding(.horizontal)
+
                         // MARK: - Versions Section
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -219,8 +253,10 @@ struct ProjectDetailView: View {
                     .cornerRadius(8)
                 }
 
-                // Generate AI artwork
-                NavigationLink(destination: ArtworkGeneratorView(projectId: projectId)) {
+                // Generate AI artwork (server applies it; update our copy live)
+                NavigationLink(destination: ArtworkGeneratorView(projectId: projectId, onGenerated: { url in
+                    self.project?.artworkUrl = url
+                })) {
                     HStack(spacing: 4) {
                         Image(systemName: "paintbrush")
                         Text("AI Art")
@@ -463,7 +499,7 @@ struct ProjectDetailView: View {
 
     private func shareVersion(_ version: Version) {
         if let token = version.shareToken {
-            let shareUrl = "https://mixbase-production.up.railway.app/share/\(token)"
+            let shareUrl = "\(Config.apiBaseURL)/share/\(token)"
             UIPasteboard.general.string = shareUrl
         }
     }
@@ -658,12 +694,19 @@ struct ProjectDetailView: View {
             project = try await SupabaseService.shared.fetchProject(id: projectId)
             versions = try await SupabaseService.shared.fetchVersions(projectId: projectId)
 
-            // Load feedback for each version
-            for version in versions {
-                let feedback = try await SupabaseService.shared.fetchFeedback(versionId: version.id)
-                if !feedback.isEmpty {
-                    feedbackByVersion[version.id] = feedback
+            // Load feedback for all versions concurrently
+            let versionIds = versions.map(\.id)
+            feedbackByVersion = await withTaskGroup(of: (UUID, [Feedback]).self) { group in
+                for id in versionIds {
+                    group.addTask {
+                        (id, (try? await SupabaseService.shared.fetchFeedback(versionId: id)) ?? [])
+                    }
                 }
+                var result: [UUID: [Feedback]] = [:]
+                for await (id, feedback) in group where !feedback.isEmpty {
+                    result[id] = feedback
+                }
+                return result
             }
         } catch {
             print("ProjectDetailView: Failed to load project — \(error.localizedDescription)")

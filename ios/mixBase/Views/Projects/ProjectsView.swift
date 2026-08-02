@@ -59,6 +59,9 @@ struct ProjectsView: View {
                             collectionsSection
                         }
                     }
+                    .refreshable {
+                        await loadAll()
+                    }
                 }
             }
             .navigationTitle("Projects")
@@ -319,14 +322,21 @@ struct ProjectsView: View {
     private func loadProjects() async {
         do {
             projects = try await SupabaseService.shared.fetchProjects()
-            var versions: [UUID: Version] = [:]
-            for project in projects {
-                let projectVersions = try await SupabaseService.shared.fetchVersions(projectId: project.id)
-                if let latest = projectVersions.max(by: { $0.versionNumber < $1.versionNumber }) {
-                    versions[project.id] = latest
+            // Latest version per project, fetched concurrently
+            let projectIds = projects.map(\.id)
+            latestVersions = await withTaskGroup(of: (UUID, Version?).self) { group in
+                for id in projectIds {
+                    group.addTask {
+                        let projectVersions = (try? await SupabaseService.shared.fetchVersions(projectId: id)) ?? []
+                        return (id, projectVersions.max(by: { $0.versionNumber < $1.versionNumber }))
+                    }
                 }
+                var result: [UUID: Version] = [:]
+                for await (id, latest) in group {
+                    if let latest { result[id] = latest }
+                }
+                return result
             }
-            latestVersions = versions
         } catch {
             print("ProjectsView: Failed to load projects — \(error.localizedDescription)")
         }
