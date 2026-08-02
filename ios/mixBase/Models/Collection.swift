@@ -10,6 +10,9 @@ struct Collection: Codable, Identifiable {
     var title: String
     var type: String         // "playlist", "ep", "album"
     var artworkUrl: String?
+    // The collection's cover image (what the web app sets via "Set as collection
+    // cover" — a different column from the legacy artwork_url).
+    var coverUrl: String?
     var releaseDate: Date?
     var notes: String?
     let createdAt: Date
@@ -18,6 +21,7 @@ struct Collection: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, title, type, notes
         case artworkUrl = "artwork_url"
+        case coverUrl = "cover_url"
         case releaseDate = "release_date"
         case createdAt = "created_at"
         case updatedAt = "updated_at"

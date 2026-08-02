@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { uploadLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { uploadLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { ownsProject } from '@/lib/ownership'
 import { isUuid } from '@/lib/validators'
 
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   const userId = req.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const limit = uploadLimiter.check(userId)
+  const limit = await checkUserLimit(uploadLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json(
       { error: 'Too many upload requests. Try again later.' },

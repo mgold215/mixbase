@@ -29,6 +29,54 @@ export function currentMonth(): string {
   return new Date().toISOString().slice(0, 7)
 }
 
+// ── Platform owner exemption ──────────────────────────────────────────────────
+// The owner's account is exempt from every monthly quota and per-user rate
+// limit. Identified by subscription_tier 'admin', or by the owner email as a
+// bootstrap: the email path self-heals the profile row to 'admin' so the
+// exemption (and the admin-gated infra panel) works without any manual DB step.
+// Cached per process — one lookup per user per deploy.
+const OWNER_EMAILS = new Set(['moodmixformat@icloud.com'])
+const ownerCache = new Map<string, boolean>()
+
+export async function isPlatformOwner(userId: string): Promise<boolean> {
+  const cached = ownerCache.get(userId)
+  if (cached !== undefined) return cached
+
+  let owner = false
+  try {
+    const { data } = await supabaseAdmin
+      .from('profiles')
+      .select('subscription_tier')
+      .eq('id', userId)
+      .single()
+    if (data?.subscription_tier === 'admin') {
+      owner = true
+    } else {
+      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId)
+      const email = userData?.user?.email?.toLowerCase()
+      if (email && OWNER_EMAILS.has(email)) {
+        owner = true
+        // Persist so every other admin gate (assertAdmin, /api/subscription)
+        // agrees from now on. Fire-and-forget: the exemption must not block.
+        void supabaseAdmin
+          .from('profiles')
+          .update({ subscription_tier: 'admin' })
+          .eq('id', userId)
+          .then(({ error }) => {
+            if (error) console.error('[tier] owner profile heal failed:', error.message)
+          })
+      }
+    }
+  } catch (err) {
+    // Lookup failed — apply normal limits this request, don't cache the failure.
+    console.error('[tier] isPlatformOwner lookup failed:', err instanceof Error ? err.message : err)
+    return false
+  }
+
+  ownerCache.set(userId, owner)
+  return owner
+}
+
 // Fetch user's subscription fields from profiles. Falls back to 'free' if row is missing.
 export async function getUserProfile(userId: string): Promise<{
   subscription_tier: SubscriptionTier
@@ -79,6 +127,20 @@ export async function checkAndIncrementUsage(
   // otherwise refund currentMonth() (the new month) and leave the reserved slot
   // (old month) burned. Callers thread this into refundUsage(..., gate.month).
   const month = currentMonth()
+
+  // Platform owner / admin: unlimited. Skip the quota reservation entirely so
+  // even a usage-RPC outage can never block the owner's generations. Checked
+  // BEFORE the zero-limit reject so the owner passes even on a 'free' profile
+  // (isPlatformOwner then heals the profile to 'admin').
+  if (tier === 'admin' || await isPlatformOwner(userId)) {
+    const adminLimits = TIER_LIMITS.admin
+    return {
+      allowed: true,
+      used: 0,
+      limit: feature === 'artwork' ? adminLimits.artworkGenerations : adminLimits.videoGenerations,
+      month,
+    }
+  }
 
   // Zero-limit feature (e.g. free/pro video) — reject without touching the DB.
   if (limit <= 0) return { allowed: false, used: 0, limit, month }

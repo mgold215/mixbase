@@ -131,11 +131,6 @@ struct PlayerView: View {
             .task {
                 await seedQueueIfNeeded()
             }
-            // Opening the Player always leads with the queue — the list of songs
-            // to choose from. Dismiss it (Done) to see the Now Playing screen.
-            .onAppear {
-                showQueue = true
-            }
             .sheet(isPresented: $showQueue) {
                 QueueSheet(isLoading: isLoading)
             }
@@ -191,19 +186,70 @@ struct PlayerView: View {
 
             Spacer(minLength: 30)
 
-            // Track title + version info
+            // Track title — tap for the song dropdown (mirrors the web player's
+            // track selector: one entry per song, latest version, no clutter)
             VStack(spacing: 8) {
-                Text(audioService.currentTrackName ?? "Unknown Track")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(Color(hex: "#f0f0f0"))
-                    .lineLimit(1)
+                Menu {
+                    ForEach(audioService.queue) { item in
+                        Button(action: { audioService.play(item: item) }) {
+                            if item.projectId == version.projectId {
+                                Label(item.trackName, systemImage: "waveform")
+                            } else {
+                                Text(item.trackName)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(audioService.currentTrackName ?? "Unknown Track")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                }
 
+                // Version + status. Switching versions is tucked into a small
+                // menu instead of a row of pills for every version.
                 HStack(spacing: 6) {
-                    Text("v\(version.versionNumber)")
-                        .fontWeight(.semibold)
-                    if let label = version.label, !label.isEmpty {
-                        Text("· \(label)")
+                    if allVersions.count > 1 {
+                        Menu {
+                            ForEach(allVersions.sorted(by: { $0.versionNumber > $1.versionNumber })) { v in
+                                Button(action: {
+                                    audioService.play(
+                                        version: v,
+                                        trackName: audioService.currentTrackName ?? "Unknown",
+                                        artworkUrl: audioService.currentArtworkUrl
+                                    )
+                                }) {
+                                    if isCurrentVersion(v) {
+                                        Label(versionMenuTitle(v), systemImage: "checkmark")
+                                    } else {
+                                        Text(versionMenuTitle(v))
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("v\(version.versionNumber)")
+                                    .fontWeight(.semibold)
+                                if let label = version.label, !label.isEmpty {
+                                    Text("· \(label)")
+                                }
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 9))
+                            }
+                        }
+                    } else {
+                        Text("v\(version.versionNumber)")
+                            .fontWeight(.semibold)
+                        if let label = version.label, !label.isEmpty {
+                            Text("· \(label)")
+                        }
                     }
                     StatusBadge(status: version.status)
                 }
@@ -211,12 +257,6 @@ struct PlayerView: View {
                 .foregroundColor(Color(hex: "#2dd4bf"))
             }
             .padding(.horizontal, 24)
-
-            // Version switcher pills (only when there's more than one version)
-            if allVersions.count > 1 {
-                versionSwitcher
-                    .padding(.top, 14)
-            }
 
             Spacer(minLength: 28)
 
@@ -379,42 +419,15 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Version Switcher
-    private var versionSwitcher: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(allVersions.sorted(by: { $0.versionNumber < $1.versionNumber })) { version in
-                    Button(action: {
-                        audioService.play(
-                            version: version,
-                            trackName: audioService.currentTrackName ?? "Unknown",
-                            artworkUrl: audioService.currentArtworkUrl
-                        )
-                    }) {
-                        Text("v\(version.versionNumber)")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .foregroundColor(
-                                isCurrentVersion(version)
-                                    ? Color(hex: "#080808")
-                                    : Color(hex: "#f0f0f0")
-                            )
-                            .background(
-                                isCurrentVersion(version)
-                                    ? Color(hex: "#2dd4bf")
-                                    : Color(hex: "#f0f0f0").opacity(0.08)
-                            )
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-        }
-    }
-
     // MARK: - Helpers
+
+    // Menu row title for a version, e.g. "v4 · Club Mix"
+    private func versionMenuTitle(_ version: Version) -> String {
+        if let label = version.label, !label.isEmpty {
+            return "v\(version.versionNumber) · \(label)"
+        }
+        return "v\(version.versionNumber)"
+    }
 
     private var playbackProgress: CGFloat {
         guard audioService.duration > 0 else { return 0 }

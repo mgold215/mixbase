@@ -14,6 +14,9 @@ struct PipelineView: View {
     // Show the new release sheet (placeholder for now)
     @State private var showNewRelease = false
 
+    // Curator submissions (SubmitBase) — lives inside Pipeline, like the web
+    @State private var showSubmissions = false
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -22,6 +25,27 @@ struct PipelineView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
+                    // MARK: - Curator Submissions entry (SubmitBase)
+                    Button(action: { showSubmissions = true }) {
+                        HStack {
+                            Image(systemName: "paperplane")
+                            Text("Curator Submissions")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(hex: "#111111"))
+                        .cornerRadius(10)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+
                     if isLoading {
                         ProgressView()
                             .tint(Color(hex: "#2dd4bf"))
@@ -76,6 +100,10 @@ struct PipelineView: View {
                 NewReleaseSheet(onSave: { release in
                     releases.insert(release, at: 0)
                 })
+            }
+            // SubmitBase — full curator pitch flow, presented from Pipeline
+            .fullScreenCover(isPresented: $showSubmissions) {
+                SubmitView()
             }
         }
     }
