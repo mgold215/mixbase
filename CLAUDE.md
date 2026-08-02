@@ -41,7 +41,7 @@ All relevant tests must pass before telling the user a fix is done.
 - Extra public paths beyond AGENTS.md list: `/auth/callback`, `/api/auth/*` above, `/api/db-init`, `/api/stripe/webhook`, `/profile` pages are auth-gated.
 
 ## Database (Supabase `mdefkqaawrusoaojstpq`, migrations in `supabase/migrations/`)
-- Tables: `profiles` (tier + Stripe IDs), `mb_projects`, `mb_versions`, `mb_feedback`, `mb_releases`, `mb_collections`, `mb_collection_items`, `mb_usage` (per-user monthly artwork/video counts, keyed YYYY-MM), `mb_feed_comments` (community-feed comments, migration 022). All except `mb_feed_comments` have `user_id` + owner-only RLS (migration 005); `mb_feed_comments` is deliberately cross-user (any signed-in user reads all rows, insert/delete own only). Server uses `supabaseAdmin`.
+- Tables: `profiles` (tier + Stripe IDs), `mb_projects`, `mb_versions`, `mb_feedback`, `mb_releases`, `mb_collections`, `mb_collection_items`, `mb_usage` (per-user monthly artwork/video counts, keyed YYYY-MM), `mb_feed_comments` (community-feed comments, migration 022), `mb_library_tracks` (released-track library — ISRC/UPC/dates synced from Spotify/Deezer, migration 027). All except `mb_feed_comments` have `user_id` + owner-only RLS (migration 005); `mb_feed_comments` is deliberately cross-user (any signed-in user reads all rows, insert/delete own only). Server uses `supabaseAdmin`.
 - RPCs (atomic, called by `src/lib/tier.ts`): `increment_artwork_usage(p_user_id, p_month)`, `increment_video_usage(p_user_id, p_month)`.
 
 ## Tiers & Stripe (enforced server-side in `src/lib/tier.ts`)

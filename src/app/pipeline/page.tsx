@@ -10,7 +10,7 @@ export default async function PipelinePage() {
 
   // mb_versions has no user_id column — scope it through the project join so
   // all the queries can run in parallel instead of waiting on project ids.
-  const [releasesRes, projectsRes, versionsRes, profileRes] = await Promise.all([
+  const [releasesRes, projectsRes, versionsRes, profileRes, libraryRes] = await Promise.all([
     supabaseAdmin
       .from('mb_releases')
       .select('*, mb_projects(title, artwork_url, finalized_artwork_url)')
@@ -34,6 +34,14 @@ export default async function PipelinePage() {
       .select('artist_name, spotify_url')
       .eq('id', userId)
       .maybeSingle(),
+    // Released-library ISRC/UPC lookup for waterfall re-releases. On any
+    // error (e.g. table missing pre-migration) the board renders without the
+    // fallback — never fail the page over it.
+    supabaseAdmin
+      .from('mb_library_tracks')
+      .select('title, isrc, upc')
+      .eq('user_id', userId)
+      .limit(1000),
   ])
 
   // Strip the join helper column so PipelineClient's prop shape is unchanged.
@@ -56,6 +64,7 @@ export default async function PipelinePage() {
           projects={projectsRes.data ?? []}
           versions={versions}
           profile={profileRes.error ? null : (profileRes.data ?? null)}
+          libraryTracks={libraryRes.error ? [] : (libraryRes.data ?? [])}
         />
       </div>
     </div>
