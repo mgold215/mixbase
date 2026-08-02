@@ -56,6 +56,7 @@ const SUITES = [
   'usage-table-rls-test.mjs',
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
+  'catalog-test.mjs',
   'submit-links-test.mjs',
   'usage-refund-test.mjs',
   'effects-test.mjs',
