@@ -110,14 +110,6 @@ export default function Nav() {
     <>
       {/* ── Top nav bar (always visible, links hidden on mobile) ── */}
       <nav className="fixed top-0 left-0 right-0 z-50 h-12 border-b flex items-center px-5" style={{ backgroundColor: 'color-mix(in srgb, var(--nav-bg) 90%, transparent)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', position: 'relative' }}>
-        {artistName && (
-          <span
-            className="absolute left-1/2 -translate-x-1/2 font-[family-name:var(--font-jost)] text-[13px] font-semibold tracking-[0.08em] pointer-events-none"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            {artistName}
-          </span>
-        )}
         {/* Logo */}
         <Link href="/dashboard" className="mr-6 flex items-baseline gap-0.5 font-[family-name:var(--font-jost)]">
           <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span><span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
@@ -171,6 +163,34 @@ export default function Nav() {
         {/* Spacer on mobile to push logout to right */}
         <div className="flex-1 md:hidden" />
 
+        {/* User menu — the artist name, lit in the accent green, sitting just
+            left of the icon cluster. Replaces both the old centered label and
+            the profile icon: clicking the name opens the account page. Falls
+            back to the icon until the name loads (or when none is set) so the
+            account page always stays reachable. */}
+        {artistName ? (
+          <Link
+            href="/profile"
+            className="mr-2.5 font-[family-name:var(--font-jost)] text-[13px] font-semibold tracking-[0.08em] truncate max-w-36 sm:max-w-52 transition-opacity hover:opacity-80"
+            style={{
+              color: 'var(--accent)',
+              textShadow: pathname === '/profile' ? '0 0 16px rgba(45, 212, 191, 0.5)' : '0 0 10px rgba(45, 212, 191, 0.25)',
+            }}
+            title="Account"
+          >
+            {artistName}
+          </Link>
+        ) : (
+          <Link
+            href="/profile"
+            className="p-1.5 rounded-md transition-colors mr-1"
+            style={{ color: pathname === '/profile' ? 'var(--accent)' : 'var(--text-muted)' }}
+            title="Account"
+          >
+            <UserCircle size={14} strokeWidth={1.5} />
+          </Link>
+        )}
+
         {/* Notifications bell */}
         <button
           onClick={openNotifications}
@@ -202,16 +222,6 @@ export default function Nav() {
         >
           <MoreHorizontal size={14} strokeWidth={1.5} />
         </button>
-
-        {/* Profile */}
-        <Link
-          href="/profile"
-          className="p-1.5 rounded-md transition-colors mr-1"
-          style={{ color: pathname === '/profile' ? 'var(--accent)' : 'var(--text-muted)' }}
-          title="Account"
-        >
-          <UserCircle size={14} strokeWidth={1.5} />
-        </Link>
 
         {/* Theme toggle */}
         <button
