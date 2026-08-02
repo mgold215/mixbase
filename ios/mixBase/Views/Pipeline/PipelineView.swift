@@ -17,6 +17,9 @@ struct PipelineView: View {
     // Curator submissions (SubmitBase) — lives inside Pipeline, like the web
     @State private var showSubmissions = false
 
+    // Linked-project artwork for the release cards
+    @State private var artworkByProject: [UUID: String] = [:]
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -113,15 +116,26 @@ struct PipelineView: View {
     @ViewBuilder
     private func releaseCard(release: Release) -> some View {
         HStack(spacing: 14) {
-            // Project artwork thumbnail (if the release is linked to a project)
-            // For now, show a placeholder since we don't have the project loaded here
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(hex: "#1a1a1a"))
+            // Linked project's artwork (placeholder when the release has none)
+            if let projectId = release.projectId,
+               let artworkUrl = artworkByProject[projectId],
+               let url = URL(string: artworkUrl) {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#1a1a1a"))
+                }
                 .frame(width: 52, height: 52)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .foregroundColor(.gray.opacity(0.4))
-                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(hex: "#1a1a1a"))
+                    .frame(width: 52, height: 52)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(.gray.opacity(0.4))
+                    )
+            }
 
             // Title and release date
             VStack(alignment: .leading, spacing: 4) {
@@ -187,7 +201,14 @@ struct PipelineView: View {
     private func loadReleases() async {
         isLoading = true
         do {
-            releases = try await SupabaseService.shared.fetchReleases()
+            async let fetchedReleases = SupabaseService.shared.fetchReleases()
+            async let fetchedProjects = SupabaseService.shared.fetchProjects()
+            releases = try await fetchedReleases
+            // Artwork for each linked project, keyed by project id
+            let projects = try await fetchedProjects
+            artworkByProject = Dictionary(uniqueKeysWithValues: projects.compactMap { project in
+                project.artworkUrl.map { (project.id, $0) }
+            })
         } catch {
             print("PipelineView: Failed to load releases — \(error.localizedDescription)")
         }

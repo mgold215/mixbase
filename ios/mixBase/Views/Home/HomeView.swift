@@ -43,6 +43,17 @@ struct HomeView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
+                        // MARK: - Brand header
+                        HStack(alignment: .firstTextBaseline, spacing: 1) {
+                            Text("mix")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                            Text("BASE")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                        .padding(.horizontal)
+
                         // MARK: - Load Error Banner
                         // Shown when the initial load failed (e.g. network not up yet
                         // on cold launch) so the user is never stuck on an empty home.
@@ -113,12 +124,10 @@ struct HomeView: View {
                     await loadDashboardData()
                 }
             }
+            // No leading toolbar item: iOS 26 collapses non-interactive leading
+            // items into a dead "…" glass button. The brand lives in the content
+            // header instead; only the (working) settings gear stays up top.
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Text("mixBase")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(Color(hex: "#2dd4bf"))
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink(destination: SettingsView()) {
                         Image(systemName: "gear")
@@ -294,7 +303,9 @@ struct HomeView: View {
             .padding(.horizontal)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                // Top-aligned so cards with and without a genre line don't
+                // vertically drift against each other.
+                HStack(alignment: .top, spacing: 12) {
                     ForEach(recentTracks) { project in
                         trackCard(project: project)
                     }
@@ -351,13 +362,13 @@ struct HomeView: View {
                 .lineLimit(1)
                 .frame(width: 140, alignment: .leading)
 
-            if let genre = project.genre {
-                Text(genre)
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
-                    .frame(width: 140, alignment: .leading)
-            }
+            // Always one genre line (blank when unset) so every card is the
+            // same height and the row lines up evenly.
+            Text(project.genre ?? " ")
+                .font(.caption2)
+                .foregroundColor(.gray)
+                .lineLimit(1)
+                .frame(width: 140, alignment: .leading)
         }
     }
 
