@@ -438,7 +438,8 @@ alter table mb_releases add column if not exists upc              text;
 alter table mb_releases add column if not exists waterfall_group_id uuid;
 alter table mb_releases add column if not exists waterfall_position integer;
 create index if not exists idx_releases_waterfall_group
-  on mb_releases(waterfall_group_id, waterfall_position);`
+  on mb_releases(waterfall_group_id, waterfall_position);
+notify pgrst, 'reload schema';`
 
 let distroKidEnsured: Promise<boolean> | null = null
 
@@ -502,7 +503,11 @@ alter table mb_library_tracks enable row level security;
 do $$ begin
   create policy "users_own_library_tracks" on mb_library_tracks
     using (auth.uid() = user_id) with check (auth.uid() = user_id);
-exception when duplicate_object then null; end $$;`
+exception when duplicate_object then null; end $$;
+-- PostgREST caches the schema; without this reload nudge the retry that
+-- follows the heal still sees "table not found in schema cache" (PGRST205)
+-- and the first sync after a fresh deploy fails even though the DDL worked.
+notify pgrst, 'reload schema';`
 
 let libraryTracksEnsured: Promise<boolean> | null = null
 

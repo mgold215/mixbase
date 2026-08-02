@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
-import { videoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { videoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
 import { isUuid } from '@/lib/validators'
 
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
   // Rate limit: 5/hour per user — defence-in-depth alongside the monthly tier gate below.
-  const limit = videoLimiter.check(userId)
+  const limit = await checkUserLimit(videoLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }

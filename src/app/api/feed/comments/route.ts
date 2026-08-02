@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
-import { feedCommentLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { feedCommentLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 import { publicArtistName, unwrapJoin, type FeedComment } from '@/lib/feed'
 import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from '@/lib/schema-heal'
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Server is misconfigured — please try again shortly' }, { status: 503 })
   }
 
-  const limit = feedCommentLimiter.check(userId)
+  const limit = await checkUserLimit(feedCommentLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Too many comments. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }

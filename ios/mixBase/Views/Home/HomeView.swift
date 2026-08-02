@@ -50,12 +50,19 @@ struct HomeView: View {
                             loadErrorBanner
                         }
 
-                        // MARK: - Stats Row
+                        // MARK: - Stats Row (each card jumps to its tab)
                         HStack(spacing: 12) {
-                            StatCard(value: projects.count, label: "Projects", color: Color(hex: "#f0f0f0"))
-                            StatCard(value: mixingCount, label: "Mixing", color: .yellow)
-                            StatCard(value: releases.count, label: "Pipeline", color: Color(hex: "#2dd4bf"))
+                            Button(action: { selectedTab = 1 }) {
+                                StatCard(value: projects.count, label: "Projects", color: Color(hex: "#f0f0f0"))
+                            }
+                            Button(action: { selectedTab = 1 }) {
+                                StatCard(value: mixingCount, label: "Mixing", color: .yellow)
+                            }
+                            Button(action: { selectedTab = 4 }) {
+                                StatCard(value: releases.count, label: "Pipeline", color: Color(hex: "#2dd4bf"))
+                            }
                         }
+                        .buttonStyle(.plain)
                         .padding(.horizontal)
 
                         // MARK: - Now Playing Card (taps through to the Player tab)

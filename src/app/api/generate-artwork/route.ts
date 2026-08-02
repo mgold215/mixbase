@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
-import { artworkLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook } from '@/lib/artwork-models'
 
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
   // Rate limit: 10/hour per user (defence-in-depth alongside the monthly tier gate)
-  const limit = artworkLimiter.check(userId)
+  const limit = await checkUserLimit(artworkLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
-import { finalVideoLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { finalVideoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
 import { startVideoJob, getVideoJob } from '@/lib/video-jobs'
 import { SHORTS_LENGTHS, MAX_SONG_SECONDS, type VideoFormat } from '@/lib/video-render'
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const limit = finalVideoLimiter.check(userId)
+  const limit = await checkUserLimit(finalVideoLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }

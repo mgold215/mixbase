@@ -138,6 +138,21 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    // MARK: - Artwork assignment (Media library)
+
+    /// Set an existing artwork image as a project's cover (must be a Supabase
+    /// storage URL — the server validates and clears any stale finalized render).
+    func assignArtworkToProject(projectId: UUID, artworkUrl: String) async throws {
+        let body: [String: Any] = ["artwork_url": artworkUrl]
+        _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
+    /// Set an artwork image as a collection's cover.
+    func setCollectionCover(collectionId: UUID, coverUrl: String) async throws {
+        let body: [String: Any] = ["cover_url": coverUrl]
+        _ = try await requestJSON(path: "/api/collections/\(collectionId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
     // MARK: - Core request plumbing
 
     /// Perform a request and parse the response as a JSON object.

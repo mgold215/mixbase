@@ -7,6 +7,9 @@ import SwiftUI
 
 struct SubmitView: View {
 
+    // Set when presented modally (from Pipeline) so the user can close it.
+    @Environment(\.dismiss) private var dismiss
+
     @State private var selectedSection = 0  // 0 = Compose, 1 = Tracker
 
     // Curators data
@@ -55,6 +58,10 @@ struct SubmitView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showAddCurator = true }) {
                         Image(systemName: "plus")

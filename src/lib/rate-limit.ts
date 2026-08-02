@@ -119,3 +119,20 @@ export function ipKey(request: { headers: { get(name: string): string | null } }
   const forwarded = request.headers.get('x-forwarded-for')
   return (forwarded?.split(',')[0]?.trim()) ?? 'unknown'
 }
+
+// ── Owner-exempt user limits ─────────────────────────────────────────────────
+// Per-user rate limits don't apply to the platform owner ("no limits" is a
+// product rule, not just a tier perk). IP-keyed limiters (login, signup,
+// public feedback) are untouched — those defend against outsiders. The owner
+// lookup is cached per process in tier.ts, so after the first call this is a
+// map hit plus the normal sync check.
+export async function checkUserLimit(
+  limiter: { check(key: string): RateLimitResult },
+  userId: string,
+): Promise<RateLimitResult> {
+  const { isPlatformOwner } = await import('./tier')
+  if (await isPlatformOwner(userId)) {
+    return { allowed: true, limit: Number.MAX_SAFE_INTEGER, remaining: Number.MAX_SAFE_INTEGER, resetAt: Date.now() }
+  }
+  return limiter.check(userId)
+}

@@ -8,21 +8,36 @@ import { ensureLibraryTracksTable, isMissingLibraryTracksTable } from '@/lib/sch
 // UPC, dates) kept separate from the pipeline board. GET lists it; POST
 // syncs it from Spotify/Deezer (upsert — safe to re-run as new drops land).
 
+// Heal-and-retry for the missing-table failure. Even after the heal's DDL
+// lands (and its `notify pgrst` fires), PostgREST reloads its schema cache
+// asynchronously — an immediate retry can still see PGRST205. Retry a few
+// times with a pause so the very first request after a fresh deploy succeeds
+// instead of surfacing "table not found in schema cache" to the user.
+async function withLibraryHeal<T>(
+  run: () => PromiseLike<{ data: T | null; error: { code?: string; message?: string } | null }>,
+): Promise<{ data: T | null; error: { code?: string; message?: string } | null }> {
+  let res = await run()
+  if (res.error && isMissingLibraryTracksTable(res.error) && await ensureLibraryTracksTable()) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise(r => setTimeout(r, 1200))
+      res = await run()
+      if (!res.error || !isMissingLibraryTracksTable(res.error)) break
+    }
+  }
+  return res
+}
+
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const read = () => supabaseAdmin
+  const { data, error } = await withLibraryHeal(() => supabaseAdmin
     .from('mb_library_tracks')
     .select('*, mb_projects(title)')
     .eq('user_id', userId)
     .order('release_date', { ascending: false, nullsFirst: false })
-    .limit(1000)
+    .limit(1000))
 
-  let { data, error } = await read()
-  if (error && isMissingLibraryTracksTable(error) && await ensureLibraryTracksTable()) {
-    ({ data, error } = await read())
-  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data ?? [])
 }
@@ -63,16 +78,11 @@ export async function POST(request: NextRequest) {
   // Merge into the library: match existing rows by ISRC first (the stable
   // identity), then by title+release for rows that don't have one yet. New
   // facts win over blanks; a manual project link is never touched.
-  const readExisting = () => supabaseAdmin
+  const { data: existing, error: readErr } = await withLibraryHeal(() => supabaseAdmin
     .from('mb_library_tracks')
     .select('id, title, isrc, release_title, project_id')
     .eq('user_id', userId)
-    .limit(1000)
-
-  let { data: existing, error: readErr } = await readExisting()
-  if (readErr && isMissingLibraryTracksTable(readErr) && await ensureLibraryTracksTable()) {
-    ({ data: existing, error: readErr } = await readExisting())
-  }
+    .limit(1000))
   if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 })
 
   const byIsrc = new Map((existing ?? []).filter(r => r.isrc).map(r => [r.isrc as string, r]))
