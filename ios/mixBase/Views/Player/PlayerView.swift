@@ -100,7 +100,9 @@ struct PlayerView: View {
                 if let version = audioService.currentVersion {
                     nowPlayingScreen(version: version)
                 } else {
-                    emptyState
+                    // Nothing playing yet: land straight on the track list —
+                    // no extra "Open Queue" tap needed.
+                    trackListScreen
                 }
             }
             .navigationTitle(audioService.currentVersion != nil ? "Now Playing" : "Player")
@@ -302,36 +304,84 @@ struct PlayerView: View {
         return URL(string: "https://mixbase.app")!
     }
 
-    // MARK: - Empty State
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "music.note")
-                .font(.system(size: 56))
-                .foregroundColor(.gray.opacity(0.3))
+    // MARK: - Track List (nothing playing)
+    // All tracks, one row per song (latest version), ready to tap-and-play.
+    private var trackListScreen: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+                Text("Your Tracks")
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
 
-            Text("Nothing playing")
-                .font(.headline)
-                .foregroundColor(Color(hex: "#f0f0f0"))
-
-            Text("Pick a track to start listening")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-
-            Button(action: { showQueue = true }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "list.bullet")
-                    Text("Open Queue")
-                        .fontWeight(.semibold)
+                if isLoading && audioService.queue.isEmpty {
+                    HStack { Spacer(); ProgressView().tint(Color(hex: "#2dd4bf")); Spacer() }
+                        .padding(.vertical, 40)
+                } else if audioService.queue.isEmpty {
+                    Text("No tracks yet — upload a mix from Projects.")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .padding(.horizontal)
+                        .padding(.vertical, 24)
+                } else {
+                    ForEach(audioService.queue) { item in
+                        trackListRow(item)
+                    }
                 }
-                .foregroundColor(Color(hex: "#080808"))
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(Color(hex: "#2dd4bf"))
-                .clipShape(Capsule())
+
+                Spacer(minLength: 100)
             }
-            .padding(.top, 8)
         }
-        .padding()
+    }
+
+    @ViewBuilder
+    private func trackListRow(_ item: QueueItem) -> some View {
+        Button(action: { audioService.play(item: item) }) {
+            HStack(spacing: 12) {
+                if let artworkUrl = item.artworkUrl, let url = URL(string: artworkUrl) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        RoundedRectangle(cornerRadius: 8).fill(Color(hex: "#1a1a1a"))
+                    }
+                    .frame(width: 48, height: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(hex: "#1a1a1a"))
+                        .frame(width: 48, height: 48)
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .font(.caption)
+                                .foregroundColor(.gray.opacity(0.4))
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.trackName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                        .lineLimit(1)
+                    Text("v\(item.version.versionNumber)\(item.version.label.map { " · \($0)" } ?? "")")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "play.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Artwork Image

@@ -13,11 +13,17 @@ struct ContentView: View {
     @State private var selectedTab = 0
 
     var body: some View {
-        if authService.isAuthenticated {
-            mainTabView
-        } else {
-            LoginView()
+        Group {
+            if authService.isAuthenticated {
+                mainTabView
+            } else {
+                LoginView()
+            }
         }
+        // The app is dark by design. Without this, iOS renders system chrome
+        // (nav bars, the floating tab bar, menus, sheets) in the device's
+        // current appearance — which is why bars flipped black/white per tab.
+        .preferredColorScheme(.dark)
     }
 
     // MARK: - Main Tab View
