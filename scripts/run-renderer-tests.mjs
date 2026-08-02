@@ -56,6 +56,7 @@ const SUITES = [
   'usage-table-rls-test.mjs',
   'security-heal-trigger-test.mjs',
   'release-pipeline-test.mjs',
+  'loudness-test.mjs',
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
   'catalog-test.mjs',
