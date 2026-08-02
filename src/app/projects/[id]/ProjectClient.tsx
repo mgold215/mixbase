@@ -7,6 +7,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
+import MasterCheck from '@/components/MasterCheck'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { trackShareUrl } from '@/lib/share-url'
 import { formatReleaseDate } from '@/lib/release-plan'
@@ -1207,6 +1208,10 @@ function CurrentMixCard({
             {version.change_log}
           </p>
         )}
+
+        {/* Measured loudness + per-DSP normalization verdict — the substance
+            behind the pipeline's "Mastering done" checkbox. */}
+        <MasterCheck versionId={version.id} audioUrl={vUrl} fileSizeBytes={version.file_size_bytes ?? null} />
 
         {/* Status */}
         <div className="flex gap-1.5 flex-wrap">

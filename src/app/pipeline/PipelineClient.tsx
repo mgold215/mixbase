@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X, ListMusic } from 'lucide-react'
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
@@ -20,10 +20,17 @@ type ReleaseWithProject = Release & {
 }
 type VersionLite = { id: string; project_id: string; version_number: number; label: string | null; status: string; audio_url: string; audio_filename: string | null }
 
+// A released-library row as the pipeline needs it: the ISRC/UPC source of
+// truth for waterfall re-releases, matched by title (synced on /library).
+type LibraryTrackLite = { title: string; isrc: string | null; upc: string | null }
+
 type Props = {
   initialReleases: ReleaseWithProject[]
   projects: { id: string; title: string }[]
   versions: VersionLite[]
+  // Seeds the waterfall-form prefill; null when unavailable.
+  profile: { artist_name: string | null; spotify_url: string | null } | null
+  libraryTracks: LibraryTrackLite[]
 }
 
 function daysUntil(dateStr: string | null): string | null {
@@ -54,7 +61,479 @@ async function copyMarkdown(md: string, filename: string, onCopied: () => void) 
   }
 }
 
-export default function PipelineClient({ initialReleases, projects, versions }: Props) {
+// One inline-editable metadata field, controlled with a local draft.
+//
+// MetaInput and ReleaseCard live at MODULE scope on purpose. They used to be
+// declared inside PipelineClient, which made each parent render produce a new
+// component *type* — so React unmounted and remounted the whole card subtree
+// on every state change. With the then-uncontrolled inputs, that destroyed the
+// DOM node holding the user's draft: type in one field, Tab to the next, and
+// when the first field's PATCH resolved the remount silently WIPED the
+// characters just typed and stole focus. Stable identities fix the remount;
+// the local draft state (legal now that the component survives renders) keeps
+// typing intact while still re-adopting the canonical value on external
+// changes (catalog backfill, the server's null→default coercion, save-error
+// reverts) whenever the field isn't actively being edited.
+function MetaInput({ release, field, label, placeholder, onSave }: {
+  release: Release
+  field: keyof Release & string
+  label: string
+  placeholder?: string
+  onSave: (releaseId: string, field: string, value: string | null) => void
+}) {
+  const value = (release[field] as string | null) ?? ''
+  const [draft, setDraft] = useState(value)
+  const [editing, setEditing] = useState(false)
+  // Adopt external canonical changes (catalog backfill, server coercion,
+  // error reverts) via React's render-phase adjustment pattern — but never
+  // while the user is mid-edit, or we'd overwrite their typing.
+  const [prevValue, setPrevValue] = useState(value)
+  if (prevValue !== value) {
+    setPrevValue(value)
+    if (!editing) setDraft(value)
+  }
+  return (
+    <div>
+      <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">{label}</label>
+      <input
+        type="text"
+        value={draft}
+        placeholder={placeholder}
+        onChange={e => setDraft(e.target.value)}
+        onFocus={() => setEditing(true)}
+        onBlur={e => {
+          setEditing(false)
+          const v = e.target.value.trim()
+          if (v !== value) onSave(release.id, field, v || null)
+          else setDraft(value)
+        }}
+        className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none"
+        style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+      />
+    </div>
+  )
+}
+
+// Everything ReleaseCard needs from the board, passed explicitly so the
+// component can live at module scope (see the MetaInput comment for why).
+type ReleaseCardProps = {
+  release: ReleaseWithProject
+  releases: ReleaseWithProject[]
+  versions: VersionLite[]
+  todayStr: string
+  expandedId: string | null
+  setExpandedId: Dispatch<SetStateAction<string | null>>
+  copiedPlanId: string | null
+  setCopiedPlanId: Dispatch<SetStateAction<string | null>>
+  copiedField: string | null
+  setCopiedField: Dispatch<SetStateAction<string | null>>
+  copyFieldValue: (key: string, value: string) => void
+  updateField: (releaseId: string, field: string, value: string | boolean | null) => Promise<boolean>
+  updateReleaseDate: (releaseId: string, value: string) => void
+  toggleCheck: (releaseId: string, field: string, current: boolean) => void
+  deleteRelease: (id: string) => void
+  libraryByTitle: Map<string, LibraryTrackLite>
+}
+
+function ReleaseCard({
+  release, releases, versions, todayStr,
+  expandedId, setExpandedId, copiedPlanId, setCopiedPlanId, copiedField, setCopiedField,
+  copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease, libraryByTitle,
+}: ReleaseCardProps) {
+  const isExpanded = expandedId === release.id
+  const pct = releaseCompletionPercent(release)
+  const countdown = daysUntil(release.release_date)
+  // Readiness judgment (At risk / Due soon / Ready) — null when nothing to flag.
+  const status = getReleaseStatus(release, todayStr)
+  const copiedPlan = copiedPlanId === release.id
+
+  // ── DistroKid prep inputs ──
+  // The tracklist for this drop (new track + earlier waterfall tracks),
+  // the file that would be uploaded (explicit link, else the project's
+  // latest version — matching the create form's "Latest / none" semantics),
+  // and the readiness issues derived from all of it.
+  const wfTotal = release.waterfall_group_id ? releases.filter(r => r.waterfall_group_id === release.waterfall_group_id).length : 0
+  // Tracks whose row has no ISRC yet fall back to the released library's
+  // title match — the ISRC synced from Spotify/Deezer on /library — so
+  // waterfall re-releases are complete without hand-copying codes around.
+  const tracklist = distroKidTracklist(release, releases).map(t =>
+    t.isrc ? t : { ...t, isrc: libraryByTitle.get(t.title.trim().toLowerCase())?.isrc ?? null },
+  )
+  const finalVersion = versions.find(v => v.id === release.final_version_id)
+    ?? (release.project_id ? versions.find(v => v.project_id === release.project_id) : undefined)
+  const artworkUrl = displayArtworkUrl(release.mb_projects ?? {})
+  const issues = validateForDistroKid(release, { hasFinalVersion: !!finalVersion, hasArtwork: !!artworkUrl, tracklist, todayStr })
+  const dkFields = distroKidFields(release, tracklist)
+  const copiedSheet = copiedField === `${release.id}:__sheet`
+
+  const copySheet = () =>
+    copyMarkdown(
+      buildDistroKidSheet(release, tracklist, issues, release.mb_projects?.title ?? null),
+      `${release.title} — DistroKid sheet.md`,
+      () => {
+        setCopiedField(`${release.id}:__sheet`)
+        setTimeout(() => setCopiedField(prev => (prev === `${release.id}:__sheet` ? null : prev)), 2000)
+      },
+    )
+
+  // Export the whole release plan — checklist state, date, metadata, notes —
+  // as one Markdown doc the musician can paste into a distributor checklist,
+  // a collaborator message, or release notes.
+  const copyPlan = () =>
+    copyMarkdown(
+      buildReleasePlan(release, release.mb_projects?.title ?? null),
+      `${release.title} — release plan.md`,
+      () => {
+        setCopiedPlanId(release.id)
+        setTimeout(() => setCopiedPlanId(prev => (prev === release.id ? null : prev)), 2000)
+      },
+    )
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+      {/* Header */}
+      <div
+        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+        onClick={() => setExpandedId(isExpanded ? null : release.id)}
+      >
+        {/* Artwork / icon */}
+        <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-[var(--surface-2)] flex-shrink-0">
+          {displayArtworkUrl(release.mb_projects ?? {}) ? (
+            <Image src={displayArtworkUrl(release.mb_projects ?? {})!} alt={release.title} fill className="object-cover" />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)] text-lg">♪</div>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-[var(--text)] truncate">{release.title}</span>
+            {release.mb_projects && (
+              release.project_id
+                ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] truncate transition-colors">← {release.mb_projects.title}</Link>
+                : <span className="text-xs text-[var(--text-muted)] truncate">← {release.mb_projects.title}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-[var(--text-muted)]">
+            {release.release_date && (
+              <span>{formatReleaseDate(release.release_date)}</span>
+            )}
+            {release.label && <span>{release.label}</span>}
+            {release.genre && <span>{release.genre}</span>}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Waterfall membership — which drop of the run this release is */}
+          {release.waterfall_group_id && release.waterfall_position && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 text-sky-400 bg-sky-400/10">
+              <Droplets size={10} />
+              Drop {release.waterfall_position}/{wfTotal}
+            </span>
+          )}
+
+          {/* Readiness status — only rendered when there's something to flag */}
+          {status && (
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_TONE[status.key]}`}>
+              {status.label}
+            </span>
+          )}
+
+          {/* Countdown */}
+          {countdown && (
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              countdown === 'Today' ? 'text-[var(--accent)] bg-[var(--accent-dim)]' :
+              countdown === 'Released' ? 'text-emerald-400 bg-emerald-400/10' :
+              'text-[var(--text-muted)] bg-[var(--surface-2)]'
+            }`}>
+              {countdown}
+            </span>
+          )}
+
+          {/* Health score */}
+          <div className="flex items-center gap-1.5">
+            <div className="w-16 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${pct}%`,
+                  backgroundColor: pct === 100 ? '#34d399' : pct >= 50 ? '#2dd4bf' : '#555'
+                }}
+              />
+            </div>
+            <span className="text-xs text-[var(--text-muted)]">{pct}%</span>
+          </div>
+
+          {isExpanded ? <ChevronUp size={14} className="text-[var(--text-muted)]" /> : <ChevronDown size={14} className="text-[var(--text-muted)]" />}
+        </div>
+      </div>
+
+      {/* Expanded */}
+      {isExpanded && (
+        <div className="px-4 pb-5 pt-2 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
+          {/* Release date — editable inline so undated releases can be scheduled later */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Release Date</label>
+              <input
+                type="date"
+                value={release.release_date ?? ''}
+                onChange={e => updateReleaseDate(release.id, e.target.value)}
+                className="rounded-xl px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
+                style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+              />
+              {!release.release_date && (
+                <span className="text-xs text-[var(--text-muted)]">Set a date to organize this release</span>
+              )}
+            </div>
+            {/* Quick-pick Friday release dates — drops conventionally land on a
+                Friday and DSP playlist pitching wants a few weeks' lead. Each
+                writes through the same hardened updateReleaseDate() (snapshot →
+                PATCH → revert + toast on failure). */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {releaseDatePresets(todayStr).map(p => {
+                const active = release.release_date === p.date
+                return (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => updateReleaseDate(release.id, p.date)}
+                    title={p.friendly}
+                    className={`rounded-full px-2.5 py-1 text-xs transition-colors ${active ? 'text-[#2dd4bf] bg-[#2dd4bf]/10' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+                    style={{ border: '1px solid var(--border)' }}
+                  >
+                    {p.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            {/* Pre-Launch checklist */}
+            <div>
+              <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Pre-Launch</p>
+              <div className="space-y-2">
+                {PRE_LAUNCH_ITEMS.map(item => (
+                  <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={!!release[item.key as keyof Release]}
+                      onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
+                      className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
+                    />
+                    <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
+                      {item.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Post-Launch campaign */}
+            <div>
+              <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Launch Campaign</p>
+              <div className="space-y-2">
+                {LAUNCH_CAMPAIGN_ITEMS.map(item => (
+                  <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={!!release[item.key as keyof Release]}
+                      onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
+                      className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
+                    />
+                    <span className="flex flex-col min-w-0">
+                      <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
+                        {item.label}
+                      </span>
+                      <span className="text-[10px] text-[var(--text-muted)] opacity-50 leading-tight">{item.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Release details — every field DistroKid's upload form asks for,
+              editable inline (saved on blur). This is the data the prep
+              panel below validates and exports. */}
+          <div>
+            <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Release Details</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <MetaInput onSave={updateField} release={release} field="artist_name" label="Artist name" placeholder="As on your Spotify profile" />
+              <MetaInput onSave={updateField} release={release} field="featured_artists" label="Featured artists" placeholder="feat. …" />
+              <MetaInput onSave={updateField} release={release} field="songwriters" label="Songwriters (legal names)" placeholder="Jane Doe, John Smith" />
+              <MetaInput onSave={updateField} release={release} field="producers" label="Producers" placeholder="Optional" />
+              <MetaInput onSave={updateField} release={release} field="genre" label="Primary genre" placeholder="e.g. Afrobeats" />
+              <MetaInput onSave={updateField} release={release} field="secondary_genre" label="Secondary genre" placeholder="Optional" />
+              <MetaInput onSave={updateField} release={release} field="language" label="Language" placeholder="English" />
+              <MetaInput onSave={updateField} release={release} field="version_info" label="Version" placeholder="Radio Edit, Remix…" />
+              <MetaInput onSave={updateField} release={release} field="label" label="Record label" placeholder="e.g. Independent" />
+              <MetaInput onSave={updateField} release={release} field="isrc" label="ISRC (this track)" placeholder="Paste after DistroKid assigns it" />
+              <MetaInput onSave={updateField} release={release} field="upc" label="UPC" placeholder="Blank = DistroKid assigns" />
+              <div>
+                <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">Release type</label>
+                <select
+                  value={release.release_type}
+                  onChange={e => updateField(release.id, 'release_type', e.target.value)}
+                  className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none appearance-none"
+                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
+                >
+                  <option value="single" style={{ backgroundColor: 'var(--surface)' }}>Single</option>
+                  <option value="ep" style={{ backgroundColor: 'var(--surface)' }}>EP</option>
+                  <option value="album" style={{ backgroundColor: 'var(--surface)' }}>Album</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-5 mt-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
+                <input type="checkbox" checked={release.explicit} onChange={() => updateField(release.id, 'explicit', !release.explicit)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
+                Explicit lyrics
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
+                <input type="checkbox" checked={release.instrumental} onChange={() => updateField(release.id, 'instrumental', !release.instrumental)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
+                Instrumental
+              </label>
+            </div>
+          </div>
+
+          {/* DistroKid prep — readiness issues, this drop's tracklist, and
+              every form answer as a click-to-copy chip in upload order. */}
+          <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'var(--surface-2)' }}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1.5">
+                <Droplets size={12} />
+                DistroKid Prep
+              </p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <button onClick={copySheet} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                  {copiedSheet ? <Check size={12} /> : <ClipboardList size={12} />}
+                  {copiedSheet ? 'Copied!' : 'Copy sheet'}
+                </button>
+                {finalVersion && (
+                  <a
+                    href={audioProxyUrl(finalVersion.audio_url)}
+                    download={finalVersion.audio_filename ?? true}
+                    className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                  >
+                    <Download size={12} />
+                    Final mix
+                  </a>
+                )}
+                {artworkUrl && (
+                  <a href={artworkUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                    <ExternalLink size={12} />
+                    Artwork
+                  </a>
+                )}
+                <a
+                  href="https://distrokid.com/new/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
+                >
+                  <ExternalLink size={12} />
+                  Open DistroKid
+                </a>
+              </div>
+            </div>
+
+            {/* Readiness — errors block a clean submission, warnings are conventions */}
+            {issues.length > 0 ? (
+              <div className="space-y-1.5">
+                {issues.map((iss, i) => (
+                  <div key={i} className={`flex items-start gap-2 text-xs ${iss.level === 'error' ? 'text-red-400' : 'text-amber-400'}`}>
+                    {iss.level === 'error' ? <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /> : <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />}
+                    <span>{iss.message}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                <Check size={12} />
+                Everything DistroKid needs is ready — copy the sheet and submit.
+              </p>
+            )}
+
+            {/* Waterfall tracklist for this drop */}
+            {tracklist.length > 1 && (
+              <div>
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1.5">Tracklist for this drop</p>
+                <div className="space-y-1">
+                  {tracklist.map(t => (
+                    <div key={t.releaseId} className="flex items-center gap-2 text-xs">
+                      <span className="text-[var(--text-muted)] w-4 text-right">{t.trackNumber}.</span>
+                      <span className="text-[var(--text)] truncate">{t.title}{t.versionInfo ? ` (${t.versionInfo})` : ''}</span>
+                      {t.isNew ? (
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-[#2dd4bf] bg-[#2dd4bf]/10 flex-shrink-0">NEW</span>
+                      ) : (
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0 ${t.isrc ? 'text-[var(--text-muted)] bg-[var(--surface)]' : 'text-red-400 bg-red-400/10'}`}>
+                          {t.isrc ? `reuse ISRC ${t.isrc}` : 'ISRC missing'}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Click-to-copy form answers, in DistroKid's upload order */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+              {dkFields.map(f => {
+                const key = `${release.id}:${f.label}`
+                const copied = copiedField === key
+                return (
+                  <button
+                    key={f.label}
+                    type="button"
+                    onClick={() => f.value && copyFieldValue(key, f.value)}
+                    disabled={!f.value}
+                    title={f.value ? 'Click to copy' : 'Not set yet'}
+                    className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors disabled:opacity-40 hover:bg-[var(--surface)]"
+                    style={{ border: '1px solid var(--border)' }}
+                  >
+                    <span className="min-w-0 flex items-baseline gap-1.5">
+                      <span className="text-[var(--text-muted)] flex-shrink-0">{f.label}</span>
+                      <span className="text-[var(--text)] truncate">{f.value || '—'}</span>
+                    </span>
+                    {copied ? <Check size={11} className="text-[#2dd4bf] flex-shrink-0" /> : <Copy size={11} className="text-[var(--text-muted)] flex-shrink-0" />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Notes */}
+          {release.notes && (
+            <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
+              <p className="text-xs text-[var(--text-muted)] mb-1">Notes</p>
+              <p className="text-sm text-[var(--text-secondary)]">{release.notes}</p>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-4">
+            <button
+              onClick={copyPlan}
+              className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+            >
+              {copiedPlan ? <Check size={12} /> : <ClipboardList size={12} />}
+              {copiedPlan ? 'Copied!' : 'Copy plan'}
+            </button>
+            <button
+              onClick={() => deleteRelease(release.id)}
+              className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
+            >
+              <Trash2 size={12} />
+              Delete release
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function PipelineClient({ initialReleases, projects, versions, profile, libraryTracks }: Props) {
   const [releases, setReleases] = useState(initialReleases)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -62,8 +541,8 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   // Which release just had its plan copied — drives the per-card "Copied!" flash.
-  // Held in the parent (not ReleaseCard) because ReleaseCard is recreated on every
-  // render, so local state there would reset whenever the board re-renders.
+  // Held here rather than in ReleaseCard so the flash survives collapsing or
+  // re-sorting the board mid-flash.
   const [copiedPlanId, setCopiedPlanId] = useState<string | null>(null)
   // Transient error toast for failed mutations (date edit, delete) so they
   // don't fail silently and leave the UI out of sync with the DB.
@@ -149,26 +628,32 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     }
   }
 
-  // Save one metadata field (details editor). Merges the server's canonical row
-  // back into state — the PATCH response has every column but not the
-  // mb_projects join, so the spread keeps the joined artwork/title intact.
-  async function updateField(releaseId: string, field: string, value: string | boolean | null) {
+  // Save metadata fields (details editor, catalog backfill). Merges the
+  // server's canonical row back into state — the PATCH response has every
+  // column but not the mb_projects join, so the spread keeps the joined
+  // artwork/title intact. Returns whether the save landed.
+  async function updateFields(releaseId: string, patch: Record<string, string | boolean | null>): Promise<boolean> {
     try {
       const res = await fetch(`/api/releases/${releaseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
+        body: JSON.stringify(patch),
       })
       if (!res.ok) throw new Error('update failed')
       const data = await res.json()
       setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, ...data } : r))
+      return true
     } catch {
-      flashError('Could not save that field — please try again.')
+      flashError('Could not save — please try again.')
+      return false
     }
+  }
+  function updateField(releaseId: string, field: string, value: string | boolean | null) {
+    return updateFields(releaseId, { [field]: value })
   }
 
   // Which DistroKid field chip was just copied — keyed "releaseId:label" and
-  // held in the parent for the same remount reason as copiedPlanId.
+  // held here for the same board-survival reason as copiedPlanId.
   const [copiedField, setCopiedField] = useState<string | null>(null)
   async function copyFieldValue(key: string, value: string) {
     try {
@@ -213,13 +698,41 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     .filter(r => r.release_date && new Date(r.release_date).getTime() < todayMs)
     .sort((a, b) => new Date(b.release_date!).getTime() - new Date(a.release_date!).getTime())
 
+  // Everything the module-scope ReleaseCard needs from this board, bundled so
+  // the two call sites below stay in lockstep.
+  // Released-library ISRC/UPC lookup by title — the fallback source for
+  // waterfall re-release codes (synced from Spotify/Deezer on /library).
+  const libraryByTitle = new Map(
+    libraryTracks.map(t => [t.title.trim().toLowerCase(), t] as const),
+  )
+
+  const cardProps = {
+    releases, versions, todayStr,
+    expandedId, setExpandedId, copiedPlanId, setCopiedPlanId, copiedField, setCopiedField,
+    copyFieldValue, updateField, updateReleaseDate, toggleCheck, deleteRelease, libraryByTitle,
+  }
+
   // ── Waterfall planner ──────────────────────────────────────────────────────
   // Plans a whole run at once: ordered tracks + start Friday + cadence →
   // POST /api/releases/waterfall creates one linked, dated release per track.
   type WfTrack = { title: string; project_id: string; final_version_id: string }
   const emptyWfTrack: WfTrack = { title: '', project_id: '', final_version_id: '' }
   const [showWaterfall, setShowWaterfall] = useState(false)
-  const [wfShared, setWfShared] = useState({ artist_name: '', genre: '', label: '', songwriters: '', start_date: '', cadence_days: 28 })
+
+  // Prefill the run's shared fields from the profile and, failing that, the
+  // most recently created release that has each field — artist, label, and
+  // songwriters rarely change between runs, so a new waterfall starts filled.
+  const recentFirst = [...initialReleases].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+  const lastWith = (pick: (r: Release) => string | null) =>
+    recentFirst.map(pick).find(v => v && v.trim())?.trim() ?? ''
+  const [wfShared, setWfShared] = useState(() => ({
+    artist_name: profile?.artist_name?.trim() || lastWith(r => r.artist_name),
+    genre: lastWith(r => r.genre),
+    label: lastWith(r => r.label),
+    songwriters: lastWith(r => r.songwriters),
+    start_date: '',
+    cadence_days: 28,
+  }))
   const [wfTracks, setWfTracks] = useState<WfTrack[]>([{ ...emptyWfTrack }, { ...emptyWfTrack }])
   const [wfSaving, setWfSaving] = useState(false)
   const [wfError, setWfError] = useState<string | null>(null)
@@ -294,419 +807,9 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
     setWfSaving(false)
   }
 
-  // One inline-editable metadata field. Uncontrolled (defaultValue + onBlur
-  // PATCH) on purpose: ReleaseCard remounts on every parent render, so
-  // controlled per-keystroke state here would need to live in the parent —
-  // the DOM holds the draft instead, and a save/error re-render restores the
-  // canonical value.
-  function MetaInput({ release, field, label, placeholder }: { release: Release; field: keyof Release & string; label: string; placeholder?: string }) {
-    const value = (release[field] as string | null) ?? ''
-    return (
-      <div>
-        <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">{label}</label>
-        <input
-          type="text"
-          defaultValue={value}
-          placeholder={placeholder}
-          onBlur={e => {
-            const v = e.target.value.trim()
-            if (v !== value) updateField(release.id, field, v || null)
-          }}
-          className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none"
-          style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-        />
-      </div>
-    )
-  }
-
-  function ReleaseCard({ release }: { release: ReleaseWithProject }) {
-    const isExpanded = expandedId === release.id
-    const pct = releaseCompletionPercent(release)
-    const countdown = daysUntil(release.release_date)
-    // Readiness judgment (At risk / Due soon / Ready) — null when nothing to flag.
-    const status = getReleaseStatus(release, todayStr)
-    const copiedPlan = copiedPlanId === release.id
-
-    // ── DistroKid prep inputs ──
-    // The tracklist for this drop (new track + earlier waterfall tracks),
-    // the file that would be uploaded (explicit link, else the project's
-    // latest version — matching the create form's "Latest / none" semantics),
-    // and the readiness issues derived from all of it.
-    const wfTotal = release.waterfall_group_id ? releases.filter(r => r.waterfall_group_id === release.waterfall_group_id).length : 0
-    const tracklist = distroKidTracklist(release, releases)
-    const finalVersion = versions.find(v => v.id === release.final_version_id)
-      ?? (release.project_id ? versions.find(v => v.project_id === release.project_id) : undefined)
-    const artworkUrl = displayArtworkUrl(release.mb_projects ?? {})
-    const issues = validateForDistroKid(release, { hasFinalVersion: !!finalVersion, hasArtwork: !!artworkUrl, tracklist, todayStr })
-    const dkFields = distroKidFields(release, tracklist)
-    const copiedSheet = copiedField === `${release.id}:__sheet`
-
-    const copySheet = () =>
-      copyMarkdown(
-        buildDistroKidSheet(release, tracklist, issues, release.mb_projects?.title ?? null),
-        `${release.title} — DistroKid sheet.md`,
-        () => {
-          setCopiedField(`${release.id}:__sheet`)
-          setTimeout(() => setCopiedField(prev => (prev === `${release.id}:__sheet` ? null : prev)), 2000)
-        },
-      )
-
-    // Export the whole release plan — checklist state, date, metadata, notes —
-    // as one Markdown doc the musician can paste into a distributor checklist,
-    // a collaborator message, or release notes.
-    const copyPlan = () =>
-      copyMarkdown(
-        buildReleasePlan(release, release.mb_projects?.title ?? null),
-        `${release.title} — release plan.md`,
-        () => {
-          setCopiedPlanId(release.id)
-          setTimeout(() => setCopiedPlanId(prev => (prev === release.id ? null : prev)), 2000)
-        },
-      )
-
-    return (
-      <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-        {/* Header */}
-        <div
-          className="flex items-center gap-4 p-4 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-          onClick={() => setExpandedId(isExpanded ? null : release.id)}
-        >
-          {/* Artwork / icon */}
-          <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-[var(--surface-2)] flex-shrink-0">
-            {displayArtworkUrl(release.mb_projects ?? {}) ? (
-              <Image src={displayArtworkUrl(release.mb_projects ?? {})!} alt={release.title} fill className="object-cover" />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)] text-lg">♪</div>
-            )}
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-[var(--text)] truncate">{release.title}</span>
-              {release.mb_projects && (
-                release.project_id
-                  ? <Link href={`/projects/${release.project_id}`} onClick={e => e.stopPropagation()} className="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] truncate transition-colors">← {release.mb_projects.title}</Link>
-                  : <span className="text-xs text-[var(--text-muted)] truncate">← {release.mb_projects.title}</span>
-              )}
-            </div>
-            <div className="flex items-center gap-3 mt-1 text-xs text-[var(--text-muted)]">
-              {release.release_date && (
-                <span>{formatReleaseDate(release.release_date)}</span>
-              )}
-              {release.label && <span>{release.label}</span>}
-              {release.genre && <span>{release.genre}</span>}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 flex-shrink-0">
-            {/* Waterfall membership — which drop of the run this release is */}
-            {release.waterfall_group_id && release.waterfall_position && (
-              <span className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 text-sky-400 bg-sky-400/10">
-                <Droplets size={10} />
-                Drop {release.waterfall_position}/{wfTotal}
-              </span>
-            )}
-
-            {/* Readiness status — only rendered when there's something to flag */}
-            {status && (
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_TONE[status.key]}`}>
-                {status.label}
-              </span>
-            )}
-
-            {/* Countdown */}
-            {countdown && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                countdown === 'Today' ? 'text-[var(--accent)] bg-[var(--accent-dim)]' :
-                countdown === 'Released' ? 'text-emerald-400 bg-emerald-400/10' :
-                'text-[var(--text-muted)] bg-[var(--surface-2)]'
-              }`}>
-                {countdown}
-              </span>
-            )}
-
-            {/* Health score */}
-            <div className="flex items-center gap-1.5">
-              <div className="w-16 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${pct}%`,
-                    backgroundColor: pct === 100 ? '#34d399' : pct >= 50 ? '#2dd4bf' : '#555'
-                  }}
-                />
-              </div>
-              <span className="text-xs text-[var(--text-muted)]">{pct}%</span>
-            </div>
-
-            {isExpanded ? <ChevronUp size={14} className="text-[var(--text-muted)]" /> : <ChevronDown size={14} className="text-[var(--text-muted)]" />}
-          </div>
-        </div>
-
-        {/* Expanded */}
-        {isExpanded && (
-          <div className="px-4 pb-5 pt-2 space-y-5" style={{ borderTop: '1px solid var(--border)' }}>
-            {/* Release date — editable inline so undated releases can be scheduled later */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Release Date</label>
-                <input
-                  type="date"
-                  value={release.release_date ?? ''}
-                  onChange={e => updateReleaseDate(release.id, e.target.value)}
-                  className="rounded-xl px-3 py-1.5 text-sm text-[var(--text)] focus:outline-none [color-scheme:dark]"
-                  style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-                />
-                {!release.release_date && (
-                  <span className="text-xs text-[var(--text-muted)]">Set a date to organize this release</span>
-                )}
-              </div>
-              {/* Quick-pick Friday release dates — drops conventionally land on a
-                  Friday and DSP playlist pitching wants a few weeks' lead. Each
-                  writes through the same hardened updateReleaseDate() (snapshot →
-                  PATCH → revert + toast on failure). */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                {releaseDatePresets(todayStr).map(p => {
-                  const active = release.release_date === p.date
-                  return (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => updateReleaseDate(release.id, p.date)}
-                      title={p.friendly}
-                      className={`rounded-full px-2.5 py-1 text-xs transition-colors ${active ? 'text-[#2dd4bf] bg-[#2dd4bf]/10' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
-                      style={{ border: '1px solid var(--border)' }}
-                    >
-                      {p.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6">
-              {/* Pre-Launch checklist */}
-              <div>
-                <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Pre-Launch</p>
-                <div className="space-y-2">
-                  {PRE_LAUNCH_ITEMS.map(item => (
-                    <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={!!release[item.key as keyof Release]}
-                        onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
-                        className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
-                      />
-                      <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
-                        {item.label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Post-Launch campaign */}
-              <div>
-                <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Launch Campaign</p>
-                <div className="space-y-2">
-                  {LAUNCH_CAMPAIGN_ITEMS.map(item => (
-                    <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={!!release[item.key as keyof Release]}
-                        onChange={() => toggleCheck(release.id, item.key, !!release[item.key as keyof Release])}
-                        className="accent-[#2dd4bf] w-3.5 h-3.5 flex-shrink-0"
-                      />
-                      <span className="flex flex-col min-w-0">
-                        <span className={`text-sm transition-colors ${release[item.key as keyof Release] ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)] group-hover:text-[var(--text)]'}`}>
-                          {item.label}
-                        </span>
-                        <span className="text-[10px] text-[var(--text-muted)] opacity-50 leading-tight">{item.hint}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Release details — every field DistroKid's upload form asks for,
-                editable inline (saved on blur). This is the data the prep
-                panel below validates and exports. */}
-            <div>
-              <p className="text-xs text-[var(--text-muted)] mb-3 uppercase tracking-wider">Release Details</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <MetaInput release={release} field="artist_name" label="Artist name" placeholder="As on your Spotify profile" />
-                <MetaInput release={release} field="featured_artists" label="Featured artists" placeholder="feat. …" />
-                <MetaInput release={release} field="songwriters" label="Songwriters (legal names)" placeholder="Jane Doe, John Smith" />
-                <MetaInput release={release} field="producers" label="Producers" placeholder="Optional" />
-                <MetaInput release={release} field="genre" label="Primary genre" placeholder="e.g. Afrobeats" />
-                <MetaInput release={release} field="secondary_genre" label="Secondary genre" placeholder="Optional" />
-                <MetaInput release={release} field="language" label="Language" placeholder="English" />
-                <MetaInput release={release} field="version_info" label="Version" placeholder="Radio Edit, Remix…" />
-                <MetaInput release={release} field="label" label="Record label" placeholder="e.g. Independent" />
-                <MetaInput release={release} field="isrc" label="ISRC (this track)" placeholder="Paste after DistroKid assigns it" />
-                <MetaInput release={release} field="upc" label="UPC" placeholder="Blank = DistroKid assigns" />
-                <div>
-                  <label className="block text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1">Release type</label>
-                  <select
-                    value={release.release_type}
-                    onChange={e => updateField(release.id, 'release_type', e.target.value)}
-                    className="w-full rounded-lg px-2.5 py-1.5 text-sm text-[var(--text)] focus:outline-none appearance-none"
-                    style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}
-                  >
-                    <option value="single" style={{ backgroundColor: 'var(--surface)' }}>Single</option>
-                    <option value="ep" style={{ backgroundColor: 'var(--surface)' }}>EP</option>
-                    <option value="album" style={{ backgroundColor: 'var(--surface)' }}>Album</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-5 mt-3">
-                <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
-                  <input type="checkbox" checked={release.explicit} onChange={() => updateField(release.id, 'explicit', !release.explicit)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
-                  Explicit lyrics
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer text-sm text-[var(--text-secondary)]">
-                  <input type="checkbox" checked={release.instrumental} onChange={() => updateField(release.id, 'instrumental', !release.instrumental)} className="accent-[#2dd4bf] w-3.5 h-3.5" />
-                  Instrumental
-                </label>
-              </div>
-            </div>
-
-            {/* DistroKid prep — readiness issues, this drop's tracklist, and
-                every form answer as a click-to-copy chip in upload order. */}
-            <div className="rounded-xl p-4 space-y-4" style={{ backgroundColor: 'var(--surface-2)' }}>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1.5">
-                  <Droplets size={12} />
-                  DistroKid Prep
-                </p>
-                <div className="flex items-center gap-4 flex-wrap">
-                  <button onClick={copySheet} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
-                    {copiedSheet ? <Check size={12} /> : <ClipboardList size={12} />}
-                    {copiedSheet ? 'Copied!' : 'Copy sheet'}
-                  </button>
-                  {finalVersion && (
-                    <a
-                      href={audioProxyUrl(finalVersion.audio_url)}
-                      download={finalVersion.audio_filename ?? true}
-                      className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-                    >
-                      <Download size={12} />
-                      Final mix
-                    </a>
-                  )}
-                  {artworkUrl && (
-                    <a href={artworkUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
-                      <ExternalLink size={12} />
-                      Artwork
-                    </a>
-                  )}
-                  <a
-                    href="https://distrokid.com/new/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1.5 text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
-                  >
-                    <ExternalLink size={12} />
-                    Open DistroKid
-                  </a>
-                </div>
-              </div>
-
-              {/* Readiness — errors block a clean submission, warnings are conventions */}
-              {issues.length > 0 ? (
-                <div className="space-y-1.5">
-                  {issues.map((iss, i) => (
-                    <div key={i} className={`flex items-start gap-2 text-xs ${iss.level === 'error' ? 'text-red-400' : 'text-amber-400'}`}>
-                      {iss.level === 'error' ? <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /> : <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />}
-                      <span>{iss.message}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-emerald-400 flex items-center gap-1.5">
-                  <Check size={12} />
-                  Everything DistroKid needs is ready — copy the sheet and submit.
-                </p>
-              )}
-
-              {/* Waterfall tracklist for this drop */}
-              {tracklist.length > 1 && (
-                <div>
-                  <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-1.5">Tracklist for this drop</p>
-                  <div className="space-y-1">
-                    {tracklist.map(t => (
-                      <div key={t.releaseId} className="flex items-center gap-2 text-xs">
-                        <span className="text-[var(--text-muted)] w-4 text-right">{t.trackNumber}.</span>
-                        <span className="text-[var(--text)] truncate">{t.title}{t.versionInfo ? ` (${t.versionInfo})` : ''}</span>
-                        {t.isNew ? (
-                          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-[#2dd4bf] bg-[#2dd4bf]/10 flex-shrink-0">NEW</span>
-                        ) : (
-                          <span className={`px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0 ${t.isrc ? 'text-[var(--text-muted)] bg-[var(--surface)]' : 'text-red-400 bg-red-400/10'}`}>
-                            {t.isrc ? `reuse ISRC ${t.isrc}` : 'ISRC missing'}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Click-to-copy form answers, in DistroKid's upload order */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-                {dkFields.map(f => {
-                  const key = `${release.id}:${f.label}`
-                  const copied = copiedField === key
-                  return (
-                    <button
-                      key={f.label}
-                      type="button"
-                      onClick={() => f.value && copyFieldValue(key, f.value)}
-                      disabled={!f.value}
-                      title={f.value ? 'Click to copy' : 'Not set yet'}
-                      className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors disabled:opacity-40 hover:bg-[var(--surface)]"
-                      style={{ border: '1px solid var(--border)' }}
-                    >
-                      <span className="min-w-0 flex items-baseline gap-1.5">
-                        <span className="text-[var(--text-muted)] flex-shrink-0">{f.label}</span>
-                        <span className="text-[var(--text)] truncate">{f.value || '—'}</span>
-                      </span>
-                      {copied ? <Check size={11} className="text-[#2dd4bf] flex-shrink-0" /> : <Copy size={11} className="text-[var(--text-muted)] flex-shrink-0" />}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Notes */}
-            {release.notes && (
-              <div className="rounded-xl p-3" style={{ backgroundColor: 'var(--surface-2)' }}>
-                <p className="text-xs text-[var(--text-muted)] mb-1">Notes</p>
-                <p className="text-sm text-[var(--text-secondary)]">{release.notes}</p>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-4">
-              <button
-                onClick={copyPlan}
-                className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-              >
-                {copiedPlan ? <Check size={12} /> : <ClipboardList size={12} />}
-                {copiedPlan ? 'Copied!' : 'Copy plan'}
-              </button>
-              <button
-                onClick={() => deleteRelease(release.id)}
-                className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
-              >
-                <Trash2 size={12} />
-                Delete release
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
+  // Past releases are reference material, not work — collapsed by default so
+  // the board stays focused on what's upcoming.
+  const [showPast, setShowPast] = useState(false)
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 pb-36 md:pb-10">
@@ -725,7 +828,14 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
           <h1 className="text-2xl font-bold text-[var(--text)]">Release Pipeline</h1>
           <p className="text-[var(--text-muted)] text-sm mt-0.5">Track every step — from mix to campaign</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <Link
+            href="/library"
+            className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-violet-400 bg-violet-400/10 hover:bg-violet-400/20"
+          >
+            <ListMusic size={16} />
+            Released Library
+          </Link>
           <button
             onClick={() => { setShowWaterfall(!showWaterfall); setShowForm(false) }}
             className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors text-sky-400 bg-sky-400/10 hover:bg-sky-400/20"
@@ -1100,16 +1210,25 @@ export default function PipelineClient({ initialReleases, projects, versions }: 
             <div>
               <h2 className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">Upcoming</h2>
               <div className="space-y-3">
-                {upcoming.map(r => <ReleaseCard key={r.id} release={r} />)}
+                {upcoming.map(r => <ReleaseCard key={r.id} release={r} {...cardProps} />)}
               </div>
             </div>
           )}
           {past.length > 0 && (
             <div>
-              <h2 className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">Past</h2>
-              <div className="space-y-3 opacity-60">
-                {past.map(r => <ReleaseCard key={r.id} release={r} />)}
-              </div>
+              <button
+                onClick={() => setShowPast(p => !p)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)] uppercase tracking-wider mb-3 transition-colors"
+                aria-expanded={showPast}
+              >
+                {showPast ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                Past ({past.length})
+              </button>
+              {showPast && (
+                <div className="space-y-3 opacity-60">
+                  {past.map(r => <ReleaseCard key={r.id} release={r} {...cardProps} />)}
+                </div>
+              )}
             </div>
           )}
         </div>

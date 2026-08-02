@@ -220,6 +220,52 @@ const issues = validateForDistroKid(rel({ release_date: '2026-08-07' }),
 check('validation flags a missing master and artwork',
   issues.some(i => i.level === 'error'), `${issues.length} issue(s)`)
 
+// ── 5. No nested component definitions in PipelineClient ─────────────────────
+// ReleaseCard/MetaInput used to be declared INSIDE PipelineClient. Every parent
+// render then produced a new component TYPE, so React unmounted and remounted
+// the whole card subtree — destroying the DOM inputs holding the user's
+// in-flight typing: type in one field, Tab to the next, and the first field's
+// PATCH resolving silently WIPED the characters just typed and stole focus.
+// The fix hoisted both to module scope; this guard keeps them there. It scans
+// only the default-export function's body so module-scope declarations pass.
+console.log('\nno component is declared inside PipelineClient (remount = typing loss)')
+{
+  const { readFileSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+  const { dirname, join } = await import('node:path')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const src = readFileSync(join(root, 'src/app/pipeline/PipelineClient.tsx'), 'utf8')
+
+  const bodyStart = src.indexOf('export default function PipelineClient')
+  check('PipelineClient default export found', bodyStart !== -1)
+  const body = src.slice(bodyStart)
+  // A nested component = a capitalized function declaration at one indent level
+  // inside the parent. Helpers (camelCase) are fine; components are not.
+  const nested = [...body.matchAll(/^ {2}(?:async )?function ([A-Z]\w*)/gm)].map(m => m[1])
+  check('no capitalized (component) function is declared inside the parent',
+    nested.length === 0, nested.length ? `found: ${nested.join(', ')}` : 'clean')
+  check('ReleaseCard is declared at module scope', /^function ReleaseCard\(/m.test(src))
+  check('MetaInput is declared at module scope', /^function MetaInput\(/m.test(src))
+  // The controlled draft must never be silently reverted mid-edit.
+  check('MetaInput guards external adoption on the editing flag',
+    /if \(!editing\) setDraft\(value\)/.test(src))
+
+  // Witness: the pre-fix shape — a component function declared inside the parent.
+  const preFix = `
+export default function PipelineClient({ initialReleases }: Props) {
+  function MetaInput({ release, field }: { release: Release; field: string }) {
+    return <input defaultValue={value} />
+  }
+  function ReleaseCard({ release }: { release: ReleaseWithProject }) {
+    return <div><MetaInput /></div>
+  }
+  return <div>{upcoming.map(r => <ReleaseCard key={r.id} release={r} />)}</div>
+}`
+  const preNested = [...preFix.slice(preFix.indexOf('export default')).matchAll(/^ {2}(?:async )?function ([A-Z]\w*)/gm)].map(m => m[1])
+  check('witness: the pre-fix nested declarations would be caught',
+    preNested.length === 2, preNested.join(', '))
+}
+
 if (failures > 0) {
   console.error(`\nrelease-pipeline: ${failures} check(s) failed`)
   process.exit(1)

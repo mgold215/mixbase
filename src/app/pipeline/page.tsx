@@ -9,8 +9,8 @@ export default async function PipelinePage() {
   const userId = await getUserId()
 
   // mb_versions has no user_id column — scope it through the project join so
-  // all three queries can run in parallel instead of waiting on project ids.
-  const [releasesRes, projectsRes, versionsRes] = await Promise.all([
+  // all the queries can run in parallel instead of waiting on project ids.
+  const [releasesRes, projectsRes, versionsRes, profileRes, libraryRes] = await Promise.all([
     supabaseAdmin
       .from('mb_releases')
       .select('*, mb_projects(title, artwork_url, finalized_artwork_url)')
@@ -26,6 +26,22 @@ export default async function PipelinePage() {
       .select('id, project_id, version_number, label, status, audio_url, audio_filename, mb_projects!inner(user_id)')
       .eq('mb_projects.user_id', userId)
       .order('version_number', { ascending: false }),
+    // Seeds the waterfall-form prefill and the catalog-import search box.
+    // On any error (e.g. columns missing pre-migration) the page just renders
+    // without prefill — never fail the board over a convenience.
+    supabaseAdmin
+      .from('profiles')
+      .select('artist_name, spotify_url')
+      .eq('id', userId)
+      .maybeSingle(),
+    // Released-library ISRC/UPC lookup for waterfall re-releases. On any
+    // error (e.g. table missing pre-migration) the board renders without the
+    // fallback — never fail the page over it.
+    supabaseAdmin
+      .from('mb_library_tracks')
+      .select('title, isrc, upc')
+      .eq('user_id', userId)
+      .limit(1000),
   ])
 
   // Strip the join helper column so PipelineClient's prop shape is unchanged.
@@ -47,6 +63,8 @@ export default async function PipelinePage() {
           initialReleases={releasesRes.data ?? []}
           projects={projectsRes.data ?? []}
           versions={versions}
+          profile={profileRes.error ? null : (profileRes.data ?? null)}
+          libraryTracks={libraryRes.error ? [] : (libraryRes.data ?? [])}
         />
       </div>
     </div>
