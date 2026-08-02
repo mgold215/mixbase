@@ -78,7 +78,7 @@ export default function Nav() {
     { href: '/dashboard', label: 'Projects' },
     { href: '/feed', label: 'Feed' },
     { href: '/collections', label: 'Collections' },
-    { href: '/media', label: 'Media' },
+    { href: '/media', label: 'Artwork' },
     { href: '/pipeline', label: 'Pipeline' },
     { href: '/library', label: 'Released' },
     { href: '/submit', label: 'Submit' },
@@ -91,7 +91,7 @@ export default function Nav() {
     { href: '/dashboard',   label: 'Projects',    icon: LayoutGrid,    match: '/dashboard' },
     { href: '/feed',        label: 'Feed',        icon: Rss,           match: '/feed' },
     { href: '/collections', label: 'Collections', icon: Library,       match: '/collections' },
-    { href: '/media',       label: 'Media',       icon: Images,        match: '/media' },
+    { href: '/media',       label: 'Artwork',     icon: Images,        match: '/media' },
     { href: currentTrack ? `/player?track=${currentTrack.project_id}` : '/player', label: 'Player', icon: PlayCircle, match: '/player' },
   ]
 
@@ -130,6 +130,24 @@ export default function Nav() {
         <div className="hidden md:flex items-center gap-5 flex-1">
           {links.map(({ href, label }) => {
             const active = pathname.startsWith(href)
+            // Player gets a filled accent pill instead of a plain text link —
+            // it's the destination users reach for most, so it should read as
+            // a button, not one more item in the row.
+            if (href === '/player') {
+              return (
+                <Link
+                  key={href}
+                  href={currentTrack ? `/player?track=${currentTrack.project_id}` : '/player'}
+                  className="flex items-center gap-1.5 text-[13px] font-semibold tracking-wide px-3.5 py-1.5 rounded-full transition-all"
+                  style={active
+                    ? { background: 'var(--accent)', color: '#0d0b08', boxShadow: '0 0 16px rgba(45, 212, 191, 0.35)' }
+                    : { background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid rgba(45, 212, 191, 0.35)' }}
+                >
+                  <PlayCircle size={14} strokeWidth={2.2} />
+                  {label}
+                </Link>
+              )
+            }
             return (
               <Link
                 key={href}
@@ -304,16 +322,19 @@ export default function Nav() {
           {tabs.map((tab) => {
             const active = isTabActive(tab)
             const Icon = tab.icon
+            // Player keeps an accent tint even when inactive — same emphasis
+            // as the desktop pill, so the tab reads as the star action.
+            const isPlayer = tab.match === '/player'
             return (
               <Link
                 key={tab.label}
                 href={tab.href}
                 className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
-                  active ? 'text-[#2dd4bf]' : 'text-[#555]'
+                  active ? 'text-[#2dd4bf]' : isPlayer ? 'text-[#2dd4bf]/70' : 'text-[#555]'
                 }`}
               >
-                <Icon size={22} strokeWidth={active ? 2 : 1.5} />
-                <span className="text-[10px] tracking-wide">{tab.label}</span>
+                <Icon size={isPlayer ? 25 : 22} strokeWidth={active || isPlayer ? 2 : 1.5} />
+                <span className={`text-[10px] tracking-wide ${isPlayer ? 'font-semibold' : ''}`}>{tab.label}</span>
               </Link>
             )
           })}

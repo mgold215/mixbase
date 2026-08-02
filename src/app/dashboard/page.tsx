@@ -25,11 +25,22 @@ function getWorkflowStage(
 export default async function DashboardPage() {
   const userId = await getUserId()
 
-  const projectsRes = await supabaseAdmin
-    .from('mb_projects')
-    .select('*, mb_versions(id, status, created_at, audio_url, version_number), mb_releases(id)')
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
+  const [projectsRes, profileRes] = await Promise.all([
+    supabaseAdmin
+      .from('mb_projects')
+      .select('*, mb_versions(id, status, created_at, audio_url, version_number), mb_releases(id)')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false }),
+    // Personalizes the heading ("moodmixformat's Projects"). Any error just
+    // falls back to the plain heading — never fail the dashboard over it.
+    supabaseAdmin
+      .from('profiles')
+      .select('artist_name')
+      .eq('id', userId)
+      .maybeSingle(),
+  ])
+
+  const artistName = profileRes.error ? null : profileRes.data?.artist_name?.trim() || null
 
   const projects = projectsRes.data ?? []
   const projectIds = projects.map(p => p.id)
@@ -72,7 +83,9 @@ export default async function DashboardPage() {
 
           {/* Header */}
           <div className="flex items-center justify-between mb-2">
-            <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>Projects</h1>
+            <h1 className="text-xl font-semibold" style={{ color: 'var(--text)' }}>
+              {artistName ? `${artistName}’s Projects` : 'Projects'}
+            </h1>
             <Link
               href="/projects/new"
               className="flex items-center gap-1.5 text-sm font-semibold px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-colors"

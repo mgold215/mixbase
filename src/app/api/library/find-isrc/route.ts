@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { findIsrcViaMusicBrainz } from '@/lib/catalog'
-import { catalogLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { catalogLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 
 // POST /api/library/find-isrc { track_id } — targeted keyless ISRC lookup via
 // MusicBrainz for one library track that Spotify/Deezer didn't cover. Saves
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const trackId = body?.track_id
   if (!isUuid(trackId)) return NextResponse.json({ error: 'track_id required' }, { status: 400 })
 
-  const rl = catalogLimiter.check(userId)
+  const rl = await checkUserLimit(catalogLimiter, userId)
   if (!rl.allowed) {
     return NextResponse.json(
       { error: 'Too many lookups — try again later' },

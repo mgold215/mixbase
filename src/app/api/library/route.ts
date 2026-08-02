@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { fetchArtistCatalog, flattenCatalogTracks, CatalogError } from '@/lib/catalog'
-import { catalogLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { catalogLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { ensureLibraryTracksTable, isMissingLibraryTracksTable } from '@/lib/schema-heal'
 
 // The released-track library: the artist's already-out discography (ISRC,
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'artist (name or Spotify artist link) is required' }, { status: 400 })
   }
 
-  const rl = catalogLimiter.check(userId)
+  const rl = await checkUserLimit(catalogLimiter, userId)
   if (!rl.allowed) {
     return NextResponse.json(
       { error: 'Too many catalog lookups — try again later' },
