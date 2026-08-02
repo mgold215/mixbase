@@ -76,11 +76,8 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                         .padding(.horizontal)
 
-                        // MARK: - Now Playing Card (taps through to the Player tab)
-                        if let version = audioService.currentVersion {
-                            nowPlayingCard(version: version)
-                                .padding(.horizontal)
-                        }
+                        // (No Now Playing card here — the floating mini player
+                        // above the tab bar already covers it on every tab.)
 
                         // MARK: - Your Tracks (quick-play carousel)
                         if !recentTracks.isEmpty {
@@ -212,78 +209,6 @@ struct HomeView: View {
             )
             .animation(.easeInOut(duration: 0.6), value: audioService.currentArtworkUrl)
         }
-    }
-
-    // MARK: - Now Playing Card
-    @ViewBuilder
-    private func nowPlayingCard(version: Version) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                if let artworkUrl = audioService.currentArtworkUrl,
-                   let url = URL(string: artworkUrl) {
-                    AsyncImage(url: url) { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(hex: "#222222"))
-                            .overlay(Image(systemName: "music.note").foregroundColor(.gray))
-                    }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("NOW PLAYING")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.gray)
-                    Text(audioService.currentTrackName ?? "Unknown Track")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color(hex: "#f0f0f0"))
-                        .lineLimit(1)
-                    Text("v\(version.versionNumber) \(version.label ?? "")")
-                        .font(.caption)
-                        .foregroundColor(Color(hex: "#2dd4bf"))
-                }
-
-                Spacer()
-
-                // Play/pause stays an explicit control; tapping the card opens the player.
-                Button(action: { audioService.togglePlayPause() }) {
-                    Image(systemName: audioService.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 36))
-                        .foregroundColor(Color(hex: "#2dd4bf"))
-                }
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: "#333333"))
-                        .frame(height: 4)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: "#2dd4bf"))
-                        .frame(width: geo.size.width * progress, height: 4)
-                }
-            }
-            .frame(height: 4)
-        }
-        .padding(16)
-        .background(Color(hex: "#111111").opacity(0.85))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(hex: "#2dd4bf").opacity(0.25), lineWidth: 1)
-        )
-        .shadow(color: Color(hex: "#2dd4bf").opacity(0.18), radius: 16, y: 6)
-        .contentShape(Rectangle())
-        .onTapGesture { selectedTab = 2 }  // Open the Player tab
-    }
-
-    private var progress: CGFloat {
-        guard audioService.duration > 0 else { return 0 }
-        return CGFloat(audioService.currentTime / audioService.duration)
     }
 
     // MARK: - Your Tracks Carousel
