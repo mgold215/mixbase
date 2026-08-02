@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs'
 import { SUPABASE_URL } from '@/lib/supabase'
 
 // Runtime self-heal for the additive mb_projects visualizer pin columns
@@ -459,6 +460,18 @@ export function isMissingDistroKidColumn(error: { message?: string } | null): bo
     /(artist_name|release_type|featured_artists|songwriters|producers|instrumental|secondary_genre|version_info|waterfall_group_id|waterfall_position)/.test(error.message)
 }
 
+// Every heal in this module runs through here, and every failure was reported
+// ONLY to console.error — which nothing watches. That made a dead heal
+// indistinguishable from a healthy one: confirmed on 2026-08-02, when the
+// Railway-stored SUPABASE_MANAGEMENT_TOKEN turned out to be rejected with
+// `401 JWT could not be decoded` on BOTH staging and production, meaning every
+// self-heal in the app (visualizer columns, video bucket limit, usage RPC
+// grants, mb_usage lockdown, share tokens, DistroKid columns…) had been
+// silently no-op for an unknown period while the code looked correct.
+//
+// A missing token is a deliberate, quiet opt-out (local dev). A token that IS
+// present and REJECTED is a broken deployment, so report that one to Sentry —
+// it is the only signal that distinguishes "healing" from "pretending to heal".
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false
@@ -468,6 +481,17 @@ async function runQuery(sql: string, label: string): Promise<boolean> {
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: sql }),
   })
-  if (!res.ok) console.error(`[schema-heal] ${label} SQL failed:`, res.status, await res.text().catch(() => ''))
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    console.error(`[schema-heal] ${label} SQL failed:`, res.status, detail)
+    // 401/403 = the credential itself is bad; that never self-recovers and
+    // disables every heal at once, so it is worth waking someone up for.
+    Sentry.captureMessage(`schema-heal: ${label} failed (${res.status})`, {
+      level: res.status === 401 || res.status === 403 ? 'error' : 'warning',
+      tags: { heal: label, status: String(res.status) },
+      // `detail` is Supabase's own error envelope, never the SQL or the token.
+      extra: { detail: detail.slice(0, 500) },
+    })
+  }
   return res.ok
 }

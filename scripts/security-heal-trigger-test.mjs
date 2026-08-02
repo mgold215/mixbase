@@ -103,6 +103,23 @@ check('a satisfied heal short-circuits immediately',
 const cap = Number((heal.match(/HEAL_MAX_ATTEMPTS\s*=\s*(\d+)/) || [])[1])
 check('the cap is small enough to bound Management API load', cap > 0 && cap <= 10, `cap = ${cap}`)
 
+// ── 3b. A failing heal must be VISIBLE ──────────────────────────────────────
+// The trigger fix is worthless if the heal fires and silently fails. That is
+// not hypothetical: on 2026-08-02 the Railway-stored SUPABASE_MANAGEMENT_TOKEN
+// was rejected `401 JWT could not be decoded` on staging AND production, so
+// every heal in this module had been a no-op for an unknown period while the
+// code read as correct. console.error alone is not a signal anyone sees.
+check('runQuery reports failures to Sentry, not just the console',
+  /Sentry\.captureMessage\(`schema-heal:/.test(heal))
+check('a rejected credential (401/403) is raised at error level',
+  /res\.status === 401 \|\| res\.status === 403/.test(heal))
+check('the heal label is tagged so the failing heal is identifiable',
+  /tags:\s*\{\s*heal:/.test(heal))
+// The SQL can carry schema details and the token must never be logged; only
+// Supabase's own error envelope is attached.
+check('the report attaches the error envelope, never the SQL or the token',
+  !/extra:[\s\S]{0,120}\bsql\b/.test(heal) && !/extra:[\s\S]{0,120}\btoken\b/.test(heal))
+
 // ── 4. The original generation-path wiring is RETAINED ──────────────────────
 // The health trigger is an addition, not a replacement: a long-running process
 // that healed at boot before the grant drifted still re-asserts on generation.
