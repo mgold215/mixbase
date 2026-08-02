@@ -210,6 +210,14 @@ export function dspDeltas(m: LoudnessMeasurement): { name: string; targetLufs: n
  * {level, message} shape as the DistroKid readiness issues so the UI renders
  * both with one component. Always returns at least one row — silence about a
  * healthy master reads as "the check did nothing".
+ *
+ * Genre calibration matters here: −8 to −5 LUFS is the NORM for club-facing
+ * genres (EDM/techno/house), not a mistake — normalized streaming turns it
+ * down to target, and un-normalized contexts (DJ sets, CDJs, clubs, Beatport
+ * buyers) get the intended level. So a loud master is reported as information
+ * with the turn-down number, never scolded; the thing that genuinely bites a
+ * loud master is PEAK headroom (Spotify's own guidance: true peak ≤ −2 dB
+ * when louder than −14 LUFS), and that keeps its warning.
  */
 export function masterVerdict(m: LoudnessMeasurement): LoudnessIssue[] {
   const issues: LoudnessIssue[] = []
@@ -217,24 +225,34 @@ export function masterVerdict(m: LoudnessMeasurement): LoudnessIssue[] {
   if (!Number.isFinite(m.integratedLufs)) {
     return [{ level: 'error', message: 'Too quiet to measure — the whole mix sits under the −70 LUFS gate. Check the export.' }]
   }
+  const lufs = m.integratedLufs
 
   // Headroom. Lossy encoders (Ogg/AAC) overshoot on transcode, so a sample
-  // peak at 0 dBFS clips on the platforms even if the WAV doesn't.
+  // peak at 0 dBFS clips on the platforms even if the WAV doesn't — and the
+  // hotter the master, the stricter the platforms' own recommendation.
   if (m.samplePeakDb > -0.1) {
-    issues.push({ level: 'warning', message: `Peaks hit ${formatDb(m.samplePeakDb)} dBFS — lossy transcodes (Spotify/Apple) will clip. Aim for at least −1 dB of headroom.` })
+    issues.push({
+      level: 'warning',
+      message: `Peaks hit ${formatDb(m.samplePeakDb)} dBFS — lossy transcodes (Spotify/Apple) can clip. ${
+        lufs > -14
+          ? 'For a master this loud, Spotify recommends keeping true peak under −2 dB.'
+          : 'Aim for at least −1 dB of headroom.'
+      }`,
+    })
   } else if (m.samplePeakDb > -1) {
     issues.push({ level: 'info', message: `Sample peak ${formatDb(m.samplePeakDb)} dBFS — tight headroom; true peaks likely exceed it after encoding.` })
   }
 
-  const spotifyDelta = m.integratedLufs - (-14)
-  if (spotifyDelta > 3) {
-    issues.push({ level: 'warning', message: `Very loud master (${formatLufs(m.integratedLufs)}). Spotify/YouTube will turn it down ${spotifyDelta.toFixed(1)} dB — that loudness costs dynamics and buys nothing.` })
-  } else if (spotifyDelta < -6) {
-    issues.push({ level: 'warning', message: `Quiet master (${formatLufs(m.integratedLufs)}). Platforms only boost with a limiter (or not at all) — it will play noticeably quieter than other releases.` })
+  if (lufs > -5) {
+    issues.push({ level: 'warning', message: `Extremely loud master (${formatLufs(lufs)}) — beyond even club norms. Streaming normalization undoes the level; only the limiting stays.` })
+  } else if (lufs > -9) {
+    issues.push({ level: 'info', message: `Loud, club-level master (${formatLufs(lufs)}) — standard for EDM/techno. Streaming plays it normalized to target; DJ sets and clubs get the full level. Peak headroom is the number to watch.` })
+  } else if (lufs < -20) {
+    issues.push({ level: 'warning', message: `Quiet master (${formatLufs(lufs)}). Platforms only boost with a limiter (or not at all) — it will play noticeably quieter than other releases.` })
   }
 
   if (issues.length === 0) {
-    issues.push({ level: 'info', message: `${formatLufs(m.integratedLufs)} integrated, ${formatDb(m.samplePeakDb)} dBFS peak — healthy for streaming.` })
+    issues.push({ level: 'info', message: `${formatLufs(lufs)} integrated, ${formatDb(m.samplePeakDb)} dBFS peak — healthy for streaming.` })
   }
   return issues
 }

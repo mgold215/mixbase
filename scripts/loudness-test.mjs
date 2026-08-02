@@ -132,13 +132,36 @@ function sine(freq, seconds, amplitude, fs = FS) {
 }
 
 // ── Verdict logic (pure) ─────────────────────────────────────────────────────
+// Genre calibration (user feedback, 2026-08-02): −8 to −5 LUFS is the NORM for
+// EDM/techno club masters, not a defect — the verdict must inform (turn-down
+// number, peak guidance), never scold. Only peak headroom keeps a warning on a
+// loud master, and only truly-beyond-club levels (> −5) warn about loudness.
 console.log('\nverdict rules')
 {
-  const hot = { integratedLufs: -7.2, shortTermMaxLufs: -5, samplePeakDb: -0.05, gatedBlockCount: 100 }
-  const verdictHot = masterVerdict(hot)
-  check('a slammed master warns about both clipping and normalization',
-    verdictHot.filter(i => i.level === 'warning').length >= 2,
-    verdictHot.map(i => i.level).join(', '))
+  // A −7 LUFS techno master with sensible headroom is fine — NO warnings.
+  const techno = { integratedLufs: -7.0, shortTermMaxLufs: -4, samplePeakDb: -2.1, gatedBlockCount: 100 }
+  const verdictTechno = masterVerdict(techno)
+  check('a −7 LUFS club master with headroom gets zero warnings',
+    verdictTechno.every(i => i.level !== 'warning'), verdictTechno.map(i => i.level).join(', '))
+  check('…and an info row acknowledging club-level loudness',
+    verdictTechno.some(i => i.level === 'info' && /club/i.test(i.message)))
+
+  // The same master slammed to 0 dBFS peaks: the CLIPPING risk warns (with the
+  // stricter loud-master guidance), the loudness itself still does not.
+  const technoClipped = { integratedLufs: -7.0, shortTermMaxLufs: -4, samplePeakDb: -0.02, gatedBlockCount: 100 }
+  const verdictClipped = masterVerdict(technoClipped)
+  check('a clipped club master warns about peaks, not loudness',
+    verdictClipped.filter(i => i.level === 'warning').length === 1
+      && /peak/i.test(verdictClipped.find(i => i.level === 'warning').message),
+    verdictClipped.map(i => i.level).join(', '))
+  check('…and the loud-master peak guidance cites −2 dB',
+    verdictClipped.some(i => /−2 dB/.test(i.message)))
+
+  // Beyond even club norms, loudness itself finally warns.
+  const extreme = { integratedLufs: -4.4, shortTermMaxLufs: -2, samplePeakDb: -0.05, gatedBlockCount: 100 }
+  check('past −5 LUFS the loudness itself warns too',
+    masterVerdict(extreme).filter(i => i.level === 'warning').length >= 2,
+    masterVerdict(extreme).map(i => i.level).join(', '))
 
   const healthy = { integratedLufs: -13.5, shortTermMaxLufs: -10, samplePeakDb: -1.4, gatedBlockCount: 100 }
   const verdictHealthy = masterVerdict(healthy)

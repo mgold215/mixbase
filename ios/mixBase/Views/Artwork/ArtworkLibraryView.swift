@@ -419,10 +419,10 @@ struct ArtworkDetailSheet: View {
                             assignSection(title: "Set as track artwork") {
                                 ForEach(otherProjects) { project in
                                     assignRow(label: project.title) {
-                                        await assign {
+                                        await assign({
                                             try await MixbaseAPI.shared.assignArtworkToProject(
                                                 projectId: project.id, artworkUrl: item.imageUrl)
-                                        } confirmationText: "Set as artwork for \(project.title)"
+                                        }, confirmationText: "Set as artwork for \(project.title)")
                                     }
                                 }
                             }
@@ -433,10 +433,10 @@ struct ArtworkDetailSheet: View {
                             assignSection(title: "Set as collection cover") {
                                 ForEach(collections) { collection in
                                     assignRow(label: collection.title) {
-                                        await assign {
+                                        await assign({
                                             try await MixbaseAPI.shared.setCollectionCover(
                                                 collectionId: collection.id, coverUrl: item.imageUrl)
-                                        } confirmationText: "Set as cover for \(collection.title)"
+                                        }, confirmationText: "Set as cover for \(collection.title)")
                                     }
                                 }
                             }
