@@ -193,6 +193,19 @@ const FeedRow = memo(function FeedRow({
           </span>
           <button
             onClick={e => { e.stopPropagation(); setCommentsOpen(o => !o) }}
+            // Keyboard needs its own guard: this button sits inside the
+            // role="button" play row, whose onKeyDown calls preventDefault()
+            // — which cancels THIS button's native activation. Without the
+            // stopPropagation below, Enter/Space here toggled playback and
+            // never opened the thread, so keyboard users could not reach
+            // comments at all. Stop the bubble and activate explicitly.
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation()
+                e.preventDefault()
+                setCommentsOpen(o => !o)
+              }
+            }}
             className="flex items-center gap-1 p-1 -m-1 transition-colors"
             style={{ color: commentsOpen ? 'var(--accent)' : 'var(--text-muted)' }}
             aria-label="Comments"

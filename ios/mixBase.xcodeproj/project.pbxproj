@@ -18,6 +18,7 @@
 		A100000013 /* Feedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000013; };
 		A100000014 /* Activity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000014; };
 		A100000015 /* Collection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000015; };
+		A100000017 /* Visualizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000017; };
 
 		/* Services */
 		A100000020 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000020; };
@@ -25,6 +26,7 @@
 		A100000022 /* ArtworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000022; };
 		A100000023 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000023; };
 		A100000024 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000024; };
+		A100000025 /* MixbaseAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000025; };
 
 		/* Utilities */
 		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
@@ -46,6 +48,9 @@
 
 		/* Views - Artwork */
 		A100000080 /* ArtworkGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000080; };
+
+		/* Views - Visualizer */
+		A1000000E0 /* VisualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000E0; };
 
 		/* Models - Curator */
 		A100000016 /* Curator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000016; };
@@ -85,6 +90,7 @@
 		B100000014 /* Activity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity.swift; sourceTree = "<group>"; };
 		B100000015 /* Collection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Collection.swift; sourceTree = "<group>"; };
 		B100000016 /* Curator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Curator.swift; sourceTree = "<group>"; };
+		B100000017 /* Visualizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Visualizer.swift; sourceTree = "<group>"; };
 
 		/* Services */
 		B100000020 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
@@ -92,6 +98,7 @@
 		B100000022 /* ArtworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkService.swift; sourceTree = "<group>"; };
 		B100000023 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		B100000024 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		B100000025 /* MixbaseAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixbaseAPI.swift; sourceTree = "<group>"; };
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
@@ -105,6 +112,7 @@
 		B100000070 /* PipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineView.swift; sourceTree = "<group>"; };
 		B100000071 /* ReleaseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDetailView.swift; sourceTree = "<group>"; };
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
+		B1000000E0 /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B1000000D0 /* SubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmitView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
@@ -192,6 +200,7 @@
 				B100000014 /* Activity.swift */,
 				B100000015 /* Collection.swift */,
 				B100000016 /* Curator.swift */,
+				B100000017 /* Visualizer.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -207,6 +216,7 @@
 				E100000022 /* Player */,
 				E100000023 /* Pipeline */,
 				E100000024 /* Artwork */,
+				E100000029 /* Visualizer */,
 				E100000025 /* Settings */,
 				E100000028 /* Submit */,
 				E100000026 /* Components */,
@@ -273,6 +283,15 @@
 			sourceTree = "<group>";
 		};
 
+		E100000029 /* Visualizer */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000E0 /* VisualizerView.swift */,
+			);
+			path = Visualizer;
+			sourceTree = "<group>";
+		};
+
 		E100000028 /* Submit */ = {
 			isa = PBXGroup;
 			children = (
@@ -310,6 +329,7 @@
 				B100000022 /* ArtworkService.swift */,
 				B100000023 /* AuthService.swift */,
 				B100000024 /* KeychainService.swift */,
+				B100000025 /* MixbaseAPI.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -423,6 +443,9 @@
 				A1000000B2 /* SignUpView.swift in Sources */,
 				A100000016 /* Curator.swift in Sources */,
 				A1000000D0 /* SubmitView.swift in Sources */,
+				A100000017 /* Visualizer.swift in Sources */,
+				A100000025 /* MixbaseAPI.swift in Sources */,
+				A1000000E0 /* VisualizerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

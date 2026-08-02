@@ -13,10 +13,13 @@ struct HomeView: View {
     // Lets the Now Playing card / "See all" jump to other tabs.
     @Binding var selectedTab: Int
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var projects: [Project] = []
     @State private var releases: [Release] = []
     @State private var activities: [Activity] = []
     @State private var isLoading = true
+    @State private var loadFailed = false
 
     // Latest versions per project — powers the quick-play carousel + activity rows
     @State private var latestVersions: [UUID: Version] = [:]
@@ -40,6 +43,13 @@ struct HomeView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
+                        // MARK: - Load Error Banner
+                        // Shown when the initial load failed (e.g. network not up yet
+                        // on cold launch) so the user is never stuck on an empty home.
+                        if loadFailed && projects.isEmpty && !isLoading {
+                            loadErrorBanner
+                        }
+
                         // MARK: - Stats Row
                         HStack(spacing: 12) {
                             StatCard(value: projects.count, label: "Projects", color: Color(hex: "#f0f0f0"))
@@ -66,7 +76,15 @@ struct HomeView: View {
                                 .foregroundColor(Color(hex: "#f0f0f0"))
                                 .padding(.horizontal)
 
-                            if activities.isEmpty && !isLoading {
+                            if isLoading && activities.isEmpty {
+                                HStack {
+                                    Spacer()
+                                    ProgressView()
+                                        .tint(Color(hex: "#2dd4bf"))
+                                    Spacer()
+                                }
+                                .padding(.vertical, 24)
+                            } else if activities.isEmpty {
                                 Text("No recent activity")
                                     .font(.subheadline)
                                     .foregroundColor(.gray)
@@ -105,7 +123,42 @@ struct HomeView: View {
             .task {
                 await loadDashboardData()
             }
+            // A failed cold-launch load (radio not up yet, token mid-refresh)
+            // retries automatically when the app becomes active again instead of
+            // waiting for a manual pull-to-refresh.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active && (loadFailed || projects.isEmpty) && !isLoading {
+                    Task { await loadDashboardData() }
+                }
+            }
         }
+    }
+
+    // MARK: - Load Error Banner
+    private var loadErrorBanner: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.title2)
+                .foregroundColor(.gray)
+            Text("Couldn't load your dashboard")
+                .font(.subheadline)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+            Button(action: { Task { await loadDashboardData() } }) {
+                Text("Retry")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#080808"))
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 8)
+                    .background(Color(hex: "#2dd4bf"))
+                    .clipShape(Capsule())
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(Color(hex: "#111111"))
+        .cornerRadius(12)
+        .padding(.horizontal)
     }
 
     private var mixingCount: Int {
@@ -391,6 +444,13 @@ struct HomeView: View {
     // MARK: - Data Loading
     private func loadDashboardData() async {
         isLoading = true
+
+        // Make sure the access token is usable BEFORE the first fetch. On a cold
+        // launch the restored token may be expired with the refresh still in
+        // flight; awaiting here (refreshes are coalesced in AuthService) means
+        // the requests below never race a stale token.
+        await AuthService.shared.ensureFreshToken()
+
         do {
             async let fetchedProjects = SupabaseService.shared.fetchProjects()
             async let fetchedReleases = SupabaseService.shared.fetchReleases()
@@ -400,16 +460,27 @@ struct HomeView: View {
             releases = try await fetchedReleases
             activities = try await fetchedActivities
 
-            // Fetch latest versions for quick-play carousel + activity rows
-            var versions: [UUID: Version] = [:]
-            for project in projects {
-                let projectVersions = try await SupabaseService.shared.fetchVersions(projectId: project.id)
-                if let latest = projectVersions.max(by: { $0.versionNumber < $1.versionNumber }) {
-                    versions[project.id] = latest
+            // Latest version per project (quick-play carousel + activity rows),
+            // fetched concurrently — serially this was the slowest part of load.
+            let projectIds = projects.map(\.id)
+            latestVersions = await withTaskGroup(of: (UUID, Version?).self) { group in
+                for id in projectIds {
+                    group.addTask {
+                        let versions = (try? await SupabaseService.shared.fetchVersions(projectId: id)) ?? []
+                        return (id, versions.max(by: { $0.versionNumber < $1.versionNumber }))
+                    }
                 }
+                var result: [UUID: Version] = [:]
+                for await (id, latest) in group {
+                    if let latest { result[id] = latest }
+                }
+                return result
             }
-            latestVersions = versions
+            loadFailed = false
         } catch {
+            // Keep whatever data we already have; only flag the failure so the
+            // banner shows when the screen would otherwise be empty.
+            loadFailed = true
             print("HomeView: Failed to load dashboard data — \(error.localizedDescription)")
         }
         isLoading = false

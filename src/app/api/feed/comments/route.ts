@@ -27,17 +27,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many comments. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
+  // A credit is spent above, before we know the request is even well-formed.
+  // Every failure exit from here on refunds it — otherwise a client looping on
+  // a deleted track (404) or a validation slip burns the 30/hr window and locks
+  // the user out of commenting for an hour over requests that never wrote a
+  // row. Mirrors the rollback pattern in /api/finalize-video.
+  const reject = (error: string, status: number) => {
+    feedCommentLimiter.rollback(userId)
+    return NextResponse.json({ error }, { status })
+  }
+
   const body = await request.json().catch(() => null)
-  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  if (!body) return reject('Invalid JSON body', 400)
   const { version_id, comment } = body
 
   if (!isUuid(version_id)) {
-    return NextResponse.json({ error: 'Valid version_id is required' }, { status: 400 })
+    return reject('Valid version_id is required', 400)
   }
   const text = typeof comment === 'string' ? comment.trim() : ''
-  if (!text) return NextResponse.json({ error: 'Comment is required' }, { status: 400 })
+  if (!text) return reject('Comment is required', 400)
   if (text.length > MAX_COMMENT_LENGTH) {
-    return NextResponse.json({ error: `Comment must be under ${MAX_COMMENT_LENGTH} characters` }, { status: 400 })
+    return reject(`Comment must be under ${MAX_COMMENT_LENGTH} characters`, 400)
   }
 
   // Insert directly — the version_id FK enforces "track exists" atomically, so
@@ -75,17 +85,17 @@ export async function POST(request: NextRequest) {
     if (error?.code === '23503') {
       const detail = `${error.details ?? ''} ${error.message ?? ''}`
       if (detail.includes('version_id') || detail.includes('mb_versions')) {
-        return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+        return reject('Track not found', 404)
       }
-      return NextResponse.json({ error: 'Account not found — please sign in again' }, { status: 401 })
+      return reject('Account not found — please sign in again', 401)
     }
     // 42501 = RLS violation → this process is writing as anon (bad key).
     if (error?.code === '42501') {
       console.error('[feed] comment insert hit RLS — admin client is running as anon')
-      return NextResponse.json({ error: 'Server is misconfigured — please try again shortly' }, { status: 503 })
+      return reject('Server is misconfigured — please try again shortly', 503)
     }
     console.error('[feed] comment insert failed:', error?.message)
-    return NextResponse.json({ error: error?.message ?? 'Failed to save comment' }, { status: 500 })
+    return reject(error?.message ?? 'Failed to save comment', 500)
   }
 
   const artist = publicArtistName(profileRes.data)

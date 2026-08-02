@@ -34,7 +34,7 @@ import {
   buildFinalVideo,
   MAX_SONG_SECONDS,
 } from '../src/lib/video-render.ts'
-import { shouldReapJob, JOB_TTL_MS, STUCK_JOB_MS } from '../src/lib/video-job-policy.ts'
+import { shouldReapJob, JOB_TTL_MS, STUCK_JOB_MS, UPLOAD_PHASE_MS } from '../src/lib/video-job-policy.ts'
 
 const require = createRequire(import.meta.url)
 const FFMPEG = require('@ffmpeg-installer/ffmpeg').path
@@ -198,6 +198,47 @@ console.log('\n— invariant: reap policy is single-sourced —')
   check('video-jobs.ts does NOT redefine the retention constants',
     !/const\s+(JOB_TTL_MS|STUCK_JOB_MS)\s*=/.test(jobsSrc))
   check('video-jobs.ts actually uses it to prune', /shouldReapJob\s*\(/.test(jobsSrc))
+}
+
+// ── Invariant: the UPLOAD phase is bounded too ──────────────────────────────
+// Every ffmpeg stage settles under its own deadline, but the phase AFTER the
+// render had none: ensureVideoBucketLimit() is a Management-API fetch with no
+// signal and storeVisualizer() pushes up to ~380 MB to Supabase. A job parked
+// in 'uploading' still counts toward activeCount() (a global MAX_CONCURRENT
+// slot) AND activeJobForUser() (the per-user single-flight), so one hung socket
+// 409s that user with `user_busy` and taxes everyone else until STUCK_JOB_MS
+// reaps it SIX HOURS later. Bounding the render but not the upload just moves
+// where the wedge happens.
+console.log('\n— invariant: the post-render upload phase settles —')
+{
+  const jobsSrc = await readFile('src/lib/video-jobs.ts', 'utf8')
+  const policySrc = await readFile('src/lib/video-job-policy.ts', 'utf8')
+
+  check('the policy module defines an upload-phase budget',
+    /export const UPLOAD_PHASE_MS\s*=/.test(policySrc))
+  check('video-jobs.ts imports it rather than inlining a number',
+    /import\s*\{[^}]*UPLOAD_PHASE_MS[^}]*\}\s*from\s*['"]\.\/video-job-policy\.ts['"]/.test(jobsSrc))
+  check('the upload phase is wrapped in a deadline',
+    /withDeadline\s*\(/.test(jobsSrc) && /UPLOAD_PHASE_MS/.test(jobsSrc))
+  check('the deadline rejects rather than resolving a bogus success',
+    /reject\(new Error\(message\)\)/.test(jobsSrc))
+  check('the deadline timer is cleared so it cannot leak',
+    /clearTimeout\(timer\)/.test(jobsSrc))
+  check('the pending timer is unref\'d so it cannot hold the process open',
+    /timer\.unref\?\.\(\)/.test(jobsSrc))
+
+  // The budget must be generous enough for a real large upload but far inside
+  // the 6-hour backstop, or it either kills good renders or fixes nothing.
+  check('upload budget is longer than a minute and well under the stuck backstop',
+    UPLOAD_PHASE_MS > 60_000 && UPLOAD_PHASE_MS < STUCK_JOB_MS / 4,
+    `${UPLOAD_PHASE_MS / 60000}min vs ${STUCK_JOB_MS / 60000}min backstop`)
+
+  // Witness: the pre-fix upload phase awaited storeVisualizer directly.
+  const preFix = `
+    if (built.bytes.length > 45 * 1024 * 1024) await ensureVideoBucketLimit()
+    const stored = await storeVisualizer({ userId: args.userId })
+  `
+  check('witness: pre-fix upload phase had no deadline', !/withDeadline/.test(preFix))
 }
 
 // ── 4. Invariant: no unguarded spawn ────────────────────────────────────────

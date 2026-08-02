@@ -1,5 +1,8 @@
 import type { Release } from './supabase'
-import { ymdUtc, nextFriday, toYmd } from './release-plan'
+// Extension-full relative import (not the @/ alias) so the node contract test
+// can import this module under plain Node type-stripping — same reason
+// video-jobs.ts reaches for './video-job-policy.ts'.
+import { ymdUtc, nextFriday, toYmd } from './release-plan.ts'
 
 // ─── DistroKid prep + waterfall sequencing ───────────────────────────────────
 // DistroKid has no public API, so this module makes mixBASE the system of
@@ -49,6 +52,37 @@ export function distroKidTracklist(release: Release, all: Release[]): DistroKidT
     isNew: r.id === release.id,
     releaseId: r.id,
   }))
+}
+
+// ─── NOT NULL release columns (migration 026) ────────────────────────────────
+// These four columns are `not null default …`. The pipeline's metadata editor
+// is uncontrolled and PATCHes `value.trim() || null` on blur, so clearing a
+// field sends an explicit null — which Postgres rejects with a 23502 not-null
+// violation, surfacing as a hard 500 and "Could not save that field" every
+// time the user empties the Language box. Nulling these is never meaningful
+// anyway: the column has a sensible default, and "cleared" should mean "back
+// to the default", not "no value".
+//
+// Applied server-side (not in the editor) so every client — the web UI, the
+// iOS app, and any future automation — gets the same forgiving behaviour.
+export const RELEASE_COLUMN_DEFAULTS: Readonly<Record<string, string | boolean>> = {
+  release_type: 'single',
+  explicit: false,
+  instrumental: false,
+  language: 'English',
+}
+
+/**
+ * Replace explicit nulls on NOT NULL release columns with that column's
+ * default. Pure; returns a new object and leaves every other key untouched
+ * (including keys whose null IS meaningful, e.g. clearing `waterfall_group_id`).
+ */
+export function coerceReleaseNulls(patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...patch }
+  for (const [col, fallback] of Object.entries(RELEASE_COLUMN_DEFAULTS)) {
+    if (col in out && out[col] === null) out[col] = fallback
+  }
+  return out
 }
 
 // A readiness problem found by validateForDistroKid. Errors block a clean

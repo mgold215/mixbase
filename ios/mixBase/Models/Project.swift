@@ -26,6 +26,9 @@ struct Project: Codable, Identifiable {
     // Optional musical key (e.g. "Am", "F#")
     var keySignature: String?
 
+    // Optional pinned visualizer video URL (Spotify-Canvas-style loop)
+    var visualizerUrl: String?
+
     // When this project was first created
     let createdAt: Date
 
@@ -42,6 +45,7 @@ struct Project: Codable, Identifiable {
         case genre
         case bpm
         case keySignature = "key_signature"
+        case visualizerUrl = "visualizer_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

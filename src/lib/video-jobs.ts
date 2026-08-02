@@ -4,7 +4,7 @@ import { storeVisualizer } from '@/lib/visualizer-store'
 import { ensureVideoBucketLimit } from '@/lib/schema-heal'
 // Relative extension-full import (not the @/ alias) so the smoke test can
 // exercise the retention rules under plain Node type-stripping.
-import { shouldReapJob } from './video-job-policy.ts'
+import { shouldReapJob, UPLOAD_PHASE_MS } from './video-job-policy.ts'
 
 // ── In-process video render jobs ─────────────────────────────────────────────
 // A full-song encode takes minutes, far beyond an acceptable HTTP request, so
@@ -100,6 +100,24 @@ export function startVideoJob(args: StartJobArgs): StartJobResult {
   return { ok: true, job }
 }
 
+/**
+ * Settle `work` within `ms`, rejecting with `message` if it doesn't.
+ *
+ * The loser is abandoned, not cancelled — there is no cancellation token on a
+ * Supabase upload. That is the point: the JOB is what must not hang. Freeing
+ * the concurrency slot and the user's single-flight guard is worth letting one
+ * orphaned socket finish on its own, and the timer is unref'd so a pending
+ * deadline can never hold the process open.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+    timer.unref?.()
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
 async function runJob(job: VideoJob, args: StartJobArgs) {
   try {
     const built = await buildFinalVideo({
@@ -122,20 +140,32 @@ async function runJob(job: VideoJob, args: StartJobArgs) {
     job.stage = 'Saving to Media'
     job.progress = 0.96
 
-    // The bucket was created with a 50 MB cap; full songs exceed it. Raise it
-    // (idempotent, direct SQL — see schema-heal) before uploading big files.
-    if (built.bytes.length > 45 * 1024 * 1024) await ensureVideoBucketLimit()
-
     const mins = Math.floor(built.durationSec / 60)
     const secs = Math.round(built.durationSec % 60).toString().padStart(2, '0')
-    const stored = await storeVisualizer({
-      userId: args.userId,
-      projectId: args.projectId,
-      bytes: built.bytes,
-      contentType: 'video/mp4',
-      kind: args.format,
-      title: args.format === 'youtube' ? `YouTube · ${mins}:${secs}` : `Short · ${mins}:${secs}`,
-    })
+
+    // Every ffmpeg stage above settles under its own deadline, but this upload
+    // phase had none — neither the Management-API bucket heal nor a ~380 MB
+    // Supabase PUT carries a timeout, and a job stuck in 'uploading' still
+    // holds a global MAX_CONCURRENT slot AND the user's single-flight guard,
+    // so one hung socket 409s them with `user_busy` until the 6-hour reaper.
+    // Bound the whole phase so it always settles.
+    const stored = await withDeadline(
+      (async () => {
+        // The bucket was created with a 50 MB cap; full songs exceed it. Raise
+        // it (idempotent, direct SQL — see schema-heal) before uploading.
+        if (built.bytes.length > 45 * 1024 * 1024) await ensureVideoBucketLimit()
+        return storeVisualizer({
+          userId: args.userId,
+          projectId: args.projectId,
+          bytes: built.bytes,
+          contentType: 'video/mp4',
+          kind: args.format,
+          title: args.format === 'youtube' ? `YouTube · ${mins}:${secs}` : `Short · ${mins}:${secs}`,
+        })
+      })(),
+      UPLOAD_PHASE_MS,
+      'Saving to Media timed out — the render finished, try saving again',
+    )
     if (!stored) throw new Error('Rendered fine but saving to storage failed — try again')
 
     job.resultUrl = stored.video_url
