@@ -28,23 +28,43 @@ struct PipelineView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    // MARK: - Curator Submissions entry (SubmitBase)
-                    Button(action: { showSubmissions = true }) {
-                        HStack {
-                            Image(systemName: "paperplane")
-                            Text("Curator Submissions")
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                    // MARK: - Released Library + Curator Submissions entries
+                    VStack(spacing: 8) {
+                        NavigationLink(destination: ReleasedLibraryView()) {
+                            HStack {
+                                Image(systemName: "music.note.list")
+                                Text("Released Library")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(Color(hex: "#111111"))
+                            .cornerRadius(10)
                         }
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(Color(hex: "#f0f0f0"))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(Color(hex: "#111111"))
-                        .cornerRadius(10)
+
+                        Button(action: { showSubmissions = true }) {
+                            HStack {
+                                Image(systemName: "paperplane")
+                                Text("Curator Submissions")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(Color(hex: "#111111"))
+                            .cornerRadius(10)
+                        }
                     }
                     .padding(.horizontal)
                     .padding(.top, 12)
