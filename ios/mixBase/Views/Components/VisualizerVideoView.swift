@@ -14,21 +14,23 @@ struct VisualizerVideoView: UIViewRepresentable {
     let url: URL
     let isPlaying: Bool
 
-    func makeUIView(context: Context) -> LoopingPlayerUIView {
-        LoopingPlayerUIView(url: url)
+    func makeUIView(context: Context) -> VisualizerPlayerUIView {
+        VisualizerPlayerUIView(url: url)
     }
 
-    func updateUIView(_ view: LoopingPlayerUIView, context: Context) {
+    func updateUIView(_ view: VisualizerPlayerUIView, context: Context) {
         view.load(url: url)
         view.setPlaying(isPlaying)
     }
 }
 
-// MARK: - LoopingPlayerUIView
+// MARK: - VisualizerPlayerUIView
 // UIView whose backing layer is an AVPlayerLayer driving an AVQueuePlayer +
 // AVPlayerLooper — the supported way to loop a short clip without a gap or
-// flash at the seam.
-final class LoopingPlayerUIView: UIView {
+// flash at the seam. Distinct from LoopingPlayerUIView (VisualizerView.swift),
+// whose loop is always-on for library previews: this one pauses/resumes in
+// step with the song and survives backgrounding.
+final class VisualizerPlayerUIView: UIView {
 
     private let player = AVQueuePlayer()
     private var looper: AVPlayerLooper?
