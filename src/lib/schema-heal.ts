@@ -146,14 +146,39 @@ export function isMissingUsageRpc(error: { code?: string; message?: string } | n
 // the grant on every environment, with no manual migration step, the first time
 // a generation runs after a deploy. It deliberately does NOT re-create the
 // function, so it can never race or diverge from the canonical definition.
+//
+// The DO block + advisory lock are load-bearing, not decoration. REVOKE/GRANT
+// rewrites a row in the pg_proc catalog, and this heal fires once per fresh
+// process from /api/health — so a Railway rollout boots two containers that
+// both re-assert the same grant within seconds of each other, and Postgres
+// kills the loser with `XX000: tuple concurrently updated` (observed live as
+// Sentry MIXBASE-6, 2 seconds after app_start_time). The heal therefore failed
+// precisely when it was LEAST needed: the grant state was already correct, the
+// healer just couldn't rewrite the row. Worse, the failure nulls the memo, so
+// the loser retries and the noise sustains itself.
+//
+// pg_advisory_xact_lock makes concurrent healers queue instead of collide: the
+// second one waits, then runs the same idempotent statements against an already
+// correct state and succeeds. The lock is transaction-scoped and a DO block is
+// its own transaction, so it is released the moment the block ends — no unlock
+// bookkeeping, and no way to leak a lock if a statement throws.
+//
+// Deliberately NOT done: reading pg_proc.proacl first and skipping the DDL when
+// it already looks right. That would also stop the race, but a predicate with a
+// bug silently skips a heal that IS needed — and this is the code that closes
+// the anon-key quota-griefing hole. Serialize the write; don't get clever about
+// avoiding it.
 const USAGE_RPC_GRANTS_SQL = `
-revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
-grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;
--- handle_new_user is a SECURITY DEFINER signup trigger, never meant to be
--- client-callable. It isn't reachable over /rest/v1/rpc (no-arg trigger shape),
--- but migration 018 revokes its PUBLIC grant too; applying the whole of 018 here
--- keeps the two in lockstep. No service_role grant — only its trigger fires it.
-revoke execute on function public.handle_new_user() from public, anon, authenticated;`
+do $$ begin
+  perform pg_advisory_xact_lock(hashtext('mixbase:usage_rpc_grants'));
+  revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
+  grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;
+  -- handle_new_user is a SECURITY DEFINER signup trigger, never meant to be
+  -- client-callable. It isn't reachable over /rest/v1/rpc (no-arg trigger shape),
+  -- but migration 018 revokes its PUBLIC grant too; applying the whole of 018 here
+  -- keeps the two in lockstep. No service_role grant — only its trigger fires it.
+  revoke execute on function public.handle_new_user() from public, anon, authenticated;
+end $$;`
 
 let usageRpcGrantsEnsured: Promise<boolean> | null = null
 
@@ -181,15 +206,24 @@ export function ensureUsageRpcGrants(): Promise<boolean> {
 // This is the table-door twin of the RPC-door lockdown above; it heals the same
 // way (migrations are applied by hand, so a deploy can't rely on 025 having run)
 // — idempotent, memoized per process, fired from the generation path.
+// Same catalog-race exposure as the grants heal above (DROP POLICY and ALTER
+// TABLE rewrite pg_policy/pg_class rows), so it takes the same treatment under
+// its own lock key — the two heals serialize against their own kind, never
+// against each other. The nested BEGIN/EXCEPTION replaces what used to be a
+// second `do $$` block: plpgsql sub-blocks catch duplicate_object exactly the
+// same way, and avoiding nested dollar-quoting keeps this readable.
 const USAGE_TABLE_LOCK_SQL = `
-alter table public.mb_usage enable row level security;
-drop policy if exists "Users can insert their own usage" on public.mb_usage;
-drop policy if exists "Users can update their own usage" on public.mb_usage;
 do $$ begin
-  alter table public.mb_usage
-    add constraint mb_usage_nonneg_counts
-    check (artwork_generations >= 0 and video_generations >= 0);
-exception when duplicate_object then null; end $$;`
+  perform pg_advisory_xact_lock(hashtext('mixbase:usage_table_lock'));
+  alter table public.mb_usage enable row level security;
+  drop policy if exists "Users can insert their own usage" on public.mb_usage;
+  drop policy if exists "Users can update their own usage" on public.mb_usage;
+  begin
+    alter table public.mb_usage
+      add constraint mb_usage_nonneg_counts
+      check (artwork_generations >= 0 and video_generations >= 0);
+  exception when duplicate_object then null; end;
+end $$;`
 
 let usageTableLockEnsured: Promise<boolean> | null = null
 
@@ -555,26 +589,71 @@ export async function upsertProfileViaManagementSql(
   return runQuery(sql, 'profiles upsert fallback')
 }
 
+/**
+ * Postgres catalog contention — two healers rewriting the same pg_proc/pg_class
+ * row at once. It is not a defect in the SQL and it self-clears on a retry, so
+ * it must not page anyone; the advisory locks above make it rare, and this
+ * classifier keeps the residual (a lock taken on a connection that dies
+ * mid-flight, say) from looking like a real failure.
+ */
+function isTransientCatalogRace(detail: string): boolean {
+  return /tuple concurrently updated|deadlock detected|could not serialize access/i.test(detail)
+}
+
+// Per-label failure budget for the whole process.
+//
+// Every heal memoizes its promise but NULLS the memo on failure so the next
+// caller retries — deliberate, but only `ensureSecurityHeals` was ever capped,
+// because only it was reachable from a public endpoint. The rest are reachable
+// from ordinary authenticated routes that mostly have no rate limiter (34 of 48
+// write routes don't — that's the house norm), so one client looping a failing
+// request turned each attempt into a Supabase Management API call.
+//
+// Capping here rather than in the ten individual heals means every heal — and
+// every future one — is covered by construction, and no call site changes.
+const RUN_QUERY_MAX_FAILURES = 8
+const runQueryFailures = new Map<string, number>()
+
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false
+  if ((runQueryFailures.get(label) ?? 0) >= RUN_QUERY_MAX_FAILURES) return false
   const ref = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
-  const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: sql }),
-  })
-  if (!res.ok) {
+
+  // At most one retry, and ONLY for the transient catalog race. Everything else
+  // (bad credential, bad SQL) is reported on the first failure — retrying those
+  // just doubles the load on the Management API from a public endpoint.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: sql }),
+    })
+    if (res.ok) {
+      // A heal that succeeds clears its budget: the next drift is a fresh
+      // problem, not a continuation of an old one.
+      runQueryFailures.delete(label)
+      return true
+    }
+
     const detail = await res.text().catch(() => '')
+    const transient = isTransientCatalogRace(detail)
+    if (transient && attempt === 0) {
+      console.warn(`[schema-heal] ${label} hit catalog contention, retrying once`)
+      continue
+    }
+    runQueryFailures.set(label, (runQueryFailures.get(label) ?? 0) + 1)
+
     console.error(`[schema-heal] ${label} SQL failed:`, res.status, detail)
     // 401/403 = the credential itself is bad; that never self-recovers and
     // disables every heal at once, so it is worth waking someone up for.
     Sentry.captureMessage(`schema-heal: ${label} failed (${res.status})`, {
       level: res.status === 401 || res.status === 403 ? 'error' : 'warning',
-      tags: { heal: label, status: String(res.status) },
+      tags: { heal: label, status: String(res.status), transient: String(transient) },
       // `detail` is Supabase's own error envelope, never the SQL or the token.
       extra: { detail: detail.slice(0, 500) },
     })
+    return false
   }
-  return res.ok
+  return false
 }

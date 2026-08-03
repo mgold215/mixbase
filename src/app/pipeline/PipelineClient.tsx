@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X, ListMusic } from 'lucide-react'
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
-import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, type ReleaseStatusKey } from '@/lib/release-plan'
+import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, daysUntilDate, isUpcomingRelease, compareReleaseDates, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
 import CassetteIcon from '@/components/CassetteIcon'
 
@@ -34,10 +34,17 @@ type Props = {
   libraryTracks: LibraryTrackLite[]
 }
 
-function daysUntil(dateStr: string | null): string | null {
-  if (!dateStr) return null
-  const diff = new Date(dateStr).getTime() - Date.now()
-  const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
+// Countdown label for a release date, phrased from the user's local calendar day.
+//
+// It takes `todayStr` rather than reading the clock because the previous version
+// differenced a UTC-parsed date against `Date.now()` — mixing a calendar date
+// with a wall-clock instant. From roughly 7pm local onward at any negative UTC
+// offset, that read a full day short ("2 days" on the evening before a 3-day
+// wait). Deferring to the shared daysUntilDate() puts this label on the same
+// basis as the Upcoming/Past bucket and the status badge.
+function daysUntil(todayStr: string, dateStr: string | null): string | null {
+  const days = daysUntilDate(todayStr, dateStr)
+  if (days === null) return null
   if (days < 0) return 'Released'
   if (days === 0) return 'Today'
   if (days === 1) return '1 day'
@@ -143,7 +150,7 @@ function ReleaseCard({
 }: ReleaseCardProps) {
   const isExpanded = expandedId === release.id
   const pct = releaseCompletionPercent(release)
-  const countdown = daysUntil(release.release_date)
+  const countdown = daysUntil(todayStr, release.release_date)
   // Readiness judgment (At risk / Due soon / Ready) — null when nothing to flag.
   const status = getReleaseStatus(release, todayStr)
   const copiedPlan = copiedPlanId === release.id
@@ -600,14 +607,21 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
     setSaving(false)
   }
 
+  // The checkbox is controlled by the release row, so a failed PATCH makes it
+  // snap back on its own. Silently, though — which reads as "the app ignored me",
+  // and on a genuine network failure the unhandled rejection meant nothing
+  // surfaced at all. Every sibling mutation here already reports; this one didn't.
   async function toggleCheck(releaseId: string, field: string, current: boolean) {
-    const res = await fetch(`/api/releases/${releaseId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: !current }),
-    })
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/releases/${releaseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: !current }),
+      })
+      if (!res.ok) throw new Error('update failed')
       setReleases(prev => prev.map(r => r.id === releaseId ? { ...r, [field]: !current } : r))
+    } catch {
+      flashError('Could not save that step — please try again.')
     }
   }
 
@@ -683,21 +697,17 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
   // Upcoming: nearest first, undated releases at the end.
   // Past: most recent first, so the latest release sits at the top.
   const now = new Date()
-  const todayMs = now.setHours(0, 0, 0, 0)
-  // Local calendar date as YYYY-MM-DD, fed to the pure getReleaseStatus() so the
-  // "At risk / Due soon / Ready" judgment matches the user's own notion of today.
+  // Local calendar date as YYYY-MM-DD — the user's own notion of "today". Every
+  // date judgment on this board flows from this ONE value through the pure
+  // helpers in release-plan.ts, so the bucket, the countdown and the status badge
+  // can no longer disagree with each other (they used to: see isUpcomingRelease).
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const upcoming = releases
-    .filter(r => !r.release_date || new Date(r.release_date).getTime() >= todayMs)
-    .sort((a, b) => {
-      if (!a.release_date && !b.release_date) return 0
-      if (!a.release_date) return 1
-      if (!b.release_date) return -1
-      return new Date(a.release_date).getTime() - new Date(b.release_date).getTime()
-    })
+    .filter(r => isUpcomingRelease(todayStr, r.release_date))
+    .sort((a, b) => compareReleaseDates(a.release_date, b.release_date))
   const past = releases
-    .filter(r => r.release_date && new Date(r.release_date).getTime() < todayMs)
-    .sort((a, b) => new Date(b.release_date!).getTime() - new Date(a.release_date!).getTime())
+    .filter(r => !isUpcomingRelease(todayStr, r.release_date))
+    .sort((a, b) => compareReleaseDates(b.release_date, a.release_date, { undatedLast: false }))
 
   // Everything the module-scope ReleaseCard needs from this board, bundled so
   // the two call sites below stay in lockstep.

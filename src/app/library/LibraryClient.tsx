@@ -71,7 +71,14 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
       if (!res.ok) throw new Error(data.error ?? 'Sync failed')
       const listRes = await fetch('/api/library')
       if (listRes.ok) setTracks(await listRes.json())
-      setSyncMsg(`Synced ${data.total} track${data.total === 1 ? '' : 's'} for ${data.artistName} via ${data.source === 'spotify' ? 'Spotify' : 'Deezer'} — ${data.created} new, ${data.updated} updated.`)
+      const via = data.source === 'spotify' ? 'Spotify' : 'Deezer'
+      // Report what actually landed, not what was attempted. A run where most
+      // writes failed used to render as a clean "Synced N tracks".
+      if (data.failed > 0) {
+        setSyncError(`${data.failed} of ${data.total} track${data.total === 1 ? '' : 's'} could not be saved${data.error ? ` — ${data.error}` : ''}. ${data.created} new, ${data.updated} updated.`)
+      } else {
+        setSyncMsg(`Synced ${data.total} track${data.total === 1 ? '' : 's'} for ${data.artistName} via ${via} — ${data.created} new, ${data.updated} updated.`)
+      }
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : 'Sync failed — please try again')
     }

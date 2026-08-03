@@ -16,6 +16,10 @@ export type Size = 'small' | 'medium' | 'large'
 
 // Text color is any #RRGGBB hex; white unless the user picks otherwise.
 export const DEFAULT_TEXT_COLOR = '#FFFFFF'
+
+// Decode ceiling for user-supplied artwork (~6300² — well past a 3000×3000
+// master cover, well short of a decompression bomb). See buildFinalized.
+export const MAX_ARTWORK_PIXELS = 40_000_000
 export function isHexColor(s: unknown): s is string {
   return typeof s === 'string' && /^#[0-9a-fA-F]{6}$/.test(s)
 }
@@ -223,8 +227,21 @@ export async function buildFinalized(
   filter: Filter,
   color: string = DEFAULT_TEXT_COLOR
 ): Promise<Buffer> {
-  let img = sharp(imageBuffer)
+  // Cap decoded pixels. The source URL is SSRF-gated to our own Supabase host,
+  // but its CONTENTS are user-controlled — any signed-in user can PUT up to
+  // 50 MB into mf-artwork and point a project at it. sharp's default ceiling
+  // (~268 Mpx) still admits a 16000×16000 PNG that compresses to a few MB and
+  // expands to ~1 GB of raw RGBA. MAX_ARTWORK_PIXELS is ~6300² — far above any
+  // real cover, far below a memory bomb.
+  //
+  // Deliberately a limit, NOT a .resize(): buildFinalized derives the whole type
+  // scale from `width`, so silently resizing would change every finalized
+  // layout. Oversized input should be refused, not quietly reinterpreted.
+  let img = sharp(imageBuffer, { limitInputPixels: MAX_ARTWORK_PIXELS })
   const { width = 1024, height = 1024 } = await img.metadata()
+  if (width * height > MAX_ARTWORK_PIXELS) {
+    throw new Error(`Artwork is too large to process (${width}×${height})`)
+  }
 
   const [vertical, horizontal] = position.split('-') as [Vertical, Align]
   const align = horizontal

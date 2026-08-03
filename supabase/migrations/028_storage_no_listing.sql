@@ -1,0 +1,60 @@
+-- Migration 028: stop anonymous LISTING of the storage buckets.
+--
+-- ⚠️ NOT YET APPLIED. Requires an explicit decision — see the note at the end.
+--
+-- THE HOLE
+-- Migrations 003 and 014 gave each bucket a SELECT policy on storage.objects
+-- whose entire condition is `bucket_id = '<bucket>'`, granted to role `public`.
+-- That is not "public read of objects" — object reads on a PUBLIC bucket never
+-- consult RLS at all. What it actually grants is the ability to ENUMERATE the
+-- bucket. Verified live with the anon key that ships in our own JS bundle:
+--   POST /storage/v1/object/list/mf-audio   →   HTTP 200, rows returned
+-- Object keys are `<projectId>/<timestamp>.<ext>`, and each maps directly to a
+-- public object URL that serves without any check. So an unauthenticated
+-- stranger can enumerate and download every unreleased mix, every piece of
+-- artwork, and every finished video on the platform. Supabase's own security
+-- advisor flags all three buckets (`public_bucket_allows_listing`).
+--
+-- WHY DROPPING THESE IS SAFE
+-- Every read path in the app goes through `/storage/v1/object/public/...`,
+-- which bypasses RLS because the buckets are public:
+--   src/app/api/audio/[...path]/route.ts:20      (audio proxy)
+--   src/app/api/artwork/[...path]/route.ts:24    (artwork proxy)
+--   src/lib/download.ts:40                       (requires that exact prefix)
+--   src/lib/supabase.ts:179, visualizer-store.ts:87, every getPublicUrl() site
+-- Server-side reads, lists and deletes all use the service-role key, which
+-- bypasses RLS entirely. There is NO client-side `.list()` anywhere in `src/`
+-- or `ios/` — grepped before writing this. Nothing legitimate depends on these
+-- policies.
+--
+-- WHAT THIS DOES NOT FIX
+-- The INSERT policies from migration 009 still allow ANONYMOUS uploads into all
+-- three buckets (`with check (bucket_id = ...)`, no auth predicate, 2 GB/file).
+-- That is a separate change: scoping it `to authenticated` may break the ≤50 MB
+-- signed-URL browser upload path depending on how Supabase validates signed
+-- upload tokens, so it needs a real upload test, not a guess. Left open
+-- deliberately rather than fixed blind.
+
+drop policy if exists "Public read mf-audio"   on storage.objects;
+drop policy if exists "Public read mf-artwork" on storage.objects;
+drop policy if exists "Public read mf-video"   on storage.objects;
+
+-- APPLY + VERIFY
+--   1. Apply this file.
+--   2. Confirm listing is dead (expect a permission error, not 200 with rows):
+--        curl -s -X POST "$SUPABASE_URL/storage/v1/object/list/mf-audio" \
+--          -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+--          -H 'Content-Type: application/json' -d '{"prefix":"","limit":5}'
+--   3. Confirm playback still works (expect HTTP 206 + Content-Range):
+--        curl -sI -H 'Range: bytes=0-1023' https://mixbase.app/api/audio/<known-key>
+--   4. node scripts/test-upload.mjs https://mixbase-staging.up.railway.app
+--
+-- ROLLBACK — recreate any policy verbatim:
+--   create policy "Public read mf-audio" on storage.objects
+--     for select using (bucket_id = 'mf-audio');
+--
+-- NOTE ON APPLYING: staging and production share one Supabase project, so there
+-- is no isolated environment to rehearse this in. The reasoning above is sound
+-- and every call site was checked, but the blast radius if Supabase's
+-- public-object semantics differ from the documented behaviour is "all audio
+-- playback stops". Apply it deliberately, with step 3 ready to run.

@@ -31,7 +31,7 @@ Supabase public audio URLs do not reliably return `Accept-Ranges` headers, so br
 
 - `src/app/api/audio/[...path]/route.ts` — proxy that forwards Range headers and returns proper 206 responses
 - `audioProxyUrl(supabaseUrl)` in `src/lib/supabase.ts` — converts any Supabase mf-audio URL to `/api/audio/...`
-- Every `<audio>` element or `WaveformPlayer` MUST use `audioProxyUrl(version.audio_url)`, not the raw URL
+- Every `<audio>` element MUST use `audioProxyUrl(version.audio_url)`, not the raw URL
 - Already applied in: `ProjectClient.tsx`, `ShareClient.tsx`, `player/page.tsx`
 - Do not remove `/api/audio` from middleware public paths
 
@@ -47,11 +47,13 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 
 # Application Pages & Features
 - `/dashboard` — Project grid with stats, activity feed
-- `/projects/[id]` — Main working view: versions, upload, A/B compare, notes, release pipeline
+- `/projects/[id]` — Main working view: versions, upload, notes, master check, release pipeline
 - `/collections` — Group tracks into playlists/EPs/albums
 - `/media` — Artwork gallery across all projects
 - `/pipeline` — Release checklist board for all releases
-- `/player` — Full-screen audio player with waveform
+- `/player` — Full-screen audio player. **Its waveform is decorative, not real**: `generateWaveform()` is an LCG seeded by `project_id`, so the shape is stable per project but carries zero information about the audio. Don't cite it as analysis, and don't "fix" it without deciding to build real peak extraction.
+
+**Features this app does NOT have** (previously claimed here; each was verified absent 2026-08-03, so don't build on them): A/B version compare — there is one shared `<audio>` in `PlayerContext` and no two-source switching; a `WaveformPlayer` component — the name appears nowhere in `src/`.
 - `/share/[token]` — Public share page (no auth required) with feedback form
 
 # Auth Model

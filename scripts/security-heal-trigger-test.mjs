@@ -158,6 +158,62 @@ check('witness: pre-fix health route never triggered any heal',
 check('witness: pre-fix had no attempt cap, so a public trigger would be unbounded',
   !/HEAL_MAX_ATTEMPTS/.test(preHeal))
 
+
+// ── 2026-08-03: the heal raced ITSELF across containers (Sentry MIXBASE-6) ───
+// REVOKE/GRANT rewrites a pg_proc catalog row. The heal fires once per fresh
+// process from /api/health, so a Railway rollout boots two containers that both
+// re-assert the same grant within seconds — and Postgres kills the loser with
+// `XX000: tuple concurrently updated`. Observed live 2 seconds after
+// app_start_time. It failed precisely when it was LEAST needed (the state was
+// already correct), and because failure nulls the memo, the loser retried and
+// sustained its own noise.
+console.log('\nHeal DDL is serialized, not racing')
+{
+  const heal = readFileSync(new URL('../src/lib/schema-heal.ts', import.meta.url), 'utf8')
+
+  check('the grants heal takes an advisory lock before touching pg_proc',
+    /pg_advisory_xact_lock\(hashtext\('mixbase:usage_rpc_grants'\)\)/.test(heal))
+  check('the mb_usage lockdown takes its own advisory lock',
+    /pg_advisory_xact_lock\(hashtext\('mixbase:usage_table_lock'\)\)/.test(heal))
+  check('the two heals use DIFFERENT lock keys (they must not block each other)',
+    /mixbase:usage_rpc_grants/.test(heal) && /mixbase:usage_table_lock/.test(heal))
+
+  // The lock must be INSIDE a DO block: a transaction-scoped advisory lock is
+  // released when the block's implicit transaction ends, so there is no unlock
+  // bookkeeping and no way to leak a lock if a statement throws.
+  const grantsBlock = heal.slice(heal.indexOf('const USAGE_RPC_GRANTS_SQL'), heal.indexOf('let usageRpcGrantsEnsured'))
+  check('the grants DDL is wrapped in a DO block',
+    /do \$\$ begin/.test(grantsBlock) && /end \$\$;/.test(grantsBlock))
+  check('the REVOKE still runs unconditionally inside the lock (no clever skip predicate)',
+    /revoke execute on function public\.try_increment_usage/.test(grantsBlock) &&
+    !/has_function_privilege|proacl/.test(grantsBlock))
+
+  // Transient catalog contention must not page anyone, but must not be
+  // swallowed forever either — one retry, then report.
+  check('catalog contention is classified as transient',
+    /tuple concurrently updated/.test(heal) && /isTransientCatalogRace/.test(heal))
+  check('a transient failure is retried exactly once',
+    /attempt < 2/.test(heal) && /transient && attempt === 0/.test(heal))
+  check('a NON-transient failure is reported on the first try (no doubled load)',
+    /if \(transient && attempt === 0\)/.test(heal))
+
+  // Every heal — not just the security pair — now has a failure budget.
+  check('runQuery caps repeated failures per label',
+    /RUN_QUERY_MAX_FAILURES/.test(heal) && /runQueryFailures/.test(heal))
+  check('a successful heal clears its failure budget',
+    /runQueryFailures\.delete\(label\)/.test(heal))
+
+  // Witness: the pre-fix SQL was bare statements with no lock.
+  const preFix = `
+const USAGE_RPC_GRANTS_SQL = \`
+revoke execute on function public.try_increment_usage(uuid, text, text, int) from public, anon, authenticated;
+grant execute on function public.try_increment_usage(uuid, text, text, int) to service_role;\``
+  check('witness: the pre-fix SQL had no advisory lock',
+    !/pg_advisory/.test(preFix))
+  check('witness: the pre-fix runQuery had no retry and no failure budget',
+    !/attempt < 2/.test(preFix) && !/RUN_QUERY_MAX_FAILURES/.test(preFix))
+}
+
 if (failures > 0) {
   console.error(`\nsecurity-heal-trigger: ${failures} check(s) failed`)
   process.exit(1)

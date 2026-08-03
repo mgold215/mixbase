@@ -88,11 +88,58 @@ export function formatReleaseDate(
 
 // Whole-day difference from `todayStr` to `dateStr` (positive = future), or null
 // if either side is blank/malformed. Both parsed on the same UTC calendar basis.
-function daysUntilDate(todayStr: string, dateStr: string | null): number | null {
+//
+// Exported because every "how far away is this release" question in the app must
+// be answered on ONE calendar basis. The pipeline board previously differenced a
+// UTC-parsed release date against `Date.now()` — a wall-clock instant — so from
+// roughly 7pm local onward, every countdown west of UTC read a day short.
+export function daysUntilDate(todayStr: string, dateStr: string | null): number | null {
   const a = ymdUtc(todayStr)
   const b = ymdUtc(dateStr)
   if (a === null || b === null) return null
   return Math.round((b - a) / 86_400_000)
+}
+
+/**
+ * Is this release still ahead of (or exactly on) today?
+ *
+ * This is the single most load-bearing date predicate on the pipeline board, and
+ * it is the one that got the basis wrong. The board used to compare
+ * `new Date(release_date)` — which parses `'2026-08-03'` as UTC midnight —
+ * against `now.setHours(0,0,0,0)`, which is LOCAL midnight. At any negative UTC
+ * offset the release instant is always the smaller number, so a release dated
+ * today sorted as PAST: on drop day the card silently left "Upcoming" and was
+ * filed into the collapsed, dimmed "Past" group — while its own countdown badge
+ * still said "Today" and its status still said "At risk". Three parts of one
+ * card disagreeing is the tell that two calendars were in play.
+ *
+ * Undated releases count as upcoming: they're plans that haven't been scheduled
+ * yet, not history.
+ */
+export function isUpcomingRelease(todayStr: string, dateStr: string | null): boolean {
+  if (!dateStr) return true
+  const days = daysUntilDate(todayStr, dateStr)
+  // A malformed date can't be judged as past — keep it visible rather than
+  // hiding it in a collapsed group where the user would never find it.
+  return days === null || days >= 0
+}
+
+/**
+ * Chronological comparator for two release dates on the shared UTC basis.
+ * `undatedLast` puts blank dates at the end (upcoming: plans without a date sit
+ * below scheduled ones); flip it for the past list, which is sorted newest-first.
+ */
+export function compareReleaseDates(
+  a: string | null,
+  b: string | null,
+  { undatedLast = true } = {},
+): number {
+  const av = ymdUtc(a)
+  const bv = ymdUtc(b)
+  if (av === null && bv === null) return 0
+  if (av === null) return undatedLast ? 1 : -1
+  if (bv === null) return undatedLast ? -1 : 1
+  return av - bv
 }
 
 // At-a-glance health of a release relative to its target date. Returns null when
