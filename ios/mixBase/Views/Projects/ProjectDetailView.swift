@@ -61,7 +61,8 @@ struct ProjectDetailView: View {
                                 audioService.play(
                                     version: latest,
                                     trackName: project.title,
-                                    artworkUrl: project.artworkUrl
+                                    artworkUrl: project.artworkUrl,
+                                    visualizerUrl: project.visualizerUrl
                                 )
                             }) {
                                 HStack {
@@ -423,7 +424,8 @@ struct ProjectDetailView: View {
             audioService.play(
                 version: version,
                 trackName: project.title,
-                artworkUrl: project.artworkUrl
+                artworkUrl: project.artworkUrl,
+                visualizerUrl: project.visualizerUrl
             )
         }) {
             HStack(spacing: 12) {

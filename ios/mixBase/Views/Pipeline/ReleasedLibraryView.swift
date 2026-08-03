@@ -434,7 +434,7 @@ struct ReleasedLibraryView: View {
                 ?? versions.first(where: { $0.status == "Finished" })
                 ?? versions.first
             if let best {
-                audioService.play(version: best, trackName: project.title, artworkUrl: project.artworkUrl)
+                audioService.play(version: best, trackName: project.title, artworkUrl: project.artworkUrl, visualizerUrl: project.visualizerUrl)
             } else {
                 flashError("The linked project has no audio versions yet.")
             }
