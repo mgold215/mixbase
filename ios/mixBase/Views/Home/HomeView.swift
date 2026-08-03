@@ -279,7 +279,8 @@ struct HomeView: View {
                         audioService.play(
                             version: version,
                             trackName: project.title,
-                            artworkUrl: project.artworkUrl
+                            artworkUrl: project.artworkUrl,
+                            visualizerUrl: project.visualizerUrl
                         )
                         selectedTab = 2  // Jump to the Player
                     }) {
@@ -377,7 +378,8 @@ struct HomeView: View {
                     audioService.play(
                         version: version,
                         trackName: project.title,
-                        artworkUrl: project.artworkUrl
+                        artworkUrl: project.artworkUrl,
+                        visualizerUrl: project.visualizerUrl
                     )
                 }) {
                     Image(systemName: audioService.currentVersion?.projectId == activity.projectId && audioService.isPlaying

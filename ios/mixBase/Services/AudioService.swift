@@ -26,6 +26,16 @@ struct QueueItem: Identifiable {
     let version: Version
     let trackName: String
     let artworkUrl: String?
+    /// The project's pinned visualizer loop (mb_projects.visualizer_url), if any.
+    let visualizerUrl: String?
+
+    init(projectId: UUID, version: Version, trackName: String, artworkUrl: String?, visualizerUrl: String? = nil) {
+        self.projectId = projectId
+        self.version = version
+        self.trackName = trackName
+        self.artworkUrl = artworkUrl
+        self.visualizerUrl = visualizerUrl
+    }
 
     var id: UUID { projectId }
 }
@@ -61,6 +71,13 @@ class AudioService: ObservableObject {
 
     /// The artwork URL for the currently playing track
     @Published var currentArtworkUrl: String?
+
+    /// The pinned visualizer video URL for the currently playing track's project
+    /// (Spotify-Canvas-style loop). The player screen loops it over the artwork
+    /// while the song plays. Unlike artwork this is cleared on every track change
+    /// unless the new track supplies its own — a leftover loop from the previous
+    /// song animating over the wrong track would be actively misleading.
+    @Published var currentVisualizerUrl: String?
 
     /// The user's artist name — fetched once from profiles table
     var artistName: String = "mixBase"
@@ -195,13 +212,13 @@ class AudioService: ObservableObject {
 
     /// Convenience: play a queue item.
     func play(item: QueueItem) {
-        play(version: item.version, trackName: item.trackName, artworkUrl: item.artworkUrl)
+        play(version: item.version, trackName: item.trackName, artworkUrl: item.artworkUrl, visualizerUrl: item.visualizerUrl)
     }
 
     // MARK: - Playback Controls
 
     /// Load and play a specific version's audio file.
-    func play(version: Version, trackName: String? = nil, artworkUrl: String? = nil) {
+    func play(version: Version, trackName: String? = nil, artworkUrl: String? = nil, visualizerUrl: String? = nil) {
         guard let url = URL(string: version.audioUrl) else {
             print("AudioService: Invalid audio URL: \(version.audioUrl)")
             return
@@ -217,6 +234,7 @@ class AudioService: ObservableObject {
         currentVersion = version
         if let trackName = trackName { currentTrackName = trackName }
         if let artworkUrl = artworkUrl { currentArtworkUrl = artworkUrl }
+        currentVisualizerUrl = visualizerUrl
 
         // Reset progress for the new track.
         currentTime = 0
@@ -440,7 +458,8 @@ class AudioService: ObservableObject {
                         projectId: project.id,
                         version: latest,
                         trackName: project.title,
-                        artworkUrl: project.artworkUrl
+                        artworkUrl: project.artworkUrl,
+                        visualizerUrl: project.visualizerUrl
                     ))
                 }
             }

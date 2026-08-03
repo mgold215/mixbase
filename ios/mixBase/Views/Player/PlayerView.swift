@@ -222,10 +222,12 @@ struct PlayerView: View {
                         Menu {
                             ForEach(allVersions.sorted(by: { $0.versionNumber > $1.versionNumber })) { v in
                                 Button(action: {
+                                    // Same project, different mix — keep its visualizer looping.
                                     audioService.play(
                                         version: v,
                                         trackName: audioService.currentTrackName ?? "Unknown",
-                                        artworkUrl: audioService.currentArtworkUrl
+                                        artworkUrl: audioService.currentArtworkUrl,
+                                        visualizerUrl: audioService.currentVisualizerUrl
                                     )
                                 }) {
                                     if isCurrentVersion(v) {
@@ -394,13 +396,27 @@ struct PlayerView: View {
                 } placeholder: {
                     artworkPlaceholder
                 }
+                .overlay(visualizerOverlay)
                 .clipShape(RoundedRectangle(cornerRadius: 20))
                 .shadow(color: Color(hex: "#2dd4bf").opacity(0.25), radius: 30, y: 10)
                 .shadow(color: .black.opacity(0.6), radius: 24, y: 16)
             } else {
                 artworkPlaceholder
+                    .overlay(visualizerOverlay)
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
             }
+        }
+    }
+
+    // The project's pinned visualizer, looping over the artwork while the track
+    // plays and freezing on pause — mirroring the web player and share page. The
+    // artwork stays underneath as the instant frame while the video buffers.
+    @ViewBuilder
+    private var visualizerOverlay: some View {
+        if let viz = audioService.currentVisualizerUrl, let url = URL(string: viz) {
+            VisualizerVideoView(url: url, isPlaying: audioService.isPlaying)
+                .allowsHitTesting(false)
         }
     }
 
@@ -523,7 +539,8 @@ struct PlayerView: View {
                         projectId: project.id,
                         version: latest,
                         trackName: project.title,
-                        artworkUrl: project.artworkUrl
+                        artworkUrl: project.artworkUrl,
+                        visualizerUrl: project.visualizerUrl
                     ))
                 }
             }

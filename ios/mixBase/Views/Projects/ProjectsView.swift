@@ -189,7 +189,8 @@ struct ProjectsView: View {
                         audioService.play(
                             version: version,
                             trackName: project.title,
-                            artworkUrl: project.artworkUrl
+                            artworkUrl: project.artworkUrl,
+                            visualizerUrl: project.visualizerUrl
                         )
                     }) {
                         ZStack {
