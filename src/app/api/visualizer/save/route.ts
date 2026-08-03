@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
+import { webmToMp4 } from '@/lib/visualizer-transcode'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 
-// Allow time to receive the upload + push it to storage.
+// Allow time to receive the upload, transcode WebM→MP4, and push to storage.
 export const maxDuration = 60
 
 // POST /api/visualizer/save — persist a client-rendered (free) visualizer so it
@@ -40,8 +41,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Video too large to save (max 10 MB).' }, { status: 413 })
   }
 
-  const bytes = Buffer.from(await file.arrayBuffer())
-  const contentType = file.type || 'video/webm'
+  let bytes: Buffer = Buffer.from(await file.arrayBuffer())
+  let contentType = file.type || 'video/webm'
+
+  // Browsers record the free visualizer as WebM, which iOS AVPlayer cannot
+  // decode — so normalize to H.264 MP4 at save time and every surface (web
+  // player, share page, native app, finalize-video) plays the same file. If
+  // the transcode fails, store the WebM as before: web keeps working and the
+  // boot heal (visualizer-transcode.ts) retries the conversion later.
+  if (contentType.includes('webm')) {
+    try {
+      bytes = await webmToMp4(bytes)
+      contentType = 'video/mp4'
+    } catch (err) {
+      console.error('[visualizer/save] webm→mp4 transcode failed, storing webm:',
+        err instanceof Error ? err.message : err)
+    }
+  }
 
   const stored = await storeVisualizer({
     userId,

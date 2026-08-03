@@ -18,6 +18,14 @@ export async function register() {
         void m.ensureDistroKidColumns()
       })
       .catch(() => {})
+
+    // Fire-and-forget WebM→MP4 visualizer heal: iOS AVPlayer can't decode
+    // WebM, so any WebM loop still referenced by the library or a project pin
+    // gets an H.264 twin and the rows are repointed. Idempotent and
+    // sequential; a failure must never delay or crash startup.
+    import('./src/lib/visualizer-transcode')
+      .then(m => { void m.healWebmVisualizers() })
+      .catch(() => {})
   }
   if (process.env.NEXT_RUNTIME === 'edge') {
     await import('./sentry.edge.config')
