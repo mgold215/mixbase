@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Gauge, AlertCircle, AlertTriangle, Check } from 'lucide-react'
-import { measureLoudness, masterVerdict, dspDeltas, formatLufs, type LoudnessMeasurement } from '@/lib/loudness'
+import { measureLoudness, masterVerdict, dspDeltas, formatLufs, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
 
 // ─── Master check — measured loudness on the current mix ─────────────────────
 // Turns "mastering done?" from a self-reported checkbox into a fact: BS.1770-4
@@ -21,11 +21,11 @@ type Props = {
   fileSizeBytes: number | null
 }
 
-// A decoded 16-bit stereo WAV doubles in memory as Float32 and the K-filter
-// pass adds a similar working set again. Past this upload size, a phone tab is
-// likely to be killed mid-decode — be honest about the limit instead of
-// crashing. (Server-side measurement is the follow-on for these.)
-const MAX_DECODE_BYTES = 150 * 1024 * 1024
+// Guard on the DOWNLOAD only. This is deliberately not the memory gate — the
+// real limit is decided after decode by canMeasureInBrowser(), which knows the
+// exact sample count and channel layout. This one just avoids pulling half a
+// gigabyte over cellular before discovering we can't measure it.
+const MAX_FETCH_BYTES = 400 * 1024 * 1024
 
 const CACHE_PREFIX = 'mb-loudness-v1:'
 
@@ -64,7 +64,12 @@ export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Prop
     setMeasuring(false)
   }, [versionId])
 
-  const tooLarge = fileSizeBytes != null && fileSizeBytes > MAX_DECODE_BYTES
+  // Known-huge uploads are refused before we even offer the button. A null size
+  // is NOT treated as small — it's simply unknown, and the authoritative check
+  // now happens after decode, where the true cost is knowable.
+  const tooLarge = fileSizeBytes != null && fileSizeBytes > MAX_FETCH_BYTES
+
+  const TOO_BIG_MESSAGE = 'This mix is too long to measure in the browser — measuring it would use more memory than a phone can spare.'
 
   const measure = async () => {
     setMeasuring(true)
@@ -73,9 +78,19 @@ export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Prop
     try {
       const res = await fetch(audioUrl)
       if (!res.ok) throw new Error(`Could not fetch the audio (${res.status})`)
+      // Catches the oversized file whose row never recorded a size (every iOS
+      // upload) before it costs the user the download.
+      const declared = Number(res.headers.get('content-length'))
+      if (Number.isFinite(declared) && declared > MAX_FETCH_BYTES) throw new Error(TOO_BIG_MESSAGE)
+
       const bytes = await res.arrayBuffer()
       ctx = new AudioContext()
       const decoded = await ctx.decodeAudioData(bytes)
+      // The real gate: exact sample count and channel layout in hand, refuse
+      // before allocating the filter working set rather than during it.
+      if (!canMeasureInBrowser(decoded.length, decoded.numberOfChannels)) {
+        throw new Error(TOO_BIG_MESSAGE)
+      }
       const channels: Float32Array[] = []
       for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
       const m = measureLoudness(channels, decoded.sampleRate)

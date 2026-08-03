@@ -21,7 +21,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { measureLoudness, masterVerdict, dspDeltas, formatLufs } from '../src/lib/loudness.ts'
+import { measureLoudness, masterVerdict, dspDeltas, formatLufs, canMeasureInBrowser, estimateMeasurePeakBytes, MAX_MEASURE_PEAK_BYTES } from '../src/lib/loudness.ts'
 
 const require = createRequire(import.meta.url)
 const FFMPEG = require('@ffmpeg-installer/ffmpeg').path
@@ -239,6 +239,57 @@ try {
   }
 } finally {
   rmSync(dir, { recursive: true, force: true })
+}
+
+
+// ── 2026-08-03: the in-browser decode gate ───────────────────────────────────
+// The gate this replaced read `fileSizeBytes != null && fileSizeBytes > 150MB`.
+// Two independent defects: it guessed memory from the UPLOAD SIZE on the
+// assumption that decoding costs ~4x the file (the real figure is ~10x, and it
+// scales with duration x sample rate, not file bytes), and `!= null` meant an
+// UNKNOWN size fell OPEN — so every mix uploaded from the iOS app, which writes
+// neither file_size_bytes nor duration_seconds, skipped the check entirely.
+// The gate now runs after decode, where the true cost is exactly knowable.
+console.log('\nIn-browser decode gate')
+{
+  const stereoSamples = sec => Math.round(sec * 44100)
+
+  // Sanity: the estimator matches the documented memory model.
+  //   n x (8 x channels [prefixes] + 8 [scratch] + 4 x channels [decoded])
+  const n = stereoSamples(600) // 10 minutes
+  check('the estimator reproduces the measured ~1 GB for a 10-minute stereo mix',
+    close(estimateMeasurePeakBytes(n, 2) / 1e9, 0.85, 0.15),
+    `${(estimateMeasurePeakBytes(n, 2) / 1e9).toFixed(2)} GB`)
+
+  check('a 3-minute stereo track is measurable',
+    canMeasureInBrowser(stereoSamples(180), 2) === true)
+  check('a 30-minute DJ mix is refused',
+    canMeasureInBrowser(stereoSamples(1800), 2) === false)
+  check('mono doubles the allowance vs stereo',
+    canMeasureInBrowser(stereoSamples(600), 1) === true &&
+    canMeasureInBrowser(stereoSamples(600), 2) === false)
+
+  // Degenerate inputs must FAIL CLOSED — the old gate's cardinal sin was
+  // treating "I don't know" as "it's fine".
+  check('zero samples is refused', canMeasureInBrowser(0, 2) === false)
+  check('NaN sample count is refused', canMeasureInBrowser(NaN, 2) === false)
+  check('NaN channel count is refused', canMeasureInBrowser(stereoSamples(60), NaN) === false)
+  check('negative input is refused', canMeasureInBrowser(-1, 2) === false)
+
+  // Witness: the pre-fix gate on a 9-minute mix uploaded from iOS (no recorded
+  // size) and on a 10-minute WAV that sits just under the old 150 MB threshold.
+  const preFixGate = (fileSizeBytes) => !(fileSizeBytes != null && fileSizeBytes > 150 * 1024 * 1024)
+  check('witness: pre-fix ALLOWED an iOS upload with no recorded size',
+    preFixGate(null) === true)
+  check('the fixed gate refuses that same 9-minute signal',
+    canMeasureInBrowser(stereoSamples(540), 2) === false)
+  check('witness: pre-fix ALLOWED a 101 MB 10-minute WAV (needs ~1 GB)',
+    preFixGate(101 * 1024 * 1024) === true)
+  check('the fixed gate refuses it',
+    canMeasureInBrowser(stereoSamples(600), 2) === false)
+
+  check('the budget is stated in bytes and is phone-sized',
+    MAX_MEASURE_PEAK_BYTES > 0 && MAX_MEASURE_PEAK_BYTES <= 1024 * 1024 * 1024)
 }
 
 if (failures > 0) {

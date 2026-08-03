@@ -1,3 +1,8 @@
+---
+name: post-deploy-test
+description: Post-push sanity pass against staging after a git push origin tst — polls /api/health, verifies the app loads, runs targeted smoke tests for the changed areas. Not a promotion gate; ship-to-prod owns the merge to main.
+---
+
 # Post-Deploy Test Agent
 
 Runs after a `git push origin tst`. Its job is a quick sanity pass — NOT a gate on promotion. Per project policy, promotion to `main` happens as soon as the PR's required checks (Build & Lint, Secret Scanning) are green; do not hold the merge waiting on staging observations, and do not loop on staging indefinitely.

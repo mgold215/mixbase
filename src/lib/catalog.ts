@@ -351,6 +351,51 @@ export type LibraryTrackRow = {
   source_url: string | null
 }
 
+// The subset of a stored library row that a re-sync is allowed to consult when
+// deciding what to keep. Deliberately structural (not the full DB row) so the
+// merge stays pure and unit-testable.
+export type StoredLibraryFacts = Partial<Omit<LibraryTrackRow, 'title' | 'release_title'>>
+
+// Fields where a previously-known value must never be replaced by a blank.
+// `title`/`release_title`/`source` are excluded on purpose: they are always
+// present on an incoming row and identify WHICH release we're describing, so a
+// genuine correction upstream should win.
+const PRESERVED_ON_BLANK = ['isrc', 'upc', 'release_date', 'source_url', 'artist_name'] as const
+
+/**
+ * Merge a freshly fetched catalog row over the stored one: **new facts win over
+ * blanks, but blanks never win over facts.**
+ *
+ * The sync route's own comment has always promised this; the code did a blind
+ * spread, so every re-sync overwrote all columns including with `null`. That was
+ * silent data loss, and the ISRC was the expensive part to lose: per-track ISRC
+ * lookups are best-effort (`.catch(() => null)`) and rate-capped, so one Deezer
+ * throttle turned a real ISRC into `null` — destroying a code the user had
+ * fetched via the MusicBrainz "Find ISRC" button or typed by hand. That code is
+ * exactly what `validateForDistroKid` needs for a waterfall re-release to keep
+ * its streaming history, so losing it silently costs real money.
+ *
+ * Pure: no clock, no I/O. The caller owns `project_id` and `updated_at`.
+ */
+export function mergeLibraryRow(existing: StoredLibraryFacts, incoming: LibraryTrackRow): LibraryTrackRow {
+  const merged: LibraryTrackRow = { ...incoming }
+  // Every preserved field is a nullable string, so one keyed view over both
+  // objects keeps the loop readable — TypeScript can't narrow an assignment
+  // across a union of keys without it.
+  const target = merged as unknown as Record<string, string | null>
+  const stored = existing as Record<string, string | null | undefined>
+  for (const key of PRESERVED_ON_BLANK) {
+    // Blank means "this sync didn't learn it", not "this is known to be empty".
+    const incomingValue = target[key]
+    const existingValue = stored[key]
+    const incomingBlank = incomingValue === null || incomingValue === undefined || incomingValue === ''
+    if (incomingBlank && existingValue != null && existingValue !== '') {
+      target[key] = existingValue
+    }
+  }
+  return merged
+}
+
 /** Pure: flatten a fetched catalog into deduped library rows, oldest release wins per recording. */
 export function flattenCatalogTracks(catalog: ArtistCatalog): LibraryTrackRow[] {
   // Oldest release first so the first occurrence of a recording is its original drop.

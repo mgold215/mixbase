@@ -93,8 +93,14 @@ function kWeighting(sampleRate: number): { shelf: Biquad; highpass: Biquad } {
 }
 
 // Direct Form I, zero initial state — the standard assumes silence before t=0.
-function applyBiquad(c: Biquad, input: ArrayLike<number>): Float64Array {
-  const out = new Float64Array(input.length)
+//
+// `out` may alias `input`: x0 is read out of the input BEFORE the store, and the
+// recurrence only ever consults x1/x2/y1/y2, which are already-saved scalars —
+// never a re-read of a neighbouring cell. That lets the caller filter in place
+// and reuse one scratch buffer for the whole K-weighting chain instead of
+// allocating a fresh Float64Array per stage per channel. On a 10-minute stereo
+// mix that is ~200 MB less peak memory, with bit-identical output.
+function applyBiquad(c: Biquad, input: ArrayLike<number>, out: Float64Array): Float64Array {
   let x1 = 0, x2 = 0, y1 = 0, y2 = 0
   for (let i = 0; i < input.length; i++) {
     const x0 = input[i]
@@ -104,6 +110,51 @@ function applyBiquad(c: Biquad, input: ArrayLike<number>): Float64Array {
     y2 = y1; y1 = y0
   }
   return out
+}
+
+/**
+ * Peak heap the measurement will need, in bytes, for an already-decoded signal.
+ *
+ * Derived from what `measureLoudness` actually holds live at its worst moment
+ * (the last channel): one retained `prefix` Float64Array per channel already
+ * processed, plus the shared scratch buffer, plus the prefix being built, plus
+ * the decoded Float32 audio the caller is still holding.
+ *
+ *   bytes ≈ n × (8 × channels  [prefixes]
+ *              + 8             [shared filter scratch]
+ *              + 4 × channels) [decoded Float32 the caller holds]
+ *
+ * This is the number the UI gate must use. The gate it replaced guessed from the
+ * *upload size* on the assumption that decoding costs ~4× the file — the real
+ * figure is ~10×, and it scales with duration × sample rate, not file bytes, so
+ * a small lossy file was just as dangerous as a big WAV. Measured on a 10-minute
+ * 44.1 kHz stereo mix: ~1.0 GB peak against a 101 MB source.
+ */
+export function estimateMeasurePeakBytes(samplesPerChannel: number, channelCount: number): number {
+  return samplesPerChannel * (8 * channelCount + 8 + 4 * channelCount)
+}
+
+/**
+ * Budget for an in-browser measurement. Mobile Safari terminates a tab well
+ * before a desktop browser would blink, and this runs on phones — so the cap is
+ * set for the phone, not the laptop. ~600 MB allows roughly 7 minutes of 44.1 kHz
+ * stereo; longer mixes get an honest refusal instead of a killed tab.
+ */
+export const MAX_MEASURE_PEAK_BYTES = 600 * 1024 * 1024
+
+/**
+ * Can this decoded signal be measured in the browser without risking the tab?
+ *
+ * Takes the DECODED shape, so it is exact rather than estimated — which also
+ * means it works for versions with no stored duration or file size at all (every
+ * mix uploaded from the native iOS app, which writes neither). The gate this
+ * replaced read `fileSizeBytes != null && …`, so unknown size fell OPEN: the
+ * riskiest uploads were precisely the ones that skipped the check.
+ */
+export function canMeasureInBrowser(samplesPerChannel: number, channelCount: number): boolean {
+  if (!Number.isFinite(samplesPerChannel) || !Number.isFinite(channelCount)) return false
+  if (samplesPerChannel <= 0 || channelCount <= 0) return false
+  return estimateMeasurePeakBytes(samplesPerChannel, channelCount) <= MAX_MEASURE_PEAK_BYTES
 }
 
 const toLufs = (meanSquare: number): number =>
@@ -138,8 +189,14 @@ export function measureLoudness(channels: ArrayLike<number>[], sampleRate: numbe
   // window's mean square is O(1) — the 400 ms gating blocks and the 3 s
   // short-term windows read the same array.
   const { shelf, highpass } = kWeighting(sampleRate)
+  // One scratch buffer for the whole run: the shelf stage writes into it, the
+  // highpass stage filters it in place (safe — see applyBiquad), and the next
+  // channel overwrites it. Previously each stage of each channel allocated its
+  // own Float64Array, so two full-length temporaries were live simultaneously.
+  const scratch = new Float64Array(n)
   const prefixes: Float64Array[] = channels.map(ch => {
-    const filtered = applyBiquad(highpass, applyBiquad(shelf, ch))
+    applyBiquad(shelf, ch, scratch)
+    const filtered = applyBiquad(highpass, scratch, scratch)
     const prefix = new Float64Array(n + 1)
     for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + filtered[i] * filtered[i]
     return prefix

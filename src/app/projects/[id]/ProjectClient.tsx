@@ -298,6 +298,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         endpoint: '/api/tus',
         chunkSize: 8 * 1024 * 1024, // 8 MB — under Railway's 10 MB wall
         retryDelays: [0, 1000, 3000, 5000],
+        // Without this, a fingerprint is never stored and findPreviousUploads()
+        // below can never match — resume is opt-in in tus-js-client.
+        storeFingerprintForResuming: true,
+        removeFingerprintOnSuccess: true,
         metadata: {
           bucketName,
           objectName: filename,
@@ -311,7 +315,17 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         onSuccess: () => resolve({ ok: true }),
         onError: (err) => resolve({ ok: false, error: err.message }),
       })
-      upload.start()
+
+      // Actually resume. The retryDelays ladder above only covers ~9 seconds
+      // within one session; anything longer (a tunnel, a backgrounded tab that
+      // Safari discards) fell back to restarting a multi-gigabyte upload from
+      // byte 0. The server side has always been resume-capable — HEAD returns
+      // the offset with Cache-Control: no-store — it was simply never asked.
+      // Failing to look up a previous upload must not block a fresh one.
+      upload.findPreviousUploads()
+        .then(previous => { if (previous.length) upload.resumeFromPreviousUpload(previous[0]) })
+        .catch(() => {})
+        .then(() => upload.start())
     })
   }
 

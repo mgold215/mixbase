@@ -33,6 +33,9 @@ import {
   PRE_LAUNCH_ITEMS,
   LAUNCH_CAMPAIGN_ITEMS,
   ymdUtc,
+  daysUntilDate,
+  isUpcomingRelease,
+  compareReleaseDates,
 } from '../src/lib/release-plan.ts'
 import {
   coerceReleaseNulls,
@@ -264,6 +267,89 @@ export default function PipelineClient({ initialReleases }: Props) {
   const preNested = [...preFix.slice(preFix.indexOf('export default')).matchAll(/^ {2}(?:async )?function ([A-Z]\w*)/gm)].map(m => m[1])
   check('witness: the pre-fix nested declarations would be caught',
     preNested.length === 2, preNested.join(', '))
+}
+
+
+// ── 2026-08-03: the pipeline board bucketed a release by MIXED calendars ─────
+// `new Date('2026-08-03')` is UTC midnight; `now.setHours(0,0,0,0)` is LOCAL
+// midnight. At any negative UTC offset the release instant is always smaller,
+// so a release dated TODAY sorted as PAST and vanished into the collapsed,
+// dimmed "Past" group — on drop day — while its own badge still read "Today".
+console.log('\nUpcoming/past bucketing (single calendar basis)')
+{
+  check('a release dated today is UPCOMING',
+    isUpcomingRelease('2026-08-03', '2026-08-03') === true)
+  check('yesterday is PAST',
+    isUpcomingRelease('2026-08-03', '2026-08-02') === false)
+  check('tomorrow is UPCOMING',
+    isUpcomingRelease('2026-08-03', '2026-08-04') === true)
+  check('an undated release stays UPCOMING (a plan, not history)',
+    isUpcomingRelease('2026-08-03', null) === true)
+  check('a malformed date stays visible rather than hiding in Past',
+    isUpcomingRelease('2026-08-03', 'not-a-date') === true)
+
+  // Witness: reproduce the exact pre-fix expression and show it disagrees.
+  // Pinned to a negative-offset zone so the assertion is deterministic in CI
+  // regardless of the runner's TZ.
+  const preFixIsUpcoming = (todayLocalMs, dateStr) =>
+    new Date(dateStr).getTime() >= todayLocalMs
+  const localMidnightNewYork = Date.UTC(2026, 7, 3, 4, 0, 0) // 2026-08-03 00:00 EDT
+  check('witness: the pre-fix comparison filed TODAY as past in New York',
+    preFixIsUpcoming(localMidnightNewYork, '2026-08-03') === false)
+  check('witness: the fixed predicate disagrees with it',
+    isUpcomingRelease('2026-08-03', '2026-08-03') === true)
+
+  // Sorting must stay chronological and keep undated releases at the end.
+  const dates = ['2026-09-01', null, '2026-08-10']
+  const upcomingOrder = [...dates].sort((a, b) => compareReleaseDates(a, b))
+  check('upcoming sorts nearest-first with undated last',
+    JSON.stringify(upcomingOrder) === JSON.stringify(['2026-08-10', '2026-09-01', null]),
+    JSON.stringify(upcomingOrder))
+  const pastOrder = ['2026-01-01', '2026-07-01'].sort((a, b) => compareReleaseDates(b, a, { undatedLast: false }))
+  check('past sorts newest-first',
+    JSON.stringify(pastOrder) === JSON.stringify(['2026-07-01', '2026-01-01']),
+    JSON.stringify(pastOrder))
+}
+
+// ── 2026-08-03: the countdown badge read a day short after ~7pm local ────────
+console.log('\nCountdown is calendar-based, not clock-based')
+{
+  check('same day = 0', daysUntilDate('2026-08-03', '2026-08-03') === 0)
+  check('next day = 1', daysUntilDate('2026-08-03', '2026-08-04') === 1)
+  check('a past date is negative', daysUntilDate('2026-08-03', '2026-08-01') === -2)
+  check('blank date = null', daysUntilDate('2026-08-03', null) === null)
+
+  // Witness: the pre-fix math differenced a UTC-parsed date against a wall-clock
+  // instant. The error appears once UTC has rolled past midnight while the
+  // user's LOCAL date is still the previous day — i.e. from 20:00 EDT onward.
+  // At 22:00 EDT on 08-03 (= 02:00 UTC on 08-04), a drop on 08-05 is 2 calendar
+  // days away but the old expression reported 1.
+  const preFixDaysUntil = (nowMs, dateStr) =>
+    Math.ceil((new Date(dateStr).getTime() - nowMs) / 86_400_000)
+  const lateEvening = Date.UTC(2026, 7, 4, 2, 0, 0) // 22:00 EDT on 2026-08-03
+  check('witness: pre-fix said "1 day" for a drop 2 calendar days out',
+    preFixDaysUntil(lateEvening, '2026-08-05') === 1,
+    `pre-fix=${preFixDaysUntil(lateEvening, '2026-08-05')}`)
+  check('the fixed helper says 2',
+    daysUntilDate('2026-08-03', '2026-08-05') === 2)
+}
+
+// ── 2026-08-03: a non-multiple-of-7 cadence yields irregular gaps ────────────
+// Reachable via POST /api/releases/waterfall (the web UI only offers multiples
+// of 7). Each offset is snapped FORWARD to Friday independently, so the snap
+// distance varies with i mod 7.
+console.log('\nWaterfall cadence honesty')
+{
+  const gapsFor = (cadence) => {
+    const ds = waterfallDates('2026-08-03', 6, cadence)
+    return ds.slice(1).map((d, i) => (ymdUtc(d) - ymdUtc(ds[i])) / 86_400_000)
+  }
+  const clean = gapsFor(28)
+  check('a multiple-of-7 cadence gives even gaps',
+    new Set(clean).size === 1, clean.join(','))
+  const ragged = gapsFor(10)
+  check('witness: cadence 10 produces UNEVEN gaps (documented, UI-unreachable)',
+    new Set(ragged).size > 1, ragged.join(','))
 }
 
 if (failures > 0) {

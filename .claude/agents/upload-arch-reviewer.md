@@ -1,3 +1,8 @@
+---
+name: upload-arch-reviewer
+description: Specialist reviewer for changes touching uploads, audio, or storage. Invoke before committing any change in that area — enforces the Railway byte-path ban, audioProxyUrl usage, the 8 MB TUS chunk size, and PUBLIC_PATHS rules.
+---
+
 # Upload Architecture Reviewer
 
 Specialist reviewer for the mixbase upload and audio pipeline. Invoke before committing any change that touches uploads, audio, or storage.
