@@ -45,6 +45,8 @@
 
 ## iOS
 - Use the `ios-build-deploy` skill for ANY iOS work — device IDs, CLI build/install, error recovery. Never tell the user to open Xcode.
+- **Apple Developer Program is ACTIVE (paid; team `AP8UC39D4D`) and the app has shipped via App Store Connect** — an ASC API key exists. Never suggest joining the program or forming anything.
+- **Primary ship path (no Mac needed): merging an `ios/` change to `main` triggers `.github/workflows/ios-testflight.yml`** — cloud-signed archive on a GitHub macOS runner, uploaded to TestFlight (secrets `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_API_KEY_P8_BASE64`). Matt's phone auto-updates via TestFlight. Backup: launchd auto-deploy on the Mac (`scripts/ios-autodeploy-install.sh`); manual cable build only for tight iteration.
 
 ## Infra Control Panel
 - Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,stripe,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.
@@ -53,4 +55,4 @@
 ## Business & Legal
 - Entity: moodmixformat, LLC (already formed — don't suggest forming one). EIN 39-2854188. Domain mixbase.app.
 - All branches unified into `main` (2026-04-26); ignore stale remotes (`app-store`, `ios-app`, `mobile-app`, `tst-auth`).
-- Before App Store submission: set up privacy@/support@/dmca@/legal@/review@ mixbase.app emails.
+- App Store: the app IS shipped/live (2026-08). If App Store metadata references privacy@/support@/dmca@/legal@/review@ mixbase.app, verify those aliases exist — don't frame them as pre-submission blockers.
