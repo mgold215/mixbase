@@ -24,7 +24,7 @@
 // that survives only inside a comment must not be able to pass this test.
 
 import { readFile } from 'fs/promises'
-import { isSafeUploadId } from '../src/lib/validators.ts'
+import { isSafeUploadId, projectIdFromUploadId } from '../src/lib/validators.ts'
 
 let failures = 0
 function check(name, ok, detail = '') {
@@ -185,6 +185,61 @@ for (const method of ['PATCH', 'HEAD']) {
     guardAt > -1 && urlAt > -1 && guardAt < urlAt, `guard@${guardAt} url@${urlAt}`)
   check(`${method} still attaches the service-role key (test is anchored)`,
     /serviceKey\s*\(/.test(body))
+
+  // 2026-08-04: the traversal guard proved the id is SHAPED safely, never that
+  // it belongs to the caller. Both handlers forward with the service-role key,
+  // so an id belonging to another user's in-flight upload was writable by any
+  // signed-in account.
+  const ownsAt = body.search(/ownsUpload\s*\(/)
+  check(`${method} checks upload ownership, not just "someone is signed in"`, ownsAt > -1)
+  check(`${method} checks ownership BEFORE building the upstream URL`,
+    ownsAt > -1 && urlAt > -1 && ownsAt < urlAt, `owns@${ownsAt} url@${urlAt}`)
+  check(`${method} passes the header identity, never a body/param value`,
+    /const userId = req\.headers\.get\('X-User-Id'\)/.test(body)
+    && /ownsUpload\(uploadId, userId\)/.test(body))
+}
+
+// The helper must fall back to ALLOW on an id it cannot parse. Supabase's id
+// encoding is not a documented contract; failing closed on a format guess would
+// break every upload in the app.
+check('ownsUpload falls back to allow when the id does not decode',
+  /if \(!projectId\) \{[\s\S]{0,400}?return true/.test(tusSrc))
+// The id is an unguessable capability credential: possessing it IS the
+// authorization, so it must never reach a log sink. Deriving facts ABOUT it
+// (length, charset) is fine — what must not appear is the id as a reported
+// VALUE, i.e. any `<key>: uploadId` in the payload.
+check('the unparseable-id report describes the id without logging it',
+  /idLength: uploadId\.length/.test(tusSrc) && !/:\s*uploadId\s*[,}]/.test(tusSrc))
+// Witness: the shape this must catch.
+check('witness: a report that DID log the id would be caught',
+  /:\s*uploadId\s*[,}]/.test('extra: { id: uploadId, n: 1 }'))
+
+// ── 5. projectIdFromUploadId (real function, real assertions) ───────────────
+console.log('\n— projectIdFromUploadId —')
+{
+  const proj = '3f1a2b4c-5d6e-4f70-8123-9a0b1c2d3e4f'
+  const b64url = s => Buffer.from(s, 'utf8').toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+  check('recovers the project id from a base64url bucket/object key',
+    projectIdFromUploadId(b64url(`mf-audio/${proj}/1712345678.wav`)) === proj)
+  check('recovers it when the bucket segment is absent',
+    projectIdFromUploadId(b64url(`${proj}/1712345678.wav`)) === proj)
+  // Anything it cannot parse must be null so the caller falls back to allow —
+  // NOT an exception and NOT a wrong id.
+  for (const bad of ['', 'not-base64-at-all!!', b64url('mf-audio/no-uuid-here/file.wav'), b64url('nopathseparator')]) {
+    check(`returns null for unparseable id ${JSON.stringify(bad).slice(0, 40)}`,
+      projectIdFromUploadId(bad) === null)
+  }
+  for (const bad of [null, undefined, 42, {}]) {
+    check(`returns null for non-string ${String(bad)}`, projectIdFromUploadId(bad) === null)
+  }
+  // Witness: a decoder that returned the FIRST segment rather than the first
+  // UUID would hand `ownsProject` the bucket name and deny every real chunk.
+  const firstSegment = Buffer.from(b64url(`mf-audio/${proj}/x.wav`).replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+    .toString('utf8').split('/')[0]
+  check('witness: naive first-segment decoding would yield the bucket, not the project',
+    firstSegment === 'mf-audio' && projectIdFromUploadId(b64url(`mf-audio/${proj}/x.wav`)) !== firstSegment)
 }
 
 console.log(`\n${failures === 0 ? '✅ ALL CHECKS PASSED' : `❌ ${failures} CHECK(S) FAILED`}`)
