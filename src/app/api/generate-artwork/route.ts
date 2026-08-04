@@ -9,13 +9,38 @@ import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook } from '@/l
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
 export const maxDuration = 120
 
+// Poll budget. Each probe carries its OWN timeout: Node's fetch (undici) waits
+// up to ~5 minutes on a stalled socket, so a single hung poll could pin this
+// handler — and the artwork slot it has already reserved — far past the nominal
+// 2-minute budget. A wall-clock deadline bounds the loop regardless of how slow
+// individual probes are; the old fixed 24 iterations bounded only the count.
+// (`maxDuration` above is advisory here: Railway runs `next start`, a plain Node
+// server, which does not enforce it — so nothing else would ever cut this off.)
+const POLL_TIMEOUT_MS = 15_000
+const POLL_BUDGET_MS = 120_000
+
 async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
-  for (let i = 0; i < 24; i++) {  // 24 * 5s = 2 min
+  const deadline = Date.now() + POLL_BUDGET_MS
+  while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 5000))
-    const res = await fetch(predictionUrl, { headers: { Authorization: `Bearer ${token}` } })
-    const p = await res.json()
-    if (p.status === 'succeeded') return Array.isArray(p.output) ? p.output[0] : p.output
-    if (p.status === 'failed' || p.status === 'canceled') throw new Error(p.error ?? 'Prediction failed')
+    let p: { status?: string; output?: string | string[] | null; error?: unknown }
+    try {
+      const res = await fetch(predictionUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+      })
+      p = await res.json()
+    } catch {
+      // A timed-out or malformed probe is transient — Replicate may still be
+      // working. Retry on the next tick rather than throwing: one flaky poll
+      // must not cancel (and charge for) a generation that is about to succeed.
+      // Falling out of the loop returns null, which the CALLER refunds — so this
+      // branch adds no new refund path and cannot double-refund. (refundUsage is
+      // not idempotent; a second call would double-decrement.)
+      continue
+    }
+    if (p.status === 'succeeded') return Array.isArray(p.output) ? p.output[0] : p.output ?? null
+    if (p.status === 'failed' || p.status === 'canceled') throw new Error(String(p.error ?? 'Prediction failed'))
   }
   return null
 }

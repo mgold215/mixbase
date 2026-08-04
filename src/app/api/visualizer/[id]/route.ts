@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { VIDEO_BUCKET, videoStoragePath } from '@/lib/visualizer-store'
+import { webmOriginalPath } from '@/lib/visualizer-encode'
 
 // DELETE /api/visualizer/[id] — remove a saved visualizer (storage object + row).
 // Static sibling segments (/runway, /save) take precedence over this dynamic one.
@@ -23,7 +24,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const path = videoStoragePath(row.video_url as string)
   if (path) {
-    const { error: storageErr } = await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([path])
+    // If this row was converted by the WebM→MP4 heal, the original WebM is
+    // still in the bucket under its pre-conversion key and nothing else
+    // references it — delete both or the bytes are orphaned forever.
+    const paths = [path, webmOriginalPath(path)].filter((p): p is string => !!p)
+    const { error: storageErr } = await supabaseAdmin.storage.from(VIDEO_BUCKET).remove(paths)
     if (storageErr) console.error('[visualizer delete] storage remove failed:', storageErr.message)
   }
 

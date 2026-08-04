@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
-import { webmToMp4 } from '@/lib/visualizer-transcode'
+import { webmToMp4, tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { vizSaveLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 
 // Allow time to receive the upload, transcode WebM→MP4, and push to storage.
 export const maxDuration = 60
@@ -13,6 +15,16 @@ export const maxDuration = 60
 export async function POST(req: NextRequest) {
   const userId = req.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  // This route forks libx264 (see the transcode below), so it is CPU work, not
+  // bookkeeping — it needs the same per-user cap the other video routes carry.
+  const limit = await checkUserLimit(vizSaveLimiter, userId)
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many visualizer saves. Try again shortly.' },
+      { status: 429, headers: rateLimitHeaders(limit) },
+    )
+  }
 
   const form = await req.formData().catch(() => null)
   if (!form) return NextResponse.json({ error: 'Invalid form data' }, { status: 400 })
@@ -49,13 +61,35 @@ export async function POST(req: NextRequest) {
   // player, share page, native app, finalize-video) plays the same file. If
   // the transcode fails, store the WebM as before: web keeps working and the
   // boot heal (visualizer-transcode.ts) retries the conversion later.
+  let transcoded = true
   if (contentType.includes('webm')) {
+    if (!tryAcquireTranscodeSlot()) {
+      // Fail fast rather than queueing: the client is waiting on this request,
+      // and piling encoders up is exactly what the gate exists to prevent.
+      return NextResponse.json(
+        { error: 'Server is busy converting another visualizer. Try again in a moment.' },
+        { status: 503, headers: { 'Retry-After': '20' } },
+      )
+    }
     try {
       bytes = await webmToMp4(bytes)
       contentType = 'video/mp4'
     } catch (err) {
+      // Storing the WebM keeps the web player working, so this is a real
+      // fallback rather than a failure — but the saved loop will NOT play on
+      // iOS until the boot heal retries it, and the user is told "Saved". That
+      // silent divergence is invisible in console.error alone (there is no
+      // captureConsoleIntegration), so report it.
+      transcoded = false
+      Sentry.captureException(err, {
+        level: 'warning',
+        tags: { area: 'visualizer-transcode', phase: 'save' },
+        extra: { projectId, sizeBytes: bytes.length },
+      })
       console.error('[visualizer/save] webm→mp4 transcode failed, storing webm:',
         err instanceof Error ? err.message : err)
+    } finally {
+      releaseTranscodeSlot()
     }
   }
 
@@ -70,5 +104,8 @@ export async function POST(req: NextRequest) {
   })
   if (!stored) return NextResponse.json({ error: 'Failed to save visualizer' }, { status: 500 })
 
-  return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true })
+  // `transcoded: false` means the stored loop is still WebM and will not play
+  // on iOS until the boot heal converts it. Reported so the client can say so
+  // instead of a flat "Saved".
+  return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, transcoded })
 }

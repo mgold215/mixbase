@@ -246,8 +246,10 @@ console.log('\n— invariant: the post-render upload phase settles —')
 // outage this change fixes, so assert on the real source. Comments are stripped
 // first: a watchdog that survives only inside a comment must not pass.
 console.log('\n— invariant: every spawn is armed —')
-{
-  const raw = await readFile('src/lib/video-render.ts', 'utf8')
+
+// Strip comments (outside string literals) so a watchdog that survives only
+// inside a comment cannot pass.
+function stripComments(raw) {
   let src = ''
   let i = 0
   let quote = null
@@ -263,30 +265,13 @@ console.log('\n— invariant: every spawn is armed —')
     if (c === '/' && n === '*') { i += 2; while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i++; i += 2; continue }
     src += c; i++
   }
-  const spawns = (src.match(/\bspawn\s*\(/g) ?? []).length
-  const armed = (src.match(/armDeadline\s*\(/g) ?? []).length
-  check('module still spawns children (test is anchored to real code)', spawns > 0, `${spawns} spawn site(s)`)
-  // One armDeadline definition + one call per spawn site.
-  check('every spawn site has a matching armDeadline call', armed >= spawns + 1,
-    `${spawns} spawns, ${armed} armDeadline occurrences`)
-  // The watchdog must REJECT, not merely kill: killing without settling leaves
-  // the promise pending forever, which is the original bug.
-  const armBody = src.slice(src.indexOf('function armDeadline'))
-  const armEnd = armBody.indexOf('\nfunction ')
-  const arm = armEnd === -1 ? armBody : armBody.slice(0, armEnd)
-  check('watchdog SIGKILLs the child', /kill\(\s*['"]SIGKILL['"]\s*\)/.test(arm))
-  check('watchdog also rejects the promise (so cleanup can run)', /reject\(/.test(arm))
-  check('watchdog handles exit separately from close', /on\(\s*['"]exit['"]/.test(arm))
-  // `close` waits for the pipes to drain and a surviving descendant can withhold
-  // it forever, so exiting must not leave the promise unguarded.
-  check('exit path still bounds the wait for close', /drainTimer|never closed/.test(arm))
+  return src
+}
 
-  // Every call site must hand the real `reject` to the watchdog. Passing a
-  // swallowing callback keeps the kill but never settles the promise — which is
-  // the original bug, and it survives every count-based check above.
-  // Extract each call's argument list by balancing parentheses — the arguments
-  // span lines and contain nested calls, so a regex can't delimit them.
-  const invocations = []
+// Extract each armDeadline call's argument list by balancing parentheses — the
+// arguments span lines and contain nested calls, so a regex can't delimit them.
+function armInvocations(src) {
+  const out = []
   for (let at = src.indexOf('armDeadline('); at !== -1; at = src.indexOf('armDeadline(', at + 1)) {
     if (/function\s+$/.test(src.slice(Math.max(0, at - 12), at))) continue // the definition
     let depth = 0
@@ -296,20 +281,59 @@ console.log('\n— invariant: every spawn is armed —')
       if (src[i] === '(') depth++
       else if (src[i] === ')' && --depth === 0) break
     }
-    invocations.push(src.slice(from, i))
+    out.push(src.slice(from, i))
   }
-  check('watchdog is invoked at least once per spawn site', invocations.length >= spawns,
-    `${invocations.length} invocation(s)`)
-  const passesReject = a => /(?:^|,)\s*reject\s*,?\s*$/.test(a.replace(/\s+/g, ' ').trim())
-    || /,\s*reject\s*,/.test(a.replace(/\s+/g, ' '))
-  check('every watchdog invocation passes the real reject callback',
-    invocations.length > 0 && invocations.every(passesReject),
-    invocations.map(a => (passesReject(a) ? 'ok' : `BAD: ${a.replace(/\s+/g, ' ').slice(-40)}`)).join(' | '))
+  return out
+}
+
+// EVERY module that spawns a child must be listed here. The watchdog used to
+// live inside video-render.ts and this invariant only read that one file — so
+// when the 2026-08-03 WebM→MP4 transcode added a fourth spawn site in
+// visualizer-transcode.ts with a kill-but-never-reject timer, it shipped green.
+// The definition now lives in proc-deadline.ts and both consumers are checked.
+const SPAWN_MODULES = ['src/lib/video-render.ts', 'src/lib/visualizer-encode.ts']
+
+{
+  // The watchdog itself must REJECT, not merely kill: killing without settling
+  // leaves the promise pending forever, which is the original bug.
+  const arm = stripComments(await readFile('src/lib/proc-deadline.ts', 'utf8'))
+  check('shared watchdog module defines armDeadline', /function armDeadline\s*\(/.test(arm))
+  check('watchdog SIGKILLs the child', /kill\(\s*['"]SIGKILL['"]\s*\)/.test(arm))
+  check('watchdog also rejects the promise (so cleanup can run)', /reject\(/.test(arm))
+  check('watchdog handles exit separately from close', /on\(\s*['"]exit['"]/.test(arm))
+  // `close` waits for the pipes to drain and a surviving descendant can withhold
+  // it forever, so exiting must not leave the promise unguarded.
+  check('exit path still bounds the wait for close', /drainTimer|never closed/.test(arm))
+
+  let totalSpawns = 0
+  for (const file of SPAWN_MODULES) {
+    const src = stripComments(await readFile(file, 'utf8'))
+    const spawns = (src.match(/\bspawn\s*\(/g) ?? []).length
+    totalSpawns += spawns
+    check(`${file}: still spawns children (test is anchored to real code)`, spawns > 0,
+      `${spawns} spawn site(s)`)
+    check(`${file}: imports the shared watchdog`,
+      /from\s+['"][^'"]*proc-deadline\.ts['"]/.test(src))
+
+    // Every call site must hand the real `reject` to the watchdog. Passing a
+    // swallowing callback keeps the kill but never settles the promise — which
+    // is the original bug, and it survives every count-based check.
+    const invocations = armInvocations(src)
+    check(`${file}: watchdog invoked at least once per spawn site`, invocations.length >= spawns,
+      `${spawns} spawns, ${invocations.length} invocation(s)`)
+    const passesReject = a => /(?:^|,)\s*reject\s*,?\s*$/.test(a.replace(/\s+/g, ' ').trim())
+      || /,\s*reject\s*,/.test(a.replace(/\s+/g, ' '))
+    check(`${file}: every watchdog invocation passes the real reject callback`,
+      invocations.length > 0 && invocations.every(passesReject),
+      invocations.map(a => (passesReject(a) ? 'ok' : `BAD: ${a.replace(/\s+/g, ' ').slice(-40)}`)).join(' | '))
+  }
+  check('all spawn sites accounted for across modules', totalSpawns >= 4, `${totalSpawns} total`)
 
   // The truncation guard must sit on the ENCODE path too, not only in the
   // duration-measure helper — the real-media checks below exercise `measure`,
   // so removing it from `run()` alone would otherwise go unnoticed.
-  const runBody = src.slice(src.indexOf('function run('), src.indexOf('async function probeJson'))
+  const renderSrc = stripComments(await readFile('src/lib/video-render.ts', 'utf8'))
+  const runBody = renderSrc.slice(renderSrc.indexOf('function run('), renderSrc.indexOf('async function probeJson'))
   check('run() rejects truncated source media', /hasTruncationMarker\s*\(/.test(runBody))
   check('run() resets the idle timer on progress output', /touch\s*\(\s*\)/.test(runBody))
 }

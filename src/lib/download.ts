@@ -76,8 +76,37 @@ async function discard(res: Response): Promise<void> {
   try { await res.body?.cancel() } catch { /* already consumed or closed */ }
 }
 
+/**
+ * Fetch that gives up if the SERVER never answers, without capping the body
+ * transfer — a 150 MB render on cellular is slow, not broken.
+ *
+ * Deliberately not `AbortSignal.timeout()`: that keeps ticking through body
+ * streaming and would kill legitimate large downloads mid-transfer (the same
+ * reasoning is documented on the range proxy in /api/audio). The timer is
+ * cleared as soon as headers arrive.
+ *
+ * The re-throw is a PLAIN Error, never an AbortError: saveMedia treats
+ * AbortError as "the user dismissed the share sheet" and returns silently, so a
+ * timeout surfacing as AbortError would leave the button doing nothing at all —
+ * no file, no fallback, no message.
+ */
+const CONNECT_TIMEOUT_MS = 20_000
+async function fetchWithConnectTimeout(url: string, ms = CONNECT_TIMEOUT_MS): Promise<Response> {
+  const abort = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; abort.abort() }, ms)
+  try {
+    return await fetch(url, { signal: abort.signal })
+  } catch (e) {
+    if (timedOut) throw new Error('Timed out waiting for the server')
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function blobDownload(url: string, baseName: string, fallbackExt: string): Promise<void> {
-  const res = await fetch(url)
+  const res = await fetchWithConnectTimeout(url)
   if (!res.ok) { await discard(res); throw new Error('Download failed') }
   const blob = await res.blob()
   const filename = safeFileName(baseName, extFrom(url, blob.type || null, fallbackExt))
@@ -101,7 +130,7 @@ export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp
   // falls through to the plain download below.
   if (isTouchDevice() && typeof navigator !== 'undefined' && typeof navigator.canShare === 'function') {
     try {
-      const res = await fetch(url)
+      const res = await fetchWithConnectTimeout(url)
       if (!res.ok) { await discard(res); throw new Error('Fetch failed') }
       const size = Number(res.headers.get('content-length') ?? '0')
       if (size > MAX_SHARE_BYTES) {
