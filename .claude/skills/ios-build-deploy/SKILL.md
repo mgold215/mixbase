@@ -5,6 +5,8 @@ description: Build and install the native iOS app onto Matt's iPhone entirely fr
 
 # iOS Build & Deploy (CLI only)
 
+**Remote/cloud sessions (no Mac): just merge to `main`.** Any `ios/` change on `main` triggers `.github/workflows/ios-testflight.yml` — cloud-signed build on a GitHub macOS runner, uploaded to TestFlight, auto-installed on Matt's phone. The commands below are for a Mac with the phone in hand (fast local iteration), plus the `scripts/ios-autodeploy-install.sh` launchd agent as the local-automation variant.
+
 The `ios/` directory is a fully native SwiftUI app (not a WebView wrapper): it talks to Supabase PostgREST directly, has its own AVPlayer audio engine (`ios/mixBase/Services/`), and can call the web API with `Authorization: Bearer <supabase-access-token>`.
 
 ## Device identifiers (Matt's iPhone 15 Pro Max)
