@@ -59,3 +59,46 @@ export function isSafeUploadId(value: unknown): value is string {
   if (value.includes('/') || value.includes('\\') || value.includes('%')) return false
   return !value.includes('..')
 }
+
+/**
+ * Recover the owning project id from an opaque Supabase TUS upload id.
+ *
+ * Why this exists: POST /api/tus does the full ownership job (session + bucket
+ * allow-list + ownsProject), but PATCH/HEAD on /api/tus/<uploadId> only check
+ * that SOMEONE is signed in before forwarding the chunk with the SERVICE-ROLE
+ * key. If an upload id is guessable or derivable, any signed-in user could
+ * write bytes into another user's in-flight upload.
+ *
+ * Supabase issues the id from its resumable-upload endpoint and does not
+ * document the encoding as a contract. It is base64url-ish and cannot contain
+ * `/` or `%` (isSafeUploadId would already reject those, and real uploads
+ * work), which is consistent with base64url of `<bucket>/<objectName>` — and
+ * our object keys are `<projectId>/<timestamp>.<ext>`, so a project UUID should
+ * fall out of a successful decode.
+ *
+ * Returns null when the id does not decode to something containing a UUID
+ * segment. Callers MUST treat null as "cannot determine" and fall back to the
+ * previous behaviour rather than denying: guessing the format wrong and failing
+ * closed would break every upload in the app, which is a far worse outcome than
+ * the narrow hole this closes. A null is reported (shape only, never the id
+ * itself — it is an unguessable capability credential) so the real format can be
+ * learned from production instead of guessed.
+ */
+export function projectIdFromUploadId(uploadId: unknown): string | null {
+  if (typeof uploadId !== 'string' || uploadId.length === 0) return null
+  // base64url → base64, then pad. An id that isn't base64 at all decodes to
+  // mojibake, which simply won't contain a UUID segment.
+  const b64 = uploadId.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+  let decoded: string
+  try {
+    decoded = Buffer.from(padded, 'base64').toString('utf8')
+  } catch {
+    return null
+  }
+  if (!decoded.includes('/')) return null
+  for (const segment of decoded.split('/')) {
+    if (isUuid(segment)) return segment
+  }
+  return null
+}

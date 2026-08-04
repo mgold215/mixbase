@@ -344,6 +344,58 @@ class SupabaseService {
         return collection
     }
 
+    /// Update arbitrary collection fields (title, type, cover_url, release_date,
+    /// notes). Pass NSNull() to clear a nullable column (e.g. remove the cover).
+    /// updated_at is bumped so fetchCollections' newest-first order stays honest.
+    func updateCollectionFields(id: UUID, fields: [String: Any]) async throws {
+        var allFields = fields
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        allFields["updated_at"] = isoFormatter.string(from: Date())
+        let body = try JSONSerialization.data(withJSONObject: allFields)
+        let request = makeRequest(
+            path: "/rest/v1/mb_collections?id=eq.\(id.uuidString)",
+            method: "PATCH",
+            body: body
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
+    /// Delete a collection and its item links. Items go first so this works
+    /// whether or not the FK cascades.
+    func deleteCollection(id: UUID) async throws {
+        let itemsRequest = makeRequest(
+            path: "/rest/v1/mb_collection_items?collection_id=eq.\(id.uuidString)",
+            method: "DELETE"
+        )
+        let (_, itemsResponse) = try await authenticatedData(for: itemsRequest)
+        try validateResponse(itemsResponse)
+
+        let request = makeRequest(
+            path: "/rest/v1/mb_collections?id=eq.\(id.uuidString)",
+            method: "DELETE"
+        )
+        let (_, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+    }
+
+    /// Fetch every collection item across all collections in one query — the
+    /// collections list uses this for fallback covers and track counts without
+    /// a query per collection.
+    func fetchAllCollectionItems() async throws -> [CollectionItem] {
+        let request = makeRequest(path: "/rest/v1/mb_collection_items?order=position.asc")
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response)
+        return try decoder.decode([CollectionItem].self, from: data)
+    }
+
+    /// Upload a collection cover image to mf-artwork; returns the public URL.
+    func uploadCollectionCover(data: Data, collectionId: UUID) async throws -> String {
+        let filename = "collection-\(collectionId.uuidString.lowercased())-\(Int(Date().timeIntervalSince1970)).jpg"
+        return try await uploadFile(data: data, filename: filename, bucket: "mf-artwork")
+    }
+
     /// Fetch items in a collection, ordered by position
     func fetchCollectionItems(collectionId: UUID) async throws -> [CollectionItem] {
         let path = "/rest/v1/mb_collection_items?collection_id=eq.\(collectionId.uuidString)&order=position.asc"

@@ -64,6 +64,7 @@ const SUITES = [
   'usage-refund-test.mjs',
   'effects-test.mjs',
   'finalize-test.mjs',
+  'visualizer-transcode-test.mjs',
   'video-test.mjs',
   'video-timeout-test.mjs',
 ]
