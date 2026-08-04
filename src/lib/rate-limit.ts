@@ -92,6 +92,14 @@ export const uploadLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 // a CPU core for minutes, so this is server protection more than cost control.
 export const finalVideoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 6 })
 
+// Visualizer saves: 20 per hour per user. Since 2026-08-03 this route forks
+// libx264 to normalize the browser's WebM to iOS-playable MP4, so a POST is no
+// longer free bookkeeping — it is CPU work on the shared container, and unlike
+// the final renders it is NOT behind MAX_CONCURRENT. Sized well above a real
+// session (one save per render) and far below anything that could starve the
+// box alongside an in-flight render.
+export const vizSaveLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
+
 // Feedback: 20 per hour per IP — public endpoint, stops spam
 export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 

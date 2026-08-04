@@ -38,6 +38,15 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
   const [visualizing, setVisualizing] = useState<Project | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [kindFilter, setKindFilter] = useState('all')
+  // A failed download used to be indistinguishable from nothing happening: both
+  // call sites discarded the rejection (one silently, one as an unhandled
+  // rejection). Visualizer.tsx already surfaces this; /media didn't.
+  const [downloadErr, setDownloadErr] = useState<string | null>(null)
+
+  const runDownload = (p: Promise<void>) => {
+    setDownloadErr(null)
+    p.catch(e => setDownloadErr(e instanceof Error ? e.message : 'Download failed'))
+  }
 
   // Kinds actually in the library, for the filter chips. Only worth showing
   // when there's more than one kind to choose between.
@@ -164,7 +173,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => saveMedia(v.video_url, v.title || 'visualizer', 'mp4').catch(() => {})}
+                        onClick={() => runDownload(saveMedia(v.video_url, v.title || 'visualizer', 'mp4'))}
                         className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium py-1.5 rounded-lg transition-colors"
                         style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
                       >
@@ -195,6 +204,11 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                 </div>
               ))}
             </div>
+            {downloadErr && (
+              <p className="text-[11px] mt-2" style={{ color: 'var(--danger, #ef4444)' }} role="alert">
+                {downloadErr}
+              </p>
+            )}
           </div>
         )}
 
@@ -285,13 +299,18 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                       Make visualizer
                     </button>
                     <button
-                      onClick={() => downloadImage(selected.artwork_url!, selected.title)}
+                      onClick={() => runDownload(downloadImage(selected.artwork_url!, selected.title))}
                       className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-4 transition-colors"
                       style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
                     >
                       <Download size={12} />
                       Download
                     </button>
+                    {downloadErr && (
+                      <p className="text-[11px] mb-4 -mt-2" style={{ color: 'var(--danger, #ef4444)' }} role="alert">
+                        {downloadErr}
+                      </p>
+                    )}
                   </>
                 )}
 

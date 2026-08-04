@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
+import { webmOriginalPath } from '@/lib/visualizer-encode'
 
 // Pull the storage object path out of a Supabase public URL for a given bucket.
 function storagePathFromUrl(url: string | null | undefined, bucket: string): string | null {
@@ -93,8 +94,14 @@ export async function POST(request: NextRequest) {
     .from('mb_visualizers')
     .select('id, video_url')
     .eq('user_id', userId)
+  // Include the pre-conversion WebM for any row the WebM→MP4 heal repointed:
+  // the row's video_url is now the MP4 twin, so deriving paths from it alone
+  // leaves the original bytes behind — orphaned, and still publicly readable.
   const videoPaths = (visualizers ?? [])
-    .map(v => storagePathFromUrl(v.video_url, 'mf-video'))
+    .flatMap(v => {
+      const mp4 = storagePathFromUrl(v.video_url, 'mf-video')
+      return mp4 ? [mp4, webmOriginalPath(mp4)] : []
+    })
     .filter((p): p is string => !!p)
 
   // Delete storage objects. A storage failure must NOT trap the user in an

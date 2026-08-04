@@ -253,6 +253,38 @@ console.log('\nno component is declared inside PipelineClient (remount = typing 
   check('MetaInput guards external adoption on the editing flag',
     /if \(!editing\) setDraft\(value\)/.test(src))
 
+  // ── 2026-08-04: clearing a field whose value equals the server default ─────
+  // Clearing Language PATCHes null; the server coerces it straight back to
+  // 'English' (coerceReleaseNulls). The canonical value therefore NEVER
+  // CHANGES, so an adoption key of `value` alone can't fire — the box sat
+  // visibly empty while the database still said English, and the DistroKid
+  // prep sheet disagreed with the editor. The key must carry a settle counter
+  // so an identical-result save still re-syncs.
+  const metaBody = src.slice(src.indexOf('function MetaInput('), src.indexOf('type ReleaseCardProps'))
+  check('MetaInput adoption key is not `value` alone',
+    !/const \[prevValue, setPrevValue\] = useState\(value\)/.test(metaBody)
+    && /adoptKey/.test(metaBody),
+    'keyed on adoptKey')
+  check('MetaInput adoption key includes a save-settled counter',
+    /const adoptKey = `\$\{saveTick\}[^`]*\$\{value\}`/.test(metaBody))
+  check('MetaInput bumps the counter after a save settles (both outcomes)',
+    /\.then\(\(\) => setSaveTick/.test(metaBody) && /\.catch\(\(\) => setSaveTick/.test(metaBody))
+  // Must NOT be a useEffect — ESLint's react-hooks/set-state-in-effect rejects
+  // that shape, and it is what the render-phase adjustment pattern replaced.
+  check('MetaInput does not adopt via useEffect', !/useEffect/.test(metaBody))
+
+  // Witness: the pre-fix key. Keyed on `value` alone, a coerced-back save is
+  // indistinguishable from no change at all.
+  const preFixKey = `
+  const [prevValue, setPrevValue] = useState(value)
+  if (prevValue !== value) {
+    setPrevValue(value)
+    if (!editing) setDraft(value)
+  }`
+  check('witness: the pre-fix key would be caught',
+    /const \[prevValue, setPrevValue\] = useState\(value\)/.test(preFixKey)
+    && !/adoptKey/.test(preFixKey))
+
   // Witness: the pre-fix shape — a component function declared inside the parent.
   const preFix = `
 export default function PipelineClient({ initialReleases }: Props) {

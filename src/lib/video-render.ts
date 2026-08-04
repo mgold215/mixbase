@@ -10,6 +10,7 @@ import ffprobeInstaller from '@ffprobe-installer/ffprobe'
 // Relative extension-full import (not the @/ alias) so the smoke test can
 // exercise this module directly under plain Node type-stripping.
 import { buildTextOverlay, DEFAULT_TEXT_COLOR } from './finalize-render.ts'
+import { armDeadline } from './proc-deadline.ts'
 
 // ── Final video renderer ─────────────────────────────────────────────────────
 // Composes the finished YouTube video / vertical Short for a song from the
@@ -143,11 +144,6 @@ export function videoStageTimeoutMs(stage: RenderStage, workSeconds = 0): number
  * slowdown between blocks. 0 means "this stage has no progress stream" (a
  * metadata probe), where only the wall-clock ceiling applies.
  */
-// Once the child has exited, its pipes drain in milliseconds (measured: ~5-40ms
-// even for a 283 MB mp4). This only has to be long enough that a slow disk never
-// trips it.
-const EXIT_DRAIN_GRACE_MS = 30_000
-
 export function videoStageIdleMs(stage: RenderStage): number {
   switch (stage) {
     case 'probe': return 0
@@ -199,73 +195,6 @@ export function hasTruncationMarker(stderr: string): boolean {
 }
 
 // ── Small process helpers ────────────────────────────────────────────────────
-
-// Node's spawn `timeout` option does fire killSignal at the deadline, but the
-// promise here is settled by `close`, which waits for the stdio pipes to drain.
-// A process that survives the signal — or that leaves a descendant holding
-// stderr — never emits `close`, so the await hangs forever anyway. So we arm our
-// OWN timer that SIGKILLs the child AND rejects the promise directly. Settling
-// is the part that matters: it's what lets buildFinalVideo's `finally` delete
-// the temp dir and lets the job release its concurrency slot. (Rejecting after
-// a resolve is a no-op, so the race is harmless.)
-// SIGKILL rather than the default SIGTERM: ffmpeg CATCHES SIGTERM and exits 255,
-// which is indistinguishable from a genuine encode failure — and a truly wedged
-// ffmpeg may never process it at all, which is precisely the case we are
-// defending against.
-//
-// Returns `touch()`, which resets the idle timer; callers call it whenever the
-// child reports progress.
-function armDeadline(
-  proc: ReturnType<typeof spawn>,
-  timeoutMs: number,
-  idleMs: number,
-  label: string,
-  reject: (err: Error) => void,
-): () => void {
-  let idleTimer: ReturnType<typeof setTimeout> | undefined
-  let drainTimer: ReturnType<typeof setTimeout> | undefined
-  let closed = false
-  const fail = (message: string) => {
-    try { proc.kill('SIGKILL') } catch { /* already gone */ }
-    reject(new Error(message))
-  }
-  const hard = setTimeout(
-    () => fail(`${label} timed out after ${Math.round(timeoutMs / 1000)}s and was killed`),
-    timeoutMs,
-  )
-  hard.unref?.()
-  const touch = () => {
-    if (idleMs <= 0 || closed) return
-    clearTimeout(idleTimer)
-    idleTimer = setTimeout(
-      () => fail(`${label} stopped reporting progress for ${Math.round(idleMs / 1000)}s and was killed`),
-      idleMs,
-    )
-    idleTimer.unref?.()
-  }
-  touch()
-
-  const clearAll = () => { clearTimeout(hard); clearTimeout(idleTimer); clearTimeout(drainTimer) }
-  proc.on('close', () => { closed = true; clearAll() })
-  proc.on('error', () => { closed = true; clearAll() })
-  proc.on('exit', () => {
-    // `exit` means the child itself is gone; callers settle on `close`, which
-    // additionally waits for the stdio pipes to drain. A surviving descendant
-    // holding stderr can withhold `close` indefinitely — the exact hang this
-    // watchdog exists to bound — so don't simply stand down here. Draining after
-    // the child is gone takes milliseconds, so give it a short grace and then
-    // settle anyway. (ffmpeg/ffprobe don't fork, so this is belt-and-braces.)
-    clearTimeout(hard)
-    clearTimeout(idleTimer)
-    if (closed) return
-    drainTimer = setTimeout(
-      () => fail(`${label} exited but its output never closed`),
-      EXIT_DRAIN_GRACE_MS,
-    )
-    drainTimer.unref?.()
-  })
-  return touch
-}
 
 // Taking the stage (rather than raw milliseconds) keeps the wall-clock ceiling
 // and the idle budget derived from one source, so a call site can't set one and
