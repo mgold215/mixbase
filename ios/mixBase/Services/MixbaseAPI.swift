@@ -228,6 +228,21 @@ final class MixbaseAPI {
     // MARK: - Core request plumbing
 
     /// Perform a request and parse the response as a JSON object.
+    // MARK: - Collections
+
+    /// Mint (or fetch — it's idempotent) the public album share link for a
+    /// collection. The server returns the canonical mixbase.app URL.
+    func collectionShareLink(collectionId: UUID) async throws -> URL {
+        let json = try await requestJSON(
+            path: "/api/collections/\(collectionId.uuidString.lowercased())/share",
+            method: "POST"
+        )
+        guard let urlString = json["url"] as? String, let url = URL(string: urlString) else {
+            throw MixbaseAPIError.invalidResponse("No share URL in response")
+        }
+        return url
+    }
+
     private func requestJSON(path: String, method: String, body: [String: Any]? = nil) async throws -> [String: Any] {
         let data = try await requestData(path: path, method: method, body: body)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
