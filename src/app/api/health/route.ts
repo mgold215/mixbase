@@ -1,5 +1,5 @@
 import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
-import { ensureSecurityHeals } from '@/lib/schema-heal'
+import { ensureSecurityHeals, ensureAppleNativeClientId } from '@/lib/schema-heal'
 
 // GET /api/health
 // Returns 200 with service status. Checks Supabase connectivity so Railway's
@@ -15,6 +15,11 @@ export async function GET() {
   // delays, or changes the health response, and a persistently failing heal
   // cannot turn this public endpoint into a Management-API amplifier.
   void ensureSecurityHeals()
+  // Same guaranteed-execution reasoning: the Apple audience allow-list broke
+  // native Sign in with Apple (App Review rejection) and no user-triggered
+  // path exercises it. Memoized after success, failure-budget-capped like the
+  // SQL heals, never blocks the response.
+  void ensureAppleNativeClientId()
 
   let db: 'ok' | 'error' = 'ok'
   // Whether the admin client demonstrably has service-role POWER at runtime —
