@@ -295,6 +295,90 @@ export async function ensureSecurityHeals(): Promise<boolean> {
   return securityHealDone
 }
 
+// ── Sign in with Apple: accept the native app's bundle ID ────────────────────
+// The iOS app signs in natively (ASAuthorizationController) and posts Apple's
+// id_token straight to GoTrue (grant_type=id_token). Apple mints that token
+// with aud = the app's BUNDLE ID — not the Services ID the web OAuth button
+// uses — and GoTrue rejects any audience it wasn't told about:
+//   "Unacceptable audience in id_token: [com.moodmixformat.mixbase]"
+// (the App Store rejection of 2026-08-04). The allow-list lives in the hosted
+// project's auth config, not in the database, so the SQL channel can't heal it;
+// this one reads and PATCHes the Management API auth config instead. Additive
+// only: the bundle ID is merged into external_apple_additional_client_ids and
+// the web flow's Services ID in external_apple_client_id is never touched.
+
+const APPLE_NATIVE_CLIENT_ID = 'com.moodmixformat.mixbase'
+
+let appleClientIdEnsured: Promise<boolean> | null = null
+
+export function ensureAppleNativeClientId(): Promise<boolean> {
+  if (!appleClientIdEnsured) {
+    appleClientIdEnsured = healAppleNativeClientId()
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) appleClientIdEnsured = null
+        return ok
+      })
+  }
+  return appleClientIdEnsured
+}
+
+async function healAppleNativeClientId(): Promise<boolean> {
+  const token = process.env.SUPABASE_MANAGEMENT_TOKEN
+  if (!token) return false
+  // Shares runQuery's per-process failure budget: this heal fires from the
+  // public health endpoint, so it needs the same amplifier cap even though it
+  // isn't SQL.
+  const label = 'apple native client id'
+  if ((runQueryFailures.get(label) ?? 0) >= RUN_QUERY_MAX_FAILURES) return false
+  const ref = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
+  const endpoint = `https://api.supabase.com/v1/projects/${ref}/config/auth`
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+  const fail = (stage: string, status: number, detail: string) => {
+    runQueryFailures.set(label, (runQueryFailures.get(label) ?? 0) + 1)
+    console.error(`[schema-heal] ${label} ${stage} failed:`, status, detail)
+    Sentry.captureMessage(`schema-heal: ${label} ${stage} failed (${status})`, {
+      level: status === 401 || status === 403 ? 'error' : 'warning',
+      tags: { heal: label, status: String(status) },
+      // `detail` is Supabase's error envelope, never the token.
+      extra: { detail: detail.slice(0, 500) },
+    })
+    return false
+  }
+
+  const res = await fetch(endpoint, { headers })
+  if (!res.ok) return fail('read', res.status, await res.text().catch(() => ''))
+  const config = (await res.json().catch(() => null)) as {
+    external_apple_client_id?: string | null
+    external_apple_additional_client_ids?: string | null
+  } | null
+  if (!config) return fail('read', res.status, 'unparseable auth config response')
+
+  const split = (v: string | null | undefined) =>
+    (v ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const additional = split(config.external_apple_additional_client_ids)
+  const accepted = [...split(config.external_apple_client_id), ...additional]
+  if (accepted.includes(APPLE_NATIVE_CLIENT_ID)) {
+    runQueryFailures.delete(label)
+    return true
+  }
+
+  const patch = await fetch(endpoint, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      external_apple_additional_client_ids: [...additional, APPLE_NATIVE_CLIENT_ID].join(','),
+    }),
+  })
+  if (!patch.ok) return fail('write', patch.status, await patch.text().catch(() => ''))
+  runQueryFailures.delete(label)
+  // Success is logged (unlike the SQL heals) because this one closes a live
+  // App Review rejection — the deploy log is where that fix is confirmed.
+  console.log(`[schema-heal] ${label}: added ${APPLE_NATIVE_CLIENT_ID} to accepted Apple audiences`)
+  return true
+}
+
 // ── Migration 019: collection share token ────────────────────────────────────
 // The public /share/album/[token] page and the collection Share button both
 // select mb_collections.share_token. A deploy can reach production before the
