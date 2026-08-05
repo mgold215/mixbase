@@ -20,6 +20,13 @@ on:
         description: 'inspect (read-only) or submit'
         required: false
         default: 'submit'
+  # TEMPORARY (user-approved, this branch only — never merged to tst/main):
+  # the remote session's GitHub integration cannot call the workflow-dispatch
+  # API, but push events run the workflow file at the pushed ref. Pushing
+  # asc-inspect fires read-only mode; asc-submit fires a real resubmission.
+  # These branches are deleted as soon as the resubmission completes.
+  push:
+    branches: [asc-inspect, asc-submit]
 
 concurrency:
   group: asc-resubmit
@@ -34,7 +41,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
-      MODE: ${{ inputs.mode || 'submit' }}
+      MODE: ${{ inputs.mode || (github.ref_name == 'asc-inspect' && 'inspect') || 'submit' }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
       - name: Drive the Review Submissions API
