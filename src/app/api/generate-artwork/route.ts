@@ -18,6 +18,11 @@ export const maxDuration = 120
 // server, which does not enforce it — so nothing else would ever cut this off.)
 const POLL_TIMEOUT_MS = 15_000
 const POLL_BUDGET_MS = 120_000
+// The two calls the poll fix left bare. Both are already wrapped in a catch
+// that refunds — the gap was that nothing ever aborted them, so the refund
+// could not run.
+const CREATE_TIMEOUT_MS = 60_000
+const DOWNLOAD_TIMEOUT_MS = 60_000
 
 async function pollPrediction(predictionUrl: string, token: string): Promise<string | null> {
   const deadline = Date.now() + POLL_BUDGET_MS
@@ -158,6 +163,13 @@ export async function POST(request: NextRequest) {
         Prefer: 'wait',
       },
       body: JSON.stringify({ input: inputFn(finalPrompt) }),
+      // `Prefer: wait` makes Replicate hold the connection open until the
+      // prediction settles, so this call is long-lived BY DESIGN — which is
+      // exactly why it needs an explicit ceiling. undici enforces no response
+      // timeout of its own; without this a stalled socket pins the handler and
+      // the reserved slot indefinitely. A throw here is already refunded by the
+      // enclosing catch.
+      signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
     })
     prediction = await replicateRes.json()
   } catch (err) {
@@ -202,7 +214,12 @@ export async function POST(request: NextRequest) {
   let imageBytes: Buffer
   let contentType: string
   try {
-    const imageRes = await fetch(outputUrl)
+    // The catch below refunds, but nothing was ever cancelling this: a CDN that
+    // accepts the connection and then drips bytes keeps `arrayBuffer()` pending
+    // forever, so the refund never runs and a free-tier user loses 1 of 3
+    // monthly generations with no image and no error. The deadline is what
+    // turns that hang into the refund path that already exists.
+    const imageRes = await fetch(outputUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
     if (!imageRes.ok) {
       await refund()
       return NextResponse.json({ error: 'Failed to download generated image' }, { status: 500 })

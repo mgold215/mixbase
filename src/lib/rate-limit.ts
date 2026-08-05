@@ -122,10 +122,56 @@ export const catalogLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
 export const sbWriteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 })
 
 // ── Helper to extract a usable key from a request ────────────────────────────
-// Prefers X-Forwarded-For (set by Railway's proxy) over the raw IP.
+// Only three limiters are keyed by IP — login (10/15min), signup (5/hr) and
+// public feedback (20/hr). Everything else is keyed by authenticated user, so
+// this function is the whole defence against an anonymous attacker.
+//
+// USE X-Real-IP, NOT X-Forwarded-For. Railway documents exactly which headers
+// its edge provides, and `X-Real-IP` is named as *the* client-IP header while
+// `X-Forwarded-For` is not listed at all:
+//   https://docs.railway.com/networking/public-networking/specs-and-limits
+// That also dissolves the leftmost-vs-rightmost argument this codebase has
+// carried unresolved for four runs: X-Real-IP is single-valued, so there is no
+// chain to pick from and nothing for a client to prepend. XFF is kept only as a
+// fallback, and we take its LAST segment — the entry closest to the edge, and
+// the only one a client cannot forge by prepending. (The previous code took the
+// FIRST segment, which is the attacker-controlled end if the edge appends.)
+//
+// The `|| null` matters: an empty or whitespace-only header must fall through
+// rather than become a key.
 export function ipKey(request: { headers: { get(name: string): string | null } }): string {
-  const forwarded = request.headers.get('x-forwarded-for')
-  return (forwarded?.split(',')[0]?.trim()) ?? 'unknown'
+  const pick = (header: string | null) => header?.split(',').pop()?.trim() || null
+  const key = pick(request.headers.get('x-real-ip')) ?? pick(request.headers.get('x-forwarded-for'))
+  if (key) return key
+
+  // NEVER return a shared constant here. The old fallback was the literal
+  // string 'unknown', which put every unidentifiable caller in ONE bucket — so
+  // a single header-less client could exhaust the global 10-per-15-minutes
+  // login budget and lock every real user out of signing in. That is a
+  // self-inflicted outage triggered by the defence itself.
+  //
+  // A per-request key means we cannot rate-limit a caller we cannot identify,
+  // which is the lesser evil and is unreachable in production: Railway's edge
+  // always sets X-Real-IP, so this branch only fires for direct container
+  // access (local dev). Reported once per process so that if it ever DOES fire
+  // in production we find out from Sentry rather than from a support ticket.
+  reportUnkeyedRequest()
+  return `unkeyed:${crypto.randomUUID()}`
+}
+
+let unkeyedReported = false
+function reportUnkeyedRequest() {
+  if (unkeyedReported) return
+  unkeyedReported = true
+  console.warn('[rate-limit] request carried neither X-Real-IP nor X-Forwarded-For')
+  // Sentry is imported LAZILY and defensively. This module is a dependency-free
+  // hot-path util that the test suite loads under plain Node type-stripping; a
+  // static `@sentry/nextjs` import makes it unloadable outside the Next runtime
+  // (verified: `Sentry.captureMessage is not a function`). Keeping the import
+  // inside the rarely-taken branch preserves both the signal and the testability.
+  import('@sentry/nextjs')
+    .then(S => S.captureMessage?.('rate-limit: request carried neither X-Real-IP nor X-Forwarded-For', { level: 'warning' }))
+    .catch(() => {})
 }
 
 // ── Owner-exempt user limits ─────────────────────────────────────────────────
