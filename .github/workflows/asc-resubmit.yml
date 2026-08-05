@@ -38,9 +38,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+      # Accept either Actions secrets or Actions variables — the two tabs are
+      # adjacent in the GitHub UI and easy to mix up.
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || vars.ASC_ISSUER_ID }}
+      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 || vars.ASC_API_KEY_P8_BASE64 }}
       MODE: ${{ inputs.mode || (github.ref_name == 'asc-inspect' && 'inspect') || 'submit' }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
@@ -51,6 +53,15 @@ jobs:
 
           const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, MODE, BUNDLE_ID } = process.env
           const BASE = 'https://api.appstoreconnect.apple.com/v1'
+
+          const missing = Object.entries({ ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64 })
+            .filter(([, v]) => !v).map(([k]) => k)
+          if (missing.length) {
+            console.error(`CREDENTIALS MISSING: ${missing.join(', ')} — not found in this repo's`)
+            console.error('Actions secrets OR variables. Check github.com/mgold215/mixbase/settings/secrets/actions:')
+            console.error('must be REPOSITORY secrets on the Actions tab (not Codespaces/Dependabot, not an Environment).')
+            process.exit(1)
+          }
 
           const b64url = (buf) => Buffer.from(buf).toString('base64url')
           function jwt() {
