@@ -51,6 +51,7 @@ function check(name, cond, detail) {
 console.log('security-heal-trigger: the lockdowns must run on a path that executes\n')
 
 const heal = read('src/lib/schema-heal.ts')
+const healRetry = read('src/lib/heal-retry.ts')
 const health = read('src/app/api/health/route.ts')
 const tier = read('src/lib/tier.ts')
 
@@ -112,7 +113,7 @@ check('the cap is small enough to bound Management API load', cap > 0 && cap <= 
 check('runQuery reports failures to Sentry, not just the console',
   /Sentry\.captureMessage\(`schema-heal:/.test(heal))
 check('a rejected credential (401/403) is raised at error level',
-  /res\.status === 401 \|\| res\.status === 403/.test(heal))
+  /status === 401 \|\| status === 403 \? 'error' : 'warning'/.test(heal))
 check('the heal label is tagged so the failing heal is identifiable',
   /tags:\s*\{\s*heal:/.test(heal))
 // The SQL can carry schema details and the token must never be logged; only
@@ -190,8 +191,12 @@ console.log('\nHeal DDL is serialized, not racing')
 
   // Transient catalog contention must not page anyone, but must not be
   // swallowed forever either — one retry, then report.
+  // The classifier moved to src/lib/heal-retry.ts on 2026-08-05 so it could be
+  // imported and tested for real (see heal-retry-test.mjs). Assert it still
+  // exists there AND that runQuery delegates to it — checking only one half
+  // would let the pair drift apart silently.
   check('catalog contention is classified as transient',
-    /tuple concurrently updated/.test(heal) && /isTransientCatalogRace/.test(heal))
+    /tuple concurrently updated/.test(healRetry) && /isRetryableHealFailure/.test(heal))
   check('a transient failure is retried exactly once',
     /attempt < 2/.test(heal) && /transient && attempt === 0/.test(heal))
   check('a NON-transient failure is reported on the first try (no doubled load)',
