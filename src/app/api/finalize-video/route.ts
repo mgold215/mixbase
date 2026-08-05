@@ -108,6 +108,14 @@ export async function POST(request: NextRequest) {
   if (!version?.audio_url) {
     return NextResponse.json({ error: 'Upload a mix before rendering a video' }, { status: 400 })
   }
+  // DELIBERATE: an unknown duration falls THROUGH this gate rather than failing
+  // closed. `duration_seconds` is null on 135 of 342 production rows (the web
+  // client's 8s metadata probe times out on large WAVs), so rejecting nulls here
+  // would block YouTube renders for ~40% of mixes. This gate is only a fast-fail
+  // courtesy: the real limit is enforced in the renderer against the PROBED
+  // duration (`video-render.ts`, `outDur > MAX_SONG_SECONDS`), which cannot be
+  // fooled by missing metadata. The cost of a null is a late failure that burns
+  // one of the user's 6/hr slots, not an unbounded render.
   if (format === 'youtube' && (version.duration_seconds ?? 0) > MAX_SONG_SECONDS) {
     return NextResponse.json({ error: `Songs over ${MAX_SONG_SECONDS / 60} minutes aren't supported yet` }, { status: 400 })
   }

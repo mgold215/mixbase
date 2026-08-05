@@ -11,6 +11,16 @@ export const maxDuration = 300
 const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY
 const RUNWAY_BASE = 'https://api.dev.runwayml.com/v1'
 
+// Every outbound call here needs its own deadline: Node's undici enforces no
+// response timeout, only a connect timeout, so a server that accepts the socket
+// and then answers slowly (or drips one byte at a time) is otherwise unbounded.
+const POLL_TIMEOUT_MS = 15_000
+const CREATE_TIMEOUT_MS = 30_000
+// Wall-clock ceiling for the whole poll loop, matching `maxDuration` above.
+const POLL_BUDGET_MS = 300_000
+// The finished video is a real file, so it gets a longer, separate budget.
+const DOWNLOAD_TIMEOUT_MS = 120_000
+
 // All Runway image-to-video models with their valid parameters.
 // Update this when Runway adds/removes models — the frontend reads it via GET.
 const MODELS: Record<string, { label: string; durations: number[]; ratios: string[] }> = {
@@ -121,14 +131,27 @@ export async function POST(req: NextRequest) {
   // the slot back — a Runway error or timeout must not burn a paid generation.
   // Refund the SAME month that was reserved (gate.month) so a generation that
   // straddles a UTC month boundary can't refund the wrong month.
-  const refund = () => refundUsage(userId, 'video', gate.month)
+  //
+  // GUARDED AGAINST DOUBLE-REFUND. `refundUsage` is read-then-write and NOT
+  // idempotent, so calling it twice decrements twice — handing the user a free
+  // paid generation. This used to rely on the claim that "every inner failure
+  // path refunds and RETURNS, so it never reaches the outer catch". That claim
+  // was false for exactly one branch: the `!createRes.ok` path refunds and then
+  // calls `createRes.text()`, which is outside the inner try — a connection
+  // reset while reading the error body unwinds to the outer catch and refunds a
+  // second time. The flag makes the invariant structural instead of a property
+  // every future edit has to re-derive.
+  let refunded = false
+  const refund = async () => {
+    if (refunded) return
+    refunded = true
+    await refundUsage(userId, 'video', gate.month)
+  }
 
   // The whole create+poll region is wrapped so a network error or malformed-JSON
   // throw (createRes.json / pollRes.json, or the fetches themselves) refunds the
   // reserved slot instead of escaping uncaught as a 500 that silently burns the
-  // user's tightest quota. Every inner failure path refunds and RETURNS, so it
-  // never reaches this catch — the catch handles only a genuine throw, and can't
-  // double-refund.
+  // user's tightest quota.
   try {
     // Create Runway task
     const createRes = await fetch(`${RUNWAY_BASE}/image_to_video`, {
@@ -145,6 +168,7 @@ export async function POST(req: NextRequest) {
         duration: runwayDuration,
         ratio: runwayRatio,
       }),
+      signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
     })
 
     if (!createRes.ok) {
@@ -164,21 +188,55 @@ export async function POST(req: NextRequest) {
 
     const task = await createRes.json()
     const taskId = task.id
+    if (!taskId) {
+      // Without an id every poll below would hit `/tasks/undefined` and 404 its
+      // way through the whole budget before reporting a timeout that never was.
+      await refund()
+      return NextResponse.json({ error: 'Runway did not return a task id' }, { status: 502 })
+    }
 
-    // Poll for completion (max 5 minutes for slower models like Veo, every 3 seconds)
-    const maxAttempts = 100
-    for (let i = 0; i < maxAttempts; i++) {
+    // Poll for completion. The budget is WALL-CLOCK, not an attempt count: the
+    // old `maxAttempts = 100` bounded only the number of probes, so if Runway
+    // slowed to ~20s per response the loop ran 100 × (3s + 20s) ≈ 38 minutes
+    // while holding the reserved slot, then reported "timed out (5 min)" — a
+    // message that was simply false. Same fix, same reasoning as the artwork
+    // route's POLL_BUDGET_MS. (`maxDuration` is advisory: Railway runs plain
+    // `next start`, which does not enforce it, so nothing else would cut this
+    // off.) Each probe also gets its own deadline, because undici applies no
+    // response timeout of its own and a slow-drip responder is otherwise
+    // unbounded.
+    const deadline = Date.now() + POLL_BUDGET_MS
+    while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 3000))
 
-      const pollRes = await fetch(`${RUNWAY_BASE}/tasks/${taskId}`, {
-        headers: {
-          'Authorization': `Bearer ${RUNWAY_API_KEY}`,
-          'X-Runway-Version': '2024-11-06',
-        },
-      })
+      let pollRes: Response
+      try {
+        pollRes = await fetch(`${RUNWAY_BASE}/tasks/${taskId}`, {
+          headers: {
+            'Authorization': `Bearer ${RUNWAY_API_KEY}`,
+            'X-Runway-Version': '2024-11-06',
+          },
+          signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+        })
+      } catch {
+        // A timed-out probe is transient — Runway may still be rendering. Retry
+        // on the next tick rather than unwinding to the outer catch: one flaky
+        // poll must not cancel a generation that is about to succeed. Falling
+        // out of the loop hits the timeout refund below, so this adds no new
+        // refund path.
+        continue
+      }
 
       if (!pollRes.ok) {
-        console.warn(`Runway poll attempt ${i + 1} failed: ${pollRes.status}`)
+        // 401/403/404 never become 200 by waiting — a rotated key or an unknown
+        // task id would otherwise burn the entire budget before reporting a
+        // timeout. Fail fast and hand the slot back.
+        if (pollRes.status === 401 || pollRes.status === 403 || pollRes.status === 404) {
+          await refund()
+          console.error(`[runway] poll rejected permanently: ${pollRes.status}`)
+          return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
+        }
+        console.warn(`Runway poll failed: ${pollRes.status}`)
         continue
       }
 
@@ -200,7 +258,7 @@ export async function POST(req: NextRequest) {
         let visualizerId: string | null = null
         if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
           try {
-            const vidRes = await fetch(runwayUrl)
+            const vidRes = await fetch(runwayUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
             if (vidRes.ok) {
               const bytes = Buffer.from(await vidRes.arrayBuffer())
               const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
@@ -236,7 +294,13 @@ export async function POST(req: NextRequest) {
     }
 
     await refund()
-    return NextResponse.json({ error: 'Runway generation timed out (5 min)' }, { status: 504 })
+    // Derived from the budget so the number in the message can't drift away
+    // from the number actually enforced — the old copy said "5 min" while the
+    // loop could run for 38.
+    return NextResponse.json(
+      { error: `Runway generation timed out (${Math.round(POLL_BUDGET_MS / 60_000)} min)` },
+      { status: 504 }
+    )
   } catch (err) {
     // Network blip or malformed JSON after the slot was reserved — refund so a
     // transient failure doesn't burn the tightest, most expensive quota, then

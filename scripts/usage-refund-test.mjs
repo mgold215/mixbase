@@ -93,7 +93,8 @@ const tierSrc = read('src/lib/tier.ts')
 
 console.log('\n generate-artwork route — download guarded + month threaded:')
 check('image download fetch(outputUrl) is inside try/catch that refunds',
-  guardedByTryRefund(artworkSrc, 'fetch(outputUrl)'))
+  // Anchor without the closing paren: the call now carries an AbortSignal arg.
+  guardedByTryRefund(artworkSrc, 'fetch(outputUrl'))
 check("refund threads the reserved month: refundUsage(userId, 'artwork', gate.month)",
   /refundUsage\(\s*userId\s*,\s*'artwork'\s*,\s*gate\.month\s*\)/.test(artworkSrc))
 check('artwork refund is NOT the old month-blind 2-arg form',
@@ -141,6 +142,81 @@ const OLD_REFUND_FN = `export async function refundUsage(userId: string, feature
 check('WITNESS: pre-fix refundUsage recomputed its own month (no month param)',
   /export async function refundUsage\([\s\S]{0,260}const month = currentMonth\(\)/.test(OLD_REFUND_FN) &&
   !/month:\s*string\s*=\s*currentMonth\(\)/.test(OLD_REFUND_FN))
+
+// ── C) The double-refund guard (added 2026-08-05) ────────────────────────────
+// `planUsageRefund` above proves refundUsage is NOT idempotent: 1 → 0 is a real
+// decrement, so two calls for one reservation hand the user a free paid
+// generation. The route used to rely on the claim that "every inner failure
+// path refunds and RETURNS, so it never reaches the outer catch". That was
+// false for exactly one branch: `!createRes.ok` refunds, then calls
+// `createRes.text()` OUTSIDE the inner try — a connection reset while reading
+// the error body unwinds to the outer catch and refunds a second time.
+console.log('\n runway route — refund is idempotent by construction:')
+check('refund() is latched behind a `refunded` flag',
+  /let refunded = false/.test(runwaySrc) &&
+  /const refund = async \(\) => \{[\s\S]{0,200}?if \(refunded\) return[\s\S]{0,200}?refunded = true/.test(runwaySrc))
+check('the latch is set BEFORE the await, so concurrent calls cannot both pass',
+  (() => {
+    const fn = runwaySrc.slice(runwaySrc.indexOf('const refund = async'), runwaySrc.indexOf('const refund = async') + 260)
+    return fn.indexOf('refunded = true') < fn.indexOf('await refundUsage')
+  })())
+// WITNESS, run not assumed: the shape that shipped before today would let the
+// error-body read escape the inner try and reach the outer catch.
+const OLD_RUNWAY_REFUND = `  const refund = () => refundUsage(userId, 'video', gate.month)`
+check('WITNESS: pre-fix runway refund had no latch',
+  !/refunded/.test(OLD_RUNWAY_REFUND))
+
+// ── D) Every paid outbound call is bounded (added 2026-08-05) ────────────────
+// undici enforces NO response timeout — only a connect timeout — so a provider
+// that accepts the socket and then answers slowly (or drips one byte at a time)
+// pins the handler and the reserved quota slot indefinitely. The refund paths
+// all exist; the gap was that nothing ever aborted the request, so the refund
+// could not run. Each of these anchors is a call that spends or holds quota.
+console.log('\n paid provider calls all carry a deadline:')
+function fetchAtHasSignal(src, anchor, win = 900) {
+  const idx = src.indexOf(anchor)
+  if (idx < 0) return false
+  return /signal:\s*AbortSignal\.timeout\(/.test(src.slice(idx, idx + win))
+}
+check('artwork: Replicate create carries a deadline',
+  fetchAtHasSignal(artworkSrc, 'Prefer: '))
+check('artwork: image download carries a deadline',
+  fetchAtHasSignal(artworkSrc, 'fetch(outputUrl'))
+check('artwork: poll probe still carries a deadline (no regression)',
+  /signal:\s*AbortSignal\.timeout\(POLL_TIMEOUT_MS\)/.test(artworkSrc))
+check('runway: create carries a deadline',
+  fetchAtHasSignal(runwaySrc, 'image_to_video'))
+check('runway: poll probe carries a deadline',
+  fetchAtHasSignal(runwaySrc, '/tasks/$'))
+check('runway: video download carries a deadline',
+  fetchAtHasSignal(runwaySrc, 'fetch(runwayUrl'))
+
+// The poll loop must be bounded by WALL CLOCK, not attempt count. With a fixed
+// 100 attempts and a 3s sleep, a provider answering in ~20s ran the loop for
+// ~38 minutes holding a studio user's 1-of-10 slot, then reported "timed out
+// (5 min)" — a message that was false.
+check('runway: poll loop is bounded by wall clock, not attempt count',
+  /const deadline = Date\.now\(\) \+ POLL_BUDGET_MS/.test(runwaySrc) &&
+  /while \(Date\.now\(\) < deadline\)/.test(runwaySrc))
+check('runway: the old attempt-count bound is gone',
+  // Matches the declaration only — the rationale comment above the loop still
+  // names maxAttempts, and should, so a bare /maxAttempts/ would be wrong.
+  !/const maxAttempts\s*=/.test(runwaySrc))
+check('runway: a permanently-rejected poll (401/403/404) bails instead of burning the budget',
+  /pollRes\.status === 401 \|\| pollRes\.status === 403 \|\| pollRes\.status === 404/.test(runwaySrc))
+check('runway: a missing task id fails fast rather than polling /tasks/undefined',
+  /if \(!taskId\)/.test(runwaySrc))
+check('runway: the timeout message is derived from the enforced budget',
+  /POLL_BUDGET_MS \/ 60_000/.test(runwaySrc))
+// WITNESS: the pre-fix loop shape, proving these checks discriminate.
+const OLD_RUNWAY_POLL = `    const maxAttempts = 100
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 3000))
+      const pollRes = await fetch(\`\${RUNWAY_BASE}/tasks/\${taskId}\`, { headers: {} })`
+check('WITNESS: pre-fix runway poll was attempt-bounded with no deadline',
+  /maxAttempts/.test(OLD_RUNWAY_POLL) &&
+  !/Date\.now\(\) \+ POLL_BUDGET_MS/.test(OLD_RUNWAY_POLL) &&
+  !/AbortSignal\.timeout/.test(OLD_RUNWAY_POLL))
 
 if (failures > 0) {
   console.error(`\nusage-refund: ${failures} check(s) failed`)
