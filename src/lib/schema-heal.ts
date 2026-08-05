@@ -1,5 +1,8 @@
 import * as Sentry from '@sentry/nextjs'
 import { SUPABASE_URL } from '@/lib/supabase'
+// Relative + extension-full on purpose: an extensionless relative import blocks
+// Node type-stripping, which is what lets the test suite load the pure module.
+import { isRetryableHealFailure, type HealFailure } from './heal-retry.ts'
 
 // Runtime self-heal for the additive mb_projects visualizer pin columns
 // (visualizer_url from migration 015, visualizer_wide_url from 020 — one heal
@@ -673,17 +676,6 @@ export async function upsertProfileViaManagementSql(
   return runQuery(sql, 'profiles upsert fallback')
 }
 
-/**
- * Postgres catalog contention — two healers rewriting the same pg_proc/pg_class
- * row at once. It is not a defect in the SQL and it self-clears on a retry, so
- * it must not page anyone; the advisory locks above make it rare, and this
- * classifier keeps the residual (a lock taken on a connection that dies
- * mid-flight, say) from looking like a real failure.
- */
-function isTransientCatalogRace(detail: string): boolean {
-  return /tuple concurrently updated|deadlock detected|could not serialize access/i.test(detail)
-}
-
 // Per-label failure budget for the whole process.
 //
 // Every heal memoizes its promise but NULLS the memo on failure so the next
@@ -698,42 +690,81 @@ function isTransientCatalogRace(detail: string): boolean {
 const RUN_QUERY_MAX_FAILURES = 8
 const runQueryFailures = new Map<string, number>()
 
+// A heal must not be able to hang forever. Node's undici applies no response
+// deadline of its own — only a connect timeout — so a Management API that
+// accepts the socket and then goes quiet would leave the promise pending for
+// the life of the process, holding the memo in its un-settled state. 15s is
+// generous for what these heals actually run (idempotent `add column if not
+// exists` / policy DDL against tables in the hundreds of rows).
+const RUN_QUERY_TIMEOUT_MS = 15_000
+
+// A gateway blip or a rate limiter needs a beat before the retry is worth
+// anything; re-sending into the same 502 inside a millisecond just spends the
+// attempt. The catalog race gets the same pause, which if anything helps it —
+// contention wants time to clear.
+const RUN_QUERY_RETRY_DELAY_MS = 400
+
+/**
+ * Run one heal statement through the Supabase Management API.
+ *
+ * NEVER THROWS — always resolves true/false. Most call sites memoize the
+ * promise behind their own `.catch(() => false)`, but `upsertProfileViaManagementSql`
+ * returns this directly to `PATCH /api/auth/me`, which awaits it with no guard;
+ * a rejection there would turn the fallback that exists to SAVE the user's
+ * profile into the thing that 500s it. Holding the no-throw contract here fixes
+ * that by construction, and is what makes the deadline above safe to add — an
+ * AbortSignal firing rejects the fetch.
+ */
 async function runQuery(sql: string, label: string): Promise<boolean> {
   const token = process.env.SUPABASE_MANAGEMENT_TOKEN
   if (!token) return false
   if ((runQueryFailures.get(label) ?? 0) >= RUN_QUERY_MAX_FAILURES) return false
   const ref = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
 
-  // At most one retry, and ONLY for the transient catalog race. Everything else
-  // (bad credential, bad SQL) is reported on the first failure — retrying those
-  // just doubles the load on the Management API from a public endpoint.
+  // At most one retry, and only for a failure that never reached a decision
+  // (gateway/timeout/rate limit/network) or the catalog race. A bad credential
+  // or bad SQL is reported on the first failure — retrying those just doubles
+  // the load on the Management API from a public endpoint.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: sql }),
-    })
-    if (res.ok) {
-      // A heal that succeeds clears its budget: the next drift is a fresh
-      // problem, not a continuation of an old one.
-      runQueryFailures.delete(label)
-      return true
+    let failure: HealFailure
+    try {
+      const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: sql }),
+        signal: AbortSignal.timeout(RUN_QUERY_TIMEOUT_MS),
+      })
+      if (res.ok) {
+        // A heal that succeeds clears its budget: the next drift is a fresh
+        // problem, not a continuation of an old one.
+        runQueryFailures.delete(label)
+        return true
+      }
+      failure = { kind: 'status', status: res.status, detail: await res.text().catch(() => '') }
+    } catch (err) {
+      // No HTTP status exists — DNS/reset/deadline. Same situation as a 502:
+      // nothing reached Postgres.
+      failure = { kind: 'network' }
+      if (attempt > 0) console.error(`[schema-heal] ${label} request failed:`, err)
     }
 
-    const detail = await res.text().catch(() => '')
-    const transient = isTransientCatalogRace(detail)
+    const transient = isRetryableHealFailure(failure)
     if (transient && attempt === 0) {
-      console.warn(`[schema-heal] ${label} hit catalog contention, retrying once`)
+      console.warn(`[schema-heal] ${label} hit a transient failure, retrying once`)
+      await new Promise(resolve => setTimeout(resolve, RUN_QUERY_RETRY_DELAY_MS))
       continue
     }
     runQueryFailures.set(label, (runQueryFailures.get(label) ?? 0) + 1)
 
-    console.error(`[schema-heal] ${label} SQL failed:`, res.status, detail)
+    // `network` has no status of its own; 0 reads as "never got an answer".
+    const status = failure.kind === 'status' ? failure.status : 0
+    const detail = failure.kind === 'status' ? failure.detail : 'request failed before any response'
+    console.error(`[schema-heal] ${label} SQL failed:`, status, detail)
     // 401/403 = the credential itself is bad; that never self-recovers and
     // disables every heal at once, so it is worth waking someone up for.
-    Sentry.captureMessage(`schema-heal: ${label} failed (${res.status})`, {
-      level: res.status === 401 || res.status === 403 ? 'error' : 'warning',
-      tags: { heal: label, status: String(res.status), transient: String(transient) },
+    Sentry.captureMessage(`schema-heal: ${label} failed (${status})`, {
+      level: status === 401 || status === 403 ? 'error' : 'warning',
+      tags: { heal: label, status: String(status), transient: String(transient) },
       // `detail` is Supabase's own error envelope, never the SQL or the token.
       extra: { detail: detail.slice(0, 500) },
     })

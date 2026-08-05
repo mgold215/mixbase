@@ -55,6 +55,8 @@ const SUITES = [
   'usage-rpc-grants-test.mjs',
   'usage-table-rls-test.mjs',
   'security-heal-trigger-test.mjs',
+  'heal-retry-test.mjs',
+  'rate-limit-key-test.mjs',
   'release-pipeline-test.mjs',
   'loudness-test.mjs',
   'infra-sql-guard-test.mjs',
