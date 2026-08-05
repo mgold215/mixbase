@@ -166,9 +166,21 @@ class SupabaseService {
 
     /// Create a new project with a title and optional genre / BPM
     func createProject(title: String, genre: String?, bpm: Int?) async throws -> Project {
+        // The owner MUST be sent explicitly. `mb_projects.user_id` is nullable
+        // with no database default, and this path writes straight to PostgREST
+        // rather than through `POST /api/projects` (which sets it server-side
+        // from the X-User-Id header). A row that lands with a null owner is
+        // invisible to its creator everywhere afterwards: the web list filters
+        // `.eq('user_id', userId)`, and the `users_own_projects` RLS policy
+        // matches on `user_id = auth.uid()`, which a null can never satisfy.
+        // 33 of 85 production projects are currently in that state.
+        guard let ownerId = currentUserId else {
+            throw SupabaseError.notFound("Not signed in — cannot create a project without an owner")
+        }
         // Build a dictionary of the fields to send
         var fields: [String: Any] = [
-            "title": title
+            "title": title,
+            "user_id": ownerId
         ]
         if let genre = genre { fields["genre"] = genre }
         if let bpm = bpm { fields["bpm"] = bpm }

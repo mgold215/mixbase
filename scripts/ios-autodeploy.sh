@@ -21,7 +21,19 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 notify() {
   # Best-effort banner on the Mac so deploys are visible without tailing logs.
-  osascript -e "display notification \"$1\" with title \"mixBase iOS auto-deploy\"" >/dev/null 2>&1 || true
+  #
+  # The message is passed as an ARGUMENT, never interpolated into the script
+  # text. This function is called with a git commit subject
+  # (`notify "Installed: $SUMMARY"`), and a subject containing a double quote
+  # would otherwise close the AppleScript string literal and let the remainder
+  # parse as code — `do shell script "..."` is arbitrary command execution on
+  # this Mac, silenced by the `2>&1 || true` below. Anyone who can land a commit
+  # on main can choose that subject.
+  osascript \
+    -e 'on run {msg}' \
+    -e 'display notification msg with title "mixBase iOS auto-deploy"' \
+    -e 'end run' \
+    -- "$1" >/dev/null 2>&1 || true
 }
 
 cd "$REPO_DIR" || { log "repo not found at $REPO_DIR"; exit 1; }

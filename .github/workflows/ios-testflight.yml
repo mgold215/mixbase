@@ -23,6 +23,14 @@ on:
       - '.github/workflows/ios-testflight.yml'
   workflow_dispatch: {}
 
+# Pinned explicitly rather than inherited. The repo default is currently "read",
+# so this changes nothing today — but this job holds an App Store Connect
+# signing key, and flipping one repo-wide setting to "Read and write" would
+# silently hand repo-write to the token sitting next to that key. Declaring it
+# here means that setting can never reach this workflow.
+permissions:
+  contents: read
+
 concurrency:
   group: ios-testflight
   cancel-in-progress: false
