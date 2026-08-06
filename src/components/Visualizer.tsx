@@ -87,6 +87,8 @@ export default function Visualizer({
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiModelLabel, setAiModelLabel] = useState('')
   const [downloadErr, setDownloadErr] = useState<string | null>(null)
+  // iOS second-tap share: holds the re-share closure for already-fetched bytes.
+  const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
   const [freeSave, setFreeSave] = useState<SaveStatus>('idle')
   // Persisted mf-video URL of the last free render — the blob: URL plays
   // locally, but only the stored URL can be pinned as the project visualizer.
@@ -444,8 +446,22 @@ export default function Visualizer({
   // the exact failure that hid the blocked blob: download. Surface it.
   function download(url: string, suffix: string, ext: 'webm' | 'mp4') {
     setDownloadErr(null)
-    void saveMedia(url, `${projectTitle}-${format}-${suffix}`, ext).catch(() => {
+    setFinishSave(null)
+    void saveMedia(url, `${projectTitle}-${format}-${suffix}`, ext, {
+      // iOS: the fetch outlived Safari's tap window, so the share sheet needs
+      // one more tap — surface a button that re-shares the fetched bytes.
+      onNeedsFinishTap: finish => setFinishSave(() => finish),
+    }).catch(() => {
       setDownloadErr("Couldn't save the file. Try again, or use Save to Media.")
+    })
+  }
+
+  function finishSaveTap() {
+    const finish = finishSave
+    if (!finish) return
+    setFinishSave(null)
+    void finish().catch(() => {
+      setDownloadErr("Couldn't save the file. Try the Download button again.")
     })
   }
 
@@ -893,6 +909,16 @@ export default function Visualizer({
               </span>
               {freeSave === 'saved' && pinButton(freeSavedUrl, format === 'youtube' ? 'wide' : 'canvas')}
               {downloadErr && <span className="text-[11px] w-full" style={{ color: '#f87171' }}>{downloadErr}</span>}
+              {finishSave && (
+                <button
+                  onClick={finishSaveTap}
+                  className="w-full flex items-center justify-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg transition-colors"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                >
+                  <Download size={14} />
+                  Ready — tap to save to Photos
+                </button>
+              )}
               <button
                 onClick={() => download(videoUrl, 'free', 'webm')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -1009,6 +1035,16 @@ export default function Visualizer({
               {/* Only a persisted mf-video URL can be pinned — transient Runway URLs expire */}
               {aiSaved && pinButton(aiVideoUrl, aiSlot)}
               {downloadErr && <span className="text-[11px] w-full" style={{ color: '#f87171' }}>{downloadErr}</span>}
+              {finishSave && (
+                <button
+                  onClick={finishSaveTap}
+                  className="w-full flex items-center justify-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg transition-colors"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                >
+                  <Download size={14} />
+                  Ready — tap to save to Photos
+                </button>
+              )}
               <button
                 onClick={() => download(aiVideoUrl, 'ai', 'mp4')}
                 className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"

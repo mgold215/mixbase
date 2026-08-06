@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Check, X, ExternalLink, Download, Film, Trash2 } from 'lucide-react'
-import { downloadImage, saveMedia } from '@/lib/download'
+import { downloadImage, saveMedia, type SaveMediaOptions } from '@/lib/download'
 import { visualizerKindLabel, availableKinds, filterByKind } from '@/lib/visualizer-kinds'
 
 const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false })
@@ -42,10 +42,22 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
   // call sites discarded the rejection (one silently, one as an unhandled
   // rejection). Visualizer.tsx already surfaces this; /media didn't.
   const [downloadErr, setDownloadErr] = useState<string | null>(null)
+  // iOS second-tap share: the bytes are fetched but Safari needs a fresh tap
+  // to open the share sheet (transient activation expired mid-download).
+  const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
 
-  const runDownload = (p: Promise<void>) => {
+  const runDownload = (run: (opts: SaveMediaOptions) => Promise<void>) => {
     setDownloadErr(null)
-    p.catch(e => setDownloadErr(e instanceof Error ? e.message : 'Download failed'))
+    setFinishSave(null)
+    run({ onNeedsFinishTap: finish => setFinishSave(() => finish) })
+      .catch(e => setDownloadErr(e instanceof Error ? e.message : 'Download failed'))
+  }
+
+  const finishSaveTap = () => {
+    const finish = finishSave
+    if (!finish) return
+    setFinishSave(null)
+    void finish().catch(e => setDownloadErr(e instanceof Error ? e.message : 'Download failed'))
   }
 
   // Kinds actually in the library, for the filter chips. Only worth showing
@@ -173,7 +185,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => runDownload(saveMedia(v.video_url, v.title || 'visualizer', 'mp4'))}
+                        onClick={() => runDownload(opts => saveMedia(v.video_url, v.title || 'visualizer', 'mp4', opts))}
                         className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium py-1.5 rounded-lg transition-colors"
                         style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
                       >
@@ -208,6 +220,16 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
               <p className="text-[11px] mt-2" style={{ color: 'var(--danger, #ef4444)' }} role="alert">
                 {downloadErr}
               </p>
+            )}
+            {finishSave && (
+              <button
+                onClick={finishSaveTap}
+                className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold mt-2 py-2 rounded-lg transition-colors"
+                style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+              >
+                <Download size={12} />
+                Ready — tap to save to Photos
+              </button>
             )}
           </div>
         )}
@@ -299,7 +321,7 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                       Make visualizer
                     </button>
                     <button
-                      onClick={() => runDownload(downloadImage(selected.artwork_url!, selected.title))}
+                      onClick={() => runDownload(opts => downloadImage(selected.artwork_url!, selected.title, opts))}
                       className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg mb-4 transition-colors"
                       style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
                     >
@@ -310,6 +332,16 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
                       <p className="text-[11px] mb-4 -mt-2" style={{ color: 'var(--danger, #ef4444)' }} role="alert">
                         {downloadErr}
                       </p>
+                    )}
+                    {finishSave && (
+                      <button
+                        onClick={finishSaveTap}
+                        className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2 rounded-lg mb-4 -mt-2 transition-colors"
+                        style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+                      >
+                        <Download size={12} />
+                        Ready — tap to save to Photos
+                      </button>
                     )}
                   </>
                 )}

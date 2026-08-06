@@ -934,7 +934,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             visualizerUrl={visualizer}
             wideVisualizerUrl={visualizerWide}
             hasAudio={versions.length > 0}
-            audioDurationSec={versions[0]?.duration_seconds ?? null}
             onSwitchToVisualizer={() => switchTab('visualizer')}
           />
         )}
