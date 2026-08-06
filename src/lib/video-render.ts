@@ -59,6 +59,15 @@ export type BuildVideoArgs = {
   color?: string
   /** Shorts only: where in the song the clip starts (seconds). */
   startSec?: number
+  /**
+   * Shorts only: resolve the start point HERE against the PROBED audio
+   * duration — 'hook' = 30% in, 'middle' = 50% in. Takes precedence over
+   * startSec. Exists because the client often never learns the song length
+   * (duration_seconds is null on ~40% of mixes — large WAVs whose upload-time
+   * metadata probe timed out), which used to leave the start-point buttons
+   * dead in the UI. The probe below always knows the real duration.
+   */
+  startMode?: 'start' | 'hook' | 'middle'
   /** Shorts only: clip length in seconds (15/30/60). */
   clipSeconds?: number
   /**
@@ -403,7 +412,17 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
     if (format === 'shorts') {
       const clip = SHORTS_LENGTHS.includes((args.clipSeconds ?? 30) as typeof SHORTS_LENGTHS[number])
         ? (args.clipSeconds ?? 30) : 30
-      startSec = Math.max(0, Math.min(args.startSec ?? 0, Math.max(0, audioDur - 5)))
+      if (args.startMode) {
+        // Resolved against the probed duration, and capped so the requested
+        // clip LENGTH survives: "middle of a 70s song, 60s clip" starts at
+        // 10s and still delivers 60s, rather than a truncated tail.
+        const requested = args.startMode === 'hook' ? audioDur * 0.3
+          : args.startMode === 'middle' ? audioDur * 0.5 : 0
+        startSec = Math.max(0, Math.min(requested, Math.max(0, audioDur - clip)))
+      } else {
+        // Legacy explicit-seconds path (older clients) — behavior unchanged.
+        startSec = Math.max(0, Math.min(args.startSec ?? 0, Math.max(0, audioDur - 5)))
+      }
       outDur = Math.min(clip, audioDur - startSec)
     } else {
       outDur = audioDur

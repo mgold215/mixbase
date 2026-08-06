@@ -50,6 +50,12 @@ export async function POST(request: NextRequest) {
   const clipSeconds: number = SHORTS_LENGTHS.includes(body.clip_seconds) ? body.clip_seconds : 30
   const startSec: number = typeof body.start_sec === 'number' && body.start_sec >= 0 && Number.isFinite(body.start_sec)
     ? body.start_sec : 0
+  // Preferred over start_sec: the renderer resolves it against the PROBED audio
+  // duration, so it works for the ~40% of mixes whose duration_seconds is null
+  // (the client can't compute a start second for those).
+  const startMode: 'start' | 'hook' | 'middle' | undefined =
+    body.start_mode === 'start' || body.start_mode === 'hook' || body.start_mode === 'middle'
+      ? body.start_mode : undefined
 
   // Everything renders from server-side state, never client-supplied URLs —
   // same rule as finalize-artwork. visualizer_wide_url can predate migration
@@ -138,6 +144,7 @@ export async function POST(request: NextRequest) {
     format,
     color,
     startSec,
+    startMode,
     clipSeconds,
     fallbackAudioSeconds: version.duration_seconds ?? undefined,
   })

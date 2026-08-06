@@ -34,15 +34,13 @@ type Props = {
   /** Horizontal pin (visualizer_wide_url) — source for the full-length video. */
   wideVisualizerUrl: string | null
   hasAudio: boolean
-  /** Song length in seconds when known — drives the Short start-point options. */
-  audioDurationSec: number | null
   onSwitchToVisualizer: () => void
 }
 
 const SHORT_LENGTHS = [15, 30, 60] as const
 
 export default function VideoFinalizer({
-  projectId, visualizerUrl, wideVisualizerUrl, hasAudio, audioDurationSec, onSwitchToVisualizer,
+  projectId, visualizerUrl, wideVisualizerUrl, hasAudio, onSwitchToVisualizer,
 }: Props) {
   const [saved, setSaved] = useState<Record<VideoFormat, SavedVideo>>({ youtube: null, shorts: null })
   const [jobs, setJobs] = useState<Partial<Record<VideoFormat, JobState>>>({})
@@ -130,9 +128,6 @@ export default function VideoFinalizer({
 
   async function startRender(format: VideoFormat) {
     setErrors(e => ({ ...e, [format]: undefined }))
-    const startSec = format === 'shorts' && audioDurationSec
-      ? (shortStart === 'hook' ? Math.round(audioDurationSec * 0.3) : shortStart === 'middle' ? Math.round(audioDurationSec * 0.5) : 0)
-      : 0
     try {
       const res = await fetch('/api/finalize-video', {
         method: 'POST',
@@ -141,7 +136,11 @@ export default function VideoFinalizer({
           project_id: projectId,
           format,
           color,
-          ...(format === 'shorts' ? { clip_seconds: shortLen, start_sec: startSec } : {}),
+          // start_mode (not a client-computed second): the server resolves it
+          // against the PROBED audio duration, so Hook/Middle work even when
+          // this client never learned the song length (duration_seconds is
+          // null on ~40% of mixes — the old start_sec math silently sent 0).
+          ...(format === 'shorts' ? { clip_seconds: shortLen, start_mode: shortStart } : {}),
         }),
       })
       const data = await res.json().catch(() => null)
@@ -274,8 +273,7 @@ export default function VideoFinalizer({
                   <button
                     key={key}
                     onClick={() => setShortStart(key)}
-                    disabled={key !== 'start' && !audioDurationSec}
-                    className={`px-3 py-1.5 text-[10px] font-medium rounded-lg transition-colors disabled:opacity-40 ${
+                    className={`px-3 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
                       shortStart === key ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
                     }`}
                   >
