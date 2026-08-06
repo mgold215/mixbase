@@ -100,6 +100,12 @@ export const finalVideoLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 6 
 // box alongside an in-flight render.
 export const vizSaveLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 
+// Server-side free visualizer renders: 10 per hour per user. Each render is a
+// full ffmpeg encode (up to 30s of 1080p, measured ~2-16s of pinned CPU), and
+// like the visualizer saves it shares the 2-slot encoder gate — this limiter
+// caps how often one user can ask, the gate caps how many run at once.
+export const freeRenderLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
+
 // Feedback: 20 per hour per IP — public endpoint, stops spam
 export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 

@@ -118,16 +118,29 @@ async function blobDownload(url: string, baseName: string, fallbackExt: string):
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
+export type SaveMediaOptions = {
+  // iOS Safari only grants navigator.share() a few seconds of "transient
+  // activation" after a tap. Fetching a multi-megabyte video routinely outlives
+  // it — especially on cellular — and share() then throws NotAllowedError even
+  // though the bytes are sitting right here. When this callback is provided,
+  // that case hands the caller a finish() closure instead of degrading to a
+  // Files-app download: the caller shows a "tap to save" affordance, and the
+  // fresh tap re-runs the share with the ALREADY-fetched file (no second
+  // transfer), which lands the "Save Video → Photos" sheet reliably.
+  // finish() resolves normally if the user shared or dismissed the sheet.
+  onNeedsFinishTap?: (finish: () => Promise<void>) => void
+}
+
 /**
  * Save a remote media file to the device the way that platform expects:
  * share sheet with the file on touch devices (Photos-ready), true attachment
  * download everywhere else. Never navigates the page to the raw URL.
  */
-export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp4'): Promise<void> {
+export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp4', opts: SaveMediaOptions = {}): Promise<void> {
   // Touch devices: fetch the bytes and open the native share sheet so the user
   // can hit "Save Video" / "Save Image" (Photos) or AirDrop it. Any failure —
-  // no share support, file too big, transient-activation expired mid-fetch —
-  // falls through to the plain download below.
+  // no share support, file too big, transient-activation expired mid-fetch
+  // (unless onNeedsFinishTap is wired) — falls through to the plain download.
   if (isTouchDevice() && typeof navigator !== 'undefined' && typeof navigator.canShare === 'function') {
     try {
       const res = await fetchWithConnectTimeout(url)
@@ -146,8 +159,35 @@ export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp
       const filename = safeFileName(baseName, extFrom(url, type || null, fallbackExt))
       const file = new File([blob], filename, type ? { type } : undefined)
       if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] })
-        return
+        const finish = async () => {
+          try {
+            await navigator.share({ files: [file] })
+          } catch (e) {
+            // Dismissing the sheet is a completed interaction, not a failure.
+            if (e instanceof DOMException && e.name === 'AbortError') return
+            throw e
+          }
+        }
+        // If the browser exposes user-activation state and the fetch already
+        // burned it, don't bother throwing share() at a guaranteed rejection.
+        const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation
+        if (opts.onNeedsFinishTap && activation && !activation.isActive) {
+          opts.onNeedsFinishTap(finish)
+          return
+        }
+        try {
+          await navigator.share({ files: [file] })
+          return
+        } catch (e) {
+          if (e instanceof DOMException && e.name === 'AbortError') return
+          // Activation expired mid-fetch (older Safari has no userActivation
+          // probe, so this is the detection path there).
+          if (opts.onNeedsFinishTap && e instanceof DOMException && e.name === 'NotAllowedError') {
+            opts.onNeedsFinishTap(finish)
+            return
+          }
+          throw e
+        }
       }
     } catch (e) {
       // User closed the share sheet — that's a completed interaction, not an
@@ -175,6 +215,6 @@ export async function saveMedia(url: string, baseName: string, fallbackExt = 'mp
 }
 
 /** Back-compat name used by artwork call sites. Images are small — same flow. */
-export async function downloadImage(url: string, baseName: string): Promise<void> {
-  return saveMedia(url, baseName, 'jpg')
+export async function downloadImage(url: string, baseName: string, opts: SaveMediaOptions = {}): Promise<void> {
+  return saveMedia(url, baseName, 'jpg', opts)
 }

@@ -27,6 +27,20 @@ struct VisualizerView: View {
     @State private var motionPrompt = ""
     @State private var isGenerating = false
 
+    // Free generator state (server-side ffmpeg render — no AI credits).
+    // Options are the static contract of /api/visualizer/free.
+    @State private var freeFormat = "canvas"
+    @State private var freeEffect = "drift"
+    @State private var freeBpm = "122"
+    @State private var isFreeGenerating = false
+
+    private let freeFormats: [(id: String, label: String)] = [
+        ("canvas", "9:16 Canvas"), ("square", "1:1 Square"), ("youtube", "16:9 YouTube"),
+    ]
+    private let freeEffects: [(id: String, label: String)] = [
+        ("drift", "Cinematic Drift"), ("pulse", "Deep Pulse"), ("orbit", "Orbit"),
+    ]
+
     // Library state
     @State private var library: [Visualizer] = []
     @State private var isLoadingLibrary = true
@@ -197,6 +211,86 @@ struct VisualizerView: View {
                                 .font(.caption)
                                 .foregroundColor(.red)
                                 .padding(.horizontal)
+                        }
+                    }
+
+                    // MARK: - Free Generator
+                    // Server-side ffmpeg render of the artwork into a seamless
+                    // loop — the iOS counterpart of the web's free generator
+                    // (which records a browser canvas this platform doesn't have).
+                    if let artworkUrl, !artworkUrl.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Free Generator")
+                                .font(.headline)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .padding(.horizontal)
+
+                            Text("Animates your artwork into a seamless loop — free, no AI credits.")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .padding(.horizontal)
+
+                            // Format picker
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(freeFormats, id: \.id) { format in
+                                        chip(format.label, selected: freeFormat == format.id) {
+                                            freeFormat = format.id
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            // Effect picker
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(freeEffects, id: \.id) { effect in
+                                        chip(effect.label, selected: freeEffect == effect.id) {
+                                            freeEffect = effect.id
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            // BPM — only the beat-synced effect uses it
+                            if freeEffect == "pulse" {
+                                HStack(spacing: 8) {
+                                    Text("Track BPM")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                    TextField("122", text: $freeBpm)
+                                        .keyboardType(.numberPad)
+                                        .font(.caption)
+                                        .foregroundColor(Color(hex: "#f0f0f0"))
+                                        .padding(8)
+                                        .frame(width: 72)
+                                        .background(Color(hex: "#161616"))
+                                        .cornerRadius(8)
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            Button(action: generateFree) {
+                                HStack {
+                                    if isFreeGenerating {
+                                        ProgressView().tint(Color(hex: "#080808"))
+                                        Text("Rendering…")
+                                    } else {
+                                        Image(systemName: "film")
+                                        Text("Generate Free Visualizer")
+                                    }
+                                }
+                                .font(.headline)
+                                .foregroundColor(Color(hex: "#080808"))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(isFreeGenerating ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                                .cornerRadius(12)
+                            }
+                            .disabled(isFreeGenerating || isGenerating)
+                            .padding(.horizontal)
                         }
                     }
 
@@ -444,6 +538,31 @@ struct VisualizerView: View {
                 errorMessage = error.localizedDescription
             }
             isGenerating = false
+        }
+    }
+
+    private func generateFree() {
+        guard let artworkUrl else { return }
+        isFreeGenerating = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let url = try await MixbaseAPI.shared.generateFreeVisualizer(
+                    projectId: projectId,
+                    imageUrl: artworkUrl,
+                    format: freeFormat,
+                    effect: freeEffect,
+                    bpm: freeEffect == "pulse" ? Int(freeBpm) : nil
+                )
+                // Free renders always persist server-side — pin for instant
+                // payoff and refresh the library so it appears there too.
+                await pin(url)
+                await loadLibrary()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isFreeGenerating = false
         }
     }
 
