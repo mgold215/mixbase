@@ -32,6 +32,11 @@ struct VisualizerView: View {
     @State private var isLoadingLibrary = true
     @State private var pinningUrl: String?    // url currently being pinned (spinner)
 
+    // Save-to-Photos state: the url currently downloading (spinner) and the
+    // last one that landed in Photos (brief checkmark so the tap visibly worked).
+    @State private var savingToPhotosUrl: String?
+    @State private var savedToPhotosUrl: String?
+
     @State private var errorMessage: String?
 
     private var selectedModel: RunwayModel? {
@@ -58,14 +63,18 @@ struct VisualizerView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .padding(.horizontal)
 
-                            Button(action: { Task { await pin(nil) } }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "pin.slash")
-                                    Text("Unpin")
+                            HStack(spacing: 16) {
+                                Button(action: { Task { await pin(nil) } }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "pin.slash")
+                                        Text("Unpin")
+                                    }
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.gray)
                                 }
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.gray)
+
+                                saveToPhotosButton(url: pinnedUrl, labeled: true)
                             }
                             .padding(.horizontal)
                         } else {
@@ -306,6 +315,9 @@ struct VisualizerView: View {
                 }
             }
 
+            // Download to Photos
+            saveToPhotosButton(url: visualizer.videoUrl, labeled: false)
+
             // Delete
             Button(action: { Task { await delete(visualizer) } }) {
                 Image(systemName: "trash")
@@ -315,6 +327,52 @@ struct VisualizerView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
+    }
+
+    // MARK: - Save to Photos
+    // Shared by the pinned section (labeled) and library rows (icon-only).
+    // Three states per url: downloading (spinner), just saved (checkmark), idle.
+    @ViewBuilder
+    private func saveToPhotosButton(url: String, labeled: Bool) -> some View {
+        if savingToPhotosUrl == url {
+            ProgressView().tint(Color(hex: "#2dd4bf"))
+        } else if savedToPhotosUrl == url {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                if labeled { Text("Saved") }
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(Color(hex: "#2dd4bf"))
+        } else {
+            Button(action: { Task { await saveToPhotos(url) } }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down")
+                    if labeled { Text("Save to Photos") }
+                }
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(labeled ? Color(hex: "#2dd4bf") : .gray)
+            }
+            .disabled(savingToPhotosUrl != nil)
+        }
+    }
+
+    private func saveToPhotos(_ url: String) async {
+        savingToPhotosUrl = url
+        errorMessage = nil
+        do {
+            try await PhotoLibrarySaver.saveVideo(from: url)
+            savedToPhotosUrl = url
+            // Let the checkmark breathe, then return to the download icon.
+            Task {
+                try? await Task.sleep(for: .seconds(2.5))
+                if savedToPhotosUrl == url { savedToPhotosUrl = nil }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        savingToPhotosUrl = nil
     }
 
     // MARK: - Actions
