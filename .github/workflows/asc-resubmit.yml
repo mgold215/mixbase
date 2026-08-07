@@ -161,7 +161,19 @@ jobs:
             if (!cancel.ok) console.error(JSON.stringify(cancel.json ?? cancel.text).slice(0, 400))
           }
 
-          let submission = (subs.data ?? []).find(s => s.attributes.state === 'READY_FOR_REVIEW')
+          // The version is often already held by one of the drafts
+          // (ITEM_PART_OF_ANOTHER_SUBMISSION) — find the draft that actually
+          // contains an item and submit that one; only attach when none do.
+          const drafts = (subs.data ?? []).filter(s => s.attributes.state === 'READY_FOR_REVIEW')
+          let submission = null
+          let hasItem = false
+          for (const d of drafts) {
+            const di = await api('GET', `/reviewSubmissions/${d.id}/items`)
+            const n = (di.json?.data ?? []).length
+            console.log(`Draft ${d.id}: ${n} item(s)`)
+            if (n > 0 && !submission) { submission = d; hasItem = true }
+          }
+          if (!submission) submission = drafts[0] ?? null
           if (!submission) {
             console.log('No draft available — creating a new review submission...')
             const created = must(await api('POST', '/reviewSubmissions', {
@@ -172,23 +184,22 @@ jobs:
               },
             }), 'create review submission')
             submission = created.data
-          } else {
-            console.log(`Using draft submission ${submission.id}`)
           }
 
-          const add = await api('POST', '/reviewSubmissionItems', {
-            data: {
-              type: 'reviewSubmissionItems',
-              relationships: {
-                reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+          console.log(`Submitting via ${submission.id}${hasItem ? ' (already contains the version item)' : ''}`)
+          if (!hasItem) {
+            const add = await api('POST', '/reviewSubmissionItems', {
+              data: {
+                type: 'reviewSubmissionItems',
+                relationships: {
+                  reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
+                  appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+                },
               },
-            },
-          })
-          // A 409 here can just mean the draft already carries this version —
-          // log it and let the submit attempt decide.
-          console.log(`Attach version to submission: HTTP ${add.status}`)
-          if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
+            })
+            console.log(`Attach version to submission: HTTP ${add.status}`)
+            if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
+          }
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {
             data: { type: 'reviewSubmissions', id: submission.id, attributes: { submitted: true } },
