@@ -179,6 +179,31 @@ jobs:
             }), 'attach version to submission')
           } else {
             console.log(`Reusing open submission ${submission.id} (state=${submission.attributes.state})`)
+            // A rejection leaves the submission's item in REJECTED state, which
+            // blocks resubmission ("Version is not ready to be submitted").
+            // Apple's flow: remove the rejected item, re-attach the version as
+            // a fresh item, then submit.
+            if (submission.attributes.state === 'UNRESOLVED_ISSUES') {
+              const items = must(await api('GET', `/reviewSubmissions/${submission.id}/items`), 'list submission items')
+              for (const it of items.data ?? []) {
+                if (it.attributes.state === 'REJECTED') {
+                  const del = await api('DELETE', `/reviewSubmissionItems/${it.id}`)
+                  console.log(`Deleted rejected item ${it.id}: HTTP ${del.status}`)
+                  if (!del.ok) console.error(JSON.stringify(del.json ?? del.text).slice(0, 400))
+                }
+              }
+              const add = await api('POST', '/reviewSubmissionItems', {
+                data: {
+                  type: 'reviewSubmissionItems',
+                  relationships: {
+                    reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
+                    appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+                  },
+                },
+              })
+              console.log(`Re-attached version to submission: HTTP ${add.status}`)
+              if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 600))
+            }
           }
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {
