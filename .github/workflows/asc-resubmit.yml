@@ -122,6 +122,23 @@ jobs:
             console.log(`Version ${v.attributes.versionString} (${v.id}): state=${state} created=${v.attributes.createdDate}`)
           }
 
+          // Deep diagnostics: the 409 "Version is not ready to be submitted"
+          // usually means a missing/expired attached build or a stuck item.
+          const vid = versions[0]?.id
+          if (vid) {
+            const b = await api('GET', `/appStoreVersions/${vid}/build?fields[builds]=version,processingState,expired,uploadedDate`)
+            console.log(`Attached build: ${JSON.stringify(b.json?.data ?? b.text).slice(0, 400)}`)
+          }
+          const builds = await api('GET', `/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=5&fields[builds]=version,processingState,expired,uploadedDate`)
+          for (const bb of builds.json?.data ?? []) {
+            console.log(`Build ${bb.attributes.version} (${bb.id}): ${bb.attributes.processingState} expired=${bb.attributes.expired} uploaded=${bb.attributes.uploadedDate}`)
+          }
+          const rejected = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
+          if (rejected) {
+            const items = await api('GET', `/reviewSubmissions/${rejected.id}/items`)
+            for (const it of items.json?.data ?? []) console.log(`Item ${it.id}: state=${it.attributes.state}`)
+          }
+
           if (MODE === 'inspect') { console.log('Mode=inspect — no changes made.'); process.exit(0) }
 
           // ── Submit ─────────────────────────────────────────────────────────
