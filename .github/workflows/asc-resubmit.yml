@@ -131,7 +131,11 @@ jobs:
             process.exit(0)
           }
 
-          let submission = (subs.data ?? []).find(s => ['UNRESOLVED_ISSUES', 'READY_FOR_REVIEW'].includes(s.attributes.state))
+          // Prefer the genuinely rejected submission (UNRESOLVED_ISSUES) over
+          // never-submitted READY_FOR_REVIEW drafts — this app has several
+          // empty drafts that would otherwise shadow the real one.
+          let submission = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
+            ?? (subs.data ?? []).find(s => s.attributes.state === 'READY_FOR_REVIEW')
 
           if (!submission) {
             // No open submission — build one around the newest submittable version.
