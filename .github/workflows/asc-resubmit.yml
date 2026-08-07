@@ -148,18 +148,22 @@ jobs:
             process.exit(0)
           }
 
-          // Prefer the genuinely rejected submission (UNRESOLVED_ISSUES) over
-          // never-submitted READY_FOR_REVIEW drafts — this app has several
-          // empty drafts that would otherwise shadow the real one.
-          let submission = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
-            ?? (subs.data ?? []).find(s => s.attributes.state === 'READY_FOR_REVIEW')
+          // A rejected (UNRESOLVED_ISSUES) submission is immutable through this
+          // API — its item can't be deleted ("Item was already submitted") and
+          // no items can be added. Cancel it to release the version, then go
+          // back to review through a draft (or fresh) submission.
+          const rejectedSub = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
+          if (rejectedSub) {
+            const cancel = await api('PATCH', `/reviewSubmissions/${rejectedSub.id}`, {
+              data: { type: 'reviewSubmissions', id: rejectedSub.id, attributes: { canceled: true } },
+            })
+            console.log(`Canceled rejected submission ${rejectedSub.id}: HTTP ${cancel.status}`)
+            if (!cancel.ok) console.error(JSON.stringify(cancel.json ?? cancel.text).slice(0, 400))
+          }
 
+          let submission = (subs.data ?? []).find(s => s.attributes.state === 'READY_FOR_REVIEW')
           if (!submission) {
-            // No open submission — build one around the newest submittable version.
-            const SUBMITTABLE = ['REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED', 'INVALID_BINARY', 'PREPARE_FOR_SUBMISSION']
-            const candidate = versions.find(v => SUBMITTABLE.includes(v.attributes.appVersionState ?? v.attributes.appStoreState))
-            if (!candidate) { console.error('No open submission and no version in a submittable state — nothing to resubmit.'); process.exit(1) }
-            console.log(`Creating a new review submission for version ${candidate.attributes.versionString}...`)
+            console.log('No draft available — creating a new review submission...')
             const created = must(await api('POST', '/reviewSubmissions', {
               data: {
                 type: 'reviewSubmissions',
@@ -168,43 +172,23 @@ jobs:
               },
             }), 'create review submission')
             submission = created.data
-            must(await api('POST', '/reviewSubmissionItems', {
-              data: {
-                type: 'reviewSubmissionItems',
-                relationships: {
-                  reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                  appStoreVersion: { data: { type: 'appStoreVersions', id: candidate.id } },
-                },
-              },
-            }), 'attach version to submission')
           } else {
-            console.log(`Reusing open submission ${submission.id} (state=${submission.attributes.state})`)
-            // A rejection leaves the submission's item in REJECTED state, which
-            // blocks resubmission ("Version is not ready to be submitted").
-            // Apple's flow: remove the rejected item, re-attach the version as
-            // a fresh item, then submit.
-            if (submission.attributes.state === 'UNRESOLVED_ISSUES') {
-              const items = must(await api('GET', `/reviewSubmissions/${submission.id}/items`), 'list submission items')
-              for (const it of items.data ?? []) {
-                if (it.attributes.state === 'REJECTED') {
-                  const del = await api('DELETE', `/reviewSubmissionItems/${it.id}`)
-                  console.log(`Deleted rejected item ${it.id}: HTTP ${del.status}`)
-                  if (!del.ok) console.error(JSON.stringify(del.json ?? del.text).slice(0, 400))
-                }
-              }
-              const add = await api('POST', '/reviewSubmissionItems', {
-                data: {
-                  type: 'reviewSubmissionItems',
-                  relationships: {
-                    reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                    appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
-                  },
-                },
-              })
-              console.log(`Re-attached version to submission: HTTP ${add.status}`)
-              if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 600))
-            }
+            console.log(`Using draft submission ${submission.id}`)
           }
+
+          const add = await api('POST', '/reviewSubmissionItems', {
+            data: {
+              type: 'reviewSubmissionItems',
+              relationships: {
+                reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
+                appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+              },
+            },
+          })
+          // A 409 here can just mean the draft already carries this version —
+          // log it and let the submit attempt decide.
+          console.log(`Attach version to submission: HTTP ${add.status}`)
+          if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {
             data: { type: 'reviewSubmissions', id: submission.id, attributes: { submitted: true } },
