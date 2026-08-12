@@ -117,6 +117,10 @@ export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 // community feed.
 export const feedCommentLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// Content reports + user blocks (UGC moderation, Guideline 1.2). Generous —
+// blocking a spammer's whole comment history takes several actions in a row.
+export const moderationLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
+
 // Catalog lookups (Spotify/Deezer discography + ISRC pull): 10 per hour per
 // user — each lookup fans out into dozens of upstream API calls, and a
 // catalog rarely changes mid-session.

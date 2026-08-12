@@ -3,7 +3,7 @@
 // Server-side only (supabaseAdmin). Shared by the /feed page and GET /api/feed.
 
 import { supabaseAdmin } from './supabase'
-import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from './schema-heal'
+import { ensureFeedCommentsTable, isMissingFeedCommentsTable, ensureUgcModerationTables, isMissingUgcModerationTable } from './schema-heal'
 import { publicArtistName } from './display-name'
 
 export type FeedComment = {
@@ -137,7 +137,70 @@ export async function getFeedCommentsForVersions(versionIds: string[]): Promise<
   }
 }
 
-export async function getFeed(): Promise<FeedItem[]> {
+// Reports needed from distinct users before content is hidden from EVERYONE
+// (the reporter stops seeing it immediately). Keep in sync with the same
+// constant in /api/feed/report.
+const AUTO_HIDE_THRESHOLD = 3
+
+/** Moderation state for one viewer: who they've blocked, what they've
+ *  reported, and which content has crossed the global report threshold.
+ *  TOTAL: any failure (including the tables not existing yet) degrades to
+ *  "no filtering" rather than taking down the feed. */
+async function getModerationState(viewerId: string | undefined, versionIds: string[]) {
+  const empty = {
+    blockedIds: new Set<string>(),
+    reportedVersionIds: new Set<string>(),
+    reportedCommentIds: new Set<string>(),
+    hiddenVersionIds: new Set<string>(),
+  }
+  try {
+    const fetchBoth = () => Promise.all([
+      viewerId
+        ? supabaseAdmin.from('mb_user_blocks').select('blocked_id').eq('blocker_id', viewerId)
+        : Promise.resolve({ data: [], error: null }),
+      versionIds.length > 0
+        ? supabaseAdmin.from('mb_content_reports').select('content_id, reporter_id').eq('content_type', 'version').in('content_id', versionIds)
+        : Promise.resolve({ data: [], error: null }),
+      viewerId
+        ? supabaseAdmin.from('mb_content_reports').select('content_id').eq('content_type', 'comment').eq('reporter_id', viewerId)
+        : Promise.resolve({ data: [], error: null }),
+    ])
+    let [blocksRes, versionReportsRes, commentReportsRes] = await fetchBoth()
+    const firstError = blocksRes.error ?? versionReportsRes.error ?? commentReportsRes.error
+    if (firstError && isMissingUgcModerationTable(firstError) && await ensureUgcModerationTables()) {
+      ;[blocksRes, versionReportsRes, commentReportsRes] = await fetchBoth()
+    }
+    if (blocksRes.error || versionReportsRes.error || commentReportsRes.error) {
+      console.error('[feed] moderation queries failed:',
+        (blocksRes.error ?? versionReportsRes.error ?? commentReportsRes.error)?.message)
+      return empty
+    }
+
+    const reportersByVersion = new Map<string, Set<string>>()
+    const reportedVersionIds = new Set<string>()
+    for (const r of versionReportsRes.data ?? []) {
+      const set = reportersByVersion.get(r.content_id) ?? new Set<string>()
+      set.add(r.reporter_id)
+      reportersByVersion.set(r.content_id, set)
+      if (viewerId && r.reporter_id === viewerId) reportedVersionIds.add(r.content_id)
+    }
+    const hiddenVersionIds = new Set<string>()
+    for (const [id, reporters] of reportersByVersion) {
+      if (reporters.size >= AUTO_HIDE_THRESHOLD) hiddenVersionIds.add(id)
+    }
+    return {
+      blockedIds: new Set((blocksRes.data ?? []).map(b => b.blocked_id)),
+      reportedVersionIds,
+      reportedCommentIds: new Set((commentReportsRes.data ?? []).map(r => r.content_id)),
+      hiddenVersionIds,
+    }
+  } catch (e) {
+    console.error('[feed] moderation state load threw:', e instanceof Error ? e.message : e)
+    return empty
+  }
+}
+
+export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
   const { data: versions, error } = await supabaseAdmin
     .from('mb_versions')
     .select('id, project_id, label, version_number, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
@@ -188,9 +251,11 @@ export async function getFeed(): Promise<FeedItem[]> {
     uploaderIds.length > 0
       ? supabaseAdmin.from('profiles').select('id, artist_name, display_name').in('id', uploaderIds)
       : Promise.resolve({ data: [] as { id: string; artist_name: string | null; display_name: string | null }[], error: null }),
+    getModerationState(viewerId, versionIds),
   ])
   let commentsRes = results[0]
   const profilesRes = results[1]
+  const moderation = results[2]
 
   // Deploy may have beaten migration 022 — heal the table and retry once.
   // A comments failure must never take down the whole feed either way.
@@ -219,6 +284,12 @@ export async function getFeed(): Promise<FeedItem[]> {
 
   const commentsByVersion = new Map<string, FeedComment[]>()
   for (const c of commentRows) {
+    // UGC moderation (Guideline 1.2): hide comments from users this viewer
+    // blocked and comments this viewer reported. (Comments past the global
+    // report threshold are hard-deleted by /api/feed/report, so they don't
+    // reach this query at all.)
+    if (moderation.blockedIds.has(c.user_id)) continue
+    if (moderation.reportedCommentIds.has(c.id)) continue
     const list = commentsByVersion.get(c.version_id) ?? []
     list.push({
       id: c.id,
@@ -231,7 +302,15 @@ export async function getFeed(): Promise<FeedItem[]> {
     commentsByVersion.set(c.version_id, list)
   }
 
-  return grouped.map(({ latest: v, older }) => ({
+  return grouped.filter(({ latest: v }) => {
+    // UGC moderation (Guideline 1.2): drop feed items from blocked users,
+    // items this viewer reported, and items past the global report threshold.
+    const ownerId = v.project?.user_id
+    if (ownerId && moderation.blockedIds.has(ownerId)) return false
+    if (moderation.reportedVersionIds.has(v.id)) return false
+    if (moderation.hiddenVersionIds.has(v.id)) return false
+    return true
+  }).map(({ latest: v, older }) => ({
     version_id: v.id,
     project_id: v.project_id,
     user_id: v.project?.user_id ?? '',

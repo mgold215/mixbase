@@ -111,6 +111,15 @@ struct SignUpView: View {
                     .disabled(authService.isLoading || email.isEmpty || password.isEmpty || confirm.isEmpty)
                     .opacity((authService.isLoading || email.isEmpty || password.isEmpty || confirm.isEmpty) ? 0.5 : 1)
 
+                    // UGC apps must bind users to terms that prohibit
+                    // objectionable content (Guideline 1.2).
+                    Text("By creating an account you agree to our [Terms of Service](https://mixbase.app/terms), which prohibit abusive or objectionable content.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "#6b6050"))
+                        .tint(Color(hex: "#2dd4bf"))
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 2)
+
                     HStack(spacing: 4) {
                         Text("Already have an account?")
                             .font(.system(size: 13))
@@ -199,7 +208,9 @@ struct AppleSignUpButton: UIViewRepresentable {
 
             let provider = ASAuthorizationAppleIDProvider()
             let request = provider.createRequest()
-            request.requestedScopes = [.email, .fullName]
+            // Only request what the app actually uses (Guideline 5.1.1 data
+            // minimization): the name was never read anywhere.
+            request.requestedScopes = [.email]
             request.nonce = sha256(nonce)
 
             let controller = ASAuthorizationController(authorizationRequests: [request])

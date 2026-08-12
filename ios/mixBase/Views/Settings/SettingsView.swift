@@ -167,46 +167,21 @@ struct SettingsView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
-    // MARK: - Delete account via Supabase
+    // MARK: - Delete account
+    // Guideline 5.1.1(v): this flow must always work. Routed through
+    // MixbaseAPI so an expired access token is refreshed and retried instead
+    // of dying on a hand-rolled request with a stale cookie.
     private func performDelete() async {
         guard deleteText == "DELETE" else { return }
         isDeleting = true
         deleteError = nil
 
-        guard let token = KeychainService.load(forKey: "access_token"),
-              let userId = authService.userId else {
-            deleteError = "Not authenticated"
-            isDeleting = false
-            return
-        }
-
-        // Call the web API to delete account and all data
-        guard let url = URL(string: "https://mixbase.app/api/auth/delete-account") else { return }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Pass the access token as a cookie so middleware can validate and inject X-User-Id
-        request.setValue("sb-access-token=\(token)", forHTTPHeaderField: "Cookie")
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                deleteError = "Unexpected response"
-                isDeleting = false
-                return
-            }
-
-            if http.statusCode == 200 {
-                // Success — sign out locally
-                authService.signOut()
-            } else {
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                deleteError = (json?["error"] as? String) ?? "Failed to delete account"
-                isDeleting = false
-            }
+            try await MixbaseAPI.shared.deleteAccount()
+            // Success — sign out locally
+            authService.signOut()
         } catch {
-            deleteError = "Network error. Try again."
+            deleteError = error.localizedDescription
             isDeleting = false
         }
     }

@@ -172,6 +172,14 @@ export async function POST(request: NextRequest) {
   await del(supabaseAdmin.from('mb_releases').delete().eq('user_id', userId), 'mb_releases')
   await del(supabaseAdmin.from('mb_projects').delete().eq('user_id', userId), 'mb_projects')
 
+  // Submitbase rows (migration 013) reference auth.users WITHOUT on delete
+  // cascade, so leaving them makes auth.admin.deleteUser below fail with an FK
+  // violation — the account becomes undeletable (a Guideline 5.1.1(v) bug, not
+  // just a 500). Deleting the user's own curators leaves the shared starter
+  // directory (user_id IS NULL) untouched.
+  await del(supabaseAdmin.from('sb_submissions').delete().eq('user_id', userId), 'sb_submissions')
+  await del(supabaseAdmin.from('sb_curators').delete().eq('user_id', userId), 'sb_curators')
+
   if (dbErrors.length > 0) {
     // Leave the account intact and retryable rather than half-deleting it.
     console.error('[delete-account] aborting before auth deletion for', userId, dbErrors)

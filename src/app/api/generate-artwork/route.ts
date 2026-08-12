@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
   }
   if (!gate.allowed) {
     return NextResponse.json(
-      { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },
+      { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Your quota resets at the start of next month.`, upgrade: true },
       { status: 403 }
     )
   }

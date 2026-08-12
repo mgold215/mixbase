@@ -29,7 +29,8 @@ jobs:
   resubmit:
     name: Resubmit to App Review
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Long enough to wait out TestFlight build processing before attaching.
+    timeout-minutes: 40
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -113,14 +114,112 @@ jobs:
             process.exit(0)
           }
 
-          let submission = (subs.data ?? []).find(s => ['UNRESOLVED_ISSUES', 'READY_FOR_REVIEW'].includes(s.attributes.state))
+          const vid = versions[0]?.id
+          if (!vid) { console.error('No appStoreVersion found.'); process.exit(1) }
 
+          // 1. Wait for the newest processed build and attach it to the version.
+          //    The 3.1.1/1.2 fixes only exist in the new binary — resubmitting
+          //    the old build would be an instant third rejection.
+          const attachedRes = await api('GET', `/appStoreVersions/${vid}/build?fields[builds]=version,uploadedDate`)
+          const attached = attachedRes.json?.data ?? null
+          console.log(`Currently attached build: ${attached ? attached.attributes.version : 'none'}`)
+          let newest = null
+          for (let i = 0; i < 30; i++) {   // up to ~25 min for upload+processing
+            const bs = must(await api('GET', `/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate`), 'list builds')
+            const b = bs.data?.[0]
+            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID'
+                && (!attached || b.id !== attached.id)) { newest = b; break }
+            console.log(`Waiting for a new VALID build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
+            await new Promise(r => setTimeout(r, 50_000))
+          }
+          if (!newest) { console.error('No new VALID build appeared — aborting before touching the submission.'); process.exit(1) }
+          must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
+            data: { type: 'builds', id: newest.id },
+          }), 'attach new build to version')
+          console.log(`Attached build ${newest.attributes.version} (${newest.id}) to the version`)
+
+          // 2. Refresh the App Review notes: no tier/plan mentions, disclose
+          //    the UGC moderation, and answer the 3.1.1 rejection directly.
+          const NOTES = [
+            'mixBase is a music production tool for managing mix versions and releases.',
+            '',
+            'Getting started: sign in with the demo account (see App Review credentials). It is pre-loaded with 3 released tracks with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.',
+            '',
+            'Regarding Guideline 3.1.1 (previous rejection): this build removes all access to and references of paid functionality. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, and AI artwork generation (included with every free account, subject to a monthly quota). The app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Visualizer video generation was removed from the app entirely.',
+            '',
+            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
+            '',
+            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. Test with a throwaway account via "Create one" on the sign-in screen.',
+            '',
+            'The app requires an internet connection. There are no in-app purchases; the app is free.',
+          ].join('\n')
+          const rd = await api('GET', `/appStoreVersions/${vid}/appStoreReviewDetail`)
+          if (rd.ok && rd.json?.data?.id) {
+            const patched = await api('PATCH', `/appStoreReviewDetails/${rd.json.data.id}`, {
+              data: { type: 'appStoreReviewDetails', id: rd.json.data.id, attributes: { notes: NOTES } },
+            })
+            console.log(`Review notes update: HTTP ${patched.status}`)
+            if (!patched.ok) console.error(JSON.stringify(patched.json ?? patched.text).slice(0, 400))
+          } else {
+            console.log('No appStoreReviewDetail found — skipping notes update')
+          }
+
+          // 3. Fix the listing description (claims features the app lacks —
+          //    Guideline 2.3.1). Non-fatal if it can't be edited right now.
+          const DESCRIPTION = [
+            'mixBase is the version tracker built for music producers. Upload mixes, listen back to every version, collect feedback, and manage your release pipeline - all in one place.',
+            '',
+            "Whether you're bouncing rough demos or polishing a final master, mixBase keeps every version organized so nothing gets lost.",
+            '',
+            'KEY FEATURES',
+            '',
+            '- Upload and organize mix versions for every project',
+            '- Listen to any version of any track with a full-featured audio player',
+            '- Track project status from rough idea to released',
+            '- Share private listening links and collect feedback from collaborators',
+            '- Hear what other artists are working on in the community feed',
+            '- Manage your release pipeline with checklists for mastering, artwork, DSP submission, and more',
+            '- Organize tracks into albums, EPs, and playlists',
+            '- Generate AI-powered artwork concepts for your releases',
+            '- Dark interface designed for studio environments',
+            '',
+            'mixBase is free to use. Create an account and start tracking your music today.',
+          ].join('\n')
+          const locs = await api('GET', `/appStoreVersions/${vid}/appStoreVersionLocalizations`)
+          const enUS = (locs.json?.data ?? []).find(l => (l.attributes.locale ?? '').startsWith('en'))
+          if (enUS) {
+            const patched = await api('PATCH', `/appStoreVersionLocalizations/${enUS.id}`, {
+              data: { type: 'appStoreVersionLocalizations', id: enUS.id, attributes: { description: DESCRIPTION } },
+            })
+            console.log(`Description update (${enUS.attributes.locale}): HTTP ${patched.status}`)
+            if (!patched.ok) console.error(JSON.stringify(patched.json ?? patched.text).slice(0, 400))
+          }
+
+          // 4. A rejected (UNRESOLVED_ISSUES) submission is immutable through
+          //    this API — cancel it to release the version, then go back to
+          //    review through a draft (or fresh) submission.
+          const rejectedSub = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
+          if (rejectedSub) {
+            const cancel = await api('PATCH', `/reviewSubmissions/${rejectedSub.id}`, {
+              data: { type: 'reviewSubmissions', id: rejectedSub.id, attributes: { canceled: true } },
+            })
+            console.log(`Canceled rejected submission ${rejectedSub.id}: HTTP ${cancel.status}`)
+            if (!cancel.ok) console.error(JSON.stringify(cancel.json ?? cancel.text).slice(0, 400))
+          }
+
+          // 5. Submit via the draft that holds the version (or attach it).
+          const drafts = (subs.data ?? []).filter(s => s.attributes.state === 'READY_FOR_REVIEW')
+          let submission = null
+          let hasItem = false
+          for (const d of drafts) {
+            const di = await api('GET', `/reviewSubmissions/${d.id}/items`)
+            const n = (di.json?.data ?? []).length
+            console.log(`Draft ${d.id}: ${n} item(s)`)
+            if (n > 0 && !submission) { submission = d; hasItem = true }
+          }
+          if (!submission) submission = drafts[0] ?? null
           if (!submission) {
-            // No open submission — build one around the newest submittable version.
-            const SUBMITTABLE = ['REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED', 'INVALID_BINARY', 'PREPARE_FOR_SUBMISSION']
-            const candidate = versions.find(v => SUBMITTABLE.includes(v.attributes.appVersionState ?? v.attributes.appStoreState))
-            if (!candidate) { console.error('No open submission and no version in a submittable state — nothing to resubmit.'); process.exit(1) }
-            console.log(`Creating a new review submission for version ${candidate.attributes.versionString}...`)
+            console.log('No draft available — creating a new review submission...')
             const created = must(await api('POST', '/reviewSubmissions', {
               data: {
                 type: 'reviewSubmissions',
@@ -129,17 +228,20 @@ jobs:
               },
             }), 'create review submission')
             submission = created.data
-            must(await api('POST', '/reviewSubmissionItems', {
+          }
+          console.log(`Submitting via ${submission.id}${hasItem ? ' (already contains the version item)' : ''}`)
+          if (!hasItem) {
+            const add = await api('POST', '/reviewSubmissionItems', {
               data: {
                 type: 'reviewSubmissionItems',
                 relationships: {
                   reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                  appStoreVersion: { data: { type: 'appStoreVersions', id: candidate.id } },
+                  appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
                 },
               },
-            }), 'attach version to submission')
-          } else {
-            console.log(`Reusing open submission ${submission.id} (state=${submission.attributes.state})`)
+            })
+            console.log(`Attach version to submission: HTTP ${add.status}`)
+            if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
           }
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {

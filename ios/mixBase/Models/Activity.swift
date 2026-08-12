@@ -13,8 +13,11 @@ struct Activity: Codable, Identifiable {
     // The kind of activity — e.g. "version_created", "release_updated", "feedback_added"
     let type: String
 
-    // Which project this activity is related to
-    let projectId: UUID
+    // Which project this activity is related to. OPTIONAL: the web writes
+    // activity rows with a null project_id (e.g. account-level events), and a
+    // non-optional here made the whole activity decode — and with it the Home
+    // dashboard — fail permanently the moment one such row existed.
+    let projectId: UUID?
 
     // Optional: which version this activity is about (if applicable)
     let versionId: UUID?

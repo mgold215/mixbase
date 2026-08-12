@@ -60,7 +60,12 @@ export default function TermsPage() {
               <li>Use automated tools to scrape, crawl, or overload our infrastructure</li>
               <li>Circumvent any security or access control measures</li>
               <li>Use the Service for any illegal purpose</li>
+              <li>Post abusive, harassing, hateful, or otherwise objectionable content anywhere on the Service, including the community feed and comments</li>
             </ul>
+            <p className="mt-2">
+              We have zero tolerance for objectionable content and abusive behavior. Content can be reported and users blocked directly in the apps;
+              we review reports within 24 hours and remove violating content and, where warranted, the accounts that posted it.
+            </p>
           </section>
 
           <section>

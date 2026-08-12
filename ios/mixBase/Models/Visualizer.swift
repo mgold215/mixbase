@@ -37,17 +37,5 @@ struct Visualizer: Codable, Identifiable {
     }
 }
 
-// MARK: - RunwayModel
-// An available image-to-video model, as returned by GET /api/visualizer/runway.
-
-struct RunwayModel: Codable, Identifiable {
-    let id: String
-    let label: String
-    let durations: [Int]
-    let ratios: [RunwayRatio]
-}
-
-struct RunwayRatio: Codable, Hashable {
-    let value: String   // e.g. "720:1280"
-    let label: String   // e.g. "9:16 portrait"
-}
+// (RunwayModel/RunwayRatio removed with the in-app generator — visualizer
+// generation is web-only; see MixbaseAPI's Visualizers note re Guideline 3.1.1.)

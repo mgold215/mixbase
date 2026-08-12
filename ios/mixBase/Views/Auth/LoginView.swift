@@ -186,7 +186,9 @@ struct AppleSignInButton: UIViewRepresentable {
 
             let provider = ASAuthorizationAppleIDProvider()
             let request = provider.createRequest()
-            request.requestedScopes = [.email, .fullName]
+            // Only request what the app actually uses (Guideline 5.1.1 data
+            // minimization): the name was never read anywhere.
+            request.requestedScopes = [.email]
             request.nonce = sha256(nonce)
 
             let controller = ASAuthorizationController(authorizationRequests: [request])

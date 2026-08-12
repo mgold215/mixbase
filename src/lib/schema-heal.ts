@@ -538,6 +538,55 @@ export function isMissingFeedCommentsTable(error: { code?: string; message?: str
   return !!error.message && error.message.includes('mb_feed_comments') && /does not exist|relation/.test(error.message)
 }
 
+// ── Migration 030: UGC moderation (content reports + user blocks) ────────────
+// App Store Guideline 1.2 requires the community feed to have report and block
+// mechanisms. Same deploy-beats-the-migration race as the other heals: the
+// report/block routes and the feed's filter queries heal on the specific
+// missing-relation error and retry. Tables are server-only (RLS on, no
+// policies), so there is no CREATE POLICY to guard.
+
+const UGC_MODERATION_SQL = `
+create table if not exists mb_content_reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references auth.users(id) on delete cascade,
+  content_type text not null check (content_type in ('version', 'comment')),
+  content_id uuid not null,
+  reason text,
+  created_at timestamptz not null default now(),
+  unique (reporter_id, content_type, content_id)
+);
+alter table mb_content_reports enable row level security;
+create index if not exists idx_content_reports_content on mb_content_reports(content_type, content_id);
+create table if not exists mb_user_blocks (
+  id uuid primary key default gen_random_uuid(),
+  blocker_id uuid not null references auth.users(id) on delete cascade,
+  blocked_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (blocker_id, blocked_id)
+);
+alter table mb_user_blocks enable row level security;
+create index if not exists idx_user_blocks_blocker on mb_user_blocks(blocker_id);`
+
+let ugcModerationEnsured: Promise<boolean> | null = null
+
+export function ensureUgcModerationTables(): Promise<boolean> {
+  if (!ugcModerationEnsured) {
+    ugcModerationEnsured = runQuery(UGC_MODERATION_SQL, 'ugc moderation tables')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) ugcModerationEnsured = null
+        return ok
+      })
+  }
+  return ugcModerationEnsured
+}
+
+/** True when a PostgREST error is the missing-relation failure the UGC heal fixes. */
+export function isMissingUgcModerationTable(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return !!error.message && /mb_content_reports|mb_user_blocks/.test(error.message) && /does not exist|relation/.test(error.message)
+}
+
 // ── Migration 026: DistroKid metadata + waterfall sequencing ─────────────────
 // The release routes write these mb_releases columns (details editor PATCH,
 // waterfall POST). Same deploy-beats-the-migration race as the other heals:
