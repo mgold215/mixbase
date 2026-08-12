@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    return NextResponse.json(await getFeed())
+    return NextResponse.json(await getFeed(userId))
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Feed unavailable' }, { status: 500 })
   }

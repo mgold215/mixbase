@@ -113,9 +113,12 @@ struct PlayerView: View {
                     AirPlayRoutePicker()
                         .frame(width: 28, height: 28)
                 }
-                // Share the current track's private listening link.
+                // Share the current track's private listening link — only when
+                // the track actually has one. No marketing-site fallback: the
+                // homepage shows subscription pricing, which the app must not
+                // route users to (Guideline 3.1.1).
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    if audioService.currentVersion != nil {
+                    if let shareURL {
                         ShareLink(item: shareURL) {
                             Image(systemName: "square.and.arrow.up")
                                 .foregroundColor(Color(hex: "#2dd4bf"))
@@ -296,14 +299,11 @@ struct PlayerView: View {
     }
 
     // The private listening link for the current version, matching the web app's
-    // /share/<token> route. Falls back to the mixBase site if a track has no token.
-    private var shareURL: URL {
-        if let token = audioService.currentVersion?.shareToken,
-           !token.isEmpty,
-           let url = URL(string: "https://mixbase.app/share/\(token)") {
-            return url
-        }
-        return URL(string: "https://mixbase.app")!
+    // /share/<token> route. Nil when the track has no token — the share button
+    // hides rather than falling back to the marketing site (Guideline 3.1.1).
+    private var shareURL: URL? {
+        guard let token = audioService.currentVersion?.shareToken, !token.isEmpty else { return nil }
+        return URL(string: "https://mixbase.app/share/\(token)")
     }
 
     // MARK: - Track List (nothing playing)

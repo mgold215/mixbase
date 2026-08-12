@@ -349,7 +349,7 @@ struct HomeView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
-                    if let project = projectMap[activity.projectId] {
+                    if let pid = activity.projectId, let project = projectMap[pid] {
                         Text(project.title)
                             .font(.caption2)
                             .fontWeight(.medium)
@@ -372,8 +372,9 @@ struct HomeView: View {
 
             Spacer()
 
-            if let version = latestVersions[activity.projectId],
-               let project = projectMap[activity.projectId] {
+            if let pid = activity.projectId,
+               let version = latestVersions[pid],
+               let project = projectMap[pid] {
                 Button(action: {
                     audioService.play(
                         version: version,

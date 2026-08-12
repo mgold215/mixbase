@@ -82,6 +82,9 @@ struct FeedView: View {
     @State private var postingFor: UUID?
     @State private var errorMessage: String?
 
+    // UGC moderation (App Store Guideline 1.2): report/block confirmations
+    @State private var moderationMessage: String?
+
     var body: some View {
         ZStack {
             Color(hex: "#080808").ignoresSafeArea()
@@ -132,6 +135,49 @@ struct FeedView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { await loadFeed() }
+        .alert("Thanks", isPresented: Binding(
+            get: { moderationMessage != nil },
+            set: { if !$0 { moderationMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(moderationMessage ?? "")
+        }
+    }
+
+    // MARK: - Moderation actions (App Store Guideline 1.2)
+
+    private func isOwnContent(_ contentUserId: UUID) -> Bool {
+        contentUserId.uuidString.lowercased() == AuthService.shared.userId?.lowercased()
+    }
+
+    private func report(type: String, id: UUID) {
+        Task {
+            do {
+                try await MixbaseAPI.shared.reportContent(type: type, id: id)
+                if type == "version" {
+                    items.removeAll { $0.versionId == id }
+                } else {
+                    for idx in items.indices { items[idx].comments.removeAll { $0.id == id } }
+                }
+                moderationMessage = "Report received. We review reported content within 24 hours and remove anything objectionable."
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func block(userId: UUID, artist: String) {
+        Task {
+            do {
+                try await MixbaseAPI.shared.blockUser(id: userId)
+                items.removeAll { $0.userId == userId }
+                for idx in items.indices { items[idx].comments.removeAll { $0.userId == userId } }
+                moderationMessage = "\(artist) is blocked. You won't see their uploads or comments anymore."
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     // MARK: - Feed Card
@@ -237,6 +283,22 @@ struct FeedView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(hex: "#161616"))
                         .cornerRadius(8)
+                        // UGC moderation (Guideline 1.2): long-press a comment
+                        // to report it or block its author.
+                        .contextMenu {
+                            if !isOwnContent(comment.userId) {
+                                Button(role: .destructive) {
+                                    report(type: "comment", id: comment.id)
+                                } label: {
+                                    Label("Report Comment", systemImage: "flag")
+                                }
+                                Button(role: .destructive) {
+                                    block(userId: comment.userId, artist: comment.artist)
+                                } label: {
+                                    Label("Block \(comment.artist)", systemImage: "hand.raised")
+                                }
+                            }
+                        }
                     }
 
                     // Composer
@@ -272,6 +334,22 @@ struct FeedView: View {
         .background(Color(hex: "#111111"))
         .cornerRadius(14)
         .padding(.horizontal)
+        // UGC moderation (Guideline 1.2): every cross-user feed entry can be
+        // reported, and its uploader blocked. Long-press the card.
+        .contextMenu {
+            if !isOwnContent(item.userId) {
+                Button(role: .destructive) {
+                    report(type: "version", id: item.versionId)
+                } label: {
+                    Label("Report Track", systemImage: "flag")
+                }
+                Button(role: .destructive) {
+                    block(userId: item.userId, artist: item.artist)
+                } label: {
+                    Label("Block \(item.artist)", systemImage: "hand.raised")
+                }
+            }
+        }
     }
 
     // MARK: - Actions

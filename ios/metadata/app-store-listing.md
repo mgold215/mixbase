@@ -14,16 +14,17 @@ Secondary: Productivity
 music production,mix versions,track manager,audio compare,release pipeline,demo feedback,daw
 
 ## Description
-mixBase is the version tracker built for music producers. Upload mixes, compare versions side-by-side, collect feedback, and manage your release pipeline — all in one place.
+mixBase is the version tracker built for music producers. Upload mixes, listen back to every version, collect feedback, and manage your release pipeline — all in one place.
 
 Whether you're bouncing rough demos or polishing a final master, mixBase keeps every version organized so nothing gets lost.
 
 KEY FEATURES
 
 - Upload and organize mix versions for every project
-- Compare versions with a built-in audio player
+- Listen to any version of any track with a full-featured audio player
 - Track project status from rough idea to released
-- Share versions with collaborators and collect timestamped feedback
+- Share private listening links and collect feedback from collaborators
+- Hear what other artists are working on in the community feed
 - Manage your release pipeline with checklists for mastering, artwork, DSP submission, and more
 - Organize tracks into albums, EPs, and playlists
 - Generate AI-powered artwork concepts for your releases
@@ -43,7 +44,9 @@ mixBase is a music production tool for managing mix versions and releases.
 
 Getting started: sign in with the demo account above (or tap "Sign in with Apple"). The demo account is pre-loaded with 3 real released tracks by the developer (moodmixformat) — "KICK IT W/U", "LIVE IT UP", and "TAKE TIME" — each with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.
 
-AI features work in-app on the demo account (no API key needed): the demo account is provisioned at the top "studio" tier, so AI artwork generation (Media / project artwork) and AI visualizer video generation both function within their monthly quotas. AI generation runs entirely on our server — no paid keys are shipped in the app binary.
+Regarding Guideline 3.1.1 (previous rejection): this build removes all access to and references of paid functionality. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, and AI artwork generation (which every free account includes, subject to a monthly quota that resets monthly). The app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Visualizer video generation was removed from the app entirely. AI generation runs on our server — no paid keys ship in the binary.
+
+Community feed (user-generated content): all cross-user content supports moderation per Guideline 1.2 — long-press any feed track or comment to Report it or Block its author; reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.
 
 Account deletion: Settings tab → "Delete Account" (type DELETE to confirm) permanently deletes the account and all associated data, satisfying Guideline 5.1.1(v). You can create a throwaway account via "Create one" on the sign-in screen to test this without removing the demo data.
 

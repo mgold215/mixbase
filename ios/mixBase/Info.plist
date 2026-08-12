@@ -21,6 +21,11 @@
 
 	<!-- Microphone access not needed for v1, but future-proofing -->
 
+	<!-- Export compliance: only standard HTTPS/TLS is used (exempt), so builds
+	     don't strand in "Missing Compliance" waiting for a manual answer. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+
 	<!-- App display name -->
 	<key>CFBundleDisplayName</key>
 	<string>mixBase</string>

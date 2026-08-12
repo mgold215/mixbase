@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   }
   if (!gate.allowed) {
     return NextResponse.json(
-      { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Upgrade to generate more.`, upgrade: true },
+      { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Your quota resets at the start of next month.`, upgrade: true },
       { status: 403 }
     )
   }
@@ -178,9 +178,15 @@ export async function POST(req: NextRequest) {
       try {
         const errData = JSON.parse(errText)
         if (errData.error?.includes('credits')) {
-          return NextResponse.json({ error: 'Runway account has no credits remaining. Add credits at dev.runwayml.com.' }, { status: 402 })
+          // Neutral, operator-facing detail stays in the server log above.
+          // Never tell CLIENTS to go buy credits somewhere — the iOS app
+          // renders these strings and App Store Guideline 3.1.1 forbids
+          // steering users to external purchases.
+          return NextResponse.json({ error: 'Video generation is temporarily unavailable. Please try again later.' }, { status: 402 })
         }
-        return NextResponse.json({ error: errData.error || 'Runway generation failed' }, { status: 502 })
+        // Upstream error strings can mention anything (pricing, credits, plans)
+        // — don't relay them to clients verbatim.
+        return NextResponse.json({ error: 'Video generation failed. Please try again.' }, { status: 502 })
       } catch {
         return NextResponse.json({ error: 'Runway generation failed' }, { status: 502 })
       }

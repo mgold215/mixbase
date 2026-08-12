@@ -11,7 +11,7 @@ export default async function FeedPage() {
   let items: FeedItem[] = []
   let loadError = false
   try {
-    items = await getFeed()
+    items = await getFeed(userId ?? undefined)
   } catch {
     loadError = true
   }

@@ -292,7 +292,10 @@ struct NewReleaseSheet: View {
                                 .foregroundColor(.gray)
 
                             if projects.isEmpty {
-                                Text("Loading projects...")
+                                // An empty list is a legitimate final state for a
+                                // brand-new account — never a spinner that spins
+                                // forever (that reads as broken in App Review).
+                                Text("No projects yet — this release won't be linked to one.")
                                     .font(.caption)
                                     .foregroundColor(.gray.opacity(0.5))
                             } else {

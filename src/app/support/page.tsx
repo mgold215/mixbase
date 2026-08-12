@@ -27,7 +27,7 @@ export default function SupportPage() {
     },
     {
       q: 'How do I generate AI artwork?',
-      a: 'Open a project and tap "Generate Artwork". Describe the vibe of the track and mixBase will generate multiple options using AI (Flux / Imagen). You can regenerate as many times as you like.',
+      a: 'Open a project and tap "Generate Artwork". Describe the vibe of the track and mixBase will generate multiple options using AI (Flux / Imagen). Generations are subject to a monthly quota that resets at the start of each month.',
     },
     {
       q: 'What is the Pipeline?',
@@ -35,7 +35,7 @@ export default function SupportPage() {
     },
     {
       q: 'How do I delete my account?',
-      a: `Email ${contact} with the subject "Delete my account". We will remove all your data — projects, audio files, artwork, and account credentials — within 7 days and confirm by email.`,
+      a: `You can delete your account directly in the app: Settings → Delete Account (or on the web under Profile). This immediately and permanently removes all your data — projects, audio files, artwork, comments, and account credentials. If you prefer, you can also email ${contact} with the subject "Delete my account".`,
     },
     {
       q: 'Is there a storage limit?',

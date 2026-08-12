@@ -83,42 +83,11 @@ final class MixbaseAPI {
     }
 
     // MARK: - Visualizers
-
-    /// Available Runway image-to-video models with their valid durations/ratios.
-    func fetchRunwayModels() async throws -> [RunwayModel] {
-        let data = try await requestData(path: "/api/visualizer/runway", method: "GET")
-        struct ModelsResponse: Codable { let models: [RunwayModel] }
-        return try decoder.decode(ModelsResponse.self, from: data).models
-    }
-
-    /// Generate a visualizer video from an artwork image. Blocks until the
-    /// server finishes polling Runway (can take minutes for slower models).
-    /// The server persists the video to the user's Media library when it can.
-    /// Returns the video URL (a permanent storage URL when saved=true).
-    func generateVisualizer(
-        projectId: UUID,
-        imageUrl: String,
-        model: String,
-        duration: Int,
-        ratio: String,
-        prompt: String?
-    ) async throws -> (videoUrl: String, saved: Bool) {
-        var body: [String: Any] = [
-            "projectId": projectId.uuidString.lowercased(),
-            "imageUrl": imageUrl,
-            "model": model,
-            "duration": duration,
-            "ratio": ratio,
-        ]
-        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            body["promptText"] = prompt
-        }
-        let json = try await requestJSON(path: "/api/visualizer/runway", method: "POST", body: body)
-        guard let url = json["videoUrl"] as? String else {
-            throw MixbaseAPIError.invalidResponse("No video URL in response")
-        }
-        return (url, (json["saved"] as? Bool) ?? false)
-    }
+    // Deliberately view/pin/delete only. Visualizer GENERATION is a web-only
+    // feature: it is gated to paid accounts server-side, and App Store
+    // Guideline 3.1.1 forbids the app exposing functionality that is
+    // purchased outside Apple's In-App Purchase. Do not add generation here
+    // without shipping StoreKit IAP alongside it.
 
     /// Every saved visualizer the user owns, newest first.
     func fetchVisualizers() async throws -> [Visualizer] {
@@ -209,6 +178,38 @@ final class MixbaseAPI {
 
     /// Recent uploads across ALL artists — one entry per project (newest mix),
     /// with inter-artist comments and that project's older mixes.
+    // MARK: - Account
+
+    /// Permanently delete the signed-in account and all its data (Guideline
+    /// 5.1.1(v)). Goes through requestData so an expired access token is
+    /// refreshed and retried instead of failing the one flow Apple requires
+    /// to always work.
+    func deleteAccount() async throws {
+        _ = try await requestData(path: "/api/auth/delete-account", method: "POST")
+    }
+
+    // MARK: - Moderation (App Store Guideline 1.2)
+
+    /// Report objectionable feed content. type is "version" (a track entry)
+    /// or "comment". The reporter stops seeing the content immediately;
+    /// heavily-reported content is removed for everyone.
+    func reportContent(type: String, id: UUID, reason: String? = nil) async throws {
+        var body: [String: Any] = [
+            "content_type": type,
+            "content_id": id.uuidString.lowercased(),
+        ]
+        if let reason, !reason.isEmpty { body["reason"] = reason }
+        _ = try await requestData(path: "/api/feed/report", method: "POST", body: body)
+    }
+
+    /// Block another artist — their uploads and comments disappear from this
+    /// account's feed everywhere, immediately and on every future load.
+    func blockUser(id: UUID) async throws {
+        _ = try await requestData(path: "/api/feed/block", method: "POST", body: [
+            "user_id": id.uuidString.lowercased(),
+        ])
+    }
+
     func fetchFeed() async throws -> [FeedItem] {
         let data = try await requestData(path: "/api/feed", method: "GET")
         return try decoder.decode([FeedItem].self, from: data)
@@ -294,8 +295,17 @@ final class MixbaseAPI {
                 if (json["upgrade"] as? Bool) == true {
                     throw MixbaseAPIError.serverError("You've reached this month's limit for AI generations. It resets at the start of next month.")
                 }
-                // Otherwise prefer the server's own human-readable error.
+                // Otherwise prefer the server's own human-readable error — but
+                // never trust it to be purchase-free. Belt-and-braces for
+                // Guideline 3.1.1: if ANY server message mentions upgrading,
+                // plans, pricing, or buying (flagged or not), replace it with
+                // the same neutral copy rather than steering to a purchase.
                 if let message = json["error"] as? String {
+                    let purchaseWords = ["upgrade", "plan", "tier", "subscri", "purchase", "billing", "pricing", "credit", "buy "]
+                    let lowered = message.lowercased()
+                    if purchaseWords.contains(where: { lowered.contains($0) }) {
+                        throw MixbaseAPIError.serverError("This action isn't available right now. Please try again later.")
+                    }
                     throw MixbaseAPIError.serverError(message)
                 }
             }
