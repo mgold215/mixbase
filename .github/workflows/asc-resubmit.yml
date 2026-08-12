@@ -133,16 +133,19 @@ jobs:
           for (let i = 0; i < 30; i++) {   // up to ~25 min for upload+processing
             const bs = must(await api('GET', `/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate`), 'list builds')
             const b = bs.data?.[0]
-            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID'
-                && (!attached || b.id !== attached.id)) { newest = b; break }
-            console.log(`Waiting for a new VALID build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
+            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID') { newest = b; break }
+            console.log(`Waiting for a VALID build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
             await new Promise(r => setTimeout(r, 50_000))
           }
-          if (!newest) { console.error('No new VALID build appeared — aborting before touching the submission.'); process.exit(1) }
-          must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
-            data: { type: 'builds', id: newest.id },
-          }), 'attach new build to version')
-          console.log(`Attached build ${newest.attributes.version} (${newest.id}) to the version`)
+          if (!newest) { console.error('No VALID build appeared — aborting before touching the submission.'); process.exit(1) }
+          if (attached && newest.id === attached.id) {
+            console.log(`Newest VALID build ${newest.attributes.version} is already attached — continuing`)
+          } else {
+            must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
+              data: { type: 'builds', id: newest.id },
+            }), 'attach new build to version')
+            console.log(`Attached build ${newest.attributes.version} (${newest.id}) to the version`)
+          }
 
           // 2. Refresh the App Review notes: no tier/plan mentions, disclose
           //    the UGC moderation, and answer the 3.1.1 rejection directly.
@@ -237,17 +240,30 @@ jobs:
           }
           console.log(`Submitting via ${submission.id}${hasItem ? ' (already contains the version item)' : ''}`)
           if (!hasItem) {
-            const add = await api('POST', '/reviewSubmissionItems', {
-              data: {
-                type: 'reviewSubmissionItems',
-                relationships: {
-                  reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                  appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+            // A just-canceled submission takes a short while to release its
+            // version (ITEM_PART_OF_ANOTHER_SUBMISSION) — retry with a wait.
+            let attachedItem = false
+            for (let i = 0; i < 8 && !attachedItem; i++) {
+              const add = await api('POST', '/reviewSubmissionItems', {
+                data: {
+                  type: 'reviewSubmissionItems',
+                  relationships: {
+                    reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
+                    appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+                  },
                 },
-              },
-            })
-            console.log(`Attach version to submission: HTTP ${add.status}`)
-            if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
+              })
+              console.log(`Attach version to submission (attempt ${i + 1}): HTTP ${add.status}`)
+              if (add.ok) { attachedItem = true; break }
+              const body = JSON.stringify(add.json ?? add.text)
+              if (body.includes('ITEM_PART_OF_ANOTHER_SUBMISSION')) {
+                await new Promise(r => setTimeout(r, 15_000))
+                continue
+              }
+              console.error(body.slice(0, 500))
+              break
+            }
+            if (!attachedItem) { console.error('Could not attach the version to the submission.'); process.exit(1) }
           }
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {
