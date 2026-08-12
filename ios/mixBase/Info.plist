@@ -19,6 +19,10 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>mixBase needs access to your photos to upload artwork for your projects.</string>
 
+	<!-- Add-only access for saving generated visualizers and renders to Photos -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>mixBase saves your generated visualizer videos to your Photos library.</string>
+
 	<!-- Microphone access not needed for v1, but future-proofing -->
 
 	<!-- Export compliance: only standard HTTPS/TLS is used (exempt), so builds

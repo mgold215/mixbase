@@ -89,6 +89,30 @@ final class MixbaseAPI {
     // purchased outside Apple's In-App Purchase. Do not add generation here
     // without shipping StoreKit IAP alongside it.
 
+    /// Server-rendered free visualizer (ffmpeg on the backend — no AI credits).
+    /// The render takes seconds for the 6s formats, up to ~1 min for YouTube.
+    /// Returns the stored mf-video URL (always persisted to the Media library).
+    func generateFreeVisualizer(
+        projectId: UUID,
+        imageUrl: String,
+        format: String,
+        effect: String,
+        bpm: Int?
+    ) async throws -> String {
+        var body: [String: Any] = [
+            "projectId": projectId.uuidString.lowercased(),
+            "imageUrl": imageUrl,
+            "format": format,
+            "effect": effect,
+        ]
+        if let bpm { body["bpm"] = bpm }
+        let json = try await requestJSON(path: "/api/visualizer/free", method: "POST", body: body)
+        guard let url = json["video_url"] as? String else {
+            throw MixbaseAPIError.invalidResponse("No video URL in response")
+        }
+        return url
+    }
+
     /// Every saved visualizer the user owns, newest first.
     func fetchVisualizers() async throws -> [Visualizer] {
         let data = try await requestData(path: "/api/visualizer", method: "GET")

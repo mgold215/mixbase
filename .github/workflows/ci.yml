@@ -5,6 +5,11 @@ on:
     branches: [main, tst]
   pull_request:
     branches: [main, tst]
+  # Manual escape hatch: when GitHub's event→Actions triggering stalls (seen
+  # 2026-08-06 — pushes and PR creation produced no runs for ~an hour), the
+  # required checks can be fired by hand against the branch head, unblocking
+  # the protected merge to main.
+  workflow_dispatch: {}
 
 # Opt the bundled JavaScript actions (checkout, setup-node, gitleaks) into the
 # Node 24 runtime ahead of GitHub's 2026-06-16 Node 20 deprecation, WITHOUT

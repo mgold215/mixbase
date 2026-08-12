@@ -34,15 +34,13 @@ type Props = {
   /** Horizontal pin (visualizer_wide_url) — source for the full-length video. */
   wideVisualizerUrl: string | null
   hasAudio: boolean
-  /** Song length in seconds when known — drives the Short start-point options. */
-  audioDurationSec: number | null
   onSwitchToVisualizer: () => void
 }
 
 const SHORT_LENGTHS = [15, 30, 60] as const
 
 export default function VideoFinalizer({
-  projectId, visualizerUrl, wideVisualizerUrl, hasAudio, audioDurationSec, onSwitchToVisualizer,
+  projectId, visualizerUrl, wideVisualizerUrl, hasAudio, onSwitchToVisualizer,
 }: Props) {
   const [saved, setSaved] = useState<Record<VideoFormat, SavedVideo>>({ youtube: null, shorts: null })
   const [jobs, setJobs] = useState<Partial<Record<VideoFormat, JobState>>>({})
@@ -130,9 +128,6 @@ export default function VideoFinalizer({
 
   async function startRender(format: VideoFormat) {
     setErrors(e => ({ ...e, [format]: undefined }))
-    const startSec = format === 'shorts' && audioDurationSec
-      ? (shortStart === 'hook' ? Math.round(audioDurationSec * 0.3) : shortStart === 'middle' ? Math.round(audioDurationSec * 0.5) : 0)
-      : 0
     try {
       const res = await fetch('/api/finalize-video', {
         method: 'POST',
@@ -141,7 +136,11 @@ export default function VideoFinalizer({
           project_id: projectId,
           format,
           color,
-          ...(format === 'shorts' ? { clip_seconds: shortLen, start_sec: startSec } : {}),
+          // start_mode (not a client-computed second): the server resolves it
+          // against the PROBED audio duration, so Hook/Middle work even when
+          // this client never learned the song length (duration_seconds is
+          // null on ~40% of mixes — the old start_sec math silently sent 0).
+          ...(format === 'shorts' ? { clip_seconds: shortLen, start_mode: shortStart } : {}),
         }),
       })
       const data = await res.json().catch(() => null)
@@ -274,8 +273,7 @@ export default function VideoFinalizer({
                   <button
                     key={key}
                     onClick={() => setShortStart(key)}
-                    disabled={key !== 'start' && !audioDurationSec}
-                    className={`px-3 py-1.5 text-[10px] font-medium rounded-lg transition-colors disabled:opacity-40 ${
+                    className={`px-3 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
                       shortStart === key ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
                     }`}
                   >
@@ -310,6 +308,10 @@ function FormatCard({
   const rendering = !!job
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Set when the video is fetched but iOS needs a fresh tap to open the share
+  // sheet (transient activation expired during the download). The button below
+  // re-shares the already-fetched bytes — no second transfer.
+  const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
 
   // Share-sheet on phones (so "Save Video" → Photos), true attachment download
   // on desktop — never a bare cross-origin link that just opens and plays.
@@ -317,13 +319,25 @@ function FormatCard({
     if (!saved || saving) return
     setSaving(true)
     setSaveError(null)
+    setFinishSave(null)
     try {
-      await saveMedia(saved.video_url, saved.title || title, 'mp4')
+      await saveMedia(saved.video_url, saved.title || title, 'mp4', {
+        onNeedsFinishTap: finish => setFinishSave(() => finish),
+      })
     } catch {
       setSaveError('Could not save the video — check your connection and try again.')
     } finally {
       setSaving(false)
     }
+  }
+
+  function finishSaveTap() {
+    const finish = finishSave
+    if (!finish) return
+    setFinishSave(null)
+    void finish().catch(() => {
+      setSaveError('Could not save the video — try the Save button again.')
+    })
   }
 
   return (
@@ -366,6 +380,16 @@ function FormatCard({
       )}
 
       {(error || saveError) && <p className="text-red-400 text-xs">{error || saveError}</p>}
+
+      {finishSave && (
+        <button
+          onClick={finishSaveTap}
+          className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0f0f0f] rounded-xl transition-colors"
+        >
+          <Download size={13} />
+          Video ready — tap to save to Photos
+        </button>
+      )}
 
       <div className="flex gap-2">
         <button

@@ -2,19 +2,18 @@ import SwiftUI
 import AVKit
 
 // MARK: - VisualizerView
-// Spotify-Canvas-style visualizers for a project, matching the web Visualizer
-// tab: a pinned looping video up top and the user's saved library where any
-// video can be pinned to this project or deleted. Generation happens on the
-// web only — the iOS app deliberately has no generation UI (App Store
-// Guideline 3.1.1: video generation is a paid capability, and the app must
-// not expose functionality that is purchased outside Apple's IAP).
+// Spotify-Canvas-style visualizers for a project: a pinned looping video up
+// top, the FREE server-side generator (ffmpeg render — included with every
+// account, no AI credits), and the user's saved library where any video can
+// be pinned to this project or deleted. The paid Runway generation is
+// deliberately web-only (App Store Guideline 3.1.1: the app must not expose
+// functionality that is purchased outside Apple's IAP).
 
 struct VisualizerView: View {
 
     let projectId: UUID
     let projectTitle: String
-    // Kept for call-site compatibility; no longer used now that the in-app
-    // generator is gone.
+    // Source image for the free generator.
     let artworkUrl: String?
 
     // The currently pinned visualizer (project.visualizer_url)
@@ -23,10 +22,29 @@ struct VisualizerView: View {
     // Lets the presenting screen update its copy of the pin immediately
     var onPinChanged: ((String?) -> Void)? = nil
 
+    // Free generator state (server-side ffmpeg render — no AI credits).
+    // Options are the static contract of /api/visualizer/free.
+    @State private var freeFormat = "canvas"
+    @State private var freeEffect = "drift"
+    @State private var freeBpm = "122"
+    @State private var isFreeGenerating = false
+
+    private let freeFormats: [(id: String, label: String)] = [
+        ("canvas", "9:16 Canvas"), ("square", "1:1 Square"), ("youtube", "16:9 YouTube"),
+    ]
+    private let freeEffects: [(id: String, label: String)] = [
+        ("drift", "Cinematic Drift"), ("pulse", "Deep Pulse"), ("orbit", "Orbit"),
+    ]
+
     // Library state
     @State private var library: [Visualizer] = []
     @State private var isLoadingLibrary = true
     @State private var pinningUrl: String?    // url currently being pinned (spinner)
+
+    // Save-to-Photos state: the url currently downloading (spinner) and the
+    // last one that landed in Photos (brief checkmark so the tap visibly worked).
+    @State private var savingToPhotosUrl: String?
+    @State private var savedToPhotosUrl: String?
 
     @State private var errorMessage: String?
 
@@ -50,14 +68,18 @@ struct VisualizerView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .padding(.horizontal)
 
-                            Button(action: { Task { await pin(nil) } }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "pin.slash")
-                                    Text("Unpin")
+                            HStack(spacing: 16) {
+                                Button(action: { Task { await pin(nil) } }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "pin.slash")
+                                        Text("Unpin")
+                                    }
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.gray)
                                 }
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.gray)
+
+                                saveToPhotosButton(url: pinnedUrl, labeled: true)
                             }
                             .padding(.horizontal)
                         } else {
@@ -74,6 +96,86 @@ struct VisualizerView: View {
                             .font(.caption)
                             .foregroundColor(.red)
                             .padding(.horizontal)
+                    }
+
+                    // MARK: - Free Generator
+                    // Server-side ffmpeg render of the artwork into a seamless
+                    // loop — the iOS counterpart of the web's free generator
+                    // (which records a browser canvas this platform doesn't have).
+                    if let artworkUrl, !artworkUrl.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Free Generator")
+                                .font(.headline)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .padding(.horizontal)
+
+                            Text("Animates your artwork into a seamless loop — free, no AI credits.")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .padding(.horizontal)
+
+                            // Format picker
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(freeFormats, id: \.id) { format in
+                                        chip(format.label, selected: freeFormat == format.id) {
+                                            freeFormat = format.id
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            // Effect picker
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(freeEffects, id: \.id) { effect in
+                                        chip(effect.label, selected: freeEffect == effect.id) {
+                                            freeEffect = effect.id
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            // BPM — only the beat-synced effect uses it
+                            if freeEffect == "pulse" {
+                                HStack(spacing: 8) {
+                                    Text("Track BPM")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                    TextField("122", text: $freeBpm)
+                                        .keyboardType(.numberPad)
+                                        .font(.caption)
+                                        .foregroundColor(Color(hex: "#f0f0f0"))
+                                        .padding(8)
+                                        .frame(width: 72)
+                                        .background(Color(hex: "#161616"))
+                                        .cornerRadius(8)
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            Button(action: generateFree) {
+                                HStack {
+                                    if isFreeGenerating {
+                                        ProgressView().tint(Color(hex: "#080808"))
+                                        Text("Rendering…")
+                                    } else {
+                                        Image(systemName: "film")
+                                        Text("Generate Free Visualizer")
+                                    }
+                                }
+                                .font(.headline)
+                                .foregroundColor(Color(hex: "#080808"))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(isFreeGenerating ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                                .cornerRadius(12)
+                            }
+                            .disabled(isFreeGenerating)
+                            .padding(.horizontal)
+                        }
                     }
 
                     // MARK: - Library
@@ -176,6 +278,9 @@ struct VisualizerView: View {
                 }
             }
 
+            // Download to Photos
+            saveToPhotosButton(url: visualizer.videoUrl, labeled: false)
+
             // Delete
             Button(action: { Task { await delete(visualizer) } }) {
                 Image(systemName: "trash")
@@ -185,6 +290,66 @@ struct VisualizerView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
+    }
+
+    // MARK: - Save to Photos
+    // Shared by the pinned section (labeled) and library rows (icon-only).
+    // Three states per url: downloading (spinner), just saved (checkmark), idle.
+    @ViewBuilder
+    private func saveToPhotosButton(url: String, labeled: Bool) -> some View {
+        if savingToPhotosUrl == url {
+            ProgressView().tint(Color(hex: "#2dd4bf"))
+        } else if savedToPhotosUrl == url {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                if labeled { Text("Saved") }
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(Color(hex: "#2dd4bf"))
+        } else {
+            Button(action: { Task { await saveToPhotos(url) } }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down")
+                    if labeled { Text("Save to Photos") }
+                }
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(labeled ? Color(hex: "#2dd4bf") : .gray)
+            }
+            .disabled(savingToPhotosUrl != nil)
+        }
+    }
+
+    private func saveToPhotos(_ url: String) async {
+        savingToPhotosUrl = url
+        errorMessage = nil
+        do {
+            try await PhotoLibrarySaver.saveVideo(from: url)
+            savedToPhotosUrl = url
+            // Let the checkmark breathe, then return to the download icon.
+            Task {
+                try? await Task.sleep(for: .seconds(2.5))
+                if savedToPhotosUrl == url { savedToPhotosUrl = nil }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        savingToPhotosUrl = nil
+    }
+
+    // MARK: - Chip
+    private func chip(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(.medium)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .foregroundColor(selected ? Color(hex: "#080808") : Color(hex: "#f0f0f0"))
+                .background(selected ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                .clipShape(Capsule())
+        }
     }
 
     // MARK: - Actions
@@ -197,6 +362,31 @@ struct VisualizerView: View {
             print("VisualizerView: failed to load library — \(error.localizedDescription)")
         }
         isLoadingLibrary = false
+    }
+
+    private func generateFree() {
+        guard let artworkUrl else { return }
+        isFreeGenerating = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let url = try await MixbaseAPI.shared.generateFreeVisualizer(
+                    projectId: projectId,
+                    imageUrl: artworkUrl,
+                    format: freeFormat,
+                    effect: freeEffect,
+                    bpm: freeEffect == "pulse" ? Int(freeBpm) : nil
+                )
+                // Free renders always persist server-side — pin for instant
+                // payoff and refresh the library so it appears there too.
+                await pin(url)
+                await loadLibrary()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isFreeGenerating = false
+        }
     }
 
     private func pin(_ url: String?) async {

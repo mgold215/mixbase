@@ -128,6 +128,7 @@ async function runJob(job: VideoJob, args: StartJobArgs) {
       format: args.format,
       color: args.color,
       startSec: args.startSec,
+      startMode: args.startMode,
       clipSeconds: args.clipSeconds,
       fallbackAudioSeconds: args.fallbackAudioSeconds,
       onProgress: (frac, stage) => {

@@ -30,6 +30,7 @@
 
 		/* Utilities */
 		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
+		A100000031 /* PhotoLibrarySaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000031; };
 
 		/* Views - Home */
 		A100000040 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000040; };
@@ -108,6 +109,7 @@
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		B100000031 /* PhotoLibrarySaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibrarySaver.swift; sourceTree = "<group>"; };
 
 		/* Views */
 		B100000040 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -363,6 +365,7 @@
 			isa = PBXGroup;
 			children = (
 				B100000030 /* Config.swift */,
+				B100000031 /* PhotoLibrarySaver.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -449,6 +452,7 @@
 				A100000021 /* AudioService.swift in Sources */,
 				A100000022 /* ArtworkService.swift in Sources */,
 				A100000030 /* Config.swift in Sources */,
+				A100000031 /* PhotoLibrarySaver.swift in Sources */,
 				A100000040 /* HomeView.swift in Sources */,
 				A100000050 /* ProjectsView.swift in Sources */,
 				A100000051 /* ProjectDetailView.swift in Sources */,
