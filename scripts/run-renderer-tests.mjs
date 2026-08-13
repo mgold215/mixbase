@@ -66,6 +66,7 @@ const SUITES = [
   'usage-refund-test.mjs',
   'effects-test.mjs',
   'fx-test.mjs',
+  'viz-finalize-test.mjs',
   'finalize-test.mjs',
   'visualizer-transcode-test.mjs',
   'video-test.mjs',

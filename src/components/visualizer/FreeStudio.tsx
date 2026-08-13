@@ -4,19 +4,25 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Dices, Download, Film, RotateCcw } from 'lucide-react'
 import {
   EFFECTS, EFFECT_IDS, domLayerFactory,
-  type DrawFrame, type EffectId, type ParamSpec,
+  type DrawFrame, type ParamSpec,
 } from '@/lib/free-effects'
 import { MACROS, applyMacros } from '@/lib/fx/recipe'
 import type { VizRecipe } from '@/lib/fx/types'
+import { canExportMp4, exportMp4 } from '@/lib/fx/export'
+import { uploadVisualizer, VizUploadError } from '@/lib/fx/upload'
 import type { VizRecipeAction } from './useVizRecipe'
 import { FORMAT_CONFIG, clampBpm, pill, type Format, type SaveStatus, type VizSlot } from './shared'
 import PreviewCanvas from './PreviewCanvas'
 
-// The free canvas render draws at 1/2 scale for browser performance, so the
-// output is half the format's nominal resolution. Kept here so the render
-// and the result label agree. (Full-resolution WebCodecs export lands in the
-// next phase of the FX engine upgrade.)
-const RENDER_SCALE = 0.5
+// Exports render at the format's NATIVE resolution (1080×1920 / 1920×1080 /
+// 1080×1080; 4K on capable hardware). The old always-half-scale render
+// survives only as the last-resort retry when full-res MediaRecorder capture
+// fails on a weak machine — that floor equals the previous behavior exactly.
+const FALLBACK_SCALE = 0.5
+
+// 4K option for the YouTube format (16:9 only — vertical platforms cap at
+// 1080×1920), shown when the hardware encoder supports it.
+const UHD = { width: 3840, height: 2160 }
 
 // Record the frame loop into a WebM blob. Module scope on purpose: the loop's
 // wall-clock pacing (performance.now) is impure, and hoisting it out of the
@@ -27,6 +33,7 @@ async function recordFrames(
   ctx: CanvasRenderingContext2D,
   drawFrame: DrawFrame,
   duration: number,
+  videoBitsPerSecond: number,
   isCancelled: () => boolean,
   onProgress: (pct: number) => void,
 ): Promise<Blob | null> {
@@ -36,9 +43,6 @@ async function recordFrames(
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
     ? 'video/webm;codecs=vp9'
     : 'video/webm'
-  // Cap the bitrate so the longest render (30s YouTube) stays comfortably
-  // under /api/visualizer/save's 10 MB limit (~8.5 MB budget).
-  const videoBitsPerSecond = Math.min(3_500_000, Math.floor((8.5 * 8 * 1024 * 1024) / duration))
   const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
   const chunks: Blob[] = []
   recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
@@ -112,6 +116,10 @@ export default function FreeStudio({
   // locally, but only the stored URL can be pinned as the project visualizer.
   const [freeSavedUrl, setFreeSavedUrl] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // Real dimensions + container of the finished render, for the result label.
+  const [resultMeta, setResultMeta] = useState<{ w: number; h: number; mime: 'MP4' | 'WebM' } | null>(null)
+  // Whether this hardware can encode 4K H.264 — gates the YouTube 4K toggle.
+  const [supports4k, setSupports4k] = useState(false)
   // Raw input string so typing "1" mid-edit isn't clamped out from under the
   // user; clampBpm() is applied wherever the number is consumed.
   const [bpmText, setBpmText] = useState(String(recipe.bpm))
@@ -153,15 +161,18 @@ export default function FreeStudio({
   // resets all transient state — the old resetFormat() behavior, without an
   // effect that calls setState.
 
+  // 4K is offered only when the hardware encoder actually supports it.
+  useEffect(() => {
+    let stale = false
+    if (format !== 'youtube') return
+    canExportMp4(UHD.width, UHD.height).then(ok => {
+      if (!stale) setSupports4k(ok)
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [format])
+
   async function generateFree() {
     if (!artworkUrl) return
-
-    // Guard: MediaRecorder is not available in Safari on iOS
-    if (typeof MediaRecorder === 'undefined' || typeof (canvasRef.current?.captureStream) === 'undefined') {
-      setStatus('error')
-      setErrorMsg('Video recording is not supported in this browser. Try Chrome or Firefox.')
-      return
-    }
 
     cancelledRef.current = false
 
@@ -171,18 +182,21 @@ export default function FreeStudio({
     setErrorMsg('')
     setFreeSave('idle')
     setFreeSavedUrl(null)
+    setResultMeta(null)
 
-    // Render at 1/2 scale for browser performance; output is still valid video
-    const W = Math.round(cfg.width * RENDER_SCALE)
-    const H = Math.round(cfg.height * RENDER_SCALE)
+    const wantHigh = format === 'youtube' && recipe.resolution === 'high' && supports4k
+    const exportW = wantHigh ? UHD.width : cfg.width
+    const exportH = wantHigh ? UHD.height : cfg.height
 
-    const canvas = canvasRef.current!
-    canvas.width = W
-    canvas.height = H
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
+    // Prefer WebCodecs: exact frame grid (perfect loop), native resolution,
+    // hardware encode faster than realtime, MP4 out (no server transcode).
+    const mp4Capable = await canExportMp4(exportW, exportH)
+    const canvas = canvasRef.current
+    const recorderCapable =
+      typeof MediaRecorder !== 'undefined' && typeof canvas?.captureStream === 'function'
+    if (!canvas || (!mp4Capable && !recorderCapable)) {
       setStatus('error')
-      setErrorMsg('Could not initialize canvas renderer.')
+      setErrorMsg('Video recording is not supported in this browser. Try Chrome or Firefox.')
       return
     }
 
@@ -201,68 +215,153 @@ export default function FreeStudio({
       return
     }
 
-    // Build the effect's frame renderer (see src/lib/free-effects.ts). Shares
-    // the recipe's seed + resolved params with the preview, so the recording
-    // matches what the preview showed.
-    let drawFrame: DrawFrame
-    try {
-      drawFrame = EFFECTS[effect].create({
-        W, H,
-        duration: cfg.duration,
-        fps: 30,
-        bpm: bpmNum,
-        seed: recipe.seed,
-        image: img,
-        imageWidth: img.width,
-        imageHeight: img.height,
-        createLayer: domLayerFactory,
-      }, effectiveParams)
-    } catch {
-      setStatus('error')
-      setErrorMsg('Could not initialize the effect renderer. Try a different image.')
-      return
+    // Build the effect's frame renderer at the requested dimensions. Shares
+    // the recipe's seed + resolved params with the preview (resolution
+    // independence means the motion is identical at any size).
+    const makeDraw = (W: number, H: number): DrawFrame | null => {
+      try {
+        return EFFECTS[effect].create({
+          W, H,
+          duration: cfg.duration,
+          fps: 30,
+          bpm: bpmNum,
+          seed: recipe.seed,
+          image: img,
+          imageWidth: img.width,
+          imageHeight: img.height,
+          createLayer: domLayerFactory,
+        }, effectiveParams)
+      } catch {
+        return null
+      }
     }
 
-    // Run the recorder. Any throw in here — a tainted canvas SecurityError
-    // (artwork served without CORS headers), captureStream being unavailable,
-    // or an unsupported codec — must reset the button, not leave it stuck on
-    // "Rendering…" forever. Happy path is unchanged (the catch only runs on a
-    // real throw). Matches the try/finally-resets-loading pattern.
-    try {
+    const TOTAL_FRAMES = cfg.duration * 30
+
+    if (mp4Capable) {
+      canvas.width = exportW
+      canvas.height = exportH
+      const ctx = canvas.getContext('2d')
+      const drawFrame = ctx ? makeDraw(exportW, exportH) : null
+      if (!ctx || !drawFrame) {
+        setStatus('error')
+        setErrorMsg('Could not initialize the effect renderer. Try a different image.')
+        return
+      }
+      try {
+        const blob = await exportMp4({
+          canvas,
+          drawFrame: f => drawFrame(ctx, f / TOTAL_FRAMES, f),
+          totalFrames: TOTAL_FRAMES,
+          fps: 30,
+          isCancelled: () => cancelledRef.current,
+          onProgress: setProgress,
+        })
+        if (!blob) return // deliberate cancel (format switch/unmount)
+        finishRender(blob, 'video/mp4', exportW, exportH)
+        return
+      } catch {
+        if (cancelledRef.current) return
+        // Encoder failed mid-flight (rare driver/OOM cases) — fall through to
+        // the MediaRecorder path when it exists, else surface the error.
+        if (!recorderCapable) {
+          setStatus('error')
+          setErrorMsg('Video rendering failed in this browser. Try Chrome or Firefox, or a different image.')
+          return
+        }
+      }
+    }
+
+    // MediaRecorder fallback — now at NATIVE resolution with a healthy bitrate
+    // (~45 MB ceiling; the signed-URL upload path has no 10 MB wall). A throw
+    // here (weak GPU at full res, tainted canvas, codec trouble) retries once
+    // at the legacy half scale + 10 MB-safe bitrate — exactly the pre-upgrade
+    // output, so the floor never regresses.
+    const runRecorder = async (scale: number, bitrate: number) => {
+      const W = Math.round(cfg.width * scale)
+      const H = Math.round(cfg.height * scale)
+      canvas.width = W
+      canvas.height = H
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no 2d context')
+      const drawFrame = makeDraw(W, H)
+      if (!drawFrame) throw new Error('effect init failed')
       const blob = await recordFrames(
-        canvas, ctx, drawFrame, cfg.duration,
+        canvas, ctx, drawFrame, cfg.duration, bitrate,
         () => cancelledRef.current,
         setProgress,
       )
-      if (!blob) return // deliberate cancel (format switch/unmount)
-      const url = URL.createObjectURL(blob)
-      setVideoUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev)
-        return url
-      })
-      setStatus('done')
-      setProgress(100)
-
-      // Persist to the Media library so it's findable later (not just a throwaway
-      // blob: URL). Playback above is instant from the local blob; this runs after.
-      void saveFreeToMedia(blob, format, effect)
+      return blob ? { blob, W, H } : null
+    }
+    try {
+      const fullBitrate = Math.min(12_000_000, Math.floor((45 * 8 * 1024 * 1024) / cfg.duration))
+      const r = await runRecorder(1, fullBitrate)
+      if (!r) return
+      finishRender(r.blob, 'video/webm', r.W, r.H)
     } catch {
-      // Don't clobber a deliberate cancel (format switch/unmount) with an error.
-      if (!cancelledRef.current) {
-        setStatus('error')
-        setErrorMsg('Video rendering failed in this browser. Try Chrome or Firefox, or a different image.')
+      if (cancelledRef.current) return
+      try {
+        const legacyBitrate = Math.min(3_500_000, Math.floor((8.5 * 8 * 1024 * 1024) / cfg.duration))
+        const r = await runRecorder(FALLBACK_SCALE, legacyBitrate)
+        if (!r) return
+        finishRender(r.blob, 'video/webm', r.W, r.H)
+      } catch {
+        if (!cancelledRef.current) {
+          setStatus('error')
+          setErrorMsg('Video rendering failed in this browser. Try Chrome or Firefox, or a different image.')
+        }
       }
     }
   }
 
-  async function saveFreeToMedia(blob: Blob, fmt: Format, eff: EffectId) {
+  function finishRender(blob: Blob, contentType: 'video/mp4' | 'video/webm', w: number, h: number) {
+    const url = URL.createObjectURL(blob)
+    setVideoUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return url
+    })
+    setStatus('done')
+    setProgress(100)
+    setResultMeta({ w, h, mime: contentType === 'video/mp4' ? 'MP4' : 'WebM' })
+    // Persist to the Media library so it's findable later (not just a throwaway
+    // blob: URL). Playback above is instant from the local blob; this runs after.
+    void saveRendered(blob, contentType)
+  }
+
+  async function saveRendered(blob: Blob, contentType: 'video/mp4' | 'video/webm') {
     if (!projectId) return
     setFreeSave('saving')
+    const title = `${FORMAT_CONFIG[format].label} · ${EFFECTS[effect].label}`
+    try {
+      // Primary: signed-URL PUT direct to storage + JSON finalize — carries any
+      // size and persists the recipe alongside the clip.
+      const up = await uploadVisualizer({
+        blob, contentType, projectId, title,
+        settings: recipe,
+        sourceImageUrl: artworkUrl ?? null,
+      })
+      setFreeSavedUrl(up.video_url)
+      setFreeSave('saved')
+      return
+    } catch (err) {
+      // The proven multipart path still works for small webm blobs — use it as
+      // the safety net when the signed path hiccups. Oversized or mp4 blobs
+      // have no legacy lane; report the failure honestly.
+      const legacyEligible =
+        err instanceof VizUploadError &&
+        contentType === 'video/webm' &&
+        blob.size <= 9.5 * 1024 * 1024
+      if (!legacyEligible) {
+        setFreeSave('error')
+        return
+      }
+    }
     try {
       const fd = new FormData()
       fd.append('file', blob, 'visualizer.webm')
       fd.append('projectId', projectId)
-      fd.append('title', `${FORMAT_CONFIG[fmt].label} · ${EFFECTS[eff].label}`)
+      fd.append('title', title)
+      fd.append('settings', JSON.stringify(recipe))
       if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
       const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
       if (res.ok) {
@@ -344,6 +443,22 @@ export default function FreeStudio({
             </button>
           ))}
         </div>
+        {/* 4K is a YouTube-only offer, shown when the hardware encoder can */}
+        {format === 'youtube' && supports4k && (
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Resolution</span>
+            {([['standard', '1080p'], ['high', '4K']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => dispatch({ type: 'resolution', resolution: value })}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+                style={pill(recipe.resolution === value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Effect selector */}
@@ -493,7 +608,7 @@ export default function FreeStudio({
           />
           <div className="p-3 flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'var(--bg-page)' }}>
             <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-              {cfg.label} · {Math.round(cfg.width * RENDER_SCALE)}×{Math.round(cfg.height * RENDER_SCALE)} · WebM
+              {cfg.label}{resultMeta ? ` · ${resultMeta.w}×${resultMeta.h} · ${resultMeta.mime}` : ''}
               {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
               {freeSave === 'saved' && (
                 <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--accent)' }}>
@@ -515,7 +630,7 @@ export default function FreeStudio({
               </button>
             )}
             <button
-              onClick={() => download(videoUrl, 'free', 'webm')}
+              onClick={() => download(videoUrl, 'free', resultMeta?.mime === 'MP4' ? 'mp4' : 'webm')}
               className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
               style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
             >

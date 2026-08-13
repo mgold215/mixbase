@@ -25,6 +25,7 @@
     "@tailwindcss/postcss": "^4",
     "jose": "^6.2.3",
     "lucide-react": "^1.0.1",
+    "mediabunny": "^1.53.1",
     "next": "^16.2.12",
     "opentype.js": "^2.0.0",
     "react": "19.2.4",

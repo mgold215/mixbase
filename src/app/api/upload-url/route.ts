@@ -5,7 +5,11 @@ import { ownsProject } from '@/lib/ownership'
 import { isUuid } from '@/lib/validators'
 
 // Buckets the client is allowed to request a signed upload URL for.
-const ALLOWED_BUCKETS = ['mf-audio', 'mf-artwork'] as const
+// mf-video: full-resolution FX-studio exports (too big for the 10 MB multipart
+// save path) PUT here directly, then register through /api/visualizer/finalize,
+// which validates the object and indexes the mb_visualizers row. The ownership
+// gate below already covers it — video keys are `<ownedProjectId>/viz-*.<ext>`.
+const ALLOWED_BUCKETS = ['mf-audio', 'mf-artwork', 'mf-video'] as const
 type UploadBucket = (typeof ALLOWED_BUCKETS)[number]
 
 // POST /api/upload-url
