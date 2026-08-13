@@ -45,6 +45,39 @@ export type EffectId =
 export type LayerHandle = { canvas: CanvasImageSource; ctx: CanvasRenderingContext2D }
 export type LayerFactory = (w: number, h: number) => LayerHandle
 
+export type ParamValue = number | boolean
+
+// Declarative spec for one user-tunable knob on an effect. Two shapes:
+//  - multiplier sliders (default 1) scale a group of motion/alpha literals, so
+//    the shipped look is untouched at the default (x * 1 is exact in IEEE);
+//  - direct sliders/toggles map 1:1 onto a single literal the effect shipped
+//    with (vignette strength, grain alpha, particle count, letterbox…).
+// Defaults MUST reproduce the pre-parameterization output bit for bit —
+// effects-test.mjs asserts the no-params render equals the explicit-defaults
+// render, and that extremes stay finite.
+export type ParamSpec = {
+  id: string
+  label: string
+  type: 'slider' | 'toggle'
+  min?: number
+  max?: number
+  step?: number
+  default: ParamValue
+}
+
+// Per-frame audio features, all normalized 0..1, precomputed OFFLINE by the fx
+// audio pipeline (never a realtime AnalyserNode) so a frame's value is a pure
+// function of (mix segment, frame) — preview and recording read the same
+// arrays. Absent → beat-synced effects fall back to the synthetic BPM envelope.
+export type FrameAudio = {
+  kick: number
+  bass: number
+  mid: number
+  treble: number
+  rms: number
+  flux: number
+}
+
 export type EffectSetup = {
   W: number
   H: number
@@ -59,14 +92,62 @@ export type EffectSetup = {
 }
 
 // Draws one complete frame (background included) at loop position t ∈ [0, 1).
-export type DrawFrame = (ctx: CanvasRenderingContext2D, t: number, frame: number) => void
+// `audio` carries the precomputed per-frame features for that exact frame;
+// undefined (today's callers, and forever when a project has no audio) keeps
+// the synthetic beat path.
+export type DrawFrame = (
+  ctx: CanvasRenderingContext2D,
+  t: number,
+  frame: number,
+  audio?: FrameAudio,
+) => void
 
 export type EffectDef = {
   label: string
   description: string
   beatSynced: boolean
-  create: (p: EffectSetup) => DrawFrame
+  params: ParamSpec[]
+  create: (p: EffectSetup, params?: Record<string, ParamValue>) => DrawFrame
 }
+
+// Fill defaults and clamp overrides to their spec ranges. Unknown ids are
+// ignored and wrong-typed / non-finite values fall back to the default, so a
+// stale saved recipe or a hand-edited draft can never crash a render.
+export function resolveParams(
+  specs: ParamSpec[],
+  overrides?: Record<string, ParamValue>,
+): Record<string, ParamValue> {
+  const out: Record<string, ParamValue> = {}
+  for (const s of specs) {
+    let v = overrides?.[s.id]
+    if (typeof v !== typeof s.default) v = s.default
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) v = s.default
+      else {
+        if (s.min !== undefined) v = Math.max(s.min, v)
+        if (s.max !== undefined) v = Math.min(s.max, v)
+      }
+    }
+    out[s.id] = v as ParamValue
+  }
+  return out
+}
+
+const slider = (
+  id: string,
+  label: string,
+  def: number,
+  min: number,
+  max: number,
+  step = 0.01,
+): ParamSpec => ({ id, label, type: 'slider', min, max, step, default: def })
+
+const toggle = (id: string, label: string, def: boolean): ParamSpec => ({
+  id,
+  label,
+  type: 'toggle',
+  default: def,
+})
 
 // Browser LayerFactory. Client-side only — never call during SSR.
 export function domLayerFactory(w: number, h: number): LayerHandle {
@@ -263,11 +344,30 @@ function roundRectPath(
 
 // ── Effects ─────────────────────────────────────────────────────────────────
 
+const kenburnsParams: ParamSpec[] = [
+  slider('zoom', 'Zoom depth', 1, 0, 3, 0.05),
+  slider('motion', 'Drift amount', 1, 0, 3, 0.05),
+  slider('glow', 'Lens bloom', 1, 0, 2.5, 0.05),
+  slider('grade', 'Color grade', 1, 0, 2, 0.05),
+  toggle('letterbox', 'Letterbox bars', true),
+  slider('vignette', 'Vignette', 0.42, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.07, 0, 0.3, 0.01),
+]
+
 const kenburns: EffectDef = {
   label: 'Cinematic Drift',
   description: 'Slow weightless zoom & pan',
   beatSynced: false,
-  create(p) {
+  params: kenburnsParams,
+  create(p, overrides) {
+    const prm = resolveParams(kenburnsParams, overrides)
+    const zoomM = prm.zoom as number
+    const motionM = prm.motion as number
+    const glowM = prm.glow as number
+    const gradeM = prm.grade as number
+    const letterbox = prm.letterbox as boolean
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -282,15 +382,15 @@ const kenburns: EffectDef = {
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
-      const scale = 1.1 + 0.045 * loopSin(t, 1, phase)
-      const panX = 0.028 * p.W * loopSin(t, 1, phase + 1.7)
-      const panY = 0.02 * p.H * loopSin(t, 1, phase + 3.9)
+      const scale = 1.1 + 0.045 * loopSin(t, 1, phase) * zoomM
+      const panX = 0.028 * p.W * loopSin(t, 1, phase + 1.7) * motionM
+      const panY = 0.02 * p.H * loopSin(t, 1, phase + 3.9) * motionM
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, panY)
       // Soft lens bloom that breathes with the zoom
       drawCover(
         ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
         scale * 1.03, panX, panY, 0,
-        0.09 + 0.05 * loopSin(t, 1, phase + 0.9), 'screen',
+        Math.min(1, (0.09 + 0.05 * loopSin(t, 1, phase + 0.9)) * glowM), 'screen',
       )
       const maxDim = Math.max(p.W, p.H)
       if (!warm) {
@@ -305,32 +405,51 @@ const kenburns: EffectDef = {
       }
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.75 + 0.25 * loopSin(t, 1, phase + 2.1)
+      ctx.globalAlpha = Math.min(1, (0.75 + 0.25 * loopSin(t, 1, phase + 2.1)) * gradeM)
       ctx.fillStyle = warm
       ctx.fillRect(0, 0, p.W, p.H)
-      ctx.globalAlpha = 0.75 + 0.25 * loopSin(t, 1, phase + 5.2)
+      ctx.globalAlpha = Math.min(1, (0.75 + 0.25 * loopSin(t, 1, phase + 5.2)) * gradeM)
       ctx.fillStyle = cool
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.42, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.07, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
       // Letterbox bars last so nothing draws over them
-      ctx.save()
-      ctx.globalAlpha = 1
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, p.W, barH)
-      ctx.fillRect(0, p.H - barH, p.W, barH)
-      ctx.restore()
+      if (letterbox) {
+        ctx.save()
+        ctx.globalAlpha = 1
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, p.W, barH)
+        ctx.fillRect(0, p.H - barH, p.W, barH)
+        ctx.restore()
+      }
     }
   },
 }
+
+const droneParams: ParamSpec[] = [
+  slider('zoom', 'Dive depth', 1, 0.2, 1.6, 0.05),
+  slider('motion', 'Camera shake', 1, 0, 3, 0.05),
+  slider('blur', 'Motion blur', 1, 0, 2, 0.05),
+  slider('fog', 'Atmosphere', 1, 0, 2, 0.05),
+  slider('vignette', 'Vignette', 0.45, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const drone: EffectDef = {
   label: 'Drone Shot',
   description: 'Circles the art, zooming in & out',
   beatSynced: false,
-  create(p) {
+  params: droneParams,
+  create(p, overrides) {
+    const prm = resolveParams(droneParams, overrides)
+    const zoomAmp = 0.5 * (prm.zoom as number)
+    const motionM = prm.motion as number
+    const blurM = prm.blur as number
+    const fogM = prm.fog as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const dir = rng() < 0.5 ? -1 : 1
@@ -382,7 +501,7 @@ const drone: EffectDef = {
       const fr = frameRng(p.seed, frame)
       // Slow push-in and pull-back, eased at both turnarounds
       const u = 0.5 + 0.5 * loopSin(t, 1, phase)
-      const zoom = 1.05 + 0.5 * u * u * (3 - 2 * u)
+      const zoom = 1.05 + zoomAmp * u * u * (3 - 2 * u)
       const theta = dir * Math.PI * 2 * t + phase
       fillBg(scratch.ctx, S, S)
       scratch.ctx.save()
@@ -394,8 +513,8 @@ const drone: EffectDef = {
       // Re-project onto the tilted plane; sub-pixel source jitter is the
       // airborne micro-vibration that sells "drone"
       fillBg(ctx, p.W, p.H)
-      const jx = (fr() - 0.5) * 0.0025 * p.W
-      const jy = (fr() - 0.5) * 0.0015 * p.H
+      const jx = (fr() - 0.5) * 0.0025 * p.W * motionM
+      const jy = (fr() - 0.5) * 0.0015 * p.H * motionM
       for (const r of rows) {
         ctx.drawImage(scratch.canvas, r.sx + jx * (r.sw / p.W), r.sy + jy, r.sw, r.sh, 0, r.dy, p.W, r.dh)
       }
@@ -407,7 +526,7 @@ const drone: EffectDef = {
       for (const r of rows) {
         if (r.dy >= p.H * 0.45) break
         const w = 1 - r.dy / (p.H * 0.45)
-        ctx.globalAlpha = 0.3 * w
+        ctx.globalAlpha = Math.min(1, 0.3 * w * blurM)
         ctx.drawImage(scratch.canvas, r.sx, r.sy, r.sw, r.sh, dir * p.W * 0.008 * w, r.dy, p.W, r.dh)
       }
       ctx.restore()
@@ -421,21 +540,38 @@ const drone: EffectDef = {
       }
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 1 - 0.7 * ((zoom - 1.05) / 0.5)
+      ctx.globalAlpha = Math.min(1, Math.max(0, (1 - 0.7 * ((zoom - 1.05) / zoomAmp)) * fogM))
       ctx.fillStyle = fog
       ctx.fillRect(0, 0, p.W, p.H * 0.55)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.45, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const parallaxParams: ParamSpec[] = [
+  slider('size', 'Card size', 0.52, 0.3, 0.8, 0.01),
+  slider('motion', 'Float amount', 1, 0, 2.5, 0.05),
+  slider('reflection', 'Reflection', 1, 0, 2.5, 0.05),
+  slider('sheen', 'Light sheen', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.5, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const parallax: EffectDef = {
   label: 'Depth Float',
   description: 'Art floats over blurred depth',
   beatSynced: false,
-  create(p) {
+  params: parallaxParams,
+  create(p, overrides) {
+    const prm = resolveParams(parallaxParams, overrides)
+    const sizeP = prm.size as number
+    const motionM = prm.motion as number
+    const reflM = prm.reflection as number
+    const sheenM = prm.sheen as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -458,7 +594,7 @@ const parallax: EffectDef = {
     a.ctx.drawImage(b.canvas, 0, 0, bW, bH, 0, 0, aW, aH)
     // Foreground card: the artwork contain-fit, floating over its own blur
     const imgAspect = p.imageWidth / p.imageHeight
-    let cardW = p.W * 0.52
+    let cardW = p.W * sizeP
     let cardH = cardW / imgAspect
     const maxH = p.H * 0.6
     if (cardH > maxH) {
@@ -487,8 +623,8 @@ const parallax: EffectDef = {
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
-      const bgPanX = 0.035 * p.W * loopSin(t, 1, phase + 1.1)
-      const bgPanY = 0.02 * p.H * loopSin(t, 1, phase + 3.3)
+      const bgPanX = 0.035 * p.W * loopSin(t, 1, phase + 1.1) * motionM
+      const bgPanY = 0.02 * p.H * loopSin(t, 1, phase + 3.3) * motionM
       drawCover(ctx, a.canvas, aW, aH, p.W, p.H, 1.16 + 0.04 * loopSin(t, 1, phase), bgPanX, bgPanY)
       ctx.save()
       ctx.globalAlpha = 0.42
@@ -498,13 +634,13 @@ const parallax: EffectDef = {
       ctx.restore()
       // Card drifts counter to the backdrop — that opposition is the parallax
       const px = -0.55 * bgPanX
-      const py = 0.02 * p.H * loopSin(t, 2, phase + 4.2)
-      const tilt = 0.035 * loopSin(t, 1, phase + 5.1)
-      const cs = 1 + 0.022 * loopSin(t, 1, phase + 2.4)
+      const py = 0.02 * p.H * loopSin(t, 2, phase + 4.2) * motionM
+      const tilt = 0.035 * loopSin(t, 1, phase + 5.1) * motionM
+      const cs = 1 + 0.022 * loopSin(t, 1, phase + 2.4) * motionM
       // Faded floor reflection just below the card (drawn first so the ground
       // shadow sits over its root, seating the card on a surface)
       ctx.save()
-      ctx.globalAlpha = 0.32
+      ctx.globalAlpha = Math.min(1, 0.32 * reflM)
       ctx.globalCompositeOperation = 'source-over'
       ctx.translate(p.W / 2 + px, p.H / 2 + py)
       ctx.rotate(tilt)
@@ -540,25 +676,42 @@ const parallax: EffectDef = {
       g.addColorStop(0.5, 'rgba(255,255,255,0.14)')
       g.addColorStop(1, 'rgba(255,255,255,0)')
       ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = Math.min(1, sheenM)
       ctx.fillStyle = g
       ctx.fillRect(-cardW / 2, -cardH / 2, cardW, cardH)
+      ctx.globalAlpha = 1
       ctx.globalCompositeOperation = 'source-over'
       ctx.strokeStyle = 'rgba(255,255,255,0.10)'
       ctx.lineWidth = Math.max(1, 0.004 * Math.min(cardW, cardH))
       roundRectPath(ctx, -cardW / 2, -cardH / 2, cardW, cardH, corner)
       ctx.stroke()
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.5, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const dustParams: ParamSpec[] = [
+  slider('density', 'Particles', 42, 5, 120, 1),
+  slider('size', 'Particle size', 1, 0.3, 3, 0.05),
+  slider('light', 'Light leaks', 1, 0, 2, 0.05),
+  slider('vignette', 'Vignette', 0.55, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const dust: EffectDef = {
   label: 'Dust & Glow',
   description: 'Floating particles, warm light',
   beatSynced: false,
-  create(p) {
+  params: dustParams,
+  create(p, overrides) {
+    const prm = resolveParams(dustParams, overrides)
+    const densityP = Math.round(prm.density as number)
+    const sizeM = prm.size as number
+    const lightM = prm.light as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -566,7 +719,7 @@ const dust: EffectDef = {
     const minDim = Math.min(p.W, p.H)
     // Particles drift on closed elliptical paths (integer cycles) so they end
     // exactly where they started — no wrap pop, just endless float.
-    const particles = Array.from({ length: 42 }, () => ({
+    const particles = Array.from({ length: densityP }, () => ({
       x0: rng(),
       y0: rng(),
       r: (0.0025 + rng() * 0.006) * minDim,
@@ -595,7 +748,7 @@ const dust: EffectDef = {
       g.addColorStop(1, 'rgba(255,178,92,0)')
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.55 + 0.35 * loopSin(t, 1, phase + 4.5)
+      ctx.globalAlpha = Math.min(1, (0.55 + 0.35 * loopSin(t, 1, phase + 4.5)) * lightM)
       ctx.fillStyle = g
       ctx.fillRect(0, 0, p.W, p.H)
       // Cool fill leak counter-orbiting low in the frame — the warm/cool
@@ -605,7 +758,7 @@ const dust: EffectDef = {
       const g2 = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, lr * 0.8)
       g2.addColorStop(0, 'rgba(92,140,255,0.18)')
       g2.addColorStop(1, 'rgba(92,140,255,0)')
-      ctx.globalAlpha = 0.55 + 0.35 * loopSin(t, 1, phase + 1.4)
+      ctx.globalAlpha = Math.min(1, (0.55 + 0.35 * loopSin(t, 1, phase + 1.4)) * lightM)
       ctx.fillStyle = g2
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
@@ -613,7 +766,7 @@ const dust: EffectDef = {
       // thin horizontal blade, alpha locked to the leak's pulse
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.3 + 0.2 * loopSin(t, 1, phase + 4.5)
+      ctx.globalAlpha = Math.min(1, (0.3 + 0.2 * loopSin(t, 1, phase + 4.5)) * lightM)
       ctx.translate(lx, ly)
       ctx.scale(1, 0.055)
       const streak = ctx.createRadialGradient(0, 0, 0, 0, 0, p.W * 0.45)
@@ -630,56 +783,76 @@ const dust: EffectDef = {
         const x = pt.x0 * p.W + pt.ax * loopSin(t, pt.cx, pt.p1)
         const y = pt.y0 * p.H + pt.ay * loopSin(t, pt.cy, pt.p2)
         const a = pt.a * (0.55 + 0.45 * loopSin(t, pt.tw, pt.p3))
+        const r = pt.r * sizeM
         ctx.globalAlpha = a * 0.1
         ctx.beginPath()
-        ctx.arc(x, y, pt.r * 6, 0, Math.PI * 2)
+        ctx.arc(x, y, r * 6, 0, Math.PI * 2)
         ctx.fill()
         ctx.globalAlpha = a * 0.3
         ctx.beginPath()
-        ctx.arc(x, y, pt.r * 3, 0, Math.PI * 2)
+        ctx.arc(x, y, r * 3, 0, Math.PI * 2)
         ctx.fill()
         ctx.globalAlpha = a
         ctx.beginPath()
-        ctx.arc(x, y, pt.r, 0, Math.PI * 2)
+        ctx.arc(x, y, r, 0, Math.PI * 2)
         ctx.fill()
       }
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.55, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const pulseParams: ParamSpec[] = [
+  slider('punch', 'Beat punch', 1, 0, 2.5, 0.05),
+  slider('sharpness', 'Punch decay', 6, 2, 14, 0.5),
+  slider('bloom', 'Kick bloom', 1, 0, 2, 0.05),
+  slider('ring', 'Shockwave ring', 1, 0, 2.5, 0.05),
+  slider('dim', 'Off-beat dim', 1, 0, 2, 0.05),
+  slider('vignette', 'Vignette', 0.45, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.05, 0, 0.3, 0.01),
+]
 
 const pulse: EffectDef = {
   label: 'Deep Pulse',
   description: 'Breathes on the beat',
   beatSynced: true,
-  create(p) {
+  params: pulseParams,
+  create(p, overrides) {
+    const prm = resolveParams(pulseParams, overrides)
+    const punchM = prm.punch as number
+    const sharpP = prm.sharpness as number
+    const bloomM = prm.bloom as number
+    const ringM = prm.ring as number
+    const dimM = prm.dim as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
     const beats = snapBeats(p.duration, p.bpm)
     const minDim = Math.min(p.W, p.H)
-    return (ctx, t, frame) => {
+    return (ctx, t, frame, audio) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
-      const kick = beatPulse(t, beats, 6)
-      const scale = 1.07 + 0.05 * kick
+      const kick = audio?.kick ?? beatPulse(t, beats, sharpP)
+      const scale = 1.07 + 0.05 * kick * punchM
       // Sub-bass squash: a felt-not-seen vertical compression on the hit
       ctx.save()
       ctx.translate(p.W / 2, p.H / 2)
-      ctx.scale(1, 1 + 0.014 * kick)
+      ctx.scale(1, 1 + 0.014 * kick * punchM)
       ctx.translate(-p.W / 2, -p.H / 2)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale)
       // Bloom: an enlarged screen-composited copy that flares on the kick
-      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.05, 0, 0, 0, 0.22 * kick, 'screen')
+      drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale * 1.05, 0, 0, 0, Math.min(1, 0.22 * kick * bloomM), 'screen')
       ctx.restore()
       // Shockwave ring: expands out from the center as the kick decays and
       // thins/fades as it travels — reads as the beat physically radiating
       const ring = 1 - kick
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.28 * Math.pow(kick, 0.55)
+      ctx.globalAlpha = Math.min(1, 0.28 * Math.pow(kick, 0.55) * ringM)
       ctx.strokeStyle = '#fff'
       ctx.lineWidth = Math.max(1, minDim * (0.012 * kick + 0.002))
       ctx.beginPath()
@@ -688,21 +861,40 @@ const pulse: EffectDef = {
       ctx.restore()
       // Sink slightly darker between beats so the kick reads as light
       ctx.save()
-      ctx.globalAlpha = 0.1 * (1 - kick)
+      ctx.globalAlpha = Math.min(1, 0.1 * (1 - kick) * dimM)
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.45, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const strobeParams: ParamSpec[] = [
+  slider('punch', 'Beat punch', 1, 0, 2.5, 0.05),
+  slider('sharpness', 'Punch decay', 7, 2, 14, 0.5),
+  slider('flash', 'Gel flash', 1, 0, 1.8, 0.05),
+  slider('split', 'RGB split', 1, 0, 2.5, 0.05),
+  slider('sway', 'Sway', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.35, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const strobe: EffectDef = {
   label: 'Club Strobe',
   description: 'Beat punch, downbeat flash',
   beatSynced: true,
-  create(p) {
+  params: strobeParams,
+  create(p, overrides) {
+    const prm = resolveParams(strobeParams, overrides)
+    const punchM = prm.punch as number
+    const sharpP = prm.sharpness as number
+    const flashM = prm.flash as number
+    const splitM = prm.split as number
+    const swayM = prm.sway as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -715,20 +907,20 @@ const strobe: EffectDef = {
     // is a whole number per loop, so the cycle is seamless), seeded start.
     const GELS = ['#ffffff', '#ff2a55', '#2ad8ff', '#ffb02a']
     const gelOffset = Math.floor(rng() * GELS.length)
-    return (ctx, t, frame) => {
+    return (ctx, t, frame, audio) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
-      const kick = beatPulse(t, beats, 7)
+      const kick = audio?.kick ?? beatPulse(t, beats, sharpP)
       // Sharp decay so the flash is a strobe hit (~150ms), not a slow fade
       const flash = beatPulse(t, bars, 14)
-      const rot = 0.015 * loopSin(t, 1, phase)
-      const scale = 1.09 + 0.06 * kick
+      const rot = 0.015 * loopSin(t, 1, phase) * swayM
+      const scale = 1.09 + 0.06 * kick * punchM
       // Handheld camera knock on the kick — deterministic per frame
-      const shx = (fr() - 0.5) * 0.01 * p.W * kick
-      const shy = (fr() - 0.5) * 0.007 * p.H * kick
+      const shx = (fr() - 0.5) * 0.01 * p.W * kick * punchM
+      const shy = (fr() - 0.5) * 0.007 * p.H * kick * punchM
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, shx, shy, rot)
       // RGB split flares with the bar flash, ticks with each kick
-      const d = p.W * (0.014 * flash + 0.004 * kick)
+      const d = p.W * (0.014 * flash + 0.004 * kick) * splitM
       if (d > 0.3) {
         const a = Math.min(1, flash + kick * 0.4) * 0.5
         drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale, shx - d, shy, rot, a, 'screen')
@@ -740,22 +932,39 @@ const strobe: EffectDef = {
         const bi = Math.min(bars - 1, Math.floor(t * bars))
         ctx.save()
         ctx.globalCompositeOperation = 'screen'
-        ctx.globalAlpha = 0.55 * flash
+        ctx.globalAlpha = Math.min(1, 0.55 * flash * flashM)
         ctx.fillStyle = GELS[(bi + gelOffset) % GELS.length]
         ctx.fillRect(0, 0, p.W, p.H)
         ctx.restore()
       }
-      drawVignette(ctx, p.W, p.H, 0.35, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const zoomblurParams: ParamSpec[] = [
+  slider('punch', 'Beat punch', 1, 0, 2, 0.05),
+  slider('warp', 'Warp intensity', 1, 0, 2, 0.05),
+  slider('twist', 'Vortex twist', 1, 0, 3, 0.05),
+  slider('fringe', 'Spectral fringe', 1, 0, 2, 0.05),
+  slider('vignette', 'Vignette', 0.4, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const zoomblur: EffectDef = {
   label: 'Warp Zoom',
   description: 'Radial warp bursts on the beat',
   beatSynced: true,
-  create(p) {
+  params: zoomblurParams,
+  create(p, overrides) {
+    const prm = resolveParams(zoomblurParams, overrides)
+    const punchM = prm.punch as number
+    const warpM = prm.warp as number
+    const twistM = prm.twist as number
+    const fringeM = prm.fringe as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -764,16 +973,16 @@ const zoomblur: EffectDef = {
     const bars = Math.max(1, Math.round(beats / 4))
     const red = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#ff0040')
     const cyan = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#00e0ff')
-    return (ctx, t, frame) => {
+    return (ctx, t, frame, audio) => {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
-      const kick = beatPulse(t, beats, 5)
+      const kick = audio?.kick ?? beatPulse(t, beats, 5)
       // Longer bar-level swell so downbeats detonate harder than every kick.
       // Gentler decay than the default — dies to ~0.01 before the wrap, which
       // is invisible at these alpha levels but keeps the tail long and warpy.
       const surge = beatPulse(t, bars, 4.5)
-      const e = Math.min(1, 0.3 * kick + 0.8 * surge)
-      const scale = 1.1 + 0.05 * kick + 0.02 * loopSin(t, 1, phase)
+      const e = Math.min(1, (0.3 * kick + 0.8 * surge) * warpM)
+      const scale = 1.1 + 0.05 * kick * punchM + 0.02 * loopSin(t, 1, phase)
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale)
       if (e > 0.02) {
         // Radial smear: stacked enlarged ghosts with a slight vortex twist.
@@ -785,13 +994,13 @@ const zoomblur: EffectDef = {
           const ga = 0.16 * e * (1 - k * 0.7)
           drawCover(
             ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
-            scale * (1 + 0.15 * e * k), 0, 0, 0.024 * e * k, ga,
+            scale * (1 + 0.15 * e * k), 0, 0, 0.024 * e * k * twistM, ga,
           )
         }
         // Spectral fringe: red pulled outward, cyan pushed inward
         const d = 1 + 0.05 * e
-        drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale * d, 0, 0, 0, 0.3 * e, 'screen')
-        drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale / d, 0, 0, 0, 0.3 * e, 'screen')
+        drawCover(ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale * d, 0, 0, 0, Math.min(1, 0.3 * e * fringeM), 'screen')
+        drawCover(ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale / d, 0, 0, 0, Math.min(1, 0.3 * e * fringeM), 'screen')
         // Hot core at burst peaks — the warp reads as light rushing at the
         // lens, so give it a source to rush from
         if (e > 0.55) {
@@ -806,17 +1015,35 @@ const zoomblur: EffectDef = {
           ctx.restore()
         }
       }
-      drawVignette(ctx, p.W, p.H, 0.4, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const liquidParams: ParamSpec[] = [
+  slider('ripple', 'Ripple amount', 1, 0, 3, 0.05),
+  slider('waves', 'Wave count', 3, 1, 8, 1),
+  slider('caustics', 'Caustic light', 1, 0, 3, 0.05),
+  slider('cast', 'Aqua cast', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.38, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.05, 0, 0.3, 0.01),
+]
 
 const liquid: EffectDef = {
   label: 'Liquid',
   description: 'Slow underwater ripple',
   beatSynced: false,
-  create(p) {
+  params: liquidParams,
+  create(p, overrides) {
+    const prm = resolveParams(liquidParams, overrides)
+    const rippleM = prm.ripple as number
+    // Whole wave cycles per loop — must stay an integer or the seam pops.
+    const wavesP = Math.max(1, Math.round(prm.waves as number))
+    const causticsM = prm.caustics as number
+    const castM = prm.cast as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -841,10 +1068,10 @@ const liquid: EffectDef = {
       fillBg(src.ctx, SW, SH)
       drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, SW, SH, 1.04 + 0.02 * loopSin(t, 1, phase))
       fillBg(ctx, p.W, p.H)
-      const amp = p.W * 0.02 * (0.75 + 0.25 * loopSin(t, 2, phase + 1.3))
+      const amp = p.W * 0.02 * (0.75 + 0.25 * loopSin(t, 2, phase + 1.3)) * rippleM
       const travel = Math.PI * 2 * t // one full wave cycle per loop
       for (let y = 0; y < p.H; y += bandH) {
-        const dx = amp * Math.sin(y * k + travel * 3 + phase)
+        const dx = amp * Math.sin(y * k + travel * wavesP + phase)
         // Secondary slower vertical swell so the water moves in two axes
         const dy = amp * 0.22 * Math.sin(y * k * 0.6 + travel * 2 + phase + 1.7)
         const sh = Math.min(bandH, p.H - y)
@@ -855,6 +1082,7 @@ const liquid: EffectDef = {
       // seamless. Slight tilt keeps them from reading as a screen wipe.
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = Math.min(1, causticsM)
       ctx.translate(p.W / 2, p.H / 2)
       ctx.rotate(0.26)
       const diag = Math.hypot(p.W, p.H)
@@ -875,26 +1103,43 @@ const liquid: EffectDef = {
       // Faint aqua cast pulls the grade underwater
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.05
+      ctx.globalAlpha = Math.min(1, 0.05 * castM)
       ctx.fillStyle = '#2ec8d8'
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.38, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const orbitParams: ParamSpec[] = [
+  slider('sway', 'Sway amount', 1, 0, 3, 0.05),
+  slider('zoom', 'Breathing zoom', 1, 0, 3, 0.05),
+  slider('bloom', 'Bloom', 1, 0, 2.5, 0.05),
+  slider('rim', 'Rim light', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.48, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const orbit: EffectDef = {
   label: 'Orbit',
   description: 'Weightless sway & rotation',
   beatSynced: false,
-  create(p) {
+  params: orbitParams,
+  create(p, overrides) {
+    const prm = resolveParams(orbitParams, overrides)
+    const swayM = prm.sway as number
+    const zoomM = prm.zoom as number
+    const bloomM = prm.bloom as number
+    const rimM = prm.rim as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
     const vig: VignetteCache = {}
-    const rotMax = 0.05 // ~2.9°
+    const rotMax = 0.05 * swayM // ~2.9° at the default
     // Extra zoom needed so the rotated cover never shows a corner
     const ratio = Math.max(p.W / p.H, p.H / p.W)
     const bleed = Math.cos(rotMax) + ratio * Math.sin(rotMax)
@@ -904,14 +1149,14 @@ const orbit: EffectDef = {
       const fr = frameRng(p.seed, frame)
       fillBg(ctx, p.W, p.H)
       const rot = rotMax * loopSin(t, 1, phase)
-      const scale = bleed * (1.035 + 0.025 * loopSin(t, 2, phase + 2.2))
-      const panX = 0.012 * p.W * loopSin(t, 1, phase + 4.1)
+      const scale = bleed * (1.035 + 0.025 * loopSin(t, 2, phase + 2.2) * zoomM)
+      const panX = 0.012 * p.W * loopSin(t, 1, phase + 4.1) * swayM
       drawCover(ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, 0, rot)
       // Breathing bloom so the sway has a light source to answer to
       drawCover(
         ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H,
         scale * 1.04, panX, 0, rot,
-        0.07 + 0.04 * loopSin(t, 2, phase + 0.8), 'screen',
+        Math.min(1, (0.07 + 0.04 * loopSin(t, 2, phase + 0.8)) * bloomM), 'screen',
       )
       // Rim light circling the frame exactly once per loop (inherently
       // seamless) — a soft moving key that gives the float dimensionality
@@ -923,20 +1168,36 @@ const orbit: EffectDef = {
       lg.addColorStop(1, 'rgba(255,244,224,0)')
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = Math.min(1, rimM)
       ctx.fillStyle = lg
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.48, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const kaleidoParams: ParamSpec[] = [
+  slider('zoom', 'Breathing zoom', 1, 0, 3, 0.05),
+  slider('drift', 'Drift amount', 1, 0, 2, 0.05),
+  slider('glow', 'Seam glow', 1, 0, 2, 0.05),
+  slider('vignette', 'Vignette', 0.42, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.06, 0, 0.3, 0.01),
+]
 
 const kaleido: EffectDef = {
   label: 'Kaleidoscope',
   description: 'Mirrored prism, slow spin',
   beatSynced: false,
-  create(p) {
+  params: kaleidoParams,
+  create(p, overrides) {
+    const prm = resolveParams(kaleidoParams, overrides)
+    const zoomM = prm.zoom as number
+    const driftM = prm.drift as number
+    const glowM = prm.glow as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -946,13 +1207,13 @@ const kaleido: EffectDef = {
     // the zoom just has to keep the inscribed circle of the rotated cover
     // over that region (plus pan): scale ≥ 2·(quarter-diagonal + pan) / minDim.
     const minDim = Math.min(p.W, p.H)
-    const panAmp = 0.045 * minDim
+    const panAmp = 0.045 * driftM * minDim
     const s0 = (2 * (Math.hypot(p.W, p.H) / 4 + panAmp)) / minDim
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       // One full revolution per loop — inherently seamless
       const rot = Math.PI * 2 * t
-      const scale = s0 * (1.06 + 0.05 * loopSin(t, 2, phase))
+      const scale = s0 * (1.06 + 0.05 * loopSin(t, 2, phase) * zoomM)
       const panX = panAmp * loopSin(t, 1, phase + 1.8)
       const panY = panAmp * 0.7 * loopSin(t, 2, phase + 3.7)
       fillBg(src.ctx, p.W, p.H)
@@ -985,21 +1246,40 @@ const kaleido: EffectDef = {
       g.addColorStop(1, 'rgba(255,255,255,0)')
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = 0.7 + 0.3 * loopSin(t, 3, phase + 0.5)
+      ctx.globalAlpha = Math.min(1, (0.7 + 0.3 * loopSin(t, 3, phase + 0.5)) * glowM)
       ctx.fillStyle = g
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.42, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.06, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const vhsParams: ParamSpec[] = [
+  slider('fringe', 'Chroma fringe', 1, 0, 3, 0.05),
+  slider('jitter', 'Frame jitter', 1, 0, 3, 0.05),
+  slider('tracking', 'Tracking band', 1, 0, 2.5, 0.05),
+  toggle('scanlines', 'Scanlines', true),
+  slider('cast', 'Magenta cast', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.42, 0, 0.8, 0.02),
+  slider('grain', 'Tape grain', 0.1, 0, 0.3, 0.01),
+]
 
 const vhs: EffectDef = {
   label: 'VHS',
   description: 'Tape fuzz, tracking roll',
   beatSynced: false,
-  create(p) {
+  params: vhsParams,
+  create(p, overrides) {
+    const prm = resolveParams(vhsParams, overrides)
+    const fringeM = prm.fringe as number
+    const jitterM = prm.jitter as number
+    const trackM = prm.tracking as number
+    const scanlinesP = prm.scanlines as boolean
+    const castM = prm.cast as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -1014,8 +1294,8 @@ const vhs: EffectDef = {
     return (ctx, t, frame) => {
       const fr = frameRng(p.seed, frame)
       const scale = 1.07 + 0.01 * loopSin(t, 1, phase)
-      const jitterY = (fr() - 0.5) * p.H * 0.003
-      const fringe = p.W * 0.0045
+      const jitterY = (fr() - 0.5) * p.H * 0.003 * jitterM
+      const fringe = p.W * 0.0045 * fringeM
       fillBg(src.ctx, p.W, p.H)
       drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, 0, jitterY)
       drawCover(src.ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale, -fringe, jitterY, 0, 0.35, 'screen')
@@ -1023,38 +1303,55 @@ const vhs: EffectDef = {
       fillBg(ctx, p.W, p.H)
       ctx.drawImage(src.canvas, 0, 0)
       // Tracking band rolling bottom→top once per loop: displaced slice + noise
-      const bandH = Math.max(3, Math.round(p.H * 0.045))
-      const bandY = Math.round((1 - t) * p.H) - bandH / 2
-      const shift = p.W * (0.01 + 0.015 * fr())
-      ctx.drawImage(src.canvas, 0, Math.max(0, bandY), p.W, bandH, shift, Math.max(0, bandY), p.W, bandH)
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(0, bandY, p.W, bandH)
-      ctx.clip()
-      ctx.globalAlpha = 0.1
-      ctx.fillStyle = '#fff'
-      ctx.fillRect(0, bandY, p.W, bandH)
-      drawGrain(ctx, grain, p.W, p.H, 0.5, fr)
-      ctx.restore()
+      if (trackM > 0.01) {
+        const bandH = Math.max(3, Math.round(p.H * 0.045))
+        const bandY = Math.round((1 - t) * p.H) - bandH / 2
+        const shift = p.W * (0.01 + 0.015 * fr()) * trackM
+        ctx.drawImage(src.canvas, 0, Math.max(0, bandY), p.W, bandH, shift, Math.max(0, bandY), p.W, bandH)
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(0, bandY, p.W, bandH)
+        ctx.clip()
+        ctx.globalAlpha = 0.1
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(0, bandY, p.W, bandH)
+        drawGrain(ctx, grain, p.W, p.H, 0.5, fr)
+        ctx.restore()
+      }
       ctx.save()
       ctx.globalAlpha = 1
-      ctx.drawImage(scan.canvas, 0, 0)
+      if (scanlinesP) ctx.drawImage(scan.canvas, 0, 0)
       // Faint warm magenta cast, very VHS
-      ctx.globalAlpha = 0.04
+      ctx.globalAlpha = Math.min(1, 0.04 * castM)
       ctx.fillStyle = '#ff0060'
       ctx.fillRect(0, 0, p.W, p.H)
       ctx.restore()
-      drawVignette(ctx, p.W, p.H, 0.42, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.1, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
+
+const glitchParams: ParamSpec[] = [
+  slider('density', 'Burst density', 1, 0, 2.5, 0.05),
+  slider('strength', 'Burst strength', 1, 0, 2, 0.05),
+  slider('fringe', 'Chroma fringe', 1, 0, 3, 0.05),
+  slider('vignette', 'Vignette', 0.32, 0, 0.8, 0.02),
+  slider('grain', 'Film grain', 0.05, 0, 0.3, 0.01),
+]
 
 const glitch: EffectDef = {
   label: 'Glitch',
   description: 'RGB-split digital bursts',
   beatSynced: true,
-  create(p) {
+  params: glitchParams,
+  create(p, overrides) {
+    const prm = resolveParams(glitchParams, overrides)
+    const densityM = prm.density as number
+    const strengthM = prm.strength as number
+    const fringeM = prm.fringe as number
+    const vigS = prm.vignette as number
+    const grainA = prm.grain as number
     const rng = mulberry32(p.seed)
     const phase = rng() * Math.PI * 2
     const grain = makeGrainLayer(p.createLayer, rng)
@@ -1064,9 +1361,12 @@ const glitch: EffectDef = {
     const cyan = makeTintLayer(p.createLayer, p.image, p.imageWidth, p.imageHeight, '#00e0ff')
     const beats = snapBeats(p.duration, p.bpm)
     // Bursts land on a random subset of beats so the glitches feel musical.
+    // The rng() draw happens for every beat regardless of the threshold so the
+    // burst timings stay stable as `density` moves.
     const bursts: { start: number; dur: number }[] = []
+    const burstProb = Math.min(1, 0.4 * densityM)
     for (let b = 0; b < beats; b++) {
-      if (rng() < 0.4) bursts.push({ start: b / beats, dur: (0.1 + rng() * 0.18) / p.duration })
+      if (rng() < burstProb) bursts.push({ start: b / beats, dur: (0.1 + rng() * 0.18) / p.duration })
     }
     if (bursts.length < 2) {
       bursts.push({ start: 0.12, dur: 0.15 / p.duration }, { start: 0.58, dur: 0.18 / p.duration })
@@ -1079,16 +1379,17 @@ const glitch: EffectDef = {
       }
       return e
     }
-    return (ctx, t, frame) => {
+    return (ctx, t, frame, audio) => {
       const fr = frameRng(p.seed, frame)
-      const e = env(t)
+      const e = Math.min(1, env(t) * strengthM)
       const scale = 1.09 + 0.03 * loopSin(t, 1, phase)
       const panX = 0.015 * p.W * loopSin(t, 1, phase + 1.2)
       fillBg(src.ctx, p.W, p.H)
       drawCover(src.ctx, p.image, p.imageWidth, p.imageHeight, p.W, p.H, scale, panX, 0)
-      // Constant hairline fringe; blown out during bursts
-      const d = p.W * (0.002 + 0.02 * e)
-      const fa = 0.25 + 0.45 * e
+      // Constant hairline fringe; blown out during bursts. Real audio (P2)
+      // widens the fringe with high-band energy on top of the burst envelope.
+      const d = p.W * (0.002 * fringeM + 0.02 * e) * (1 + (audio?.treble ?? 0) * 0.5)
+      const fa = Math.min(1, 0.25 * fringeM + 0.45 * e)
       drawCover(src.ctx, red.layer.canvas, red.w, red.h, p.W, p.H, scale, panX - d, 0, 0, fa, 'screen')
       drawCover(src.ctx, cyan.layer.canvas, cyan.w, cyan.h, p.W, p.H, scale, panX + d, 0, 0, fa, 'screen')
       fillBg(ctx, p.W, p.H)
@@ -1122,8 +1423,8 @@ const glitch: EffectDef = {
           ctx.restore()
         }
       }
-      drawVignette(ctx, p.W, p.H, 0.32, vig)
-      drawGrain(ctx, grain, p.W, p.H, 0.05, fr)
+      drawVignette(ctx, p.W, p.H, vigS, vig)
+      drawGrain(ctx, grain, p.W, p.H, grainA, fr)
     }
   },
 }
