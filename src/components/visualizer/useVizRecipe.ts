@@ -17,6 +17,7 @@ export type VizRecipeAction =
   | { type: 'macro'; id: string; value: number }
   | { type: 'bpm'; bpm: number }
   | { type: 'seed'; seed: number }
+  | { type: 'resolution'; resolution: 'standard' | 'high' }
 
 function reducer(recipe: VizRecipe, action: VizRecipeAction): VizRecipe {
   switch (action.type) {
@@ -36,6 +37,10 @@ function reducer(recipe: VizRecipe, action: VizRecipeAction): VizRecipe {
       return { ...recipe, bpm: Math.min(200, Math.max(60, Math.round(action.bpm))) }
     case 'seed':
       return { ...recipe, seed: action.seed >>> 0 }
+    case 'resolution':
+      // 4K is a youtube-only offer (vertical formats are capped by their
+      // platforms at 1080×1920) — validateRecipe enforces the same rule.
+      return { ...recipe, resolution: recipe.format === 'youtube' ? action.resolution : 'standard' }
   }
 }
 

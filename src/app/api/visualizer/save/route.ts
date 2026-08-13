@@ -4,6 +4,7 @@ import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
 import { webmToMp4, tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { vizSaveLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
+import { sanitizeSettings } from '@/lib/visualizer-finalize'
 
 // Allow time to receive the upload, transcode WebM→MP4, and push to storage.
 export const maxDuration = 60
@@ -40,6 +41,17 @@ export async function POST(req: NextRequest) {
   const sourceImageUrl = isSupabaseStorageUrl(form.get('sourceImageUrl'))
     ? String(form.get('sourceImageUrl'))
     : null
+  // Optional FX-engine recipe (JSON string) — validated to a canonical
+  // VizRecipe or dropped; never fails the save.
+  const settings = (() => {
+    const raw = form.get('settings')
+    if (typeof raw !== 'string' || raw.length > 32_768) return null
+    try {
+      return sanitizeSettings(JSON.parse(raw))
+    } catch {
+      return null
+    }
+  })()
 
   if (!(file instanceof Blob)) return NextResponse.json({ error: 'file is required' }, { status: 400 })
   if (!isUuid(projectId)) return NextResponse.json({ error: 'Valid projectId is required' }, { status: 400 })
@@ -101,6 +113,7 @@ export async function POST(req: NextRequest) {
     kind: 'free',
     title,
     sourceImageUrl,
+    settings,
   })
   if (!stored) return NextResponse.json({ error: 'Failed to save visualizer' }, { status: 500 })
 

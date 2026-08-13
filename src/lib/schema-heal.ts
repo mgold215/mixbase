@@ -55,6 +55,35 @@ export function isMissingVisualizerColumn(error: { message?: string } | null): b
   return !!error?.message && /visualizer(_wide)?_url/.test(error.message)
 }
 
+// ── mb_visualizers.settings (migration 031) ─────────────────────────────────
+// The FX-engine recipe persisted with each saved clip. A deploy that beats the
+// migration would fail every insert that includes `settings`; the write paths
+// (/api/visualizer/save, /api/visualizer/finalize) catch the specific missing-
+// column error, heal, and retry — and on a persistent failure store the row
+// with settings omitted rather than failing the save.
+
+const VIZ_SETTINGS_SQL =
+  "alter table mb_visualizers add column if not exists settings jsonb; notify pgrst, 'reload schema';"
+
+let vizSettingsEnsured: Promise<boolean> | null = null
+
+export function ensureVisualizerSettingsColumn(): Promise<boolean> {
+  if (!vizSettingsEnsured) {
+    vizSettingsEnsured = runQuery(VIZ_SETTINGS_SQL, 'mb_visualizers.settings column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) vizSettingsEnsured = null
+        return ok
+      })
+  }
+  return vizSettingsEnsured
+}
+
+/** True when a PostgREST error is the missing-settings-column failure. */
+export function isMissingVisualizerSettingsColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /settings/.test(error.message) && /mb_visualizers|schema cache/.test(error.message)
+}
+
 // ── mf-video bucket size limit (migration 016) ──────────────────────────────
 // Final YouTube videos exceed the bucket's original 50 MB cap. The limit must
 // be raised via direct SQL — the Storage API clamps updateBucket to the

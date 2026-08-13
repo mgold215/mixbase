@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase'
+import { ensureVisualizerSettingsColumn, isMissingVisualizerSettingsColumn } from '@/lib/schema-heal'
 
 // Shared persistence for generated visualizers. Both the AI path
 // (/api/visualizer/runway) and the free path (/api/visualizer/save) upload the
@@ -29,9 +30,49 @@ export type StoreVisualizerArgs = {
   kind: 'free' | 'ai' | 'youtube' | 'shorts'
   title: string
   sourceImageUrl?: string | null
+  // FX-engine recipe (VizRecipe JSON, already validated + size-capped by the
+  // route). Opaque to the server; enables "edit a copy" in the web studio.
+  settings?: unknown
 }
 
 export type StoredVisualizer = { id: string; video_url: string }
+
+// Insert the mb_visualizers row, healing the `settings` column if the deploy
+// beat migration 031. Degrades in order: insert with settings → heal + retry →
+// insert WITHOUT settings (a clip whose recipe didn't persist is still a saved
+// clip; the reverse — a failed save over a metadata column — is not acceptable).
+async function insertVisualizerRow(fields: {
+  user_id: string
+  project_id: string
+  video_url: string
+  source_image_url: string | null
+  kind: string
+  title: string
+}, settings: unknown): Promise<{ id: string } | null> {
+  const withSettings = settings !== undefined && settings !== null
+  const attempt = (includeSettings: boolean) =>
+    supabaseAdmin
+      .from('mb_visualizers')
+      .insert(includeSettings ? { ...fields, settings } : fields)
+      .select('id')
+      .single()
+
+  let res = await attempt(withSettings)
+  if (res.error && withSettings && isMissingVisualizerSettingsColumn(res.error)) {
+    const healed = await ensureVisualizerSettingsColumn()
+    res = await attempt(healed)
+    if (res.error && healed && isMissingVisualizerSettingsColumn(res.error)) {
+      // Heal reported success but PostgREST still rejects the column (stale
+      // schema cache) — save the row without the recipe rather than failing.
+      res = await attempt(false)
+    }
+  }
+  if (res.error || !res.data) {
+    console.error('[visualizer-store] db insert error:', res.error?.message)
+    return null
+  }
+  return { id: res.data.id as string }
+}
 
 // Upload a generated visualizer and index it. Returns null when EITHER the
 // upload or the DB insert fails — both are genuine "not saved" outcomes, so the
@@ -39,7 +80,7 @@ export type StoredVisualizer = { id: string; video_url: string }
 // with an empty id on a DB-insert failure; callers read that as success and told
 // the user "saved" while the row never landed in Media and the bytes leaked.)
 export async function storeVisualizer(args: StoreVisualizerArgs): Promise<StoredVisualizer | null> {
-  const { userId, projectId, bytes, contentType, kind, title, sourceImageUrl } = args
+  const { userId, projectId, bytes, contentType, kind, title, sourceImageUrl, settings } = args
 
   const ext = contentType.includes('mp4') ? 'mp4'
     : contentType.includes('quicktime') ? 'mov'
@@ -57,28 +98,54 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
   const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(uploadData.path)
   const videoUrl = urlData.publicUrl
 
-  const { data: row, error: dbError } = await supabaseAdmin
-    .from('mb_visualizers')
-    .insert({
-      user_id: userId,
-      project_id: projectId,
-      video_url: videoUrl,
-      source_image_url: sourceImageUrl ?? null,
-      kind,
-      title,
-    })
-    .select('id')
-    .single()
-  if (dbError || !row) {
+  const row = await insertVisualizerRow({
+    user_id: userId,
+    project_id: projectId,
+    video_url: videoUrl,
+    source_image_url: sourceImageUrl ?? null,
+    kind,
+    title,
+  }, settings)
+  if (!row) {
     // The row is what Media reads, so an un-indexed object is invisible and would
     // leak forever. Best-effort delete the just-uploaded bytes, then report the
     // failure (return null) so the caller can tell the user it didn't save.
-    console.error('[visualizer-store] db insert error:', dbError?.message)
     await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([uploadData.path]).catch(() => {})
     return null
   }
 
-  return { id: row.id as string, video_url: videoUrl }
+  return { id: row.id, video_url: videoUrl }
+}
+
+// Index an object that is ALREADY in mf-video (signed-URL upload path — the
+// bytes never passed through this server). Same no-orphan rule as
+// storeVisualizer: if the row can't land, best-effort delete the object so it
+// doesn't leak invisibly.
+export async function indexVisualizer(args: {
+  userId: string
+  projectId: string
+  storagePath: string
+  kind: 'free' | 'ai' | 'youtube' | 'shorts'
+  title: string
+  sourceImageUrl?: string | null
+  settings?: unknown
+}): Promise<StoredVisualizer | null> {
+  const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(args.storagePath)
+  const videoUrl = urlData.publicUrl
+
+  const row = await insertVisualizerRow({
+    user_id: args.userId,
+    project_id: args.projectId,
+    video_url: videoUrl,
+    source_image_url: args.sourceImageUrl ?? null,
+    kind: args.kind,
+    title: args.title,
+  }, args.settings)
+  if (!row) {
+    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([args.storagePath]).catch(() => {})
+    return null
+  }
+  return { id: row.id, video_url: videoUrl }
 }
 
 // Derive the storage object path (after the bucket segment) from a public URL,
