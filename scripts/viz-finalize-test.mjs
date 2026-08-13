@@ -59,7 +59,7 @@ check('rejects query-ish suffixes', parseVizStoragePath(PID, `${PID}/viz-1.mp4?x
 // ── constants sanity (route + client budgets agree) ─────────────────────────
 
 check('mp4 cap covers 4K exports with headroom', MAX_FINALIZE_BYTES === 200 * 1024 * 1024)
-check('webm cap covers the 45 MB fallback ceiling', MAX_FINALIZE_WEBM_BYTES === 80 * 1024 * 1024)
+check('webm cap bounds the transcoder input near its old assumptions', MAX_FINALIZE_WEBM_BYTES === 48 * 1024 * 1024)
 check('minimum duration matches finalize-video', MIN_CLIP_SECONDS === 0.5)
 check('probe window is faststart-sized', MP4_PROBE_BYTES === 2 * 1024 * 1024)
 

@@ -294,7 +294,9 @@ export default function FreeStudio({
       return blob ? { blob, W, H } : null
     }
     try {
-      const fullBitrate = Math.min(12_000_000, Math.floor((45 * 8 * 1024 * 1024) / cfg.duration))
+      // ~30 MB ceiling: keeps the worst-case webm well inside the server
+      // transcoder's 60 s SIGKILL window (6 s clips still get the full 12 Mbps).
+      const fullBitrate = Math.min(12_000_000, Math.floor((30 * 8 * 1024 * 1024) / cfg.duration))
       const r = await runRecorder(1, fullBitrate)
       if (!r) return
       finishRender(r.blob, 'video/webm', r.W, r.H)

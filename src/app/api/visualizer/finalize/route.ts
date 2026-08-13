@@ -69,38 +69,72 @@ export async function POST(req: NextRequest) {
     : null
   const settings = sanitizeSettings(body.settings)
 
-  const removeObject = () =>
-    supabaseAdmin.storage.from(VIDEO_BUCKET).remove([storagePath]).catch(() => {})
-
   const { data: pub } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(storagePath)
+
+  // Delete a claimed object ONLY if no mb_visualizers row references it. All
+  // stored clips — including finished youtube/shorts renders and pinned
+  // loops — share the `{projectId}/viz-*.{ext}` key shape, so an owner can
+  // legitimately name an already-indexed object in a claim; failing that
+  // claim's validation must never take a library item's bytes down with it.
+  // On a failed reference check, err on the side of keeping the object.
+  const safeRemove = async () => {
+    const { data, error } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('id')
+      .eq('video_url', pub.publicUrl)
+      .limit(1)
+      .maybeSingle()
+    if (error || data) return
+    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([storagePath]).catch(() => {})
+  }
 
   if (parsed.ext === 'mp4') {
     // Validate the head of the object: both client encoders write faststart
     // MP4s, so the moov metadata sits in the first couple of MB. The Range
     // response's Content-Range also tells us the total object size without a
     // second request. Server-to-server fetch — no Railway limits apply.
-    let head: ArrayBuffer
+    let head: Uint8Array
     let totalBytes = 0
     try {
       const res = await fetch(pub.publicUrl, {
         headers: { Range: `bytes=0-${MP4_PROBE_BYTES - 1}` },
         signal: AbortSignal.timeout(30_000),
       })
-      if (!res.ok && res.status !== 206) throw new Error(`fetch ${res.status}`)
+      if (!res.ok || !res.body) throw new Error(`fetch ${res.status}`)
+      // Total size: Content-Range on a 206; Content-Length when the server
+      // ignores Range and answers 200 (Supabase public URLs have exactly that
+      // flakiness — it's why audioProxyUrl exists).
       const contentRange = res.headers.get('content-range') // "bytes 0-x/TOTAL"
-      totalBytes = contentRange ? parseInt(contentRange.split('/')[1] ?? '0', 10) : 0
-      head = await res.arrayBuffer()
-      if (!totalBytes) totalBytes = head.byteLength
+      totalBytes = contentRange
+        ? parseInt(contentRange.split('/')[1] ?? '0', 10)
+        : parseInt(res.headers.get('content-length') ?? '0', 10)
+      if (Number.isFinite(totalBytes) && totalBytes > MAX_FINALIZE_BYTES) {
+        res.body.cancel().catch(() => {})
+        await safeRemove()
+        return NextResponse.json({ error: 'Video too large' }, { status: 413 })
+      }
+      // Stream at most the probe window, then hang up — never buffer a
+      // Range-ignoring 200's full body (up to the bucket's 500 MB) in memory.
+      const chunks: Uint8Array[] = []
+      let got = 0
+      const reader = res.body.getReader()
+      while (got < MP4_PROBE_BYTES) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        got += value.byteLength
+      }
+      reader.cancel().catch(() => {})
+      head = Buffer.concat(chunks)
+      if (!totalBytes) totalBytes = got
     } catch {
-      // The claimed object doesn't exist or storage is unreachable — nothing
-      // was indexed, nothing to clean up beyond a best-effort remove.
-      await removeObject()
-      return NextResponse.json({ error: 'Uploaded video not found' }, { status: 400 })
-    }
-
-    if (totalBytes > MAX_FINALIZE_BYTES) {
-      await removeObject()
-      return NextResponse.json({ error: 'Video too large' }, { status: 413 })
+      // Could not REACH the object — transient storage trouble is not proof
+      // of a bad upload, so leave the bytes alone and tell the client to
+      // retry the (cheap) finalize call. fx/upload.ts retries 503s.
+      return NextResponse.json(
+        { error: 'Could not verify the upload. Try again in a moment.' },
+        { status: 503, headers: { 'Retry-After': '10' } },
+      )
     }
 
     // Pure-JS demux (mediabunny) instead of ffprobe: no traced binaries, no
@@ -115,7 +149,7 @@ export async function POST(req: NextRequest) {
       const duration = await input.computeDuration()
       if (!(duration >= MIN_CLIP_SECONDS)) throw new Error(`duration ${duration}`)
     } catch (err) {
-      await removeObject()
+      await safeRemove()
       Sentry.captureException(err, {
         level: 'warning',
         tags: { area: 'visualizer-finalize', phase: 'validate' },
@@ -143,11 +177,15 @@ export async function POST(req: NextRequest) {
     .from(VIDEO_BUCKET)
     .download(storagePath)
   if (dlError || !blob) {
-    await removeObject()
-    return NextResponse.json({ error: 'Uploaded video not found' }, { status: 400 })
+    // Same retry semantics as the mp4 probe: an unreachable object is not a
+    // proven-bad object, so never delete on a failed download.
+    return NextResponse.json(
+      { error: 'Could not verify the upload. Try again in a moment.' },
+      { status: 503, headers: { 'Retry-After': '10' } },
+    )
   }
   if (blob.size > MAX_FINALIZE_WEBM_BYTES) {
-    await removeObject()
+    await safeRemove()
     return NextResponse.json({ error: 'Video too large' }, { status: 413 })
   }
 
@@ -179,9 +217,14 @@ export async function POST(req: NextRequest) {
       userId, projectId, bytes: mp4Bytes, contentType: 'video/mp4',
       kind: 'free', title, sourceImageUrl, settings,
     })
-    if (!stored) return NextResponse.json({ error: 'Failed to save visualizer' }, { status: 500 })
+    if (!stored) {
+      // The mp4 twin's bytes were already cleaned up by storeVisualizer; the
+      // raw webm original would otherwise leak unindexed forever.
+      await safeRemove()
+      return NextResponse.json({ error: 'Failed to save visualizer' }, { status: 500 })
+    }
     // The mp4 twin is indexed; the raw webm original is no longer referenced.
-    await removeObject()
+    await safeRemove()
     return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, transcoded: true })
   }
 

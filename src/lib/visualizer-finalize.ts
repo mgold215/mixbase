@@ -13,12 +13,14 @@ import type { VizRecipe } from './fx/types.ts'
 // clients generate, and the extension decides the pipeline (mp4 = validate +
 // index; webm = server transcode like /api/visualizer/save always did).
 // Anything else — traversal, foreign prefixes, exotic extensions — is rejected.
+export const VIZ_KEY_RE = /^([0-9a-f-]{36})\/viz-[A-Za-z0-9_-]{1,64}\.(mp4|webm)$/
+
 export function parseVizStoragePath(
   projectId: string,
   storagePath: unknown,
 ): { ext: 'mp4' | 'webm' } | null {
   if (typeof storagePath !== 'string' || storagePath.length > 200) return null
-  const m = /^([0-9a-f-]{36})\/viz-[A-Za-z0-9_-]{1,64}\.(mp4|webm)$/.exec(storagePath)
+  const m = VIZ_KEY_RE.exec(storagePath)
   if (!m || m[1] !== projectId) return null
   return { ext: m[2] as 'mp4' | 'webm' }
 }
@@ -37,10 +39,12 @@ export function sanitizeSettings(raw: unknown): VizRecipe | null {
 }
 
 // Upper bound on a finalized clip. 4K 30s at ~40 Mbps is ~150 MB; anything
-// bigger than 200 MB in this bucket path is a mistake or abuse. (The webm
-// fallback records at ≤ ~12 Mbps, so it gets a tighter cap.)
+// bigger than 200 MB in this bucket path is a mistake or abuse. The webm cap
+// is tighter on purpose: the fallback recorder budgets ~30 MB (see
+// FreeStudio), and webms feed the 60 s-SIGKILL webmToMp4 transcoder — inputs
+// bounded near the old assumptions keep that ceiling comfortable.
 export const MAX_FINALIZE_BYTES = 200 * 1024 * 1024
-export const MAX_FINALIZE_WEBM_BYTES = 80 * 1024 * 1024
+export const MAX_FINALIZE_WEBM_BYTES = 48 * 1024 * 1024
 
 // finalize-video rejects clips under 0.5 s; catching it here keeps garbage out
 // of the library instead of surfacing later as a confusing render failure.

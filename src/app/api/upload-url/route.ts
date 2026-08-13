@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { uploadLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { ownsProject } from '@/lib/ownership'
 import { isUuid } from '@/lib/validators'
+import { VIZ_KEY_RE } from '@/lib/visualizer-finalize'
 
 // Buckets the client is allowed to request a signed upload URL for.
 // mf-video: full-resolution FX-studio exports (too big for the 10 MB multipart
@@ -53,6 +54,13 @@ export async function POST(req: NextRequest) {
   const projectId = safeFilename.split('/')[0]
   if (!isUuid(projectId) || !(await ownsProject(projectId, userId))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // mf-video keys must be the viz-* shape /api/visualizer/finalize accepts —
+  // anything else could be signed and uploaded but never indexed, so it could
+  // only ever leak storage.
+  if (targetBucket === 'mf-video' && !VIZ_KEY_RE.test(safeFilename)) {
+    return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
   }
 
   const { data, error } = await supabaseAdmin.storage
