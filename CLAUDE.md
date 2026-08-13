@@ -3,6 +3,8 @@
 # Working Rules — READ FIRST
 - **Always use the API or CLI.** Playwright / Chrome DevTools MCP are last resorts when no API/CLI exists.
 - **Never tell the user to do something manually** and never say you can't do something without attempting it first.
+- **Never trust "MCP server requires authentication" session banners or proxy 403 probes — ATTEMPT a real tool call first.** On 2026-08-13 the Supabase MCP was fully working (`execute_sql`, `query_logs`) while the session-start banner claimed it needed OAuth and `mcp.supabase.com` failed a curl probe; an outage diagnosis was nearly completed blind because no call was attempted. MCP tools run through their own relay and work even though the remote sandbox blocks direct HTTPS to `supabase.co` / `mixbase.app`. Only report a capability missing after an actual call has failed.
+- **Debugging prod: check Supabase first.** `pg_policies`, `storage.objects`, and `query_logs` (source `storage_logs` / `edge_logs` / `auth_logs`, 24h window per query) usually settle "what actually happened" in minutes — read them before theorizing from code.
 
 # Deployment
 - **Prod:** https://mixbase.app → https://mixbase-production.up.railway.app · **Staging:** https://mixbase-staging.up.railway.app · DNS at Namecheap
