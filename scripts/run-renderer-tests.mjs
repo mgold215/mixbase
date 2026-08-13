@@ -65,6 +65,7 @@ const SUITES = [
   'submit-links-test.mjs',
   'usage-refund-test.mjs',
   'effects-test.mjs',
+  'fx-test.mjs',
   'finalize-test.mjs',
   'visualizer-transcode-test.mjs',
   'video-test.mjs',

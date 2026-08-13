@@ -22,6 +22,7 @@ import {
   snapBeats,
   beatPulse,
   coverDims,
+  resolveParams,
 } from '../src/lib/free-effects.ts'
 
 let failures = 0
@@ -193,10 +194,11 @@ function probeLog(id, seed, probe, warm) {
 }
 
 // Full-loop fingerprint for a seed — proves the seed actually drives the motion.
-function loopLog(id, seed) {
+// Optional `params` exercises the parameterized create() path.
+function loopLog(id, seed, params) {
   const stats = { drawImage: 0 }
   const log = []
-  const draw = EFFECTS[id].create(makeSetup(stats, { ...DET_SHAPE, seed }, log))
+  const draw = EFFECTS[id].create(makeSetup(stats, { ...DET_SHAPE, seed }, log), params)
   const ctx = makeStubCtx(stats, log)
   for (let f = 0; f < DET_N; f++) draw(ctx, f / DET_N, f)
   return log.join('|')
@@ -222,6 +224,86 @@ for (const id of EFFECT_IDS) {
   const seedA = loopLog(id, 42)
   check(`${id}: identical seed reproduces the loop exactly`, seedA === loopLog(id, 42))
   check(`${id}: a different seed changes the loop`, seedA !== loopLog(id, 999))
+}
+
+// ── Params: spec validity, default equality, extremes, wiring ───────────────
+// The parameterization refactor is only safe if (a) passing nothing and
+// passing every default explicitly render identically — proving the spec
+// defaults match the literals the effects shipped with — and (b) any value in
+// range keeps every frame finite.
+
+for (const id of EFFECT_IDS) {
+  const specs = EFFECTS[id].params
+  const uniqueIds = new Set(specs.map((s) => s.id))
+  check(
+    `${id}: param specs are well-formed`,
+    Array.isArray(specs) &&
+      specs.length > 0 &&
+      uniqueIds.size === specs.length &&
+      specs.every((s) =>
+        s.type === 'toggle'
+          ? typeof s.default === 'boolean'
+          : typeof s.default === 'number' &&
+            Number.isFinite(s.min) &&
+            Number.isFinite(s.max) &&
+            s.min <= s.default &&
+            s.default <= s.max,
+      ),
+  )
+
+  const defaults = Object.fromEntries(specs.map((s) => [s.id, s.default]))
+  check(
+    `${id}: explicit defaults reproduce the no-params render exactly`,
+    loopLog(id, 42) === loopLog(id, 42, defaults),
+  )
+
+  const atMin = Object.fromEntries(specs.map((s) => [s.id, s.type === 'toggle' ? false : s.min]))
+  const atMax = Object.fromEntries(specs.map((s) => [s.id, s.type === 'toggle' ? true : s.max]))
+  let error = null
+  try {
+    for (const params of [atMin, atMax]) {
+      const stats = { drawImage: 0 }
+      const draw = EFFECTS[id].create(makeSetup(stats, DET_SHAPE), params)
+      const ctx = makeStubCtx(stats)
+      for (let f = 0; f < DET_N; f += 7) draw(ctx, f / DET_N, f)
+    }
+  } catch (e) {
+    error = e
+  }
+  check(`${id}: param extremes render finite frames`, !error, error ? String(error) : '')
+  check(`${id}: params actually change the render`, loopLog(id, 42) !== loopLog(id, 42, atMax))
+}
+
+{
+  const specs = EFFECTS.kenburns.params
+  const r = resolveParams(specs, { zoom: 99, junk: 5, letterbox: 'nope', grain: NaN })
+  check('resolveParams clamps overrides to the spec max', r.zoom === 3)
+  check('resolveParams ignores unknown ids', !('junk' in r))
+  check('resolveParams rejects wrong-typed values', r.letterbox === true)
+  check('resolveParams rejects non-finite numbers', r.grain === 0.07)
+}
+
+// ── FrameAudio: the per-frame audio features actually drive the render ──────
+// Probe a mid-beat frame (synthetic kick ≈ 0) so a real kick=1 must visibly
+// differ. Absence of audio === synthetic path is already proven by the
+// default-equality assertions above (they render with audio undefined).
+
+const AUDIO_ON = { kick: 1, bass: 1, mid: 0.5, treble: 1, rms: 0.8, flux: 0.6 }
+const AUDIO_OFF = { kick: 0, bass: 0, mid: 0, treble: 0, rms: 0, flux: 0 }
+
+function audioProbe(id, audio) {
+  const stats = { drawImage: 0 }
+  const log = []
+  const draw = EFFECTS[id].create(makeSetup(stats, { ...DET_SHAPE, seed: 42 }, log))
+  const ctx = makeStubCtx(stats, log)
+  draw(ctx, 0, 0) // warm-up builds the cached vignette gradient
+  log.length = 0
+  draw(ctx, 7 / DET_N, 7, audio)
+  return log.join('|')
+}
+
+for (const id of ['pulse', 'strobe', 'zoomblur', 'glitch']) {
+  check(`${id}: FrameAudio drives the render`, audioProbe(id, AUDIO_ON) !== audioProbe(id, AUDIO_OFF))
 }
 
 console.log(failures === 0 ? '\nAll effects tests passed' : `\n${failures} effects test(s) FAILED`)

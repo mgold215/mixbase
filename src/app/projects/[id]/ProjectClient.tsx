@@ -924,6 +924,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             wideVisualizerUrl={visualizerWide}
             onWideVisualizerUpdated={handleWideVisualizerUpdated}
             onSwitchToArtwork={() => switchTab('artwork')}
+            projectBpm={project.bpm}
+            audioUrl={currentMix ? audioProxyUrl(currentMix.audio_url) : null}
+            audioVersionId={currentMix?.id ?? null}
           />
         )}
 
