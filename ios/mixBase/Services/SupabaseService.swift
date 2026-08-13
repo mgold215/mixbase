@@ -585,10 +585,13 @@ class SupabaseService {
 
     // MARK: - Storage: Audio Upload
 
-    /// Upload an audio file to the "mf-audio" bucket in Supabase Storage.
+    /// Upload an audio file to the "mf-audio" bucket by streaming it from disk.
+    /// Mixes are routinely hundreds of MB — streaming avoids holding the whole
+    /// file (plus URLSession's send buffer) in memory, and the delegate reports
+    /// progress so the UI never looks stuck on a slow cellular uplink.
     /// Returns the public URL of the uploaded file.
-    func uploadAudio(data: Data, filename: String) async throws -> String {
-        return try await uploadFile(data: data, filename: filename, bucket: "mf-audio")
+    func uploadAudio(fileURL: URL, filename: String, onProgress: @escaping @Sendable (Double) -> Void) async throws -> String {
+        return try await uploadFile(fileURL: fileURL, filename: filename, bucket: "mf-audio", onProgress: onProgress)
     }
 
     // MARK: - Storage: Artwork Upload
@@ -599,11 +602,84 @@ class SupabaseService {
         return try await uploadFile(data: data, filename: filename, bucket: "mf-artwork")
     }
 
-    // MARK: - Storage Helper
+    // MARK: - Storage Helpers
 
-    /// Generic file upload to a Supabase Storage bucket.
-    /// The file is uploaded at the root of the bucket with the given filename.
+    // Session tuned for large uploads over cellular: a genuine 2-minute stall
+    // still fails, but a slow-yet-moving upload gets a full hour before the
+    // resource timeout kills it (URLSession.shared allows only 60s idle and is
+    // shared with every quick REST call, so it gets no special tuning).
+    private static let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 60 * 60
+        return URLSession(configuration: config)
+    }()
+
+    // Forwards outgoing-byte progress for a streamed upload, throttled to
+    // whole-percent changes (didSendBodyData fires per ~32 KB buffer, which
+    // would otherwise flood the main actor on a 500 MB mix).
+    private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+        private let onProgress: @Sendable (Double) -> Void
+        private var lastPercent = -1
+        init(onProgress: @escaping @Sendable (Double) -> Void) { self.onProgress = onProgress }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        didSendBodyData bytesSent: Int64,
+                        totalBytesSent: Int64,
+                        totalBytesExpectedToSend: Int64) {
+            guard totalBytesExpectedToSend > 0 else { return }
+            let percent = Int(Double(totalBytesSent) / Double(totalBytesExpectedToSend) * 100)
+            guard percent != lastPercent else { return }
+            lastPercent = percent
+            onProgress(Double(percent) / 100)
+        }
+    }
+
+    /// Streamed upload from a local file. Requires a signed-in session: the
+    /// storage INSERT policies are moving to authenticated-only (migration
+    /// 029), so falling back to the anon key would fail with a 403 that the
+    /// 401-only retry can never heal. Refreshing up front also gives the token
+    /// a full hour of runway — a 401 arriving after minutes of streaming would
+    /// force the whole body to be re-sent.
+    private func uploadFile(fileURL: URL, filename: String, bucket: String,
+                            onProgress: @escaping @Sendable (Double) -> Void) async throws -> String {
+        await AuthService.shared.ensureFreshToken()
+        guard let token = accessToken else { throw SupabaseError.notSignedIn }
+
+        var request = uploadRequest(filename: filename, bucket: bucket, token: token)
+        let delegate = UploadProgressDelegate(onProgress: onProgress)
+        var (data, response) = try await Self.uploadSession.upload(for: request, fromFile: fileURL, delegate: delegate)
+
+        // Token expired mid-flight: refresh and re-send once (authenticatedData
+        // can't retry here because the body streams from disk, not memory).
+        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            await AuthService.shared.refreshSession()
+            guard let newToken = accessToken else { throw SupabaseError.notSignedIn }
+            request.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await Self.uploadSession.upload(for: request, fromFile: fileURL, delegate: delegate)
+        }
+
+        try validateResponse(response, body: data)
+        return "\(supabaseURL)/storage/v1/object/public/\(bucket)/\(filename)"
+    }
+
+    /// Generic in-memory upload to a Supabase Storage bucket — fine for images,
+    /// wrong for audio (use the streaming variant above for anything big).
     private func uploadFile(data: Data, filename: String, bucket: String) async throws -> String {
+        let bearerToken = accessToken ?? supabaseKey
+        var request = uploadRequest(filename: filename, bucket: bucket, token: bearerToken)
+        request.httpBody = data
+
+        let (body, response) = try await authenticatedData(for: request)
+        try validateResponse(response, body: body)
+
+        // Build and return the public URL for the uploaded file
+        let publicURL = "\(supabaseURL)/storage/v1/object/public/\(bucket)/\(filename)"
+        return publicURL
+    }
+
+    /// Shared request shape for storage object POSTs.
+    private func uploadRequest(filename: String, bucket: String, token: String) -> URLRequest {
         let path = "/storage/v1/object/\(bucket)/\(filename)"
         let url = URL(string: "\(supabaseURL)\(path)")!
         var request = URLRequest(url: url)
@@ -611,24 +687,14 @@ class SupabaseService {
 
         // Storage API still needs the same auth headers
         request.setValue(supabaseKey, forHTTPHeaderField: "apikey")
-        let bearerToken = accessToken ?? supabaseKey
-        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         // Guess content type from file extension
-        let contentType = guessContentType(for: filename)
-        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(guessContentType(for: filename), forHTTPHeaderField: "Content-Type")
 
         // If the file already exists, allow overwriting it
         request.setValue("true", forHTTPHeaderField: "x-upsert")
-
-        request.httpBody = data
-
-        let (_, response) = try await authenticatedData(for: request)
-        try validateResponse(response)
-
-        // Build and return the public URL for the uploaded file
-        let publicURL = "\(supabaseURL)/storage/v1/object/public/\(bucket)/\(filename)"
-        return publicURL
+        return request
     }
 
     // MARK: - Authenticated Request with Auto-Retry
@@ -660,12 +726,20 @@ class SupabaseService {
     // MARK: - Response Validation
 
     /// Check that the HTTP response is in the 200-299 "success" range.
-    /// If not, throw an error with the status code.
-    private func validateResponse(_ response: URLResponse) throws {
+    /// If not, throw an error with the status code — and, when the caller
+    /// passes the response body, the server's own explanation (storage and
+    /// PostgREST both return JSON saying exactly what was wrong; "HTTP 403"
+    /// alone is undebuggable from a phone screen).
+    private func validateResponse(_ response: URLResponse, body: Data? = nil) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            if let body = body,
+               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let message = (json["message"] ?? json["error"] ?? json["msg"]) as? String {
+                throw SupabaseError.serverError(statusCode: httpResponse.statusCode, message: message)
+            }
             throw SupabaseError.httpError(statusCode: httpResponse.statusCode)
         }
     }
@@ -681,7 +755,12 @@ class SupabaseService {
         case "aac": return "audio/aac"
         case "flac": return "audio/flac"
         case "m4a": return "audio/mp4"
+        case "mp4": return "audio/mp4"
         case "ogg": return "audio/ogg"
+        // The version pickers allow AIFF; without this mapping those uploads
+        // fell through to application/octet-stream, which the mf-audio bucket's
+        // audio/* mime allow-list rejects outright.
+        case "aiff", "aif": return "audio/aiff"
         case "png": return "image/png"
         case "jpg", "jpeg": return "image/jpeg"
         case "webp": return "image/webp"
@@ -696,8 +775,10 @@ class SupabaseService {
 enum SupabaseError: LocalizedError {
     case notFound(String)
     case httpError(statusCode: Int)
+    case serverError(statusCode: Int, message: String)
     case invalidResponse
     case decodingFailed(String)
+    case notSignedIn
 
     var errorDescription: String? {
         switch self {
@@ -705,10 +786,14 @@ enum SupabaseError: LocalizedError {
             return message
         case .httpError(let code):
             return "HTTP error: \(code)"
+        case .serverError(let code, let message):
+            return "\(message) (HTTP \(code))"
         case .invalidResponse:
             return "Invalid response from server"
         case .decodingFailed(let message):
             return message
+        case .notSignedIn:
+            return "Your session has expired — sign in again to upload"
         }
     }
 }

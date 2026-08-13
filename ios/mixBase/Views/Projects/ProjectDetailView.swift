@@ -648,24 +648,39 @@ struct ProjectDetailView: View {
     private func uploadAudioVersion(url: URL) async {
         guard let project = project else { return }
         isUploadingAudio = true
-        uploadProgress = "Reading file..."
+        uploadProgress = "Preparing file..."
 
-        // Start accessing the security-scoped resource
+        // Copy the picked file into our sandbox first: the picker's
+        // security-scoped grant can lapse mid-upload, and a local copy lets the
+        // upload stream from disk instead of holding a whole mix in memory.
         guard url.startAccessingSecurityScopedResource() else {
-            uploadProgress = "Cannot access file"
-            isUploadingAudio = false
+            await showUploadResult("⚠️ Cannot access that file — try picking it again", success: false)
             return
         }
-        defer { url.stopAccessingSecurityScopedResource() }
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("version-upload-\(UUID().uuidString)")
+            .appendingPathExtension(url.pathExtension)
+        do {
+            try FileManager.default.copyItem(at: url, to: tempURL)
+        } catch {
+            url.stopAccessingSecurityScopedResource()
+            await showUploadResult("⚠️ Couldn't read the file: \(error.localizedDescription)", success: false)
+            return
+        }
+        url.stopAccessingSecurityScopedResource()
+        defer { try? FileManager.default.removeItem(at: tempURL) }
 
         do {
-            let data = try Data(contentsOf: url)
             let ext = url.pathExtension.lowercased()
             let nextVersion = (versions.map(\.versionNumber).max() ?? 0) + 1
             let filename = "\(project.id.uuidString)-v\(nextVersion)-\(Int(Date().timeIntervalSince1970)).\(ext)"
 
-            uploadProgress = "Uploading audio..."
-            let audioUrl = try await SupabaseService.shared.uploadAudio(data: data, filename: filename)
+            uploadProgress = "Uploading audio… 0%"
+            let audioUrl = try await SupabaseService.shared.uploadAudio(fileURL: tempURL, filename: filename) { fraction in
+                Task { @MainActor in
+                    uploadProgress = "Uploading audio… \(Int(fraction * 100))%"
+                }
+            }
 
             uploadProgress = "Creating version..."
             let label = newVersionLabel.isEmpty ? nil : newVersionLabel
@@ -678,13 +693,18 @@ struct ProjectDetailView: View {
 
             versions.append(version)
             newVersionLabel = ""
-            uploadProgress = "Done!"
+            await showUploadResult("Done!", success: true)
         } catch {
-            uploadProgress = "Upload failed: \(error.localizedDescription)"
+            await showUploadResult("⚠️ Upload failed: \(error.localizedDescription)", success: false)
         }
+    }
 
-        // Brief delay to show result
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+    // Show the outcome, then restore the upload button. Failures stay up long
+    // enough to actually read — the old 1.5s flash made every failure look
+    // like the upload just silently vanished.
+    private func showUploadResult(_ message: String, success: Bool) async {
+        uploadProgress = message
+        try? await Task.sleep(nanoseconds: success ? 1_500_000_000 : 6_000_000_000)
         isUploadingAudio = false
         uploadProgress = ""
     }
