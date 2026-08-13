@@ -193,24 +193,40 @@ struct NewProjectView: View {
 
                 // Step 2: Upload audio file if one was selected
                 if let fileURL = selectedFileURL {
-                    // Start accessing the security-scoped resource
+                    // Copy the file into our sandbox first: the picker's
+                    // security-scoped grant can lapse mid-upload, and a local
+                    // copy lets the upload stream from disk instead of holding
+                    // the whole mix in memory.
                     guard fileURL.startAccessingSecurityScopedResource() else {
                         errorMessage = "Cannot access the selected file"
                         isSubmitting = false
                         uploadProgress = nil
                         return
                     }
-                    defer { fileURL.stopAccessingSecurityScopedResource() }
+                    let tempURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("new-project-upload-\(UUID().uuidString)")
+                        .appendingPathExtension(fileURL.pathExtension)
+                    do {
+                        try FileManager.default.copyItem(at: fileURL, to: tempURL)
+                    } catch {
+                        fileURL.stopAccessingSecurityScopedResource()
+                        throw error
+                    }
+                    fileURL.stopAccessingSecurityScopedResource()
+                    defer { try? FileManager.default.removeItem(at: tempURL) }
 
-                    uploadProgress = "Uploading audio..."
-                    let audioData = try Data(contentsOf: fileURL)
+                    uploadProgress = "Uploading audio… 0%"
                     let ext = fileURL.pathExtension.lowercased()
                     let filename = "\(project.id.uuidString)-v1.\(ext)"
 
                     let audioPublicUrl = try await SupabaseService.shared.uploadAudio(
-                        data: audioData,
+                        fileURL: tempURL,
                         filename: filename
-                    )
+                    ) { fraction in
+                        Task { @MainActor in
+                            uploadProgress = "Uploading audio… \(Int(fraction * 100))%"
+                        }
+                    }
 
                     // Step 3: Create version 1
                     uploadProgress = "Creating version..."
