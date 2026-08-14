@@ -54,3 +54,69 @@ export const MIN_CLIP_SECONDS = 0.5
 // write faststart MP4s (moov before mdat), so the metadata lives in the first
 // couple of MB regardless of file size.
 export const MP4_PROBE_BYTES = 2 * 1024 * 1024
+
+// The cap that applies to a claim, chosen by the extension the key carries.
+// One function so the two lanes can never drift apart on which ceiling is in
+// force — the webm number is deliberately the tighter of the two.
+export function maxFinalizeBytesFor(ext: 'mp4' | 'webm'): number {
+  return ext === 'webm' ? MAX_FINALIZE_WEBM_BYTES : MAX_FINALIZE_BYTES
+}
+
+// Total byte length of the stored object as reported by ONE storage response's
+// headers, or null when the response does not say.
+//
+// Both lanes learn an object's size from a cheap Range probe instead of by
+// downloading it: a 206 answers `Content-Range: bytes 0-N/TOTAL`, and a server
+// that ignores Range answers 200 + `Content-Length: TOTAL` (Supabase public
+// URLs have exactly that flakiness — it is why audioProxyUrl exists).
+//
+// null means UNKNOWN, and unknown must never be read as "small enough". The
+// inline version this replaces did `parseInt(header ?? '0', 10)`, so a response
+// carrying NEITHER header produced 0 — and `0 > MAX_FINALIZE_BYTES` is false,
+// so the size cap silently did not fire and an object of any size sailed
+// through. Callers turn null into a retryable 503: failing to MEASURE the
+// object is not the same as the object being acceptable.
+//
+// Number() rather than parseInt() on purpose: parseInt('12abc') is 12, which
+// would let a malformed header masquerade as a measurement.
+export function totalBytesFromHeaders(headers: { get(name: string): string | null }): number | null {
+  const size = (raw: string | null | undefined): number | null => {
+    const text = raw?.trim()
+    if (!text) return null
+    const n = Number(text)
+    return Number.isSafeInteger(n) && n >= 0 ? n : null
+  }
+  // "bytes 0-2097151/524288000" → 524288000. A server that knows the range but
+  // not the total writes "…/*", which stays unknown.
+  const contentRange = headers.get('content-range')
+  if (contentRange) {
+    const total = size(contentRange.split('/')[1])
+    if (total !== null) return total
+  }
+  return size(headers.get('content-length'))
+}
+
+// What a demux told us about a claimed object: the primary video track's codec
+// (null when there is no video track at all) and the container duration.
+export type ClipProbe = { codec: string | null; duration: number }
+
+// Why a probed clip is unusable, or null when it passes. Both lanes run this,
+// so "indexed" always means "actually a playable clip":
+//   - mp4 must be avc (H.264) — the one codec every surface decodes (web,
+//     share page, iOS AVPlayer, finalize-video).
+//   - webm carries vp8/vp9/av1 by definition, so the codec is only required to
+//     EXIST there; the mp4 twin that the route transcodes is what reaches iOS.
+//   - either way the clip must be long enough for finalize-video to use.
+//
+// The webm lane used to check nothing but blob.size, which is why a 0-byte
+// MediaRecorder blob (chunks empty because 'dataavailable' never fired) could
+// be stored and reported "Saved": ffmpeg failed it with "EBML header parsing
+// failed", the route swallowed that as a transcode miss, and the raw bytes got
+// indexed anyway.
+export function clipRejectionReason(probe: ClipProbe, ext: 'mp4' | 'webm'): string | null {
+  if (!probe.codec) return 'no video track'
+  if (ext === 'mp4' && probe.codec !== 'avc') return `codec ${probe.codec}`
+  // Written as !(x >= y) so a NaN duration (unreadable container) rejects too.
+  if (!(probe.duration >= MIN_CLIP_SECONDS)) return `duration ${probe.duration}`
+  return null
+}

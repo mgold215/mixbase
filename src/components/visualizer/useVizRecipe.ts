@@ -48,18 +48,29 @@ const draftKey = (projectId: string | undefined) => `mixbase:vizdraft:${projectI
 
 function initRecipe(projectId: string | undefined, projectBpm: number | null | undefined): VizRecipe {
   const seed = Math.floor(Math.random() * 2 ** 31)
+  const detected =
+    projectBpm && Number.isFinite(projectBpm)
+      ? Math.min(200, Math.max(60, Math.round(projectBpm)))
+      : null
+
   const fresh = defaultRecipe('kenburns', 'canvas', seed)
-  if (projectBpm && Number.isFinite(projectBpm)) {
-    fresh.bpm = Math.min(200, Math.max(60, Math.round(projectBpm)))
-  } else {
-    fresh.bpm = DEFAULT_BPM
-  }
+  fresh.bpm = detected ?? DEFAULT_BPM
   if (typeof window === 'undefined') return fresh
   try {
     const raw = window.localStorage.getItem(draftKey(projectId))
     if (!raw) return fresh
-    const parsed = validateRecipe(JSON.parse(raw))
-    return parsed ?? fresh
+    const draft = validateRecipe(JSON.parse(raw))
+    if (!draft) return fresh
+    // The detected tempo must still reach a returning user. The draft used to
+    // be returned as-is, so the moment ANY draft existed for a project — and
+    // the write-through effect below creates one on first render — the "prefill
+    // from detected BPM" feature could never fire again for that project.
+    //
+    // A draft always carries a bpm, so "the user set one" can only be read as
+    // "it differs from the default". Leaving DEFAULT_BPM in place is the case
+    // where nothing was ever chosen, and that is the one we overwrite; a tempo
+    // the user actually dialled in always wins over detection.
+    return detected !== null && draft.bpm === DEFAULT_BPM ? { ...draft, bpm: detected } : draft
   } catch {
     return fresh
   }

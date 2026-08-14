@@ -40,50 +40,62 @@ async function recordFrames(
   const FPS = 30
   const TOTAL_FRAMES = duration * FPS
   const stream = canvas.captureStream(FPS)
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-    ? 'video/webm;codecs=vp9'
-    : 'video/webm'
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
-  const chunks: Blob[] = []
-  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+  try {
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : 'video/webm'
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
+    const chunks: Blob[] = []
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-  const blobReady = new Promise<Blob>((resolve, reject) => {
-    recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
-    // A recorder-level failure (encoder error, the capture stream ending)
-    // fires 'error' and may never fire 'stop' — without this the await below
-    // would hang and the button would stay stuck on "Rendering…" forever
-    // (a hang is not a throw, so the catch never runs). Reject so the caller
-    // resets to the error state, like the tainted-canvas path.
-    recorder.onerror = () => reject(new Error('MediaRecorder failed'))
-  })
-  // If a cancel bails out before the await below, keep a late rejection from
-  // surfacing as an unhandled promise rejection.
-  blobReady.catch(() => {})
+    const blobReady = new Promise<Blob>((resolve, reject) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+      // A recorder-level failure (encoder error, the capture stream ending)
+      // fires 'error' and may never fire 'stop' — without this the await below
+      // would hang and the button would stay stuck on "Rendering…" forever
+      // (a hang is not a throw, so the catch never runs). Reject so the caller
+      // resets to the error state, like the tainted-canvas path.
+      recorder.onerror = () => reject(new Error('MediaRecorder failed'))
+    })
+    // If a cancel bails out before the await below, keep a late rejection from
+    // surfacing as an unhandled promise rejection.
+    blobReady.catch(() => {})
 
-  recorder.start()
+    recorder.start()
 
-  // t = frame / TOTAL_FRAMES (never reaching 1) so the last frame sits one
-  // step before the wrap — every effect is periodic over [0,1), which makes
-  // the exported loop seamless.
-  const startTime = performance.now()
-  for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
-    drawFrame(ctx, frame / TOTAL_FRAMES, frame)
+    // t = frame / TOTAL_FRAMES (never reaching 1) so the last frame sits one
+    // step before the wrap — every effect is periodic over [0,1), which makes
+    // the exported loop seamless.
+    const startTime = performance.now()
+    for (let frame = 0; frame < TOTAL_FRAMES; frame++) {
+      drawFrame(ctx, frame / TOTAL_FRAMES, frame)
 
-    onProgress(Math.round((frame / TOTAL_FRAMES) * 100))
+      onProgress(Math.round((frame / TOTAL_FRAMES) * 100))
 
-    if (isCancelled()) {
-      recorder.stop()
-      return null
+      if (isCancelled()) {
+        recorder.stop()
+        return null
+      }
+
+      // Pace against an absolute schedule (not a fixed per-frame sleep) so
+      // draw time doesn't stretch the recording past the nominal duration.
+      const wait = startTime + ((frame + 1) * 1000) / FPS - performance.now()
+      await new Promise(r => setTimeout(r, Math.max(0, wait)))
     }
 
-    // Pace against an absolute schedule (not a fixed per-frame sleep) so
-    // draw time doesn't stretch the recording past the nominal duration.
-    const wait = startTime + ((frame + 1) * 1000) / FPS - performance.now()
-    await new Promise(r => setTimeout(r, Math.max(0, wait)))
+    recorder.stop()
+    // `return await`, not a bare `return`: a bare return would hand the
+    // pending promise back and run the finally FIRST, killing the capture
+    // track before the recorder had flushed its last chunk.
+    return await blobReady
+  } finally {
+    // captureStream() attaches a live video track to the canvas that keeps
+    // pulling frames until it is explicitly stopped — recorder.stop() does not
+    // stop it. Without this, every render (and every cancelled or failed
+    // render: a format switch, an unmount mid-render, a recorder 'error') left
+    // another live track feeding off the canvas for the life of the page.
+    for (const track of stream.getTracks()) track.stop()
   }
-
-  recorder.stop()
-  return blobReady
 }
 
 type Props = {
@@ -115,6 +127,13 @@ export default function FreeStudio({
   // Persisted mf-video URL of the last free render — the blob: URL plays
   // locally, but only the stored URL can be pinned as the project visualizer.
   const [freeSavedUrl, setFreeSavedUrl] = useState<string | null>(null)
+  // Whether the stored clip is the H.264 MP4 every surface can decode. Both
+  // save routes answer `transcoded: false` when they had to keep the raw WebM
+  // (see /api/visualizer/save's closing comment): the clip IS saved and plays
+  // on the web, but iOS AVPlayer cannot decode WebM at all, so it stays blank
+  // in the native app until the boot heal converts it. Reporting a flat
+  // "Saved to Media" there is a lie the user only discovers on their phone.
+  const [freeSaveTranscoded, setFreeSaveTranscoded] = useState(true)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   // Real dimensions + container of the finished render, for the result label.
   const [resultMeta, setResultMeta] = useState<{ w: number; h: number; mime: 'MP4' | 'WebM' } | null>(null)
@@ -182,6 +201,7 @@ export default function FreeStudio({
     setErrorMsg('')
     setFreeSave('idle')
     setFreeSavedUrl(null)
+    setFreeSaveTranscoded(true)
     setResultMeta(null)
 
     const wantHigh = format === 'youtube' && recipe.resolution === 'high' && supports4k
@@ -343,6 +363,7 @@ export default function FreeStudio({
         sourceImageUrl: artworkUrl ?? null,
       })
       setFreeSavedUrl(up.video_url)
+      setFreeSaveTranscoded(up.transcoded)
       setFreeSave('saved')
       return
     } catch (err) {
@@ -367,8 +388,12 @@ export default function FreeStudio({
       if (artworkUrl) fd.append('sourceImageUrl', artworkUrl)
       const res = await fetch('/api/visualizer/save', { method: 'POST', body: fd })
       if (res.ok) {
-        const data = await res.json().catch(() => null) as { video_url?: string } | null
+        const data = await res.json().catch(() => null) as
+          { video_url?: string; transcoded?: boolean } | null
         setFreeSavedUrl(data?.video_url ?? null)
+        // Absent flag means an older response shape — assume the happy path,
+        // exactly like uploadVisualizer() does.
+        setFreeSaveTranscoded(data?.transcoded !== false)
         setFreeSave('saved')
       } else {
         setFreeSave('error')
@@ -612,11 +637,17 @@ export default function FreeStudio({
             <span className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
               {cfg.label}{resultMeta ? ` · ${resultMeta.w}×${resultMeta.h} · ${resultMeta.mime}` : ''}
               {freeSave === 'saving' && <span className="text-[11px]">Saving…</span>}
-              {freeSave === 'saved' && (
+              {freeSave === 'saved' && (freeSaveTranscoded ? (
                 <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--accent)' }}>
                   <Check size={11} strokeWidth={3} /> Saved to Media
                 </span>
-              )}
+              ) : (
+                // Saved, but still WebM — plays here and in the browser, blank
+                // on iPhone until the server's conversion catches up.
+                <span className="text-[11px] text-amber-400">
+                  Saved to Media as WebM — won&rsquo;t play on iPhone until the server converts it
+                </span>
+              ))}
               {freeSave === 'error' && <span className="text-[11px]" style={{ color: '#f87171' }}>Save failed</span>}
             </span>
             {freeSave === 'saved' && pinButton(freeSavedUrl, format === 'youtube' ? 'wide' : 'canvas')}
