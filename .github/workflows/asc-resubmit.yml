@@ -20,6 +20,10 @@ on:
         description: 'inspect (read-only), notes (update review notes only), or submit'
         required: false
         default: 'submit'
+  # TEMPORARY (user-approved, trigger-branch only — revoked after use):
+  # push events run the workflow file at the pushed ref.
+  push:
+    branches: [asc4-notes]
 
 concurrency:
   group: asc-resubmit
@@ -35,7 +39,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
-      MODE: ${{ inputs.mode || 'submit' }}
+      MODE: ${{ inputs.mode || (github.ref_name == 'asc4-notes' && 'notes') || 'submit' }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
       - name: Drive the Review Submissions API
@@ -119,7 +123,7 @@ jobs:
             '',
             'EXTERNAL SERVICES: Supabase (authentication, database, file storage), our own API server at mixbase.app (hosted on Railway), Replicate (AI image generation for cover-art concepts), server-side ffmpeg rendering on our own infrastructure (visualizer videos), and Sentry (error monitoring). The app contains NO payment functionality: no purchases, no subscriptions, no purchase links. Every feature in the app is available on a free account (AI generation has a monthly quota).',
             '',
-            'SENSITIVE PERMISSIONS: none requested — no location, contacts, camera, microphone, or tracking. Media is selected through the system pickers, which require no permission grants.',
+            'SENSITIVE PERMISSIONS: exactly one prompt — add-only Photos access, shown the first time a generated visualizer video is saved to the Photos library (project -> Visualizer -> Save to Photos). Nothing else is requested: no location, contacts, camera, microphone, full photo-library read, or tracking. Artwork upload uses the out-of-process system photo picker, which requires no permission grant.',
             '',
             'REGIONAL DIFFERENCES: none — the app functions identically in all regions (English UI).',
             '',
