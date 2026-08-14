@@ -23,7 +23,8 @@
 import { spawn } from 'child_process'
 import { mkdtemp, rm, readFile, writeFile, readdir } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join, relative } from 'path'
+import { fileURLToPath } from 'node:url'
 import { createServer } from 'http'
 import { createRequire } from 'module'
 import {
@@ -38,6 +39,9 @@ import { shouldReapJob, JOB_TTL_MS, STUCK_JOB_MS, UPLOAD_PHASE_MS } from '../src
 
 const require = createRequire(import.meta.url)
 const FFMPEG = require('@ffmpeg-installer/ffmpeg').path
+// Repo root, derived from this file rather than cwd — the spawn-site walk below
+// must find the same source tree whether run by hand or by run-renderer-tests.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 let failures = 0
 function check(name, ok, detail = '') {
@@ -286,14 +290,71 @@ function armInvocations(src) {
   return out
 }
 
-// EVERY module that spawns a child must be listed here. The watchdog used to
-// live inside video-render.ts and this invariant only read that one file — so
-// when the 2026-08-03 WebM→MP4 transcode added a fourth spawn site in
-// visualizer-transcode.ts with a kill-but-never-reject timer, it shipped green.
-// The definition now lives in proc-deadline.ts and both consumers are checked.
-const SPAWN_MODULES = ['src/lib/video-render.ts', 'src/lib/visualizer-encode.ts']
+// EVERY module that spawns a child must be armed with a deadline — and the list
+// of those modules is DERIVED, never enumerated.
+//
+// The enumeration is what kept failing. This invariant originally read one file
+// (video-render.ts, where the watchdog then lived), so when the 2026-08-03
+// WebM→MP4 transcode added a spawn site in a NEW module with a
+// kill-but-never-reject timer, it shipped green. The fix at the time widened the
+// list from one file to two — which closed that instance and left the mechanism
+// intact: a fifth spawn in a sixth module would ship green today, for exactly
+// the same reason. So walk src/ for spawn sites instead, and require the derived
+// set to equal the set of modules that actually arm them. A new module cannot
+// join the codebase unarmed without turning this red.
+
+// `spawn(` but not `spawnSync(` / `respawn(` — the word boundary rules both out.
+const SPAWN_RE = /\bspawn\s*\(/g
+
+// Every watchdog invocation must hand over the REAL `reject`. A swallowing
+// callback keeps the kill but never settles the promise — the original bug, and
+// it survives every count-based check.
+const passesReject = a => /(?:^|,)\s*reject\s*,?\s*$/.test(a.replace(/\s+/g, ' ').trim())
+  || /,\s*reject\s*,/.test(a.replace(/\s+/g, ' '))
+
+// Why a module is NOT armed, or null when it is. Comment-stripped source in.
+function armingProblem(src) {
+  const spawns = (src.match(SPAWN_RE) ?? []).length
+  if (!/from\s+['"][^'"]*proc-deadline\.ts['"]/.test(src)) return 'does not import the shared watchdog'
+  const invocations = armInvocations(src)
+  if (invocations.length < spawns) return `${spawns} spawn site(s) but only ${invocations.length} armDeadline call(s)`
+  const bad = invocations.filter(a => !passesReject(a))
+  if (bad.length) return `armDeadline call swallows the rejection: …${bad[0].replace(/\s+/g, ' ').slice(-40)}`
+  return null
+}
+
+async function walkTsFiles(dir) {
+  const out = []
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...await walkTsFiles(full))
+    else if (/\.tsx?$/.test(entry.name)) out.push(full)
+  }
+  return out
+}
+
+// Every module under `dir` with at least one live spawn site, found by walking.
+async function findSpawnModules(dir, base = ROOT) {
+  const found = []
+  for (const abs of await walkTsFiles(dir)) {
+    // Comments stripped first: a spawn that exists only inside a comment is not
+    // a spawn, and a watchdog that survives only inside one must not pass.
+    const src = stripComments(await readFile(abs, 'utf8'))
+    const spawns = (src.match(SPAWN_RE) ?? []).length
+    if (spawns > 0) found.push({ file: relative(base, abs), src, spawns })
+  }
+  return found
+}
 
 {
+  const SPAWN_MODULES = await findSpawnModules(join(ROOT, 'src'))
+  const unarmed = SPAWN_MODULES.filter(m => armingProblem(m.src) !== null)
+  check('every src/ module that spawns a child arms it with a deadline',
+    unarmed.length === 0,
+    unarmed.length
+      ? unarmed.map(m => `${m.file}: ${armingProblem(m.src)}`).join(' | ')
+      : SPAWN_MODULES.map(m => m.file).join(', '))
   // The watchdog itself must REJECT, not merely kill: killing without settling
   // leaves the promise pending forever, which is the original bug.
   const arm = stripComments(await readFile('src/lib/proc-deadline.ts', 'utf8'))
@@ -306,28 +367,55 @@ const SPAWN_MODULES = ['src/lib/video-render.ts', 'src/lib/visualizer-encode.ts'
   check('exit path still bounds the wait for close', /drainTimer|never closed/.test(arm))
 
   let totalSpawns = 0
-  for (const file of SPAWN_MODULES) {
-    const src = stripComments(await readFile(file, 'utf8'))
-    const spawns = (src.match(/\bspawn\s*\(/g) ?? []).length
+  for (const { file, src, spawns } of SPAWN_MODULES) {
     totalSpawns += spawns
-    check(`${file}: still spawns children (test is anchored to real code)`, spawns > 0,
-      `${spawns} spawn site(s)`)
     check(`${file}: imports the shared watchdog`,
       /from\s+['"][^'"]*proc-deadline\.ts['"]/.test(src))
-
-    // Every call site must hand the real `reject` to the watchdog. Passing a
-    // swallowing callback keeps the kill but never settles the promise — which
-    // is the original bug, and it survives every count-based check.
     const invocations = armInvocations(src)
     check(`${file}: watchdog invoked at least once per spawn site`, invocations.length >= spawns,
       `${spawns} spawns, ${invocations.length} invocation(s)`)
-    const passesReject = a => /(?:^|,)\s*reject\s*,?\s*$/.test(a.replace(/\s+/g, ' ').trim())
-      || /,\s*reject\s*,/.test(a.replace(/\s+/g, ' '))
     check(`${file}: every watchdog invocation passes the real reject callback`,
       invocations.length > 0 && invocations.every(passesReject),
       invocations.map(a => (passesReject(a) ? 'ok' : `BAD: ${a.replace(/\s+/g, ' ').slice(-40)}`)).join(' | '))
   }
-  check('all spawn sites accounted for across modules', totalSpawns >= 4, `${totalSpawns} total`)
+  // Anti-tautology anchor, kept from the enumerated version: an empty walk (bad
+  // path, renamed dir, a regex that stopped matching) would otherwise satisfy
+  // "every spawning module is armed" with zero modules and pass silently.
+  check('the walk is anchored to real code', totalSpawns >= 4,
+    `${totalSpawns} spawn site(s) across ${SPAWN_MODULES.length} module(s)`)
+
+  // ── Fail-first witness: point the SAME walker at unarmed fixtures ──────────
+  // Both shapes that have actually shipped: a brand-new module that never heard
+  // of the watchdog, and one that arms it with a callback that swallows the
+  // rejection (kills the child, leaves the promise pending forever).
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'mb-spawn-fixture-'))
+  try {
+    await writeFile(join(fixtureDir, 'rogue.ts'),
+      "import { spawn } from 'child_process'\n" +
+      "export function encode() {\n" +
+      "  return new Promise((resolve, reject) => {\n" +
+      "    const proc = spawn('ffmpeg', ['-i', 'in.webm'])\n" +
+      "    proc.on('close', () => resolve(null))\n" +
+      "  })\n}\n")
+    await writeFile(join(fixtureDir, 'swallower.ts'),
+      "import { armDeadline } from './proc-deadline.ts'\n" +
+      "import { spawn } from 'child_process'\n" +
+      "export function encode() {\n" +
+      "  return new Promise((resolve, reject) => {\n" +
+      "    const proc = spawn('ffmpeg', ['-i', 'in.webm'])\n" +
+      "    armDeadline(proc, 'final', 1000, () => {})\n" +
+      "    proc.on('close', () => resolve(null))\n" +
+      "  })\n}\n")
+    const fixtures = await findSpawnModules(fixtureDir, fixtureDir)
+    check('witness: the walker finds spawn sites in brand-new modules',
+      fixtures.length === 2, fixtures.map(f => f.file).join(', '))
+    const verdicts = Object.fromEntries(fixtures.map(f => [f.file, armingProblem(f.src)]))
+    check('witness: an unarmed spawn is caught', !!verdicts['rogue.ts'], verdicts['rogue.ts'] ?? 'reported armed')
+    check('witness: a watchdog that swallows the rejection is caught',
+      !!verdicts['swallower.ts'], verdicts['swallower.ts'] ?? 'reported armed')
+  } finally {
+    await rm(fixtureDir, { recursive: true, force: true }).catch(() => {})
+  }
 
   // The truncation guard must sit on the ENCODE path too, not only in the
   // duration-measure helper — the real-media checks below exercise `measure`,

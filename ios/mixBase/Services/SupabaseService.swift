@@ -665,8 +665,13 @@ class SupabaseService {
 
     /// Generic in-memory upload to a Supabase Storage bucket — fine for images,
     /// wrong for audio (use the streaming variant above for anything big).
+    ///
+    /// Requires a signed-in session for the same reason the streaming variant
+    /// does: migration 029 moves the storage INSERT policies to `authenticated`,
+    /// and this used to fall back to the PUBLIC anon key when no session was
+    /// loaded — which would turn into a 403 the moment 029 is applied.
     private func uploadFile(data: Data, filename: String, bucket: String) async throws -> String {
-        let bearerToken = accessToken ?? supabaseKey
+        guard let bearerToken = accessToken else { throw SupabaseError.notSignedIn }
         var request = uploadRequest(filename: filename, bucket: bucket, token: bearerToken)
         request.httpBody = data
 
