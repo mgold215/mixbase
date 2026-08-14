@@ -9,6 +9,7 @@ import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import MasterCheck from '@/components/MasterCheck'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { loudnessFromRow, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
 import { trackShareUrl } from '@/lib/share-url'
 import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
@@ -599,6 +600,34 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const currentMix = versions[0] ?? null
   const archivedVersions = versions.slice(1)
 
+  // ── Cross-version loudness ─────────────────────────────────────────────────
+  // A measurement now lives on the version row (migration 032), so the page can
+  // show what CHANGED between two mixes — the thing a DAW can't tell you,
+  // because it only ever has one bounce open.
+
+  function mixLabelFor(v: Version): string {
+    return v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`
+  }
+
+  // The comparison partner for a mix is the nearest OLDER mix that actually has
+  // a stored measurement — NOT simply the one before it. Skipping unmeasured
+  // mixes is what makes the delta appear as soon as any two points in the
+  // history have numbers, instead of only when two consecutive uploads happen to
+  // have been measured.
+  function previousMeasuredFor(index: number): { loudness: LoudnessInput; label: string } | null {
+    for (let i = index + 1; i < versions.length; i++) {
+      const loudness = loudnessFromRow(versions[i])
+      if (loudness) return { loudness, label: mixLabelFor(versions[i]) }
+    }
+    return null
+  }
+
+  // Fold the saved columns straight back into the version row so the readout and
+  // every later comparison update without a refetch.
+  function handleMeasured(versionId: string, row: VersionLoudnessRow) {
+    setVersions(prev => prev.map(v => (v.id === versionId ? { ...v, ...row } : v)))
+  }
+
   return (
     <div className={inModal ? '' : 'pt-14'}>
       {actionError && (
@@ -798,6 +827,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onToggleAllowDownload={updateAllowDownload}
                 shareEnabled={Boolean(project.share_token)}
                 parseMixLabel={parseMixLabel}
+                loudness={loudnessFromRow(currentMix)}
+                previousMeasured={previousMeasuredFor(0)}
+                onMeasured={handleMeasured}
               />
             )}
 
@@ -958,36 +990,61 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               </button>
             </div>
             <div className="overflow-y-auto max-h-96 divide-y" style={{ borderColor: 'var(--border)' }}>
-              {archivedVersions.map(av => (
-                <div key={av.id} className="flex items-center gap-4 px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[var(--text)]">
-                      {av.label || parseMixLabel(av.audio_filename ?? '') || `Mix ${av.version_number}`}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
-                      <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                      {av.duration_seconds && <span>{formatDuration(av.duration_seconds)}</span>}
-                      {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
+              {archivedVersions.map((av, i) => {
+                // `i + 1` because archivedVersions is versions.slice(1).
+                const previous = previousMeasuredFor(i + 1)
+                return (
+                <div key={av.id} className="px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-[var(--text)]">
+                        {av.label || parseMixLabel(av.audio_filename ?? '') || `Mix ${av.version_number}`}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
+                        <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                        {av.duration_seconds && <span>{formatDuration(av.duration_seconds)}</span>}
+                        {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
+                      </div>
                     </div>
+                    <StatusBadge status={av.status} size="sm" />
+                    <a
+                      href={`${audioProxyUrl(av.audio_url)}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
+                      download={av.audio_filename ?? 'mix.wav'}
+                      className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
+                      title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
+                    >
+                      <Download size={13} />
+                    </a>
+                    <button
+                      onClick={() => restoreVersion(av)}
+                      disabled={restoring}
+                      className="text-xs font-medium text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors flex-shrink-0"
+                    >
+                      {restoring ? 'Restoring…' : 'Restore'}
+                    </button>
                   </div>
-                  <StatusBadge status={av.status} size="sm" />
-                  <a
-                    href={`${audioProxyUrl(av.audio_url)}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
-                    download={av.audio_filename ?? 'mix.wav'}
-                    className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
-                    title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
-                  >
-                    <Download size={13} />
-                  </a>
-                  <button
-                    onClick={() => restoreVersion(av)}
-                    disabled={restoring}
-                    className="text-xs font-medium text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors flex-shrink-0"
-                  >
-                    {restoring ? 'Restoring…' : 'Restore'}
-                  </button>
+
+                  {/* Archived mixes get the full master check too, and this is
+                      not cosmetic: a comparison needs two measured points, and
+                      the older one is always in here. Without a way to measure
+                      an archived mix the delta would have exactly one data point
+                      forever — and opening this modal also backfills the
+                      pre-persistence localStorage readings for every old mix at
+                      once. */}
+                  <div className="mt-3">
+                    <MasterCheck
+                      versionId={av.id}
+                      audioUrl={audioProxyUrl(av.audio_url)}
+                      fileSizeBytes={av.file_size_bytes ?? null}
+                      initial={loudnessFromRow(av)}
+                      previous={previous?.loudness ?? null}
+                      previousLabel={previous?.label ?? null}
+                      onMeasured={row => handleMeasured(av.id, row)}
+                    />
+                  </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
             <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)' }}>
               <p className="text-[11px] text-[var(--text-muted)]">Restoring a mix makes it the current version. The old one stays in this archive.</p>
@@ -1025,6 +1082,11 @@ type CurrentMixCardProps = {
   /** Project has a share link, so the download toggle actually reaches someone. */
   shareEnabled: boolean
   parseMixLabel: (filename: string) => string | null
+  /** Stored BS.1770-4 measurement for this mix (migration 032), or null. */
+  loudness: LoudnessInput | null
+  /** Nearest older mix that has one, for the delta. */
+  previousMeasured: { loudness: LoudnessInput; label: string } | null
+  onMeasured: (versionId: string, row: VersionLoudnessRow) => void
 }
 
 function CurrentMixCard({
@@ -1032,7 +1094,7 @@ function CurrentMixCard({
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
   onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
-  shareEnabled, parseMixLabel,
+  shareEnabled, parseMixLabel, loudness, previousMeasured, onMeasured,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1226,8 +1288,17 @@ function CurrentMixCard({
         )}
 
         {/* Measured loudness + per-DSP normalization verdict — the substance
-            behind the pipeline's "Mastering done" checkbox. */}
-        <MasterCheck versionId={version.id} audioUrl={vUrl} fileSizeBytes={version.file_size_bytes ?? null} />
+            behind the pipeline's "Mastering done" checkbox — plus the delta
+            against the last measured mix. */}
+        <MasterCheck
+          versionId={version.id}
+          audioUrl={vUrl}
+          fileSizeBytes={version.file_size_bytes ?? null}
+          initial={loudness}
+          previous={previousMeasured?.loudness ?? null}
+          previousLabel={previousMeasured?.label ?? null}
+          onMeasured={row => onMeasured(version.id, row)}
+        />
 
         {/* Status */}
         <div className="flex gap-1.5 flex-wrap">

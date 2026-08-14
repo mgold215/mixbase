@@ -84,6 +84,45 @@ export function isMissingVisualizerSettingsColumn(error: { message?: string } | 
   return !!error?.message && /settings/.test(error.message) && /mb_visualizers|schema cache/.test(error.message)
 }
 
+// ── mb_versions loudness columns (migration 032) ────────────────────────────
+// The persisted BS.1770-4 reading for one mix. This heal is not optional
+// belt-and-braces: migrations here are applied BY HAND while Railway deploys on
+// merge, so the route ships first by construction, and PostgREST rejects the
+// WHOLE update when any one referenced column is missing — the feature would be
+// inert (every measurement silently failing to save) until someone remembered
+// to run 032. POST /api/versions/[id]/loudness catches that specific error,
+// heals, and retries. All five columns travel together, so one ALTER carries
+// them all.
+
+const VERSION_LOUDNESS_SQL =
+  'alter table mb_versions add column if not exists loudness_lufs real;' +
+  ' alter table mb_versions add column if not exists loudness_short_term_lufs real;' +
+  ' alter table mb_versions add column if not exists sample_peak_db real;' +
+  ' alter table mb_versions add column if not exists loudness_measured_at timestamptz;' +
+  " alter table mb_versions add column if not exists loudness_algo text; notify pgrst, 'reload schema';"
+
+let versionLoudnessEnsured: Promise<boolean> | null = null
+
+export function ensureVersionLoudnessColumns(): Promise<boolean> {
+  if (!versionLoudnessEnsured) {
+    versionLoudnessEnsured = runQuery(VERSION_LOUDNESS_SQL, 'mb_versions loudness columns')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) versionLoudnessEnsured = null
+        return ok
+      })
+  }
+  return versionLoudnessEnsured
+}
+
+/** True when a PostgREST error is the missing-column failure this heals. */
+export function isMissingVersionLoudnessColumn(error: { message?: string } | null): boolean {
+  // Every column is listed explicitly — PostgREST names only the first missing
+  // one, and 'sample_peak_db' shares no substring with the 'loudness_' family.
+  return !!error?.message &&
+    /loudness_lufs|loudness_short_term_lufs|sample_peak_db|loudness_measured_at|loudness_algo/.test(error.message)
+}
+
 // ── mf-video bucket size limit (migration 016) ──────────────────────────────
 // Final YouTube videos exceed the bucket's original 50 MB cap. The limit must
 // be raised via direct SQL — the Storage API clamps updateBucket to the
