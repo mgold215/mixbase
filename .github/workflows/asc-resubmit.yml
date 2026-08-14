@@ -17,9 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'inspect (read-only) or submit'
+        description: 'inspect (read-only), notes (update review notes only), or submit'
         required: false
         default: 'submit'
+  # TEMPORARY (user-approved, trigger-branch only — revoked after use):
+  # push events run the workflow file at the pushed ref.
+  push:
+    branches: [asc-inspect, asc4-notes]
 
 concurrency:
   group: asc-resubmit
@@ -35,7 +39,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
-      MODE: ${{ inputs.mode || 'submit' }}
+      MODE: ${{ inputs.mode || (github.ref_name == 'asc-inspect' && 'inspect') || (github.ref_name == 'asc4-notes' && 'notes') || 'submit' }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
       - name: Drive the Review Submissions API
@@ -105,6 +109,42 @@ jobs:
             console.log(`Version ${v.attributes.versionString} (${v.id}): state=${state} created=${v.attributes.createdDate}`)
           }
 
+          // Review notes: the full 2.1 information package (app overview,
+          // audience, tested devices, external services, regional posture,
+          // regulated-industry statement, UGC moderation, 3.1.1 statement).
+          const NOTES = [
+            "mixBase is a mix-version tracker for music producers: organize every bounce of a song per project, play versions back, share private listening links for collaborator feedback, track releases through a pipeline checklist, generate AI cover-art concepts, create free audio-reactive visualizer videos, and hear other artists' works in progress in a community feed.",
+            '',
+            'GETTING STARTED: sign in with the demo account (credentials in App Review Information). It is pre-loaded with three released tracks with artwork and playable audio. Projects tab -> tap a project -> play any version. Media: Generate Artwork (AI). Project -> Visualizer -> Generate Free Visualizer. Feed tab: play other artists\' uploads, comment, and long-press any track or comment to Report or Block. Settings -> Delete Account (type DELETE) permanently deletes an account — test with a throwaway account created via "Create one" on the sign-in screen.',
+            '',
+            'TARGET AUDIENCE: independent music producers and recording artists. Problem solved: mix versions scattered across texts, email, and hard drives get lost; mixBase keeps the full version history of every song organized, playable, and shareable.',
+            '',
+            'TESTED ON: physical iPhone hardware running the latest iOS, via TestFlight builds and direct Xcode device installs. The app targets iPhone only.',
+            '',
+            'EXTERNAL SERVICES: Supabase (authentication, database, file storage), our own API server at mixbase.app (hosted on Railway), Replicate (AI image generation for cover-art concepts), server-side ffmpeg rendering on our own infrastructure (visualizer videos), and Sentry (error monitoring). The app contains NO payment functionality: no purchases, no subscriptions, no purchase links. Every feature in the app is available on a free account (AI generation has a monthly quota).',
+            '',
+            'SENSITIVE PERMISSIONS: none requested — no location, contacts, camera, microphone, or tracking. Media is selected through the system pickers, which require no permission grants.',
+            '',
+            'REGIONAL DIFFERENCES: none — the app functions identically in all regions (English UI).',
+            '',
+            'REGULATED INDUSTRY / THIRD-PARTY MATERIAL: not a regulated industry. All audio and artwork is user-generated; users affirm they own the rights in our Terms of Service (mixbase.app/terms) and we operate a DMCA process (mixbase.app/dmca). No licensed third-party content ships with the app.',
+            '',
+            'USER-GENERATED CONTENT (Guideline 1.2): every cross-user item in the community feed supports moderation — long-press to Report content or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold.',
+            '',
+            'GUIDELINE 3.1.1: this build contains no access to or references of paid functionality — no purchase flows, no upgrade prompts, no pricing, no external purchase links.',
+          ].join('\n')
+
+          if (MODE === 'notes') {
+            const nvid = versions[0]?.id
+            if (!nvid) { console.error('No appStoreVersion found.'); process.exit(1) }
+            const nrd = must(await api('GET', `/appStoreVersions/${nvid}/appStoreReviewDetail`), 'get review detail')
+            must(await api('PATCH', `/appStoreReviewDetails/${nrd.data.id}`, {
+              data: { type: 'appStoreReviewDetails', id: nrd.data.id, attributes: { notes: NOTES } },
+            }), 'update review notes')
+            console.log(`NOTES UPDATED (${NOTES.length} chars). No submission changes made.`)
+            process.exit(0)
+          }
+
           if (MODE === 'inspect') { console.log('Mode=inspect — no changes made.'); process.exit(0) }
 
           // ── Submit ─────────────────────────────────────────────────────────
@@ -143,19 +183,6 @@ jobs:
 
           // 2. Refresh the App Review notes: no tier/plan mentions, disclose
           //    the UGC moderation, and answer the 3.1.1 rejection directly.
-          const NOTES = [
-            'mixBase is a music production tool for managing mix versions and releases.',
-            '',
-            'Getting started: sign in with the demo account (see App Review credentials). It is pre-loaded with 3 released tracks with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.',
-            '',
-            'Regarding Guideline 3.1.1 (previous rejection): this build removes all access to and references of paid functionality. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, and AI artwork generation (included with every free account, subject to a monthly quota). The app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Visualizer video generation was removed from the app entirely.',
-            '',
-            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
-            '',
-            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. Test with a throwaway account via "Create one" on the sign-in screen.',
-            '',
-            'The app requires an internet connection. There are no in-app purchases; the app is free.',
-          ].join('\n')
           const rd = await api('GET', `/appStoreVersions/${vid}/appStoreReviewDetail`)
           if (rd.ok && rd.json?.data?.id) {
             const patched = await api('PATCH', `/appStoreReviewDetails/${rd.json.data.id}`, {
