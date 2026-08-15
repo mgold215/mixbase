@@ -1,6 +1,6 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { createSessionClient } from '@/lib/supabase'
 
-type RefreshResult = Awaited<ReturnType<typeof supabaseAdmin.auth.refreshSession>>
+type RefreshResult = Awaited<ReturnType<ReturnType<typeof createSessionClient>['auth']['refreshSession']>>
 
 // Supabase rotates refresh tokens on every use: two concurrent refreshSession()
 // calls with the same token race, and the loser's rotated token is invalid —
@@ -48,7 +48,11 @@ export function refreshSessionOnce(refreshToken: string): Promise<RefreshResult>
 
   let pending = inflight.get(refreshToken)
   if (!pending) {
-    pending = supabaseAdmin.auth
+    // Throwaway client, NOT supabaseAdmin. This is the highest-frequency
+    // session-establishing call in the app — middleware refreshes on every
+    // expired access token — so it was the main way the shared admin client
+    // kept getting re-identified as a user.
+    pending = createSessionClient().auth
       .refreshSession({ refresh_token: refreshToken })
       .then(result => {
         // Cache only successful rotations — errors must stay retryable.

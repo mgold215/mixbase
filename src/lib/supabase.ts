@@ -47,11 +47,54 @@ if (!serviceRoleKeyValid && typeof window === 'undefined') {
   )
 }
 
-// Server-only admin client — uses service role key if available, falls back to anon
+// Server-only admin client — uses service role key if available, falls back to anon.
+//
+// ⚠️ NEVER call a session-ESTABLISHING auth method on this client
+// (`signInWithPassword`, `signUp`, `refreshSession`, `setSession`, `verifyOtp`).
+// Use `createSessionClient()` below instead. `auth.admin.*` is fine — it always
+// sends the service key explicitly.
+//
+// Why this is not a style preference. supabase-js resolves the token for EVERY
+// PostgREST and Storage request through SupabaseClient._getAccessToken():
+//
+//     if (this.accessToken) return await this.accessToken()
+//     const { data } = await this.auth.getSession()
+//     return data.session?.access_token ?? this.supabaseKey
+//
+// The service key is only the FALLBACK. The moment a session lands on this
+// client, every later `.from()` and `.storage` call from this process sends that
+// user's access token instead — at role `authenticated`, not `service_role`.
+// This module is a singleton on a long-lived Railway process, so one sign-in
+// re-identified the whole server until the next deploy.
+//
+// It shipped that way and it was silent, because the damage is mostly INVISIBLE:
+// storage RLS grants DELETE on mf-audio/mf-artwork/mf-video only to
+// `auth.role() = 'service_role'`, so an `authenticated` delete matches no policy,
+// removes zero rows, and storage-api answers `200` with a body of `[]`.
+// supabase-js reports `{ data: [], error: null }` — NO error — so every cleanup
+// path in the app "succeeded" while deleting nothing. Confirmed in production
+// 2026-08-15: 10/10 delete_many calls returned an empty array, and 259 objects
+// (~5.2 GB) had accumulated across the three buckets, including files belonging
+// to deleted accounts.
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
   rawServiceKey ?? SUPABASE_ANON_KEY
 )
+
+// Throwaway client for the calls that MUST establish a user session: sign-in,
+// sign-up's post-create sign-in, password change re-auth, and token refresh.
+//
+// Fresh per call and never reused, so the session it acquires dies with it and
+// can never leak onto a data path. Sessions are not persisted or auto-refreshed:
+// this client exists to hand back one set of tokens, which the caller puts in
+// cookies — it is not a logged-in client that anything reads from afterwards.
+// Logins are rare relative to data requests, so the extra allocation is noise,
+// and with autoRefreshToken off it starts no background timers to leak.
+export function createSessionClient() {
+  return createClient(SUPABASE_URL, rawServiceKey ?? SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  })
+}
 
 // ---- Type definitions ----
 

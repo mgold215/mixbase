@@ -23,8 +23,20 @@ export async function register() {
     // WebM, so any WebM loop still referenced by the library or a project pin
     // gets an H.264 twin and the rows are repointed. Idempotent and
     // sequential; a failure must never delay or crash startup.
+    //
+    // The mf-video orphan sweep is chained AFTER it rather than fired
+    // alongside it, deliberately. The heal uploads an MP4 twin and only THEN
+    // repoints the rows that reference it, so during the heal the bucket
+    // legitimately contains objects nothing points at yet; the reaper's whole
+    // safety property is reading a settled set of references. (The 24 h age
+    // floor already covers a freshly uploaded twin — this just removes the
+    // question.) Neither call is awaited, so boot is unaffected either way, and
+    // every failure is swallowed: a heal or a sweep must never take down boot.
     import('./src/lib/visualizer-transcode')
-      .then(m => { void m.healWebmVisualizers() })
+      .then(m => m.healWebmVisualizers())
+      .catch(() => {})
+      .then(() => import('./src/lib/video-orphan-reaper'))
+      .then(m => m.reapOrphanVideos())
       .catch(() => {})
   }
   if (process.env.NEXT_RUNTIME === 'edge') {

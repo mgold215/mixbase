@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 import { indexVisualizer, storeVisualizer, userOwnsProject, VIDEO_BUCKET } from '@/lib/visualizer-store'
+import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 import { webmToMp4, tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { vizSaveLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
@@ -97,6 +98,13 @@ export async function POST(req: NextRequest) {
   // legitimately name an already-indexed object in a claim; failing that
   // claim's validation must never take a library item's bytes down with it.
   // On a failed reference check, err on the side of keeping the object.
+  //
+  // The delete goes through removeStorageObjectsLogged() rather than
+  // storage.remove() directly: a remove refused by storage RLS is NOT an error
+  // — the policy matches no rows and the API answers 200 with `[]` — so a
+  // cleanup that only checks `error` reports success while the bytes stay
+  // public. That is what turned every "the bytes go with the rejected claim"
+  // guarantee in this route into a no-op in production.
   const removeIfUnreferenced = async (key: string) => {
     const { data: keyPub } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(key)
     const { data, error } = await supabaseAdmin
@@ -106,7 +114,7 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle()
     if (error || data) return
-    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([key]).catch(() => {})
+    await removeStorageObjectsLogged(VIDEO_BUCKET, [key], 'visualizer-finalize discard')
   }
 
   const safeRemove = () => removeIfUnreferenced(storagePath)

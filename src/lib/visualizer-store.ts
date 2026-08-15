@@ -1,10 +1,18 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { ensureVisualizerSettingsColumn, isMissingVisualizerSettingsColumn } from '@/lib/schema-heal'
+import { claimAfterInsertFailure, claimPrecheck } from '@/lib/visualizer-claim'
+import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 
 // Shared persistence for generated visualizers. Both the AI path
 // (/api/visualizer/runway) and the free path (/api/visualizer/save) upload the
 // video bytes to the mf-video bucket and record a row so the result is findable
 // in the Media library — mirroring how artwork lands in mf-artwork.
+//
+// Every cleanup below goes through removeStorageObjectsLogged() rather than
+// storage.remove(): a remove refused by storage RLS is NOT an error — the
+// policy matches no rows and the API answers 200 with `[]` — so a guard that
+// only checks `error` reports success while the bytes stay public. That is how
+// these "best-effort deletes" were unconditional no-ops in production.
 
 const VIDEO_BUCKET = 'mf-video'
 
@@ -108,19 +116,50 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
   }, settings)
   if (!row) {
     // The row is what Media reads, so an un-indexed object is invisible and would
-    // leak forever. Best-effort delete the just-uploaded bytes, then report the
-    // failure (return null) so the caller can tell the user it didn't save.
-    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([uploadData.path]).catch(() => {})
+    // leak forever. Delete the just-uploaded bytes — verified, because a remove
+    // that quietly deletes nothing is exactly how these orphans accumulated —
+    // then report the failure (return null) so the caller can tell the user it
+    // didn't save.
+    await removeStorageObjectsLogged(VIDEO_BUCKET, [uploadData.path], 'visualizer-store un-indexed upload')
     return null
   }
 
   return { id: row.id, video_url: videoUrl }
 }
 
+// The row that already indexes this exact object, if there is one.
+//
+// `undefined` means the LOOKUP ITSELF failed, which is NOT the same answer as
+// "no row". Every caller below treats the two differently: a known-absent row
+// licenses deleting the bytes, an unanswered question never does.
+async function visualizerByVideoUrl(
+  videoUrl: string,
+): Promise<{ id: string; user_id: string } | null | undefined> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_visualizers')
+    .select('id, user_id')
+    .eq('video_url', videoUrl)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    console.error('[visualizer-store] existing-claim lookup failed:', error.message)
+    return undefined
+  }
+  return (data as { id: string; user_id: string } | null) ?? null
+}
+
 // Index an object that is ALREADY in mf-video (signed-URL upload path — the
 // bytes never passed through this server). Same no-orphan rule as
 // storeVisualizer: if the row can't land, best-effort delete the object so it
 // doesn't leak invisibly.
+//
+// IDEMPOTENT ON THE STORAGE PATH. fx/upload.ts re-POSTs the claim when its
+// response is lost (retrying the cheap JSON claim beats re-uploading, and
+// beats the caller falling back to the legacy multipart save, which would
+// store a second COPY of the bytes). So the same object can be claimed more
+// than once, and a plain INSERT answered that with a SECOND mb_visualizers row
+// over one object: the user sees a duplicate in Media, and deleting either row
+// takes the bytes with it and leaves the other row pointing at a 404.
 export async function indexVisualizer(args: {
   userId: string
   projectId: string
@@ -133,6 +172,19 @@ export async function indexVisualizer(args: {
   const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(args.storagePath)
   const videoUrl = urlData.publicUrl
 
+  // The common repeat case: the first claim's row landed and only its response
+  // was lost. Hand back that row — the client gets a success it can act on
+  // (same id/video_url shape as a fresh save), and no second row is created.
+  // A repeat claim keeps the FIRST claim's title/settings; that is what
+  // idempotent means here, and the client sends the same values anyway.
+  const existing = await visualizerByVideoUrl(videoUrl)
+  const precheck = claimPrecheck(existing, args.userId)
+  if (precheck === 'reuse') return { id: existing!.id, video_url: videoUrl }
+  if (precheck === 'foreign') {
+    console.error('[visualizer-store] claimed object is already indexed by another user')
+    return null
+  }
+
   const row = await insertVisualizerRow({
     user_id: args.userId,
     project_id: args.projectId,
@@ -142,7 +194,15 @@ export async function indexVisualizer(args: {
     title: args.title,
   }, args.settings)
   if (!row) {
-    await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([args.storagePath]).catch(() => {})
+    // Two concurrent retries of the SAME claim can both pass the precheck.
+    // Post-033 the loser's insert fails on the unique index rather than writing
+    // a duplicate, and the winner's row is the correct answer for both.
+    const raced = await visualizerByVideoUrl(videoUrl)
+    const decision = claimAfterInsertFailure(raced, args.userId)
+    if (decision === 'reuse') return { id: raced!.id, video_url: videoUrl }
+    if (decision === 'remove-bytes') {
+      await removeStorageObjectsLogged(VIDEO_BUCKET, [args.storagePath], 'visualizer-store failed claim')
+    }
     return null
   }
   return { id: row.id, video_url: videoUrl }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, createSessionClient } from '@/lib/supabase'
 import { signupLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 
 const COOKIE_OPTS = {
@@ -50,8 +50,10 @@ export async function POST(request: NextRequest) {
       .eq('id', data.user.id)
   }
 
-  // Sign in immediately so we can issue session cookies
-  const { data: signInData, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+  // Sign in immediately so we can issue session cookies. Throwaway client: on
+  // the shared admin client this would attach the new user's token to it and
+  // demote every later server-side write to `authenticated`.
+  const { data: signInData, error: signInError } = await createSessionClient().auth.signInWithPassword({
     email,
     password,
   })

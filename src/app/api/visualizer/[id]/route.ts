@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { VIDEO_BUCKET, videoStoragePath } from '@/lib/visualizer-store'
 import { webmOriginalPath } from '@/lib/visualizer-encode'
+import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 
 // DELETE /api/visualizer/[id] — remove a saved visualizer (storage object + row).
 // Static sibling segments (/runway, /save) take precedence over this dynamic one.
@@ -27,9 +28,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     // If this row was converted by the WebM→MP4 heal, the original WebM is
     // still in the bucket under its pre-conversion key and nothing else
     // references it — delete both or the bytes are orphaned forever.
+    //
+    // Removal is VERIFIED, not assumed. A storage delete that RLS refuses is
+    // not an error — it returns 200 with `[]` — so the old `if (storageErr)`
+    // check passed while removing nothing, and this endpoint answered
+    // `{deleted:true}` over bytes that are still in a public bucket. That is
+    // where most of the orphans in mf-video came from.
     const paths = [path, webmOriginalPath(path)].filter((p): p is string => !!p)
-    const { error: storageErr } = await supabaseAdmin.storage.from(VIDEO_BUCKET).remove(paths)
-    if (storageErr) console.error('[visualizer delete] storage remove failed:', storageErr.message)
+    await removeStorageObjectsLogged(VIDEO_BUCKET, paths, 'visualizer delete')
   }
 
   const { error: delErr } = await supabaseAdmin

@@ -11,7 +11,17 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb)
 }
 
-// The full schema SQL — same as supabase/migrations/001_initial.sql + 002_remaining_tables.sql
+// The bootstrap schema SQL. NOT a verbatim copy of supabase/migrations/ — it
+// carries the subset of the numbered migrations that db-init owns (the
+// public-schema tables this app creates), and EVERY statement must be
+// idempotent, because this runs against environments that already hold some of
+// these objects.
+//
+// Which migrations are carried here, and which are deliberately left out and
+// why, is asserted by scripts/db-init-migration-parity-test.mjs. Adding a
+// migration without either folding it in below or recording it as a documented
+// exclusion in that test turns it red — which is the point: this blob silently
+// fell five migrations behind before that guard existed.
 const SCHEMA_SQL = `
 create extension if not exists "pgcrypto";
 
@@ -229,8 +239,16 @@ create policy "users_own_collection_items" on mb_collection_items
   using (collection_id in (select id from mb_collections where user_id = auth.uid()))
   with check (collection_id in (select id from mb_collections where user_id = auth.uid()));
 
+-- Migration 017 (prc_hardening) tightened this away from "with check (true)",
+-- which let anyone insert feedback rows against any — or a non-existent —
+-- version_id. The bootstrap blob still carried the permissive form, and the
+-- drop/create pair here is unconditional: running db-init against an already
+-- hardened database silently REVERTED the fix. Match the canonical migration.
 create policy "public_feedback_insert" on mb_feedback
-  for insert with check (true);
+  for insert with check (
+    version_id is not null
+    and exists (select 1 from mb_versions v where v.id = version_id)
+  );
 
 create policy "users_read_feedback" on mb_feedback
   for select using (
@@ -356,6 +374,133 @@ alter table mb_library_tracks enable row level security;
 drop policy if exists "users_own_library_tracks" on mb_library_tracks;
 create policy "users_own_library_tracks" on mb_library_tracks
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ── 028 + 029 (storage RLS) are DELIBERATELY NOT CARRIED HERE ───────────────
+-- Both rewrite RLS on storage.objects and both are still awaiting the owner's
+-- sign-off; their own headers say so. Folding them in would apply that pending
+-- decision as a side effect of "run the bootstrap", which is wrong for three
+-- reasons:
+--   1. There is no such thing as an isolated fresh environment here. This route
+--      targets whatever NEXT_PUBLIC_SUPABASE_URL points at, and staging and
+--      production are the SAME Supabase project — so the first db-init run
+--      against either applies the change to production, with no smoke test
+--      queued and nobody watching for the rollback window.
+--   2. 028 is destructive. It drops the three live "Public read mf-*" policies,
+--      and its own note puts the blast radius at "all audio playback stops" if
+--      the public-object reasoning turns out to be wrong. A bootstrap endpoint
+--      is the worst possible vehicle for a change that needs a curl check ready
+--      in the other terminal.
+--   3. This blob has never contained a single storage.objects statement. Every
+--      storage grant in this app comes from a numbered migration, and the
+--      buckets themselves are created by Step 2 of this route through the
+--      Storage API — not from SQL. Making db-init a second, quieter owner of
+--      storage RLS is a worse end state than the drift it would close.
+-- When the owner approves them, apply the migration files with their documented
+-- verify steps and fold them in here in the same change.
+
+-- Migration 030: UGC moderation — content reports + user blocks (App Store 1.2).
+-- Both tables are SERVER-ONLY: every read and write goes through the API routes
+-- with supabaseAdmin, which validates identity from the middleware's X-User-Id.
+-- Migration 030 expresses that as "RLS on, no policies" (which denies the anon
+-- and authenticated PostgREST roles by default). Here the same deny-all is
+-- written out explicitly as a "using (false)" policy: it grants nothing that
+-- no-policy did not already grant, it states the intent where a reader of the
+-- bootstrap blob will actually look, and it keeps the "every created table
+-- carries a policy" invariant in scripts/db-init-rls-test.mjs true without
+-- weakening that guard for the tables where it really matters.
+create table if not exists mb_content_reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references auth.users(id) on delete cascade,
+  -- Polymorphic on purpose (no FK on content_id): 'version' rows point at
+  -- mb_versions, 'comment' rows at mb_feed_comments. Comments are hard-deleted
+  -- at the report threshold; orphaned report rows are the audit trail.
+  content_type text not null check (content_type in ('version', 'comment')),
+  content_id uuid not null,
+  reason text,
+  created_at timestamptz not null default now(),
+  unique (reporter_id, content_type, content_id)
+);
+
+create table if not exists mb_user_blocks (
+  id uuid primary key default gen_random_uuid(),
+  blocker_id uuid not null references auth.users(id) on delete cascade,
+  blocked_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (blocker_id, blocked_id)
+);
+
+create index if not exists idx_content_reports_content on mb_content_reports(content_type, content_id);
+create index if not exists idx_user_blocks_blocker on mb_user_blocks(blocker_id);
+
+alter table mb_content_reports enable row level security;
+alter table mb_user_blocks     enable row level security;
+
+drop policy if exists "content_reports_server_only" on mb_content_reports;
+create policy "content_reports_server_only" on mb_content_reports
+  using (false) with check (false);
+
+drop policy if exists "user_blocks_server_only" on mb_user_blocks;
+create policy "user_blocks_server_only" on mb_user_blocks
+  using (false) with check (false);
+
+-- Migration 031: the FX-engine recipe (VizRecipe JSON) behind a saved clip.
+-- "alter table IF EXISTS" on purpose. mb_visualizers is created by migration
+-- 014, which this blob has never carried, so on a project bootstrapped only
+-- through db-init the table is absent — and a bare ALTER against a missing
+-- relation aborts the WHOLE run, taking every statement after it down with it.
+-- Every environment that does have the table gets the column; the rest are no
+-- worse off than before, and src/lib/schema-heal.ts
+-- (ensureVisualizerSettingsColumn) still adds it at runtime.
+alter table if exists mb_visualizers add column if not exists settings jsonb;
+
+-- Migration 032: per-version loudness (BS.1770-4). Nullable, no defaults and no
+-- backfill on purpose — a measurement costs seconds of CPU over fully decoded
+-- audio, so it can only come from a user pressing "Measure loudness", and NULL
+-- means "never measured", a real and permanent state that has to stay
+-- distinguishable from a measured value.
+alter table mb_versions add column if not exists loudness_lufs            real;
+alter table mb_versions add column if not exists loudness_short_term_lufs real;
+alter table mb_versions add column if not exists sample_peak_db           real;
+alter table mb_versions add column if not exists loudness_measured_at     timestamptz;
+alter table mb_versions add column if not exists loudness_algo            text;
+
+-- Migration 033: one mb_visualizers row per stored mf-video object. A retried
+-- save claim could write a SECOND row over the same object, and deleting either
+-- one takes the shared bytes with it — the survivor is left pointing at a 404.
+--
+-- Guarded on the table existing, for the same reason 031 above uses "alter table
+-- IF EXISTS": mb_visualizers comes from migration 014, which this blob has never
+-- carried, and CREATE INDEX has no IF EXISTS for its target table — an unguarded
+-- one would abort the whole bootstrap on a project that lacks it.
+--
+-- The de-duplication is not optional: "create unique index" fails outright if
+-- duplicates already exist. It keeps the OLDEST row per video_url and deletes
+-- the rest. Those rows describe bytes that are NOT deleted — the survivor still
+-- points at the same object, so nothing becomes unreachable.
+do $$ begin
+  if to_regclass('public.mb_visualizers') is not null then
+    with ranked as (
+      select id,
+             row_number() over (
+               partition by video_url
+               order by created_at asc nulls last, id asc
+             ) as rn
+      from mb_visualizers
+    )
+    delete from mb_visualizers v
+    using ranked r
+    where v.id = r.id
+      and r.rn > 1;
+
+    create unique index if not exists mb_visualizers_video_url_uidx
+      on mb_visualizers (video_url);
+  end if;
+end $$;
+
+-- PostgREST caches the schema. Without this nudge the first write after a
+-- bootstrap can still fail with "column not found in schema cache" (PGRST204)
+-- even though the DDL above succeeded.
+notify pgrst, 'reload schema';
 `
 
 // GET /api/db-init — run mixBase database migrations via the Supabase Management API.

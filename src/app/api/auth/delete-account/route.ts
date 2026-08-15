@@ -3,6 +3,7 @@ import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 import { webmOriginalPath } from '@/lib/visualizer-encode'
+import { removeStorageObjects } from '@/lib/storage-remove'
 
 // Pull the storage object path out of a Supabase public URL for a given bucket.
 function storagePathFromUrl(url: string | null | undefined, bucket: string): string | null {
@@ -107,36 +108,36 @@ export async function POST(request: NextRequest) {
   // Delete storage objects. A storage failure must NOT trap the user in an
   // undeletable account, so we log loudly (for a later orphan sweep) and press
   // on — DB-row deletion below is what actually gates the irreversible step.
-  if (audioPaths.length > 0) {
-    const { error } = await supabaseAdmin.storage.from('mf-audio').remove(audioPaths)
-    if (error) {
-      console.error('[delete-account] mf-audio cleanup failed for', userId, error.message)
-      // Surface orphaned-object candidates to Sentry so a future sweep can find them.
-      Sentry.captureMessage('delete-account: mf-audio cleanup failed', {
-        level: 'warning',
-        extra: { userId, objectCount: audioPaths.length, error: error.message },
-      })
-    }
-  }
-  if (artworkPaths.length > 0) {
-    const { error } = await supabaseAdmin.storage.from('mf-artwork').remove(artworkPaths)
-    if (error) {
-      console.error('[delete-account] mf-artwork cleanup failed for', userId, error.message)
-      Sentry.captureMessage('delete-account: mf-artwork cleanup failed', {
-        level: 'warning',
-        extra: { userId, objectCount: artworkPaths.length, error: error.message },
-      })
-    }
-  }
-  if (videoPaths.length > 0) {
-    const { error } = await supabaseAdmin.storage.from('mf-video').remove(videoPaths)
-    if (error) {
-      console.error('[delete-account] mf-video cleanup failed for', userId, error.message)
-      Sentry.captureMessage('delete-account: mf-video cleanup failed', {
-        level: 'warning',
-        extra: { userId, objectCount: videoPaths.length, error: error.message },
-      })
-    }
+  //
+  // Removal is VERIFIED per key, not inferred from the absence of an error. A
+  // storage delete that RLS refuses returns 200 with `[]`, so the previous
+  // `if (error)` check was unreachable: this route reported a clean GDPR wipe
+  // while every byte stayed in a PUBLIC bucket, and the Sentry warnings that
+  // were supposed to feed a later sweep never fired once. Unconfirmed keys are
+  // now reported individually so a sweep has something to act on.
+  for (const [bucket, paths] of [
+    ['mf-audio', audioPaths],
+    ['mf-artwork', artworkPaths],
+    ['mf-video', videoPaths],
+  ] as const) {
+    if (paths.length === 0) continue
+    const outcome = await removeStorageObjects(bucket, paths)
+    if (outcome.ok) continue
+    console.error(
+      `[delete-account] ${bucket} cleanup incomplete for`, userId,
+      `— removed ${outcome.removed.length}/${paths.length}`,
+      outcome.error ?? '(no error reported; the delete was refused or the objects were already gone)',
+    )
+    Sentry.captureMessage(`delete-account: ${bucket} cleanup incomplete`, {
+      level: 'warning',
+      extra: {
+        userId,
+        objectCount: paths.length,
+        removedCount: outcome.removed.length,
+        unconfirmed: outcome.unconfirmed,
+        error: outcome.error,
+      },
+    })
   }
 
   // Delete DB rows in dependency order, capturing every error. If ANY row

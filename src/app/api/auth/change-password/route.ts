@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin, createSessionClient } from '@/lib/supabase'
 
 // POST /api/auth/change-password — verify current password, then update
 export async function POST(request: NextRequest) {
@@ -25,8 +25,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
 
-  // Verify current password by attempting a sign-in
-  const { error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+  // Verify current password by attempting a sign-in. Throwaway client: this
+  // session is used for nothing but the yes/no answer, and on the shared admin
+  // client it would demote every later server-side write to `authenticated`.
+  const { error: signInError } = await createSessionClient().auth.signInWithPassword({
     email: user.email,
     password: current_password,
   })
