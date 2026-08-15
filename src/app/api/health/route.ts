@@ -55,9 +55,17 @@ export async function GET() {
   // This check is precise instead of inferential — supabase-js prefers a session
   // token over the API key for every PostgREST and Storage call, so the presence
   // of ANY session here means the process is no longer acting as service_role.
-  // In-memory, no network. Reported and logged rather than folded into `ok`:
-  // consistent with `admin_power`, and a 503 here would take the site down over
-  // a condition the code now makes unreachable.
+  //
+  // Usually in-memory, but NOT always: getSession() → __loadSession refreshes an
+  // EXPIRED stored session over the network. So on a leaked-and-just-expired
+  // session whose refresh then fails, the session is cleared and this reports
+  // `false` for a process that was leaking a moment ago. The false negative is
+  // in the safe direction and cannot mask a live leak, but don't read a single
+  // `false` as proof the process was never demoted.
+  //
+  // Reported and logged rather than folded into `ok`: consistent with
+  // `admin_power`, and a 503 here would take the site down over a condition the
+  // code now makes unreachable.
   let adminSessionLeak = false
   try {
     const { data } = await supabaseAdmin.auth.getSession()

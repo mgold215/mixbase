@@ -120,6 +120,15 @@ check('route does not re-implement the codec rule inline',
 check('route does not re-implement the duration rule inline',
   !/MIN_CLIP_SECONDS|duration\s*[<>]/.test(route))
 
+// …and the verdict must actually be ACTED ON. Every check above passes on a
+// route that computes `reason` and then ignores it: an adversarial review
+// neutered the gate to `if (false && reason) throw` and this whole section
+// stayed green while a 0-byte blob was stored again. Sections A and B don't
+// cover it either — they exercise clipRejectionReason in the lib, never the
+// route. So bind the call to the throw that consumes it.
+check('route ACTS on the verdict — the rejection throw is reachable',
+  /const reason = clipRejectionReason\([^\n]*\)\s*\n\s*if \(reason\) throw/.test(route))
+
 // The demux adapter is duplicated between the two routes only because a Next
 // route module may not export helpers. It must stay BYTE-identical until it is
 // lifted into a lib — a silent divergence here reintroduces the weak lane.

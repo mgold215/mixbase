@@ -133,31 +133,48 @@ function walk(dir, out = []) {
   return out
 }
 
-// Establishing a session mutates the client. `auth.admin.*` does NOT (it always
-// sends the service key explicitly), and getUser(token) only validates one.
-const SESSION_ESTABLISHING = [
-  'signInWithPassword',
-  'signInWithOtp',
-  'signInWithIdToken',
-  'signUp',
-  'refreshSession',
-  'setSession',
-  'verifyOtp',
-]
+// An ALLOW-LIST, deliberately, not a list of banned methods.
+//
+// The first version of this check enumerated the session-establishing methods
+// (signInWithPassword, refreshSession, …) and was both over- and
+// under-inclusive: it listed `signInWithOtp`, which does not save a session, and
+// omitted `signInAnonymously`, `exchangeCodeForSession`, `updateUser`,
+// `linkIdentityIdToken` and the MFA `_verify` path, all of which DO. Every one
+// of those reaches `_saveSession` in @supabase/auth-js. `exchangeCodeForSession`
+// is the live risk: src/app/auth/callback/route.ts already calls it (correctly,
+// on its own client), so a refactor to `supabaseAdmin.auth.exchangeCodeForSession`
+// — the natural mistake, since every other route imports supabaseAdmin —
+// recreates the incident, and a deny-list would have stayed green.
+//
+// Only two uses of `supabaseAdmin.auth` are safe, and both are safe by
+// construction rather than by convention:
+//   auth.admin.*   — always sends the service key explicitly
+//   getUser(token) — with a jwt argument it short-circuits to a bare request and
+//                    never touches _useSession/_saveSession/storage
+//   getSession()   — READS the session; it is the health probe's leak detector.
+//                    (It is not purely passive: on an EXPIRED stored session it
+//                    refreshes, which writes one back. That cannot establish a
+//                    session where none exists, so it cannot cause the bug —
+//                    but it is why the probe can report a false negative for a
+//                    process whose leaked session had just expired.)
+// Anything else must go through createSessionClient(). Complete by construction,
+// so it cannot rot as the library adds methods.
+const ADMIN_AUTH_ALLOWED = /^(admin\b|getUser\s*\(|getSession\s*\()/
 
 const files = walk(srcDir)
 const offenders = []
 for (const file of files) {
   const text = readFileSync(file, 'utf8')
-  for (const method of SESSION_ESTABLISHING) {
-    // Matches `supabaseAdmin.auth.<method>` including across a line break, which
-    // is how the original violations were formatted.
-    const re = new RegExp(`supabaseAdmin\\s*\\.\\s*auth\\s*\\.\\s*${method}\\b`)
-    if (re.test(text)) offenders.push(`${relative(root, file)} → supabaseAdmin.auth.${method}`)
+  for (const m of text.matchAll(/supabaseAdmin\s*\.\s*auth\s*\.\s*/g)) {
+    const rest = text.slice(m.index + m[0].length, m.index + m[0].length + 40)
+    if (!ADMIN_AUTH_ALLOWED.test(rest)) {
+      const member = (rest.match(/^[A-Za-z_$][\w$]*/) ?? ['<unknown>'])[0]
+      offenders.push(`${relative(root, file)} → supabaseAdmin.auth.${member}`)
+    }
   }
 }
 check(
-  'no session-establishing auth call is made on supabaseAdmin',
+  'supabaseAdmin.auth is used ONLY for admin.* and getUser(token)',
   offenders.length === 0,
   offenders.join('\n      '),
 )
