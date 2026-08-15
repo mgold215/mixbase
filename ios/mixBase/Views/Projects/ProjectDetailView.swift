@@ -684,11 +684,19 @@ struct ProjectDetailView: View {
 
             uploadProgress = "Creating version..."
             let label = newVersionLabel.isEmpty ? nil : newVersionLabel
+            // The user-facing name is the file they PICKED (url), not tempURL —
+            // tempURL is a UUID scratch copy. Without this the version showed no
+            // name at all, which is what "the upload didn't work" looked like.
+            // Probe tempURL for size/duration: it's the copy we still own, and
+            // the security-scoped original has already been released by here.
             let version = try await SupabaseService.shared.createVersion(
                 projectId: project.id,
                 versionNumber: nextVersion,
                 audioUrl: audioUrl,
-                label: label
+                label: label,
+                audioFilename: url.lastPathComponent,
+                durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
+                fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)
             )
 
             versions.append(version)
