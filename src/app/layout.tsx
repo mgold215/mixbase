@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Jost, Bebas_Neue, Space_Mono } from "next/font/google";
+import { Bebas_Neue, Space_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { PlayerProvider } from "@/contexts/PlayerContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
@@ -10,7 +11,30 @@ import PullToRefresh from "@/components/PullToRefresh";
 import SessionRefresher from "@/components/SessionRefresher";
 import { SITE_URL } from "@/lib/site";
 
-const jost = Jost({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-jost" });
+// Jost is SELF-HOSTED, unlike the other two, and that asymmetry is deliberate.
+//
+// `next/font/google` downloads the font at BUILD time. On 2026-08-15 Google
+// began serving Jost @font-face URLs that 404 for some CDN edges: Railway's
+// builder got `.../jost/v20/92z8tBhP…woff2` → 404, which Turbopack escalates
+// from a warning into 12 "Can't resolve @vercel/turbopack-next/internal/font/
+// google/font" errors and a failed build. It reproduced on every Railway build
+// while a cold local build (different edge) succeeded — so it was not cacheable,
+// not retryable, and not ours to fix. That made a working production deploy
+// contingent on Google's CDN, which is not an acceptable dependency for shipping.
+//
+// The file below is the same latin variable woff2 Google serves (26 KB, OFL),
+// vendored so the build has no network dependency at all. It is a VARIABLE font
+// covering 100–900, which is why one file replaces the four weights the previous
+// `weight: ["400","500","600","700"]` requested — the rendered result is
+// unchanged. Bebas Neue and Space Mono still come from next/font/google; move
+// them here too if they ever break the same way.
+const jost = localFont({
+  src: "./fonts/jost-latin-var.woff2",
+  weight: "100 900",
+  style: "normal",
+  display: "swap",
+  variable: "--font-jost",
+});
 const bebasNeue = Bebas_Neue({ subsets: ["latin"], weight: "400", variable: "--font-bebas" });
 const spaceMono = Space_Mono({ subsets: ["latin"], weight: ["400", "700"], variable: "--font-mono" });
 
