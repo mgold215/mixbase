@@ -61,15 +61,33 @@ export async function removeStorageObjects(bucket: string, paths: string[]): Pro
   // that matters. A basename is only accepted when it is unambiguous within
   // this batch, so it can never merge two distinct keys into one confirmation.
   const basename = (k: string) => k.slice(k.lastIndexOf('/') + 1)
-  const ambiguous = new Set<string>()
-  const seen = new Set<string>()
+
+  // A basename is only trusted when exactly one requested key claims it. Note
+  // this counts a bucket-ROOT key (no '/') as claiming its own name, which is
+  // what makes the EXACT-match branch safe too: if the batch held both
+  // `clip.wav` and `proj/clip.wav` and the server echoed basenames, a bare
+  // `clip.wav` in the response would otherwise "confirm" the root key when the
+  // prefixed one was what got deleted. Root keys are not hypothetical — the iOS
+  // app writes `<UUID>-v19-<ts>.wav` straight to the bucket root in mf-audio,
+  // while the web app writes `<projectId>/<ts>.wav`, so both shapes coexist and
+  // a delete-account batch can contain the two together.
+  const claims = new Map<string, number>()
   for (const p of requested) {
     const b = basename(p)
-    if (seen.has(b)) ambiguous.add(b)
-    seen.add(b)
+    claims.set(b, (claims.get(b) ?? 0) + 1)
   }
+
+  // Decide the echo STYLE once, from the response, instead of per key. Any
+  // returned name containing '/' means the server is echoing full keys (what it
+  // actually does — `storage.objects.name` holds the whole key), and then exact
+  // matching is unambiguous for every shape including root keys. Only when every
+  // returned name is bare do we fall back to basenames, and then a key is
+  // confirmed solely if it is the unique claimant of that basename.
+  const fullKeyEcho = returned.some(n => n.includes('/'))
   const isRemoved = (p: string) =>
-    returnedSet.has(p) || (!ambiguous.has(basename(p)) && returnedSet.has(basename(p)))
+    fullKeyEcho
+      ? returnedSet.has(p)
+      : (claims.get(basename(p)) ?? 0) === 1 && returnedSet.has(basename(p))
 
   const removed = requested.filter(isRemoved)
   const unconfirmed = requested.filter(p => !isRemoved(p))
