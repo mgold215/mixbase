@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
-import { indexVisualizer, storeVisualizer, userOwnsProject, VIDEO_BUCKET } from '@/lib/visualizer-store'
+import { indexVisualizer, indexedVisualizerAt, storeVisualizer, userOwnsProject, VIDEO_BUCKET } from '@/lib/visualizer-store'
 import { removeStorageObjectsLogged } from '@/lib/storage-remove'
-import { webmToMp4, tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
+import { webmToMp4, mp4TwinPath, tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { vizSaveLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import {
@@ -282,6 +282,39 @@ export async function POST(req: NextRequest) {
   // the mp4 twin on success; on transcode failure the webm row is indexed
   // as-is (web plays it; the boot heal in visualizer-transcode.ts retries).
 
+  // ── Has this exact claim already succeeded? ───────────────────────────────
+  // Unlike the mp4 lane, this one MOVES the object: the success path writes a
+  // separate mp4 twin and then deletes the webm the claim names. So a replayed
+  // claim — fx/upload.ts re-POSTs whenever the response is lost, deliberately —
+  // arrives naming an object that no longer exists. Every probe below then
+  // reads "unreachable", which is a 503; the client burns its three retries and
+  // gives up; and FreeStudio falls back to the legacy multipart save, which
+  // uploads the SAME video a second time and writes a SECOND row. The user ends
+  // up with a duplicate in Media over duplicate bytes — the exact outcome
+  // fx/upload.ts's retry loop and migration 033 were built to prevent, reached
+  // by the one lane whose key changes underneath the claim.
+  //
+  // Nothing needs to be recorded to undo that, because the twin's key is
+  // DERIVED from the claimed key (mp4TwinPath, the WebM→MP4 heal's own
+  // convention) rather than freshly stamped. Both possible outcomes of a first
+  // claim are therefore addressable from the claim alone: the twin if the
+  // transcode succeeded, the original if it did not. Either hit is answered
+  // with the row that claim already produced — the same success the lost
+  // response carried — before any download, transcode or insert happens.
+  const twinPath = mp4TwinPath(storagePath)
+  const storedTwin = await indexedVisualizerAt(twinPath, userId)
+  if (storedTwin) {
+    return NextResponse.json({ id: storedTwin.id, video_url: storedTwin.video_url, saved: true, transcoded: true })
+  }
+  // The transcode-failure outcome: the row points at the webm itself, which is
+  // still in place. Re-transcoding here would succeed on a good day and write a
+  // SECOND row beside the first — so hand back the row that exists and let the
+  // boot heal convert it, exactly as that path already promises.
+  const storedOriginal = await indexedVisualizerAt(storagePath, userId)
+  if (storedOriginal) {
+    return NextResponse.json({ id: storedOriginal.id, video_url: storedOriginal.video_url, saved: true, transcoded: false })
+  }
+
   // MEASURE BEFORE DOWNLOADING. supabaseAdmin.storage.download() buffers the
   // ENTIRE object and only then exposes .size, so checking the cap afterwards
   // was no cap at all: the bucket ceiling is 500 MB, and an owner claiming a
@@ -376,11 +409,24 @@ export async function POST(req: NextRequest) {
   }
 
   if (mp4Bytes) {
+    // `path` is what makes a replay resolvable: the twin lands on a key this
+    // claim can recompute, not on a fresh timestamp only the first response
+    // ever knew.
     const stored = await storeVisualizer({
       userId, projectId, bytes: mp4Bytes, contentType: 'video/mp4',
-      kind: 'free', title, sourceImageUrl, settings,
+      kind: 'free', title, sourceImageUrl, settings, path: twinPath,
     })
     if (!stored) {
+      // Two claims genuinely in flight together both pass the check at the top
+      // of this lane and both transcode; one wins the twin key. The loser must
+      // NOT report failure — the client would fall back to the legacy save and
+      // duplicate the very video the winner just stored — and must not take any
+      // bytes down with it. Ask once more, now that the winner's row exists.
+      const won = await indexedVisualizerAt(twinPath, userId)
+      if (won) {
+        await safeRemove()
+        return NextResponse.json({ id: won.id, video_url: won.video_url, saved: true, transcoded: true })
+      }
       // The mp4 twin's bytes were already cleaned up by storeVisualizer; the
       // raw webm original would otherwise leak unindexed forever.
       return await discardAndFail('Failed to save visualizer', 500, { refund: true })

@@ -206,6 +206,427 @@ function idempotencyProblems(rawSchema) {
   return problems
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BODY PARITY — what the object-name accounting above cannot see.
+//
+// `artifacts()` answers "does the blob create a thing by this name". That is a
+// real question, and it caught a five-migration gap. It is also blind to the
+// thing's CONTENTS: SCHEMA_SQL could carry `create table mb_content_reports`
+// with the `unique (reporter_id, content_type, content_id)` line deleted and
+// every check above would stay green — while POST /api/feed/report, whose
+// upsert names exactly those three columns in `onConflict`, dies at runtime with
+// PostgreSQL 42P10 ("no unique or exclusion constraint matching the ON CONFLICT
+// specification"). Same shape for /api/feed/block and its (blocker_id,
+// blocked_id) pair. That was demonstrated against this file, not assumed.
+//
+// So the rules below compare BODIES. The comparison is fact-based rather than
+// textual, for a reason that matters more than it sounds: SCHEMA_SQL is
+// explicitly NOT a verbatim copy of the migrations. It reorders statements,
+// rewrites their comments, wraps 031/033 in `if exists` / `to_regclass` guards
+// the migration files do not have, and adds an explicit deny-all policy where
+// 030 relies on "RLS on, no policies". A textual diff would scream on every one
+// of those and get switched off within a week. Instead each side is reduced to a
+// set of normalized assertions — "this column is NOT NULL", "these columns are
+// UNIQUE together", "this policy's USING predicate is X" — and the rule is a
+// SUBSET test: every fact a carried migration states must also be stated by the
+// blob. Whitespace, indentation, case, comments and `public.` prefixes are
+// normalized away first, and a witness at the bottom reformats the blob beyond
+// recognition to prove the rule does not cry wolf over any of it.
+
+// Comment-stripper that respects single-quoted literals, so a '--' inside a
+// string is not mistaken for the start of a comment. (The older stripComments
+// above is left alone: the sections that use it are working and mutation-tested,
+// and swapping their input is a change with no upside.)
+function stripSqlComments(sql) {
+  let out = ''
+  let i = 0
+  while (i < sql.length) {
+    if (sql[i] === "'") {
+      let j = i + 1
+      while (j < sql.length) {
+        if (sql[j] === "'") {
+          if (sql[j + 1] === "'") { j += 2; continue }
+          j++; break
+        }
+        j++
+      }
+      out += sql.slice(i, j); i = j; continue
+    }
+    const two = sql.slice(i, i + 2)
+    if (two === '--') { const nl = sql.indexOf('\n', i); i = nl === -1 ? sql.length : nl; out += ' '; continue }
+    if (two === '/*') { const e = sql.indexOf('*/', i + 2); i = e === -1 ? sql.length : e + 2; out += ' '; continue }
+    out += sql[i]; i++
+  }
+  return out
+}
+
+// Canonical form of a SQL fragment: case-folded, whitespace-collapsed, spaces
+// dropped around every non-word character, `public.` removed. String literals
+// are lifted out first so their case and spacing survive ('WIP' must not
+// silently equal 'wip' — a default value is data, not syntax).
+function norm(s) {
+  const lits = []
+  let out = String(s).replace(/'(?:[^']|'')*'/g, (m) => `${lits.push(m) - 1}`)
+  out = out
+    .toLowerCase()
+    .replace(/\bpublic\s*\./g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/ ?([^\w ]) ?/g, '$1')
+    .trim()
+  return out.replace(/(\d+)/g, (_, i) => lits[Number(i)])
+}
+
+// Spellings Postgres treats as the same type. Deliberately short: only pairs
+// that are genuinely interchangeable, so a real type change stays visible.
+const TYPE_ALIASES = {
+  int: 'integer', int2: 'smallint', int4: 'integer', int8: 'bigint',
+  bool: 'boolean', float4: 'real', float8: 'double precision',
+  'timestamp with time zone': 'timestamptz', 'timestamp without time zone': 'timestamp',
+}
+const normType = (t) => { const n = norm(t); return TYPE_ALIASES[n] ?? n }
+
+// Slice of the balanced parenthesis group whose '(' is at `open`.
+function balanced(s, open) {
+  let d = 0
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "'") { i++; while (i < s.length && s[i] !== "'") i++; continue }
+    if (s[i] === '(') d++
+    else if (s[i] === ')') { d--; if (d === 0) return { inner: s.slice(open + 1, i), end: i } }
+  }
+  return null
+}
+
+// Split on commas at paren-depth 0 — i.e. into a table's column/constraint items
+// without cutting `check (a in ('x','y'))` or `numeric(10,2)` in half.
+function splitTop(s) {
+  const parts = []
+  let d = 0
+  let cur = ''
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === "'") { cur += c; i++; while (i < s.length && s[i] !== "'") cur += s[i++]; cur += "'"; continue }
+    if (c === '(') d++
+    if (c === ')') d--
+    if (c === ',' && d === 0) { parts.push(cur); cur = ''; continue }
+    cur += c
+  }
+  if (cur.trim()) parts.push(cur)
+  return parts.map((p) => p.trim()).filter(Boolean)
+}
+
+// First depth-0 occurrence of `re`. Depth matters: the `unique` inside
+// `check (kind in ('unique'))` is not a UNIQUE constraint.
+function findTop(s, re) {
+  let d = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === "'") { i++; while (i < s.length && s[i] !== "'") i++; continue }
+    if (c === '(') { d++; continue }
+    if (c === ')') { d--; continue }
+    if (d === 0 && re.test(s.slice(i)) && s.slice(i).match(re).index === 0) return i
+  }
+  return -1
+}
+
+// Where a column's type ends and its modifiers begin.
+const MODIFIER = /^(not\s+null|null|default|unique|primary\s+key|references|check|generated|collate|constraint)\b/i
+
+function referenceFact(table, col, rest, out) {
+  const m = rest.match(/\breferences\s+([\w."]+)\s*(\()?/i)
+  if (!m) return
+  let target = norm(m[1])
+  let targetCol = ''
+  if (m[2]) {
+    const b = balanced(rest, rest.indexOf('(', m.index))
+    if (b) targetCol = norm(b.inner)
+  }
+  const del = rest.match(/\bon\s+delete\s+(cascade|set\s+null|set\s+default|restrict|no\s+action)/i)
+  out.add(`fk ${table}.${col} -> ${target}(${targetCol})${del ? ` on delete ${norm(del[1])}` : ''}`)
+}
+
+// One column definition → its type, nullability, default, inline constraints.
+function columnFacts(table, item, out) {
+  const m = item.match(/^\s*"?([\w]+)"?\s*([\s\S]*)$/)
+  if (!m) return
+  const name = norm(m[1])
+  const rest = m[2].trim()
+  const modAt = findTop(rest, MODIFIER)
+  const type = normType(modAt === -1 ? rest : rest.slice(0, modAt))
+  if (type) out.add(`col ${table}.${name} ${type}`)
+  if (findTop(rest, /^not\s+null\b/i) !== -1) out.add(`notnull ${table}.${name}`)
+  if (findTop(rest, /^unique\b/i) !== -1) out.add(`unique ${table}(${name})`)
+  if (findTop(rest, /^primary\s+key\b/i) !== -1) out.add(`pk ${table}(${name})`)
+  const dAt = findTop(rest, /^default\b/i)
+  if (dAt !== -1) {
+    let expr = rest.slice(dAt + 'default'.length)
+    const nxt = findTop(expr, /^(not\s+null|unique|primary\s+key|references|check|collate)\b/i)
+    if (nxt !== -1) expr = expr.slice(0, nxt)
+    out.add(`default ${table}.${name}=${norm(expr)}`)
+  }
+  const cAt = findTop(rest, /^check\s*\(/i)
+  if (cAt !== -1) {
+    const b = balanced(rest, rest.indexOf('(', cAt))
+    if (b) out.add(`check ${table} ${norm(b.inner)}`)
+  }
+  referenceFact(table, name, rest, out)
+}
+
+// A table-level constraint item (with or without a `constraint <name>` prefix —
+// the name itself is already accounted for by artifacts()).
+function tableConstraintFacts(table, item, out) {
+  const s = item.replace(/^\s*constraint\s+"?[\w]+"?\s*/i, '')
+  const open = s.indexOf('(')
+  if (/^\s*unique\s*\(/i.test(s)) {
+    const b = balanced(s, open); if (b) out.add(`unique ${table}(${norm(b.inner)})`)
+    return true
+  }
+  if (/^\s*primary\s+key\s*\(/i.test(s)) {
+    const b = balanced(s, open); if (b) out.add(`pk ${table}(${norm(b.inner)})`)
+    return true
+  }
+  if (/^\s*check\s*\(/i.test(s)) {
+    const b = balanced(s, open); if (b) out.add(`check ${table} ${norm(b.inner)}`)
+    return true
+  }
+  if (/^\s*foreign\s+key\s*\(/i.test(s)) {
+    const b = balanced(s, open)
+    if (b) referenceFact(table, norm(b.inner), s.slice(b.end), out)
+    return true
+  }
+  return false
+}
+
+const TABLE_CONSTRAINT = /^\s*(constraint\s+"?[\w]+"?\s+)?(unique|primary\s+key|check|foreign\s+key|exclude)\b/i
+
+// Every runtime-visible assertion a chunk of SQL makes, as a comparable set.
+// Storage-schema objects are dropped here for the same reason artifacts() drops
+// them — see the 028/029 exclusions.
+function facts(rawSql) {
+  const sql = stripSqlComments(rawSql)
+  const out = new Set()
+
+  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?([\w."]+)\s*\(/gi)) {
+    const table = norm(m[1])
+    if (table.startsWith('storage.')) continue
+    const b = balanced(sql, m.index + m[0].length - 1)
+    if (!b) continue
+    for (const item of splitTop(b.inner)) {
+      if (TABLE_CONSTRAINT.test(item) && tableConstraintFacts(table, item, out)) continue
+      columnFacts(table, item, out)
+    }
+  }
+
+  for (const m of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?([\w."]+)([\s\S]*?);/gi)) {
+    const table = norm(m[1])
+    if (table.startsWith('storage.')) continue
+    const body = m[2]
+    for (const c of body.matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?/gi)) {
+      const tail = body.slice(c.index + c[0].length)
+      columnFacts(table, splitTop(tail)[0] ?? tail, out)
+    }
+    for (const c of body.matchAll(/add\s+constraint\s+"?[\w]+"?\s*/gi)) {
+      tableConstraintFacts(table, body.slice(c.index + c[0].length), out)
+    }
+  }
+
+  // Index SHAPE, not just its name: a unique index quietly downgraded to a plain
+  // one, or one column dropped from its list, keeps the name the accounting rule
+  // matches on.
+  for (const m of sql.matchAll(/create\s+(unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?"?[\w]+"?\s+on\s+([\w."]+)\s*\(/gi)) {
+    const table = norm(m[2])
+    if (table.startsWith('storage.')) continue
+    const b = balanced(sql, m.index + m[0].length - 1)
+    if (!b) continue
+    out.add(`index${m[1] ? ' unique' : ''} ${table}(${norm(b.inner)})`)
+  }
+
+  // Policy PREDICATES. `using (false)` and `using (true)` are the same policy by
+  // name and opposite policies in effect.
+  for (const m of sql.matchAll(/create\s+policy\s+(?:"([^"]+)"|(\w+))\s+on\s+([\w."]+)([\s\S]*?);/gi)) {
+    const table = norm(m[3])
+    if (table.startsWith('storage.')) continue
+    const body = m[4]
+    const cmd = (body.match(/\bfor\s+(all|select|insert|update|delete)\b/i)?.[1] ?? 'all').toLowerCase()
+    let using = ''
+    let check = ''
+    // normPredicate, not norm: `=` is commutative, and different migrations
+    // genuinely write the same policy with the operands in either order.
+    const uAt = body.search(/\busing\s*\(/i)
+    if (uAt !== -1) { const b = balanced(body, body.indexOf('(', uAt)); if (b) using = normPredicate(b.inner) }
+    const cAt = body.search(/\bwith\s+check\s*\(/i)
+    if (cAt !== -1) { const b = balanced(body, body.indexOf('(', cAt)); if (b) check = normPredicate(b.inner) }
+    out.add(`policy ${table}.${norm(m[1] ?? m[2])} for=${cmd} using=${using} check=${check}`)
+  }
+
+  // Function signature + body. try_increment_usage is the tier-limit enforcement
+  // point; "a function by that name exists" is not the property that matters.
+  for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+([\w."]+)\s*\(/gi)) {
+    const b = balanced(sql, m.index + m[0].length - 1)
+    if (!b) continue
+    const open = sql.indexOf('$$', b.end)
+    const close = open === -1 ? -1 : sql.indexOf('$$', open + 2)
+    const head = open === -1 ? sql.slice(b.end + 1) : sql.slice(b.end + 1, open)
+    const body = close === -1 ? '' : sql.slice(open + 2, close)
+    out.add(`function ${norm(m[1])}(${norm(b.inner)}) ${norm(head)} :: ${norm(body)}`)
+  }
+
+  return out
+}
+
+// Final RLS state per table — LAST statement wins, because that is what the
+// database ends up with. SCHEMA_SQL genuinely disables RLS on several tables
+// early and re-enables them later; only the end state is a fact about the
+// bootstrapped database, and a stray `disable` appended at the tail would leave
+// a table world-readable through the anon key with every name-level check green.
+function rlsFinalState(rawSql) {
+  const state = new Map()
+  for (const m of stripSqlComments(rawSql)
+    .matchAll(/alter\s+table\s+(?:if\s+exists\s+)?([\w."]+)\s+(enable|disable)\s+row\s+level\s+security/gi)) {
+    const t = norm(m[1])
+    if (!t.startsWith('storage.')) state.set(t, m[2].toLowerCase())
+  }
+  return state
+}
+
+// The body rule, pure so the witnesses can run it against a mutated blob.
+// Scope: migrations Section A already classifies as the blob's responsibility —
+// i.e. everything above the floor that is NOT a documented exclusion. Excluded
+// migrations are skipped entirely, which is what keeps 028/029 (and 014/016/017-
+// hardening/018/021/023/024) exactly as deliberate as they were before.
+function bodyProblems(schema, entries, excluded) {
+  const have = facts(schema)
+  const haveRls = rlsFinalState(schema)
+  const problems = []
+  for (const { file, sql } of entries) {
+    if (excluded[file]) continue
+    for (const f of [...facts(sql)].sort()) {
+      if (!have.has(f)) problems.push(`${file}: SCHEMA_SQL does not state — ${f}`)
+    }
+    for (const [table, want] of rlsFinalState(sql)) {
+      const got = haveRls.get(table)
+      if (got !== want) {
+        problems.push(`${file}: RLS on ${table} should end ${want}d in SCHEMA_SQL, got ${got ? `${got}d` : 'no statement at all'}`)
+      }
+    }
+  }
+  return problems
+}
+
+// Body facts with no migration above the floor to derive them from, pinned by
+// hand because they are load-bearing at runtime. Two sources feed this list:
+//
+//   • the base schema (migrations 001–013, below PARITY_FROM). Those files are
+//     out of scope for the accounting rule for good reasons — 004 and 005 have
+//     genuinely diverged from the blob, so fact-checking them wholesale WOULD
+//     cry wolf — but a handful of their assertions still decide whether the app
+//     works, and nothing else in this suite would notice them going missing.
+//   • the two ON CONFLICT targets. 030 covers them today; pinning them means the
+//     guard survives an edit to the migration file itself, which is the one
+//     thing a migration-relative subset test can never catch.
+//
+// Each entry names the code that breaks when the fact goes away.
+const CRITICAL_FACTS = {
+  'unique mb_content_reports(reporter_id,content_type,content_id)':
+    "POST /api/feed/report upserts with onConflict: 'reporter_id,content_type,content_id'. Without the constraint every report request fails with 42P10 — the exact regression that motivated this section.",
+  'unique mb_user_blocks(blocker_id,blocked_id)':
+    "POST /api/feed/block upserts with onConflict: 'blocker_id,blocked_id'. Same 42P10 failure mode.",
+  'notnull mb_versions.audio_url':
+    'a version row with no audio has nothing to play, seek or measure; every player path dereferences it.',
+  'fk mb_versions.project_id -> mb_projects(id) on delete cascade':
+    'deleting a project must take its versions with it. Downgraded to SET NULL, orphaned versions survive with no owner — and no RLS policy matches them, so they become invisible AND undeletable.',
+  'unique mb_versions(share_token)':
+    '/share/[token] resolves one version by token. Duplicates make the lookup non-deterministic.',
+  'unique mb_projects(share_token)': '/share project links resolve by this token (migration 012).',
+  'unique mb_collections(share_token)': '/share/album/<token> resolves by this token (migration 019).',
+  'index unique mb_versions(project_id,version_number)':
+    'migration 017 renumbers versions and relies on this to stop two v3 rows appearing under one project.',
+  'check mb_feedback rating>=1 and rating<=5':
+    'the share page renders the rating as stars; an out-of-range value from a forged PostgREST insert breaks the UI.',
+  'fk mb_feed_comments.version_id -> mb_versions(id) on delete cascade':
+    'a deleted mix must take its feed comments with it, or /feed renders comments against a missing track.',
+  'col mb_activity.user_id uuid':
+    'migration 006 adds it and every activity insert in the app writes it (/api/projects, /api/versions, /api/feedback, /api/releases). Without the column a db-init-bootstrapped database rejects every activity write with PGRST204 — and the users_own_activity policy, which reads user_id, fails to create and aborts the whole bootstrap.',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPERSEDED DEFINITIONS — "carried" must mean "matches the LATEST definition".
+//
+// The subset rule above compares SCHEMA_SQL against each migration file
+// independently, which has a hole: when several migrations define the SAME
+// object, matching ANY of them passes. Policies are redefined constantly here —
+// 005 → 006 → 017_prc_hardening all rewrite the same policy names — so "matches
+// some migration" is a much weaker claim than it reads as.
+//
+// It was not hypothetical. SCHEMA_SQL carried migration 005's definition of
+// users_own_activity, which 006 superseded and which production actually runs.
+// Because the blob's `drop policy if exists` / `create policy` pair is
+// unconditional, a single db-init run against production would have replaced the
+// live 006 policy with the older 005 one — a genuine weakening, since the 005
+// predicate constrains only project_id and never mentions the row's own user_id.
+//
+// This rule reads ALL migrations (including below PARITY_FROM — supersession
+// does not respect the floor: 006 is the authority here and it is migration 6),
+// takes the last definition of each policy in filename order, and requires
+// SCHEMA_SQL to match it. It is scoped to policies SCHEMA_SQL actually creates,
+// so it never demands the blob grow policies it deliberately does not own.
+
+// Predicate normalization that additionally knows `=` is commutative, so
+// `auth.uid() = user_id` and `user_id = auth.uid()` — which appear in different
+// migrations for the same policy — are correctly read as the SAME predicate.
+// Without this the rule would flag four harmless policies and get switched off.
+// It is deliberately narrow: only a whole predicate of the form `a = b`, with no
+// spaces left in either operand after normalization.
+function normPredicate(s) {
+  const n = norm(s)
+  const m = n.match(/^([\w.()]+)=([\w.()]+)$/)
+  return m ? [m[1], m[2]].sort().join('=') : n
+}
+
+// policy key → normalized definition, for one chunk of SQL.
+function policyDefs(rawSql) {
+  const sql = stripSqlComments(rawSql)
+  const out = new Map()
+  for (const m of sql.matchAll(/create\s+policy\s+(?:"([^"]+)"|(\w+))\s+on\s+([\w."]+)([\s\S]*?);/gi)) {
+    const table = norm(m[3])
+    if (table.startsWith('storage.')) continue
+    const body = m[4]
+    const cmd = (body.match(/\bfor\s+(all|select|insert|update|delete)\b/i)?.[1] ?? 'all').toLowerCase()
+    let using = ''
+    let check = ''
+    const uAt = body.search(/\busing\s*\(/i)
+    if (uAt !== -1) { const b = balanced(body, body.indexOf('(', uAt)); if (b) using = normPredicate(b.inner) }
+    const cAt = body.search(/\bwith\s+check\s*\(/i)
+    if (cAt !== -1) { const b = balanced(body, body.indexOf('(', cAt)); if (b) check = normPredicate(b.inner) }
+    out.set(`${table}.${norm(m[1] ?? m[2])}`, `for=${cmd} using=${using} check=${check}`)
+  }
+  return out
+}
+
+// Last writer wins, in filename order.
+function latestPolicyDefs(allMigrations) {
+  const latest = new Map()
+  for (const { file, sql } of allMigrations) {
+    for (const [key, def] of policyDefs(sql)) latest.set(key, { file, def })
+  }
+  return latest
+}
+
+function supersededPolicyProblems(schema, allMigrations) {
+  const latest = latestPolicyDefs(allMigrations)
+  const problems = []
+  for (const [key, def] of policyDefs(schema)) {
+    const win = latest.get(key)
+    // No migration defines it → SCHEMA_SQL is the sole author. That is true and
+    // intentional for the two 030 deny-all policies, whose reasoning is written
+    // out in route.ts; nothing to compare against.
+    if (!win) continue
+    if (win.def !== def) {
+      problems.push(`${key}: SCHEMA_SQL carries a definition that ${win.file} superseded — blob has [${def}], ${win.file} has [${win.def}]`)
+    }
+  }
+  return problems
+}
+
 function readMigrations() {
   return readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.sql'))
@@ -213,6 +634,14 @@ function readMigrations() {
     .map((f) => ({ file: f, n: parseInt(f.slice(0, 3), 10) }))
     .filter((m) => Number.isFinite(m.n) && m.n > PARITY_FROM)
     .map((m) => ({ ...m, sql: readFileSync(join(MIGRATIONS, m.file), 'utf8') }))
+}
+
+// Every migration, floor included — supersession does not respect PARITY_FROM.
+function readAllMigrations() {
+  return readdirSync(MIGRATIONS)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((file) => ({ file, sql: readFileSync(join(MIGRATIONS, file), 'utf8') }))
 }
 
 console.log('db-init-migration-parity: SCHEMA_SQL must account for every migration\n')
@@ -324,6 +753,184 @@ console.log('\n  witness: the idempotency rule goes red on a non-idempotent stat
   check('witness: rule reports an unguarded add constraint',
     idempotencyProblems(bareConstraint).some((p) => /add constraint/.test(p)))
   check('witness: the same rule is clean on the current blob', idempotencyProblems(SQL).length === 0)
+}
+
+// ── Section F: body parity ────────────────────────────────────────────────────
+// Names are Section A's job. This is the contents.
+const bodies = bodyProblems(SQL, entries, EXCLUDED)
+check('every carried migration\'s SQL body is fully stated by SCHEMA_SQL', bodies.length === 0, bodies.join(' | '))
+
+const haveFacts = facts(SQL)
+for (const [fact, why] of Object.entries(CRITICAL_FACTS)) {
+  check(`SCHEMA_SQL states: ${fact}`, haveFacts.has(fact), haveFacts.has(fact) ? '' : why)
+}
+
+// ── Section G: fail-first witnesses for the body rule ─────────────────────────
+// Same discipline as Section E: break the blob in-process, prove the rule goes
+// red, and — where it is the whole point — prove the OLD name-only rule stays
+// green through the same break.
+console.log('\n  witness: body drift the name-level accounting cannot see')
+{
+  // Each entry mutates SCHEMA_SQL and names the fact that must go missing.
+  const mutations = [
+    ['unique constraint deleted (the 42P10 regression)',
+      (s) => s.replace(',\n  unique (reporter_id, content_type, content_id)\n', '\n'),
+      /unique mb_content_reports/],
+    ['NOT NULL dropped from a column',
+      (s) => s.replace('reporter_id uuid not null references auth.users(id)', 'reporter_id uuid references auth.users(id)'),
+      /notnull mb_content_reports\.reporter_id/],
+    ['foreign key on-delete weakened',
+      (s) => s.replace('version_id uuid not null references mb_versions(id) on delete cascade',
+                       'version_id uuid not null references mb_versions(id) on delete set null'),
+      /fk mb_feed_comments\.version_id/],
+    ['column default changed',
+      (s) => s.replace("release_type     text not null default 'single'", "release_type     text not null default 'album'"),
+      /default mb_releases\.release_type/],
+    ['column type changed',
+      (s) => s.replace('add column if not exists loudness_lufs            real', 'add column if not exists loudness_lufs            text'),
+      /col mb_versions\.loudness_lufs real/],
+    ['RLS policy predicate weakened to a blanket allow',
+      (s) => s.replace('for insert with check (user_id = auth.uid());', 'for insert with check (true);'),
+      /policy mb_feed_comments\.feed_comments_insert_own/],
+    ['unique index quietly downgraded to a plain one',
+      (s) => s.replace('create unique index if not exists mb_visualizers_video_url_uidx', 'create index if not exists mb_visualizers_video_url_uidx'),
+      /index unique mb_visualizers/],
+    ['a column dropped from an index',
+      (s) => s.replace('on mb_library_tracks(user_id, isrc)', 'on mb_library_tracks(user_id)'),
+      /index mb_library_tracks\(user_id,isrc\)/],
+    ['the tier-limit function body gutted',
+      (s) => s.replace('if v_used >= p_limit then', 'if false then'),
+      /function try_increment_usage/],
+    ['RLS switched back off at the tail',
+      (s) => `${s}\nalter table mb_feed_comments disable row level security;\n`,
+      /RLS on mb_feed_comments should end enabled/],
+  ]
+  for (const [label, mutate, expect] of mutations) {
+    const broken = mutate(SQL)
+    check(`witness: the "${label}" mutation actually changed SCHEMA_SQL`, broken !== SQL)
+    const found = bodyProblems(broken, entries, EXCLUDED)
+    check(`witness: body rule goes red on ${label}`, found.some((p) => expect.test(p)),
+      found.length ? found.slice(0, 2).join(' | ') : 'rule reported NOTHING')
+  }
+
+  // The load-bearing contrast: the pre-existing name-level rules sail straight
+  // through the two mutations that keep every object name intact. If this ever
+  // fails, Section F has stopped being the thing that catches them.
+  const gutted = SQL.replace(',\n  unique (reporter_id, content_type, content_id)\n', '\n')
+  check('witness: the gutted-unique blob still passes the NAME-level accounting rule',
+    accountingProblems(gutted, entries, EXCLUDED).length === 0)
+  check('witness: the gutted-unique blob still passes the idempotency rule',
+    idempotencyProblems(gutted).length === 0)
+  const downgraded = SQL.replace('create unique index if not exists mb_visualizers_video_url_uidx', 'create index if not exists mb_visualizers_video_url_uidx')
+  check('witness: the downgraded-index blob still passes the NAME-level accounting rule',
+    accountingProblems(downgraded, entries, EXCLUDED).length === 0)
+
+  // …and a CRITICAL_FACTS anchor fires for the same break, independent of
+  // whether migration 030 still declares it.
+  check('witness: the CRITICAL_FACTS anchor also fires on the gutted unique',
+    !facts(gutted).has('unique mb_content_reports(reporter_id,content_type,content_id)'))
+}
+
+// G-last — the anti-wolf witness. A rule that flags harmless reformatting gets
+// deleted, and then the gap above is back with interest. Reformat SCHEMA_SQL as
+// brutally as a human plausibly might — collapse a table onto one line, re-indent
+// everything, uppercase the keywords, inject comments, add a `public.` prefix,
+// blank lines — and require the body rule to stay SILENT.
+console.log('\n  witness: harmless reformatting does NOT go red')
+{
+  const reformatted = SQL
+    .replace(
+      /create table if not exists mb_content_reports \([\s\S]*?\n\);/,
+      "CREATE TABLE IF NOT EXISTS public.mb_content_reports ( id uuid PRIMARY KEY DEFAULT gen_random_uuid(), reporter_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, content_type text NOT NULL CHECK (content_type IN ('version', 'comment')), content_id uuid NOT NULL, reason text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (reporter_id, content_type, content_id) ); -- reflowed onto one line",
+    )
+    .replace(
+      'create policy "feed_comments_read_authenticated" on mb_feed_comments\n  for select using (auth.uid() is not null);',
+      '/* block comment */\nCREATE POLICY "feed_comments_read_authenticated"\n\tON public.mb_feed_comments\n\tFOR SELECT\n\tUSING (   auth.uid()   IS NOT NULL   );   -- trailing note',
+    )
+    .replace(
+      'alter table mb_versions add column if not exists loudness_lufs            real;',
+      'ALTER TABLE public.mb_versions\n\n  ADD COLUMN IF NOT EXISTS loudness_lufs float4;   -- float4 is the same type as real',
+    )
+  check('witness: the reformatting actually changed SCHEMA_SQL', reformatted !== SQL)
+  // Set equality, not just size: reformatting must leave the fact set IDENTICAL.
+  // This is what proves the normalizer earns its keep — with normalization
+  // removed, every reflowed statement reads as a different fact and this fires.
+  const after = facts(reformatted)
+  const drifted = [...after].filter((f) => !haveFacts.has(f)).concat([...haveFacts].filter((f) => !after.has(f)))
+  check('witness: reformatting alone changed no fact', drifted.length === 0, drifted.slice(0, 3).join(' | '))
+  const noise = bodyProblems(reformatted, entries, EXCLUDED)
+  check('witness: body rule stays silent through reformatting', noise.length === 0, noise.join(' | '))
+  check('witness: the same rule is clean on the current blob', bodyProblems(SQL, entries, EXCLUDED).length === 0)
+}
+
+// ── Section H: no policy may carry a superseded definition ────────────────────
+const allMigrations = readAllMigrations()
+check('all migrations readable for the supersession rule', allMigrations.length > entries.length,
+  `${allMigrations.length} total, ${entries.length} above the floor`)
+
+const superseded = supersededPolicyProblems(SQL, allMigrations)
+check('no SCHEMA_SQL policy carries a definition a later migration superseded',
+  superseded.length === 0, superseded.join(' | '))
+
+// The specific one this rule was built for, pinned so a revert is loud.
+check('users_own_activity carries migration 006\'s predicate, not 005\'s',
+  facts(SQL).has('policy mb_activity.users_own_activity for=all using=auth.uid()=user_id check=auth.uid()=user_id'))
+check('migration 006 is the source of that shape',
+  /create policy "users_own_activity" on mb_activity\s+for all using \(user_id = auth\.uid\(\)\)/i
+    .test(read('supabase/migrations/006_multi_user_auth.sql')))
+check('migration 005 is the superseded source it must NOT match',
+  /CREATE POLICY "users_own_activity" ON mb_activity\s+USING \(\s*project_id IN/i
+    .test(read('supabase/migrations/005_multi_user.sql')))
+
+console.log('\n  witness: the supersession rule')
+{
+  // H1 — the exact pre-fix blob. Put migration 005's predicate back and prove
+  // the rule fires. This is the drift that was LIVE in this file, not a
+  // fabricated one, so it is the strongest witness in this suite.
+  const preFix = SQL.replace(
+    'create policy "users_own_activity" on mb_activity\n  using (user_id = auth.uid()) with check (user_id = auth.uid());',
+    'create policy "users_own_activity" on mb_activity\n' +
+    '  using (project_id in (select id from mb_projects where user_id = auth.uid()))\n' +
+    '  with check (project_id in (select id from mb_projects where user_id = auth.uid()));',
+  )
+  check('witness: reconstructed the pre-fix users_own_activity', preFix !== SQL)
+  const found = supersededPolicyProblems(preFix, allMigrations)
+  check('witness: rule reports the superseded users_own_activity',
+    found.some((p) => p.startsWith('mb_activity.users_own_activity')), found.join(' | ') || 'rule reported NOTHING')
+  check('witness: and it names 006 as the authority', found.some((p) => p.includes('006_multi_user_auth.sql')))
+
+  // The load-bearing contrast, exactly as for the body rule: every pre-existing
+  // check sails straight through the pre-fix policy, because the object name
+  // never changed.
+  check('witness: the pre-fix blob still passes the NAME-level accounting rule',
+    accountingProblems(preFix, entries, EXCLUDED).length === 0)
+  check('witness: the pre-fix blob still passes the idempotency rule', idempotencyProblems(preFix).length === 0)
+  check('witness: the pre-fix blob still passes the body-subset rule',
+    bodyProblems(preFix, entries, EXCLUDED).length === 0)
+
+  // H2 — normalization must NOT paper over the difference. Compare the two
+  // predicates directly rather than trusting that the rule above proves it.
+  const p005 = normPredicate('project_id in (select id from mb_projects where user_id = auth.uid())')
+  const p006 = normPredicate('user_id = auth.uid()')
+  check('witness: the 005 and 006 predicates normalize UNEQUAL', p005 !== p006, `${p005} vs ${p006}`)
+
+  // H3 — but the commutative case, which is genuinely the same policy written
+  // two ways, must normalize EQUAL. This is what stops the rule crying wolf on
+  // users_own_projects / _releases / _collections, where the blob and 006
+  // disagree only on operand order.
+  check('witness: `a = b` and `b = a` normalize EQUAL',
+    normPredicate('auth.uid() = user_id') === normPredicate('user_id = auth.uid()'))
+  check('witness: commutative folding is narrow — a subquery predicate is untouched',
+    normPredicate('project_id in (select id from mb_projects where user_id = auth.uid())')
+      === 'project_id in(select id from mb_projects where user_id=auth.uid())')
+
+  // H4 — the rule must not be vacuous: prove it actually compares something by
+  // fabricating a later migration that redefines a policy the blob carries.
+  const fake = { file: '999_fabricated_supersession.sql', sql: 'create policy "users_own_projects" on mb_projects using (true) with check (true);' }
+  const withFake = supersededPolicyProblems(SQL, [...allMigrations, fake])
+  check('witness: rule reports a policy a fabricated later migration redefines',
+    withFake.some((p) => p.startsWith('mb_projects.users_own_projects')))
+  check('witness: the same rule is clean on the current blob', supersededPolicyProblems(SQL, allMigrations).length === 0)
 }
 
 if (failures > 0) {

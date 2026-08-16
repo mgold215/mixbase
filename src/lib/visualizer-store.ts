@@ -41,6 +41,18 @@ export type StoreVisualizerArgs = {
   // FX-engine recipe (VizRecipe JSON, already validated + size-capped by the
   // route). Opaque to the server; enables "edit a copy" in the web studio.
   settings?: unknown
+  // Where to write the object. Defaults to a fresh `viz-<stamp>` key, which is
+  // what every caller that holds only bytes wants.
+  //
+  // /api/visualizer/finalize's webm lane passes mp4TwinPath(claimedKey)
+  // instead, so the transcoded twin lands on a key DERIVABLE from the claim.
+  // That derivation is the whole idempotency story on that lane: the twin
+  // replaces the webm original, so a replayed claim can no longer find the
+  // object it names — but it can still compute where the finished mp4 went.
+  // (Same convention the WebM→MP4 boot heal uses, so DELETE
+  // /api/visualizer/[id], /api/auth/delete-account and the orphan sweep already
+  // understand the pair via webmOriginalPath().)
+  path?: string
 }
 
 export type StoredVisualizer = { id: string; video_url: string }
@@ -93,11 +105,24 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
   const ext = contentType.includes('mp4') ? 'mp4'
     : contentType.includes('quicktime') ? 'mov'
     : 'webm'
-  const filename = `${projectId}/viz-${Date.now()}.${ext}`
+  const filename = args.path ?? `${projectId}/viz-${Date.now()}.${ext}`
 
+  // upsert follows the key, and both settings are load-bearing:
+  //
+  //   minted key  — `false` is a guard. Nothing should be sitting on a stamp
+  //                 generated a millisecond ago, and if something is, it is not
+  //                 ours to overwrite.
+  //   derived key — `true`, matching the WebM→MP4 heal that writes this exact
+  //                 key ("deterministic, so re-running after a partial failure
+  //                 converges instead of piling up duplicates"). A twin object
+  //                 left behind by a claim that died between upload and insert
+  //                 would otherwise refuse every later attempt at the same clip
+  //                 FOREVER — the derived key never changes, so the collision
+  //                 never clears itself. What gets overwritten is a twin
+  //                 re-derived from the same source webm, i.e. the same video.
   const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
     .from(VIDEO_BUCKET)
-    .upload(filename, bytes, { contentType, upsert: false })
+    .upload(filename, bytes, { contentType, upsert: !!args.path })
   if (uploadError || !uploadData) {
     console.error('[visualizer-store] upload error:', uploadError?.message)
     return null
@@ -115,6 +140,26 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
     title,
   }, settings)
   if (!row) {
+    // WHOSE bytes are these? A key minted a millisecond ago cannot be anyone
+    // else's, so the answer is "ours" and the cleanup below is unambiguous. A
+    // key the CALLER derived is different: the finalize webm lane writes its
+    // mp4 twin at mp4TwinPath(claimedKey), so a concurrent replay of the same
+    // claim can already hold a row over this exact URL — and post-033 that
+    // unique index is precisely WHY our insert would fail. Deleting then would
+    // destroy the object the WINNER's row points at. That is the same shape
+    // migration 033 turned from "harmless duplicate" into "destroys a live
+    // video" over in indexVisualizer; it must not come back through this door.
+    if (args.path) {
+      const raced = await visualizerByVideoUrl(videoUrl)
+      const decision = claimAfterInsertFailure(raced, userId)
+      // The winner's row is the right answer for the loser too: the object is
+      // there and it is indexed, which is exactly what the caller asked for.
+      if (decision === 'reuse') return { id: raced!.id, video_url: videoUrl }
+      // Anything short of a definitive "no row exists" keeps the bytes; the
+      // orphan sweep collects a genuine abandon 24 h later, which is a
+      // recoverable mistake in a way that deleting a live video is not.
+      if (decision !== 'remove-bytes') return null
+    }
     // The row is what Media reads, so an un-indexed object is invisible and would
     // leak forever. Delete the just-uploaded bytes — verified, because a remove
     // that quietly deletes nothing is exactly how these orphans accumulated —
@@ -124,7 +169,67 @@ export async function storeVisualizer(args: StoreVisualizerArgs): Promise<Stored
     return null
   }
 
-  return { id: row.id, video_url: videoUrl }
+  // A DERIVED key means two concurrent claims of the same upload write the SAME
+  // object, so a duplicate row here is not a duplicate video — it is two rows
+  // over one set of bytes. Migration 033's unique index would have refused the
+  // second insert, but 033 is NOT applied in production, so pre-033 both
+  // succeed. That is strictly worse than the behaviour this lane replaced:
+  // stamped keys produced two independent (row, object) pairs, which were merely
+  // redundant, whereas one object under two rows means DELETE
+  // /api/visualizer/[id] — which removes bytes with no cross-row check — takes
+  // the object out from under the surviving row and leaves it pointing at a 404.
+  //
+  // So collapse it here rather than depending on DDL nobody has applied yet.
+  // Returns the id that actually survives, which may not be ours — handing back
+  // a row we just deleted would leave the caller referencing a 404.
+  const effectiveId = args.path ? await reconcileDuplicateClaim(videoUrl, row.id) : row.id
+
+  return { id: effectiveId, video_url: videoUrl }
+}
+
+/**
+ * Collapse concurrent rows over ONE derived object down to the earliest.
+ *
+ * Deletes only the ROW, never the bytes: the object is exactly what the
+ * surviving row points at, so removing it is the one thing that must not happen.
+ *
+ * Ordering is a deterministic TOTAL order — created_at, then id as tiebreaker —
+ * and each caller deletes only ITS OWN row and only when that row is not the
+ * minimum. Exactly one row is the minimum, so concurrent reconcilers cannot all
+ * delete themselves and leave the object unindexed. A failed lookup keeps
+ * everything: a duplicate row is visible and fixable, an object with no row at
+ * all is invisible in Media and leaks forever.
+ *
+ * Returns the row id the caller should report — ours when it survives, the
+ * winner's when ours was the one collapsed.
+ */
+async function reconcileDuplicateClaim(videoUrl: string, ownRowId: string): Promise<string> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_visualizers')
+    .select('id, created_at')
+    .eq('video_url', videoUrl)
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+    .limit(10)
+  if (error || !data || data.length < 2) return ownRowId
+
+  const winner = data[0] as { id: string }
+  if (winner.id === ownRowId) return ownRowId
+
+  const { error: delError } = await supabaseAdmin
+    .from('mb_visualizers')
+    .delete()
+    .eq('id', ownRowId)
+  if (delError) {
+    // Both rows still exist. Keep reporting ours — it is real and it points at
+    // the right object; the duplicate is a cosmetic problem, not a broken save.
+    console.error('[visualizer-store] duplicate-claim reconcile failed:', delError.message)
+    return ownRowId
+  }
+  console.warn(
+    `[visualizer-store] collapsed a concurrent duplicate claim over ${videoUrl} — kept ${winner.id}, dropped ${ownRowId}`,
+  )
+  return winner.id
 }
 
 // The row that already indexes this exact object, if there is one.
@@ -146,6 +251,34 @@ async function visualizerByVideoUrl(
     return undefined
   }
   return (data as { id: string; user_id: string } | null) ?? null
+}
+
+// The library row that ALREADY indexes this storage key for this user, or null.
+//
+// This is the read half of claim idempotency, for the callers that have to
+// decide whether to do expensive work at all. /api/visualizer/finalize's webm
+// lane asks it twice before downloading anything: once for the mp4 twin its
+// success path produces, once for the webm original its transcode-failure path
+// indexes. A hit means this exact claim already succeeded, so the answer is the
+// row it produced — not a second download, transcode and row.
+//
+// Deliberately asymmetric with the delete rules in visualizer-claim.ts: there,
+// an unanswered lookup (`undefined`) must never license destroying bytes; here
+// it must never license reporting a save that may not have landed. Both fall
+// through to "do the real work", which claimPrecheck already encodes as
+// `insert`.
+export async function indexedVisualizerAt(
+  storagePath: string,
+  userId: string,
+): Promise<StoredVisualizer | null> {
+  const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(storagePath)
+  const videoUrl = urlData.publicUrl
+  const existing = await visualizerByVideoUrl(videoUrl)
+  const precheck = claimPrecheck(existing, userId)
+  if (precheck === 'foreign') {
+    console.error('[visualizer-store] object is already indexed by another user')
+  }
+  return precheck === 'reuse' ? { id: existing!.id, video_url: videoUrl } : null
 }
 
 // Index an object that is ALREADY in mf-video (signed-URL upload path — the

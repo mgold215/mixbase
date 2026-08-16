@@ -325,6 +325,16 @@ const object = (name, createdAt) => ({ name, id: `id-${name}`, created_at: creat
     found === null, `${Date.now() - started}ms`)
   check('…and is bounded by the page cap',
     calls.filter(c => c.prefix === PID).length === REAP_MAX_PAGES)
+  // The check above compares the observed call count to the very constant that
+  // produced it, so it stays green no matter how large REAP_MAX_PAGES becomes —
+  // raising it to 100_000 kept it passing while the sweep made 100k list calls
+  // per prefix per boot. Pin the VALUE, in both directions, or the only thing
+  // bounding that work is a number nothing asserts on.
+  check('the page cap covers a realistic bucket',
+    REAP_MAX_PAGES * REAP_PAGE_SIZE >= 100_000,
+    `${REAP_MAX_PAGES} * ${REAP_PAGE_SIZE}`)
+  check('…without licensing an unbounded number of list calls',
+    REAP_MAX_PAGES <= 500, `${REAP_MAX_PAGES}`)
 }
 
 // ── Source contract: src/lib/video-orphan-reaper.ts ─────────────────────────
@@ -432,7 +442,13 @@ check('it runs AFTER the WebM heal settles, not racing it',
   && /healWebmVisualizers\(\)[\s\S]{0,200}?video-orphan-reaper/.test(instrumentation))
 check('a failing sweep cannot take down boot',
   /video-orphan-reaper[\s\S]{0,200}?\.catch\(\(\) => \{\}\)/.test(instrumentation))
+// The reaper is reached through `.then()` off the transcode heal, so it is never
+// spelled `await import('./src/lib/video-orphan-reaper')` and this check cannot
+// fail for the defect it names. The realistic regression is awaiting the HEAD of
+// that chain, which blocks boot on the whole sweep — and that stays green here.
 check('boot does not await it', !/await import\('\.\/src\/lib\/video-orphan-reaper'\)/.test(instrumentation))
+check('…nor awaits the chain the sweep hangs off, which would block boot on it',
+  !/await\s+import\('\.\/src\/lib\/visualizer-transcode'/.test(instrumentation))
 
 // 7. Guards on the sweep itself.
 check('the sweep no-ops without a service-role key',

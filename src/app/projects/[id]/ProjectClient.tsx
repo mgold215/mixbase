@@ -7,9 +7,13 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import MasterCheck from '@/components/MasterCheck'
+import MasterCheck, { writeLoudnessCache } from '@/components/MasterCheck'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { loudnessFromRow, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
+import { measureLoudness, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
+import {
+  AUTO_MEASURE_MAX_FILE_BYTES, autoMeasureProbeFrames, fitsAutoMeasureBudget, canAttemptAutoMeasure,
+} from '@/lib/loudness-auto'
 import { trackShareUrl } from '@/lib/share-url'
 import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
@@ -37,6 +41,144 @@ const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false
 const VideoFinalizer = dynamic(() => import('@/components/VideoFinalizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
+
+// ─── Auto-measure loudness after an upload ───────────────────────────────────
+// Measuring a mix has always been possible (MasterCheck's "Measure loudness"
+// button), but it costs a full RE-DOWNLOAD: the button fetches the track back
+// out of Supabase storage purely to decode it. At the end of an upload the
+// browser is still holding the local `File`, so the same measurement is
+// available without the round trip. That saving — not "free CPU" — is the whole
+// justification for doing this automatically.
+//
+// Everything here is at module scope and takes only what it needs. It captures
+// no component state and returns nothing to the upload flow, so there is no way
+// for it to interfere with the upload that triggered it.
+
+/**
+ * Decode the just-uploaded file and measure it — but only if this device can do
+ * so cheaply. Returns null for every "not worth it" and every failure, which
+ * the caller treats identically: no number, no error, nothing said.
+ *
+ * Three gates, cheapest first:
+ *   1. File bytes, before anything is read into memory.
+ *   2. Decoded memory — the same `canMeasureInBrowser` ceiling the manual
+ *      button uses, computed from the exact decoded shape.
+ *   3. Measured time on THIS device, via a short timing probe.
+ */
+async function measureUploadedFile(file: File): Promise<LoudnessMeasurement | null> {
+  // Gate 1. Bounds the arrayBuffer() allocation before it happens — a 2 GB
+  // upload (the app's ceiling) must never be pulled into memory by a background
+  // task nobody asked for. Checked here as well as in the conjunction below,
+  // because the conjunction can only run once the bytes are already read.
+  if (file.size > AUTO_MEASURE_MAX_FILE_BYTES) return null
+
+  let ctx: AudioContext | null = null
+  try {
+    const bytes = await file.arrayBuffer()
+    ctx = new AudioContext()
+    const decoded = await ctx.decodeAudioData(bytes)
+
+    // Gate 2. Exact sample count and channel layout in hand — refuse before
+    // allocating the filter working set rather than during it. Note this is
+    // derived from the DECODED audio, never from `duration_seconds`, which is
+    // null on 141 of 357 production rows (every iOS upload). A compressed file
+    // is exactly why the byte cap above is not sufficient on its own.
+    if (!canAttemptAutoMeasure(file.size, decoded.length, decoded.numberOfChannels, canMeasureInBrowser)) return null
+
+    const channels: Float32Array[] = []
+    for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
+
+    // Gate 3. Time a short prefix to learn what this device costs per sample,
+    // then extrapolate. The probe's LOUDNESS is discarded and never shown — a
+    // prefix of a mix with a quiet intro reads nothing like the mix (that false
+    // premise is what got this feature deferred once already). It is a
+    // stopwatch, nothing more.
+    const probeFrames = autoMeasureProbeFrames(decoded.sampleRate, decoded.length)
+    if (probeFrames <= 0) return null
+    const probeStart = performance.now()
+    measureLoudness(channels.map(ch => ch.subarray(0, probeFrames)), decoded.sampleRate)
+    const probeMs = performance.now() - probeStart
+    if (!fitsAutoMeasureBudget(probeMs, probeFrames, decoded.length)) return null
+
+    return measureLoudness(channels, decoded.sampleRate)
+  } catch {
+    // Unsupported codec, a decode failure, an AudioContext the browser refused,
+    // out of memory — all the same answer. The mix uploaded fine; it simply has
+    // no measurement yet, and the manual button still works.
+    return null
+  } finally {
+    // Free the decoder — a lingering context competes with playback. Wrapped
+    // rather than `.catch()`-ed: older WebKit returns undefined from close()
+    // instead of a promise, and a TypeError thrown from a `finally` would
+    // replace the value being returned. The caller swallows it either way, but
+    // this keeps the "cannot fail" guarantee where this function states it.
+    try { await ctx?.close() } catch { /* already closed, or no promise */ }
+  }
+}
+
+/**
+ * Fire-and-forget the measurement once the version row exists.
+ *
+ * STRUCTURALLY UNABLE TO AFFECT THE UPLOAD. It is called after the upload has
+ * already reported success, it is not awaited, it returns void rather than a
+ * promise anyone could accidentally await, and every stage inside it swallows
+ * its own failures. The upload path cannot observe this running, finishing, or
+ * failing.
+ *
+ * Deferred to idle so the decode never competes with the render that just
+ * added the new mix to the page. `requestIdleCallback` carries a timeout so a
+ * permanently busy tab still gets its measurement instead of silently never
+ * measuring; browsers without it (older Safari) fall back to a plain delay.
+ */
+// Serializes auto-measures. Each one is allowed up to the `canMeasureInBrowser`
+// ceiling on its own; two uploaded back to back could otherwise decode at the
+// same time and double that, which is exactly the peak the gate exists to cap.
+// A tail-chained promise keeps them one at a time without dropping any, and a
+// rejection can never poison the chain because the body below never rejects.
+let autoMeasureChain: Promise<void> = Promise.resolve()
+
+function scheduleAutoMeasure(
+  file: File,
+  versionId: string,
+  onSaved: (row: VersionLoudnessRow) => void,
+): void {
+  const run = () => {
+    autoMeasureChain = autoMeasureChain.then(async () => {
+      try {
+        const m = await measureUploadedFile(file)
+        if (!m) return
+
+        // Cache FIRST, then persist. If the POST fails (offline, rate limited,
+        // or migration 032 still unapplied and its runtime heal not yet won),
+        // the number survives locally and MasterCheck's existing backfill
+        // pushes it up on the next mount. No retry logic needed here.
+        writeLoudnessCache(versionId, m)
+
+        // The existing hardened route — rate limited, range validated, server
+        // clock, and already carrying the missing-column heal for 032. This is
+        // deliberately the SAME door the manual button uses; a second write
+        // path would be a second thing to keep honest.
+        const res = await fetch(`/api/versions/${versionId}/loudness`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(m),
+        })
+        if (!res.ok) return
+        const data = await res.json().catch(() => null)
+        if (data?.version) onSaved(data.version as VersionLoudnessRow)
+      } catch {
+        // Nothing to report. The upload succeeded; this did not happen.
+      }
+    })
+  }
+
+  try {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 15_000 })
+    else setTimeout(run, 1_200)
+  } catch {
+    // Even the scheduling is guarded — this must never throw into the caller.
+  }
+}
 
 type Props = {
   project: Project
@@ -465,6 +607,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         setUploadStatus('')
         setUploading(false)
         syncAfterMutation()
+        // Measure the mix from the File we still have in hand, skipping the
+        // re-download MasterCheck's button would pay. Scheduled from HERE, after
+        // the new row is in `versions`, so the result folds into a row that
+        // exists — and after the upload has already reported success, so it
+        // cannot delay or fail it. Not awaited, by design.
+        scheduleAutoMeasure(file, newVersion.id as string, row => handleMeasured(newVersion.id as string, row))
       }, 600)
     } else {
       setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)

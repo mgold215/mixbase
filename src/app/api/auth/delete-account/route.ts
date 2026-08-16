@@ -2,16 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
-import { webmOriginalPath } from '@/lib/visualizer-encode'
 import { removeStorageObjects } from '@/lib/storage-remove'
-
-// Pull the storage object path out of a Supabase public URL for a given bucket.
-function storagePathFromUrl(url: string | null | undefined, bucket: string): string | null {
-  if (!url) return null
-  const marker = `/storage/v1/object/public/${bucket}/`
-  const idx = url.indexOf(marker)
-  return idx !== -1 ? url.slice(idx + marker.length) : null
-}
+import {
+  AUDIO_BUCKET,
+  ARTWORK_BUCKET,
+  VIDEO_BUCKET,
+  collectAssetKeys,
+  type VersionAssetRow,
+  type VisualizerAssetRow,
+} from '@/lib/project-assets'
 
 // POST /api/auth/delete-account — permanently delete user and all their data
 // Deletes storage files first (GDPR), then DB rows, then the auth user.
@@ -58,52 +57,42 @@ export async function POST(request: NextRequest) {
   const projectIds = (projects ?? []).map(p => p.id)
 
   let versionIds: string[] = []
-  let audioPaths: string[] = []
+  let versions: VersionAssetRow[] = []
 
   if (projectIds.length > 0) {
-    const { data: versions } = await supabaseAdmin
+    const { data } = await supabaseAdmin
       .from('mb_versions')
       .select('id, audio_url')
       .in('project_id', projectIds)
 
-    versionIds = (versions ?? []).map(v => v.id)
-
-    // Extract storage paths from audio URLs for deletion
-    // URL format: https://<project>.supabase.co/storage/v1/object/public/mf-audio/<path>
-    const marker = '/storage/v1/object/public/mf-audio/'
-    audioPaths = (versions ?? [])
-      .map(v => {
-        const idx = v.audio_url?.indexOf(marker) ?? -1
-        return idx !== -1 ? v.audio_url.slice(idx + marker.length) : null
-      })
-      .filter((p): p is string => !!p)
+    versionIds = (data ?? []).map(v => v.id)
+    versions = (data ?? []) as VersionAssetRow[]
   }
-
-  // Both the generated source artwork and the finalized (text lockup) render live
-  // in mf-artwork — collect both so neither is orphaned.
-  const artworkPaths = (projects ?? [])
-    .flatMap(p => [
-      storagePathFromUrl(p.artwork_url, 'mf-artwork'),
-      storagePathFromUrl(p.finalized_artwork_url, 'mf-artwork'),
-    ])
-    .filter((p): p is string => !!p)
 
   // Visualizers (free canvas + AI + finished YouTube/Shorts) are keyed by
   // user_id and stored in mf-video. They were previously never cleaned up,
   // leaving orphaned rows and bytes after a GDPR delete.
+  //
+  // Selected by user_id, NOT by project — that is deliberately broader than
+  // DELETE /api/projects/[id]'s project-scoped lookup, because project_id is
+  // nullable and a row without one would otherwise be missed here. Row
+  // SELECTION is what legitimately differs between the two delete paths; the
+  // URL→key derivation below must not.
   const { data: visualizers } = await supabaseAdmin
     .from('mb_visualizers')
-    .select('id, video_url')
+    .select('id, video_url, source_image_url')
     .eq('user_id', userId)
-  // Include the pre-conversion WebM for any row the WebM→MP4 heal repointed:
-  // the row's video_url is now the MP4 twin, so deriving paths from it alone
-  // leaves the original bytes behind — orphaned, and still publicly readable.
-  const videoPaths = (visualizers ?? [])
-    .flatMap(v => {
-      const mp4 = storagePathFromUrl(v.video_url, 'mf-video')
-      return mp4 ? [mp4, webmOriginalPath(mp4)] : []
-    })
-    .filter((p): p is string => !!p)
+
+  // One shared derivation for both delete paths (src/lib/project-assets.ts):
+  // source + finalized artwork, audio, visualizer videos AND the pre-conversion
+  // WebM twin the MP4 heal leaves behind, all deduped per bucket. Anything this
+  // route derived by hand instead was free to drift from the project-delete
+  // path — and did: source_image_url was missed entirely here.
+  const assetKeys = collectAssetKeys({
+    projects: (projects ?? []),
+    versions,
+    visualizers: (visualizers ?? []) as VisualizerAssetRow[],
+  })
 
   // Delete storage objects. A storage failure must NOT trap the user in an
   // undeletable account, so we log loudly (for a later orphan sweep) and press
@@ -115,11 +104,8 @@ export async function POST(request: NextRequest) {
   // while every byte stayed in a PUBLIC bucket, and the Sentry warnings that
   // were supposed to feed a later sweep never fired once. Unconfirmed keys are
   // now reported individually so a sweep has something to act on.
-  for (const [bucket, paths] of [
-    ['mf-audio', audioPaths],
-    ['mf-artwork', artworkPaths],
-    ['mf-video', videoPaths],
-  ] as const) {
+  for (const bucket of [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET] as const) {
+    const paths = assetKeys[bucket]
     if (paths.length === 0) continue
     const outcome = await removeStorageObjects(bucket, paths)
     if (outcome.ok) continue

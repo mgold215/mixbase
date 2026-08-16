@@ -193,10 +193,19 @@ create index if not exists idx_collection_items_position on mb_collection_items(
 alter table mb_projects    add column if not exists user_id uuid references auth.users(id);
 alter table mb_releases    add column if not exists user_id uuid references auth.users(id);
 alter table mb_collections add column if not exists user_id uuid references auth.users(id);
+-- Migration 006 also puts user_id on mb_activity, and this blob had missed it.
+-- Every activity insert in the app writes user_id explicitly (see
+-- /api/projects, /api/versions, /api/feedback, /api/releases), so without this
+-- column a database bootstrapped through db-init rejects EVERY activity write
+-- with PGRST204. It is also what the users_own_activity policy below reads —
+-- creating that policy against a table lacking the column aborts the entire
+-- bootstrap run, since the Management API executes this whole body as one query.
+alter table mb_activity    add column if not exists user_id uuid references auth.users(id);
 
 create index if not exists idx_projects_user_id    on mb_projects(user_id);
 create index if not exists idx_releases_user_id    on mb_releases(user_id);
 create index if not exists idx_collections_user_id on mb_collections(user_id);
+create index if not exists idx_activity_user_id    on mb_activity(user_id);
 
 alter table mb_projects        enable row level security;
 alter table mb_versions        enable row level security;
@@ -259,9 +268,19 @@ create policy "users_read_feedback" on mb_feedback
     )
   );
 
+-- Migration 006 SUPERSEDED migration 005's definition of this policy, and 006 is
+-- what is live in production (verified against pg_policies). This blob carried
+-- the 005 shape, and its drop/create pair above is unconditional — so running
+-- db-init against production would have silently DOWNGRADED a live policy, the
+-- same mechanism as the public_feedback_insert revert fixed just above.
+--
+-- The downgrade was a real weakening, not churn. The 005 predicate constrains
+-- only the row's project_id and says nothing about user_id, so it would let a
+-- user insert an mb_activity row carrying SOMEONE ELSE'S user_id as long as the
+-- project_id is one of their own. The 006 predicate constrains the row's own
+-- user_id, which is the property that actually matters. Do not "restore" 005.
 create policy "users_own_activity" on mb_activity
-  using (project_id in (select id from mb_projects where user_id = auth.uid()))
-  with check (project_id in (select id from mb_projects where user_id = auth.uid()));
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- Migration 022: feed comments — readable by every signed-in artist, writable/
 -- deletable only by their author. (Server routes use the service-role key and

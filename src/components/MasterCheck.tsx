@@ -64,7 +64,13 @@ function readCache(versionId: string): LoudnessMeasurement | null {
   }
 }
 
-function writeCache(versionId: string, m: LoudnessMeasurement) {
+/**
+ * Exported because the upload path measures too (ProjectClient auto-measures a
+ * fresh mix from the local File, skipping the re-download this component would
+ * otherwise pay). Both writers must use the SAME key and shape or the reading
+ * this component shows and the one the backfill pushes up would drift apart.
+ */
+export function writeLoudnessCache(versionId: string, m: LoudnessMeasurement) {
   try {
     localStorage.setItem(CACHE_PREFIX + versionId, JSON.stringify(m))
   } catch { /* storage full or unavailable — measuring again later is fine */ }
@@ -154,7 +160,7 @@ export default function MasterCheck({
       const channels: Float32Array[] = []
       for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
       const m = measureLoudness(channels, decoded.sampleRate)
-      writeCache(versionId, m)
+      writeLoudnessCache(versionId, m)
       setMeasured(m)
       void persist(m)
     } catch (e) {
