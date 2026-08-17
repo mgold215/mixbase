@@ -19,6 +19,12 @@ import {
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
+import {
+  SCAN_CONCURRENCY,
+  assumedSurvivorRows,
+  chunkByEncodedLength,
+  runBounded,
+} from '@/lib/survivor-scan-plan'
 import type { ListPage, StorageEntry } from '@/lib/video-orphan-plan'
 
 // GET /api/projects/[id] — get one project with its versions (must belong to the user)
@@ -313,9 +319,19 @@ async function removeProjectAssets(id: string, candidates: AssetKeys, candidateU
 /**
  * Which of these URLs are STILL referenced after the delete, as storage keys.
  *
- * Returns null if any query failed — the caller must then treat every key as
- * possibly-shared and remove nothing, the same fail-safe direction
- * video-orphan-reaper takes when its reference scan can't be trusted.
+ * Returns null when the scan cannot be trusted AT ALL — the caller must then
+ * treat every key as possibly-shared and remove nothing, the same fail-safe
+ * direction video-orphan-reaper takes when its reference scan can't be trusted.
+ *
+ * A pass-1 chunk that fails does NOT null the whole scan any more. That chunk
+ * asked about a known list of URLs, so the damage is exactly scoped: those URLs
+ * are folded into the survivor set as though a live row still named them. The
+ * safety property is unchanged in the direction that matters — unknown still
+ * means "keep", never "delete" — but one bad chunk no longer abandons cleanup
+ * for the whole project, which is what made this feature a no-op on precisely
+ * the large projects it exists for. A pass-2 failure still nulls the scan: its
+ * LIKE is not scoped to any enumerable set of URLs, so there is no subset left
+ * that can be proven safe.
  *
  * Deliberately NOT scoped to the deleting user: PATCH only checks that
  * artwork_url is *a* Supabase storage URL, so one account can point a project
@@ -326,6 +342,10 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
   const projects: ProjectAssetRow[] = []
   const versions: VersionAssetRow[] = []
   const visualizers: VisualizerAssetRow[] = []
+
+  // URLs the scan could not get an answer about, treated exactly as if a
+  // surviving row still named them. See `run` below.
+  const unresolved = new Set<string>()
   let failed = false
 
   // Every URL column that can name one of our candidate objects. Missing the
@@ -352,33 +372,76 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
     else visualizers.push(...(rows as VisualizerAssetRow[]))
   }
 
+  // `protect` is the URL list this query was asking about, or null when the
+  // query is not scoped to one (pass 2). It is what a failure degrades to.
   const run = async (
     table: string,
     column: string,
     build: (q: ReturnType<typeof supabaseAdmin.from>) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+    protect: readonly string[] | null,
   ) => {
-    const { data, error } = await build(supabaseAdmin.from(table))
-    if (error) {
+    let lastError: { message: string } | null = null
+
+    // Retry once. With the fan-out bounded and the chunks sized to the request
+    // line, what is left to fail here is overwhelmingly transient — a pooler
+    // blip, a connection reset — and the cost of not retrying is not an error
+    // page, it is these bytes leaking with nothing left to name them. PATCH's
+    // visualizer lookup above makes the same call for the same reason. No
+    // backoff: the bounded pool already staggers these, and a user is waiting.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let data: unknown[] | null = null
+      let error: { message: string } | null = null
+      try {
+        ({ data, error } = await build(supabaseAdmin.from(table)))
+      } catch (thrown) {
+        // supabase-js reports failures in `error`, but a transport fault can
+        // still throw. That exception used to escape DELETE entirely: a 500 for
+        // a delete whose row removal had ALREADY succeeded, telling the user it
+        // failed when it did not, and skipping cleanup on the way out.
+        error = { message: thrown instanceof Error ? thrown.message : String(thrown) }
+      }
+      if (!error) {
+        absorb(table, data ?? [])
+        return
+      }
+      // A missing pin column means there are no pins to protect, not a broken
+      // scan (migrations 015 / 020). Never retried — it cannot heal.
       if (optional.has(column) && isMissingVisualizerColumn(error)) return
-      console.error(`[project delete] survivor scan failed on ${table}.${column}: ${error.message}`)
-      failed = true
+      lastError = error
+    }
+
+    console.error(`[project delete] survivor scan failed on ${table}.${column}: ${lastError?.message}`)
+
+    if (protect) {
+      // Scoped failure: assume every URL this chunk asked about is still
+      // referenced. Unknown ⇒ survivor ⇒ leak. Strictly safer than deleting,
+      // and strictly better than the old behaviour, where one bad chunk
+      // abandoned cleanup for every other object the project owned.
+      for (const url of protect) unresolved.add(url)
       return
     }
-    absorb(table, data ?? [])
+
+    // Unscoped failure: pass 2's LIKE spans every key under the project prefix,
+    // so no subset of the candidates can still be proven safe. Fail the scan.
+    failed = true
   }
 
-  await Promise.all(columns.flatMap(([table, column]) => {
-    const queries = []
+  // Chunked ONCE — the URL list is the same for every column.
+  //
+  // Chunked by ENCODED length rather than a flat count of 50: these are full
+  // URLs travelling in the PostgREST query string, and 50 of the real ones
+  // (110 mf-audio rows carry raw spaces and parentheses, which postgrest-js
+  // quotes) serialize to an 8,217-byte request line — past the usual 8,192
+  // ceiling. That is a 414 on any project with 50 versions, and the route
+  // already allows 1,000.
+  const chunks = chunkByEncodedLength(urls)
 
+  const queries: Array<() => Promise<void>> = []
+  for (const [table, column] of columns) {
     // Pass 1 — exact matches on the URLs the deleted rows named. This is what
     // protects the iOS bucket-root audio keys, which have no project prefix.
-    //
-    // Chunked: these are full URLs travelling in the PostgREST query string, so
-    // a project with hundreds of versions would otherwise build a request URL
-    // past the server's limit and fail the whole scan.
-    for (let i = 0; i < urls.length; i += 50) {
-      const chunk = urls.slice(i, i + 50)
-      queries.push(run(table, column, q => q.select(column).in(column, chunk)))
+    for (const chunk of chunks) {
+      queries.push(() => run(table, column, q => q.select(column).in(column, chunk), chunk))
     }
 
     // Pass 2 — anything still pointing INTO this project's prefix. The prefix
@@ -387,15 +450,29 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
     // that saves an artwork object another project reassigned to itself — two
     // such objects exist in production right now. `id` is a validated UUID, so
     // it carries no LIKE wildcards.
-    queries.push(run(table, column, q => q.select(column).like(column, `%/${id}/%`)))
+    //
+    // No URL list scopes this one, so it passes null and a failure fails the
+    // whole scan.
+    queries.push(() => run(table, column, q => q.select(column).like(column, `%/${id}/%`), null))
+  }
 
-    return queries
-  }))
+  // Bounded, NOT Promise.all. This used to fire columns × chunks + columns
+  // queries simultaneously — about 147 at the route's own limit(1000) — which
+  // is how the pooler rejections that failed the entire scan happened in the
+  // first place.
+  await runBounded(queries, SCAN_CONCURRENCY)
 
   // A scan we cannot complete cannot tell a shared object from an exclusively
   // owned one, and deleting a shared object destroys another project's live
   // media. Fail towards leaking bytes, never towards deleting them.
   if (failed) return null
 
-  return collectAssetKeys({ projects, versions, visualizers })
+  const found = collectAssetKeys({ projects, versions, visualizers })
+  if (unresolved.size === 0) return found
+
+  // Fold the unanswered URLs in as though they were survivors — through the
+  // SHARED derivation, so their keys are worked out exactly the way the
+  // candidate keys were (WebM twins included) rather than by a second parser
+  // that could drift out of step with it.
+  return unionKeys(found, collectAssetKeys(assumedSurvivorRows([...unresolved])))
 }

@@ -1,6 +1,42 @@
 -- Migration 028: stop anonymous LISTING of the storage buckets.
 --
--- ⚠️ NOT YET APPLIED. Requires an explicit decision — see the note at the end.
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 🛑 DO NOT APPLY. THIS EXACT CHANGE ALREADY CAUSED A PRODUCTION OUTAGE.
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Established 2026-08-17 by reading supabase_migrations.schema_migrations on
+-- the live project. These same three DROP POLICY statements were applied on
+-- 2026-07-11 as `restrict_public_bucket_listing` (self-labelled "018") and
+-- rolled back the next day, 2026-07-12, by `restore_public_bucket_read_policies`.
+-- The rollback migration states the cause in its own header:
+--
+--     "Dropping them broke uploads (Supabase's upload does INSERT ... RETURNING,
+--      which needs a SELECT policy to read the new row back). Re-create them
+--      exactly as they were so uploads work again. (The enumeration hardening
+--      will be redone a safer way.)"
+--
+-- So the failure mode is UPLOADS, not reads. Everything the "WHY DROPPING THESE
+-- IS SAFE" section below says about read paths is correct and beside the point:
+-- reads on a public bucket really do bypass RLS. The write path does not. The
+-- INSERT succeeds and then the RETURNING clause is denied, so the client sees
+-- the upload fail.
+--
+-- Note what this file predicts as its own blast radius: "all audio playback
+-- stops". That is the wrong failure. The one verification step that WOULD have
+-- caught the real one is step 4, `node scripts/test-upload.mjs` — and that
+-- script cannot authenticate, so it has never been able to pass. The check that
+-- mattered is the check that does not run.
+--
+-- The hole itself is REAL and still open (re-verified live 2026-08-17: all three
+-- `Public read mf-*` policies are still `SELECT TO public USING (bucket_id = …)`
+-- with no other predicate, so the anon key still enumerates every bucket). It
+-- needs the "safer way" the rollback promised and nobody ever built — most
+-- likely a SELECT policy scoped so that `INSERT ... RETURNING` still reads back
+-- the row just written while bulk enumeration is refused. That shape must be
+-- established EMPIRICALLY, on a Supabase branch or a throwaway probe bucket,
+-- not by reasoning. Reasoning is what produced this file.
+--
+-- Superseded-by: nothing yet. Kept only as the record of a refuted approach.
+-- ═══════════════════════════════════════════════════════════════════════════
 --
 -- THE HOLE
 -- Migrations 003 and 014 gave each bucket a SELECT policy on storage.objects
@@ -35,11 +71,14 @@
 -- upload tokens, so it needs a real upload test, not a guess. Left open
 -- deliberately rather than fixed blind.
 
-drop policy if exists "Public read mf-audio"   on storage.objects;
-drop policy if exists "Public read mf-artwork" on storage.objects;
-drop policy if exists "Public read mf-video"   on storage.objects;
+-- NEUTRALISED 2026-08-17. Left in place, commented out, so that applying this
+-- file is a no-op rather than a repeat of the 07-11 outage. Do not uncomment
+-- without the empirical rehearsal described at the top.
+-- drop policy if exists "Public read mf-audio"   on storage.objects;
+-- drop policy if exists "Public read mf-artwork" on storage.objects;
+-- drop policy if exists "Public read mf-video"   on storage.objects;
 
--- APPLY + VERIFY
+-- APPLY + VERIFY (HISTORICAL — step 4 is the step that never ran; see top)
 --   1. Apply this file.
 --   2. Confirm listing is dead (expect a permission error, not 200 with rows):
 --        curl -s -X POST "$SUPABASE_URL/storage/v1/object/list/mf-audio" \

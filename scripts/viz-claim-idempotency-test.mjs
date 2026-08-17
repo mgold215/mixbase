@@ -305,8 +305,13 @@ check('033 de-duplicates BEFORE creating the index',
   && sql.indexOf('delete from mb_visualizers') < sql.indexOf('create unique index'))
 check('033 keeps the earliest row per url', /order by created_at asc nulls last, id asc/.test(sql))
 check('033 nudges the PostgREST schema cache', /notify pgrst, 'reload schema'/.test(sql))
+// A runbook HEADING, not the word appearing anywhere. The previous form was
+// `includes('X:') || includes('X')` — the second operand subsumes the first, so
+// the whole check reduced to "the word X appears somewhere in the file", which
+// the prose above the SQL satisfies on its own.
 for (const section of ['APPLY', 'VERIFY', 'ROLLBACK', 'SMOKE TEST']) {
-  check(`033 documents its ${section} step`, migration.includes(`${section}:`) || migration.includes(`${section}`))
+  check(`033 documents its ${section} step`,
+    new RegExp(`^-- ${section}[ (:]`, 'm').test(migration))
 }
 check('033 is marked as not yet applied', /NOT APPLIED/.test(migration))
 

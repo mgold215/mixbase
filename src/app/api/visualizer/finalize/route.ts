@@ -302,8 +302,50 @@ export async function POST(req: NextRequest) {
   // with the row that claim already produced — the same success the lost
   // response carried — before any download, transcode or insert happens.
   const twinPath = mp4TwinPath(storagePath)
+  // The twin is a key this route is about to WRITE, so it has to be a key the
+  // rest of the app can still name — above all the orphan sweep, whose shape
+  // filter is VIZ_KEY_RE (the same one parseVizStoragePath just applied). An
+  // object outside that shape is counted keptForeignShape and never reaped, so
+  // minting one would create bytes with no cleanup path in any code path,
+  // forever. VIZ_WEBM_STAMP_MAX makes this unreachable by construction — the
+  // claim above is refused before it gets here — and this is the assertion that
+  // keeps it that way if the twin convention or the bound ever drift apart. It
+  // fails CLOSED: refuse the claim and take the claimed bytes with it, rather
+  // than write a twin nothing can collect.
+  if (!parseVizStoragePath(projectId, twinPath)) {
+    Sentry.captureMessage('visualizer-finalize: derived twin key is not a recognizable viz key', {
+      level: 'error',
+      tags: { area: 'visualizer-finalize', phase: 'twin-shape' },
+      extra: { projectId, storagePath, twinPath },
+    })
+    return await discardAndFail('Invalid storagePath', 400)
+  }
   const storedTwin = await indexedVisualizerAt(twinPath, userId)
   if (storedTwin) {
+    // Finish the first claim's cleanup before answering with its row.
+    //
+    // A first claim that got this far ends in exactly one state: the twin is
+    // indexed AND the webm original this claim names is gone (the success path
+    // below does `await safeRemove()` for precisely that reason). So on a
+    // genuine replay there is nothing here to delete and this is a no-op.
+    //
+    // When there IS an object sitting on the claimed key, this exit was the one
+    // hole left in the lane's no-orphan guarantee: it hands back a pre-existing
+    // row WITHOUT ever reading the object the claim names, so those bytes are
+    // never indexed by anything — and they are not even collectable, because the
+    // sweep folds webmOriginalPath(twin) into its REFERENCED set to protect the
+    // heal's rollback original. The twin's row therefore pins the webm key as
+    // "referenced" while nothing points at it: a permanent leak. Two ways to be
+    // in that state, both handled by the same reference-checked delete:
+    //   * the first claim's own safeRemove was refused (storage RLS answers 200
+    //     with `[]`) — this is the retry that completes it;
+    //   * a fresh object was PUT onto the vacant key and then claimed, which
+    //     only a hand-built request does (fx/upload.ts stamps a new key per
+    //     attempt) but needs no privilege beyond owning the project.
+    // removeIfUnreferenced still refuses to touch anything a row points at, so
+    // the transcode-failure replay below — where the row IS on this key — cannot
+    // lose its bytes to this line.
+    await safeRemove()
     return NextResponse.json({ id: storedTwin.id, video_url: storedTwin.video_url, saved: true, transcoded: true })
   }
   // The transcode-failure outcome: the row points at the webm itself, which is

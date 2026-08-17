@@ -37,6 +37,7 @@ import { stripComments } from './source-contract.mjs'
 import { mp4TwinPath, webmOriginalPath } from '../src/lib/visualizer-encode.ts'
 import { parseVizStoragePath } from '../src/lib/visualizer-finalize.ts'
 import { claimAfterInsertFailure, claimPrecheck } from '../src/lib/visualizer-claim.ts'
+import { planReap } from '../src/lib/video-orphan-plan.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => readFileSync(join(root, p), 'utf8')
@@ -102,6 +103,13 @@ function removeObject(world, key) {
 }
 
 const rowAt = (world, key) => world.rows.find(r => r.video_url === urlOf(key)) ?? null
+
+// removeIfUnreferenced(): the route's only delete. An object some row points at
+// is never touched — which is what lets the replay exits call it at all.
+function removeIfUnreferenced(world, key) {
+  if (rowAt(world, key)) return
+  removeObject(world, key)
+}
 
 // indexedVisualizerAt(): the row that already indexes this key for this user.
 function indexedAt(world, key, userId) {
@@ -177,14 +185,24 @@ function legacyWebmClaim(world, userId, key, { transcodeFails = false } = {}) {
 //                    what a second claim racing the first actually looks like.
 //   noRaceRecheck  — the pre-fix shape of the store-failure exit: report 500
 //                    and let the client fall back.
+//   noReplayCleanup— the pre-fix shape of the TWIN replay exit: answer with the
+//                    pre-existing row and never look at the claimed object.
 function newWebmClaim(world, userId, key, {
   transcodeFails = false, inFlight = false, noRaceRecheck = false, noUpsert = false,
-  noReconcile = false,
+  noReconcile = false, noReplayCleanup = false,
 } = {}) {
   const twin = mp4TwinPath(key)
   if (!inFlight) {
     const onTwin = indexedAt(world, twin, userId)
-    if (onTwin) return { status: 200, id: onTwin.id, video_url: onTwin.video_url, transcoded: true, replay: true }
+    if (onTwin) {
+      // The first claim's success path deletes the original, so on a genuine
+      // replay this finds nothing. When it does find something — that delete was
+      // refused, or fresh bytes were PUT onto the vacated key — those bytes are
+      // what this exit would otherwise strand, permanently: nothing indexes them
+      // and the sweep treats the key as referenced on the twin's behalf.
+      if (!noReplayCleanup) removeIfUnreferenced(world, key)
+      return { status: 200, id: onTwin.id, video_url: onTwin.video_url, transcoded: true, replay: true }
+    }
     const onOriginal = indexedAt(world, key, userId)
     if (onOriginal) return { status: 200, id: onOriginal.id, video_url: onOriginal.video_url, transcoded: false, replay: true }
     if (!world.storage.has(key)) return { status: 503 }
@@ -198,12 +216,12 @@ function newWebmClaim(world, userId, key, {
   if (!stored) {
     const won = noRaceRecheck ? null : indexedAt(world, twin, userId)
     if (won) {
-      removeObject(world, key)
+      removeIfUnreferenced(world, key) // safeRemove()
       return { status: 200, id: won.id, video_url: won.video_url, transcoded: true }
     }
     return { status: 500 }
   }
-  removeObject(world, key)
+  removeIfUnreferenced(world, key) // safeRemove(): the original is no longer referenced
   return { status: 200, id: stored.id, video_url: stored.video_url, transcoded: true }
 }
 
@@ -266,9 +284,71 @@ for (const unique of [false, true]) {
   // The replay exit must not route through the discard path. Post-033 that is
   // the actively destructive direction: the object it would take down is the
   // one the winner's row points at.
-  check(`${label}: the replay deletes NOTHING — only the first claim removed the original`,
+  check(`${label}: the replay removes nothing NEW — the first claim already took the original`,
     fixed.removals.length === 1 && fixed.removals[0] === WEBM,
     fixed.removals.join('|') || 'none')
+  check(`${label}: …and above all leaves the twin the surviving row points at alone`,
+    !fixed.removals.includes(mp4TwinPath(WEBM)))
+}
+
+// Scenario 1a — the hole the twin short-circuit itself left open.
+//
+// That exit answers from the DB alone: it hands back the row indexed at
+// mp4TwinPath(claim) without ever reading the object the claim names. On a real
+// replay that is right and cheap, because the first claim's success path already
+// deleted the original. It is wrong whenever something IS sitting on the key —
+// the first claim's delete was refused (storage RLS answers 200 with `[]`), or
+// fresh bytes were PUT onto the key after it was vacated, which fx/upload.ts
+// never does but a hand-built request can with nothing more than owning the
+// project. Those bytes are then indexed by nothing at all.
+{
+  const twin = mp4TwinPath(WEBM)
+
+  const world = makeWorld({ unique: true })
+  world.storage.set(WEBM, 'webm')
+  const first = newWebmClaim(world, ME, WEBM)
+  world.storage.set(WEBM, 'a-second-webm-on-the-vacated-key')
+  const replay = newWebmClaim(world, ME, WEBM)
+  check('a claimed object that exists under an already-indexed twin is not stranded',
+    replay.status === 200 && replay.replay === true && !world.storage.has(WEBM),
+    [...world.storage.keys()].join('|'))
+  check('…while the twin that row actually points at is left alone',
+    world.storage.has(twin) && world.storage.size === 1 && world.rows.length === 1)
+  check('…and the caller still gets the first claim\'s row, not an error',
+    replay.id === first.id, `${first.id} vs ${replay.id}`)
+
+  // The transcode-failure replay is the case that must NOT lose its bytes: there
+  // the row points AT the claimed key, so the reference check has to refuse.
+  const failed = makeWorld({ unique: true })
+  failed.storage.set(WEBM, 'webm')
+  newWebmClaim(failed, ME, WEBM, { transcodeFails: true })
+  const failedReplay = newWebmClaim(failed, ME, WEBM)
+  check('the cleanup is reference-checked, so a row ON the claimed key protects it',
+    failedReplay.status === 200 && failed.storage.has(WEBM) && failed.removals.length === 0)
+
+  // Fail-first witness: the shipped shape, and why nothing else catches it.
+  const leaky = makeWorld({ unique: true })
+  leaky.storage.set(WEBM, 'webm')
+  newWebmClaim(leaky, ME, WEBM, { noReplayCleanup: true })
+  leaky.storage.set(WEBM, 'a-second-webm-on-the-vacated-key')
+  const leakyReplay = newWebmClaim(leaky, ME, WEBM, { noReplayCleanup: true })
+  check('witness: without the cleanup the fresh object stays in the bucket, indexed by nothing',
+    leakyReplay.status === 200 && leaky.storage.has(WEBM) && leaky.rows.length === 1,
+    'stored, reported saved, and pointing at someone else\'s video')
+
+  // …and the orphan sweep will not collect it either. The reaper folds
+  // webmOriginalPath(twin) into its REFERENCED set on purpose, to protect the
+  // pre-conversion webm the boot heal leaves as a rollback path — so a row over
+  // the twin marks THIS key referenced even though nothing points at it. Real
+  // planReap, real derivation, an object left to age 400 days.
+  const NOW = Date.parse('2026-08-15T12:00:00.000Z')
+  const referenced = new Set([twin, webmOriginalPath(twin)])
+  const plan = planReap([{ key: WEBM, createdAt: new Date(NOW - 400 * 86_400_000).toISOString() }], referenced, NOW)
+  check('witness: …and the orphan sweep protects the leak — the twin\'s row makes the key "referenced"',
+    plan.reap.length === 0 && plan.keptReferenced === 1,
+    JSON.stringify(plan.reap))
+  check('witness: …which is the same rule that protects a real rollback original',
+    referenced.has(WEBM) && webmOriginalPath(twin) === WEBM)
 }
 
 // Scenario 1b — the other half of the same question, and the one that must NOT
@@ -505,21 +585,56 @@ check('a twin hit is reported as transcoded, an original hit as not',
 check('a replay returns the row the first claim produced, not a fresh id',
   /id: storedTwin\.id, video_url: storedTwin\.video_url/.test(route)
   && /id: storedOriginal\.id, video_url: storedOriginal\.video_url/.test(route))
-// Neither replay exit may route through discardAndFail: it deletes the claimed
-// object, and on a replay the row that survives is the one describing the video
-// the user already has. (removeIfUnreferenced would refuse — but the exit must
-// not be asking in the first place.)
+// Neither replay exit may route through discardAndFail or answer with a failure
+// status: on a replay the row that survives is the one describing the video the
+// user already has, and discardAndFail's delete is not reference-checked at the
+// call site — it is the exit for a claim that was definitively rejected.
+//
+// The twin exit does clean up, but ONLY through safeRemove(), whose
+// removeIfUnreferenced refuses to touch anything a row points at. The original
+// exit must not even do that: the row there points AT the claimed key.
 {
   const iTwinCheck = route.indexOf('const storedTwin')
+  const iOriginalCheck = route.indexOf('const storedOriginal')
   const iAfterOriginal = route.indexOf('let webmTotalBytes')
+  const twinExit = route.slice(iTwinCheck, iOriginalCheck)
+  const originalExit = route.slice(iOriginalCheck, iAfterOriginal)
   const replayBlock = route.slice(iTwinCheck, iAfterOriginal)
-  check('the replay exits carry no discard, no removal and no failure status',
+  check('both replay exits were located and are in the expected order',
+    iTwinCheck !== -1 && iOriginalCheck > iTwinCheck && iAfterOriginal > iOriginalCheck)
+  check('the replay exits carry no discard and no failure status',
     replayBlock.length > 0
     && !/discardAndFail/.test(replayBlock)
-    && !/removeStorageObjects|safeRemove/.test(replayBlock)
     && !/status: [45]\d\d/.test(replayBlock))
+  check('…and never reach past the reference-checked helper to storage',
+    !/removeStorageObjects/.test(replayBlock))
+  // The twin exit's own cleanup: the claimed webm is not the object the row it
+  // returns describes, so an object still sitting there is indexed by NOTHING —
+  // and the sweep will not collect it, because webmOriginalPath(twin) is in the
+  // reaper's referenced set. Without this the lane's no-orphan guarantee has a
+  // hole a plain HTTP client can drive through.
+  check('the TWIN replay exit completes the first claim\'s cleanup via safeRemove()',
+    /await safeRemove\(\)/.test(twinExit))
+  check('…before it answers, not after the response has ended the request',
+    twinExit.indexOf('await safeRemove()') < twinExit.indexOf('NextResponse.json'))
+  check('the ORIGINAL replay exit removes nothing — its row points AT the claimed key',
+    originalExit.length > 0 && !/safeRemove|removeIfUnreferenced/.test(originalExit))
   check('…and report a success the client can act on',
     [...replayBlock.matchAll(/saved: true/g)].length === 2)
+}
+
+// The twin key this lane WRITES has to stay inside VIZ_KEY_RE, because that
+// regex is also planReap's shape filter: a twin outside it is counted
+// keptForeignShape and can never be swept. VIZ_WEBM_STAMP_MAX makes that
+// unreachable at the gate; this guard is what fails closed if the two ever drift.
+{
+  const iTwinPath = route.indexOf('const twinPath = mp4TwinPath(storagePath)')
+  const iTwinCheck = route.indexOf('const storedTwin')
+  const guard = route.slice(iTwinPath, iTwinCheck)
+  check('the derived twin is re-validated as a claimable viz key before it is used',
+    guard.length > 0 && /parseVizStoragePath\(projectId, twinPath\)/.test(guard))
+  check('…and an unrecognizable twin fails CLOSED — refuse the claim and drop the bytes',
+    /if \(!parseVizStoragePath\(projectId, twinPath\)\)[\s\S]{0,400}?discardAndFail/.test(guard))
 }
 // The transcoded twin must not go back to a stamped key, or every property
 // above becomes unreachable while the route still looks correct.

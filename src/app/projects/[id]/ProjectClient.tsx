@@ -230,7 +230,11 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   }
   const router = useRouter()
 
-  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, refreshTracks } = usePlayer()
+  // Deliberately NOT pulled from the context: ensureAudioChain / setEQGains.
+  // ensureAudioChain calls createMediaElementSource on the app's one <audio>
+  // element, which is irreversible for the page session and whose failure mode
+  // is silence everywhere. Nothing on this page needs an EQ.
+  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, pause, refreshTracks } = usePlayer()
 
   // Push edits to the rest of the app: the player's client-side track list
   // (refreshTracks) and the server-rendered pages cached by the router —
@@ -639,7 +643,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       if (res.ok) {
         const newVersion = await res.json()
         setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
-        setArchivedOpen(false)
+        closeArchived()
         syncAfterMutation()
       } else {
         flashError('Could not restore that mix — please try again.')
@@ -747,6 +751,21 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // Current mix = highest version_number (index 0, sorted desc). Everything else is archived.
   const currentMix = versions[0] ?? null
   const archivedVersions = versions.slice(1)
+
+  // ── Closing the archive ends the audition it started ───────────────────────
+  // Archived mixes play through the app's ONE shared <audio> element (see the
+  // modal below), so leaving the modal would otherwise leave an old mix playing
+  // in the mini player with no obvious way back to it.
+  //
+  // The stop is keyed on the URL rather than on a "we started it" flag: if the
+  // user was already playing the CURRENT mix when they opened the archive, that
+  // playback is not ours to stop. Every close path — the X, the backdrop, and
+  // Restore — goes through here, which is why setArchivedOpen(false) appears
+  // exactly once in this file.
+  function closeArchived() {
+    if (currentUrl && archivedVersions.some(av => audioProxyUrl(av.audio_url) === currentUrl)) pause()
+    setArchivedOpen(false)
+  }
 
   // ── Cross-version loudness ─────────────────────────────────────────────────
   // A measurement now lives on the version row (migration 032), so the page can
@@ -1128,12 +1147,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
           style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
-          onClick={e => { if (e.target === e.currentTarget) setArchivedOpen(false) }}
+          onClick={e => { if (e.target === e.currentTarget) closeArchived() }}
         >
           <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
               <h3 className="text-sm font-semibold text-[var(--text)]">Archived Mixes</h3>
-              <button onClick={() => setArchivedOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+              <button onClick={() => closeArchived()} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
                 <X size={16} />
               </button>
             </div>
@@ -1141,22 +1160,63 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               {archivedVersions.map((av, i) => {
                 // `i + 1` because archivedVersions is versions.slice(1).
                 const previous = previousMeasuredFor(i + 1)
+                const avLabel = mixLabelFor(av)
+                // Same proxied URL the download link and MasterCheck use. It has
+                // to be the proxy: Supabase's public URLs don't reliably send
+                // Accept-Ranges, so a raw URL plays but cannot seek or report a
+                // duration — and it would never match `currentUrl` below either.
+                const avUrl = audioProxyUrl(av.audio_url)
+                // "Is this the mix playing?" is asked of the shared engine, not
+                // of local state. That is what makes one-at-a-time structural
+                // rather than bookkeeping: there is a single <audio> element, so
+                // starting one archived mix stops whatever else was playing, and
+                // no second row can believe it is still active.
+                const avActive = currentUrl === avUrl
+                const avPlaying = avActive && isPlaying
                 return (
                 <div key={av.id} className="px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    {/* 36px round target — big enough to hit on a phone, and a
+                        plain tap (no drag) so it never fights the list scroll. */}
+                    <button
+                      onClick={() => {
+                        if (avActive) togglePlay()
+                        else playUrl(avUrl, project.title, undefined, artwork ?? undefined, avLabel)
+                      }}
+                      aria-label={avPlaying ? `Pause ${avLabel}` : `Play ${avLabel}`}
+                      title={avPlaying ? `Pause ${avLabel}` : `Play ${avLabel}`}
+                      className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full transition-colors"
+                      style={avActive
+                        ? { backgroundColor: 'rgba(45,212,191,0.12)', border: '1px solid #2dd4bf', color: '#2dd4bf' }
+                        : { backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+                    >
+                      {avPlaying ? <Pause size={13} /> : <Play size={13} />}
+                    </button>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-[var(--text)]">
-                        {av.label || parseMixLabel(av.audio_filename ?? '') || `Mix ${av.version_number}`}
+                      <p className="text-sm text-[var(--text)] flex items-center gap-2 flex-wrap">
+                        {avLabel}
+                        {avActive && (
+                          <span className="text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded-full leading-none">
+                            {isPlaying ? 'Playing' : 'Paused'}
+                          </span>
+                        )}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
                         <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                        {av.duration_seconds && <span>{formatDuration(av.duration_seconds)}</span>}
+                        {/* While it plays, the stored length gives way to the real
+                            one — which is the only length there is for the many
+                            rows whose duration_seconds is null (iOS uploads). */}
+                        {avActive ? (
+                          <span className="tabular-nums">{formatDuration(currentTime)} / {formatDuration(duration || av.duration_seconds)}</span>
+                        ) : av.duration_seconds ? (
+                          <span>{formatDuration(av.duration_seconds)}</span>
+                        ) : null}
                         {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
                       </div>
                     </div>
                     <StatusBadge status={av.status} size="sm" />
                     <a
-                      href={`${audioProxyUrl(av.audio_url)}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
+                      href={`${avUrl}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
                       download={av.audio_filename ?? 'mix.wav'}
                       className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
                       title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
@@ -1182,7 +1242,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   <div className="mt-3">
                     <MasterCheck
                       versionId={av.id}
-                      audioUrl={audioProxyUrl(av.audio_url)}
+                      audioUrl={avUrl}
                       fileSizeBytes={av.file_size_bytes ?? null}
                       initial={loudnessFromRow(av)}
                       previous={previous?.loudness ?? null}

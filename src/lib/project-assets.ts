@@ -1,5 +1,19 @@
 import { webmOriginalPath } from './visualizer-encode.ts'
 import type { ListPage } from './video-orphan-plan.ts'
+// Relative + extension-full, and survivor-scan-plan.ts imports nothing at all,
+// so this stays loadable under Node type stripping (see PURE BY DESIGN below).
+// Shared on purpose: DELETE /api/projects/[id] and POST /api/auth/delete-account
+// must bound their fan-out and degrade on failure IDENTICALLY. They briefly did
+// not — the account path kept an unbounded Promise.all — and that is the same
+// "two places deriving the same answer differently" bug this module exists to
+// prevent, just one level up.
+import {
+  CHUNK_ENCODED_BUDGET,
+  SCAN_CONCURRENCY,
+  assumedSurvivorRows,
+  chunkByEncodedLength,
+  runBounded,
+} from './survivor-scan-plan.ts'
 
 // Which storage objects a project's rows account for.
 //
@@ -175,6 +189,129 @@ export function totalKeyCount(keys: AssetKeys): number {
   return keys[AUDIO_BUCKET].length + keys[ARTWORK_BUCKET].length + keys[VIDEO_BUCKET].length
 }
 
+// The (table, column) pairs that can name one of our candidate objects — the
+// same list DELETE /api/projects/[id]'s survivor scan walks, hoisted here so
+// the two delete paths cannot drift apart on WHICH references count. A pair
+// missing from this list is a live row the scan cannot see, and that is exactly
+// how a shared object gets deleted out from under its other owner.
+export const ASSET_URL_COLUMNS = [
+  ['mb_versions', 'audio_url'],
+  ['mb_projects', 'artwork_url'],
+  ['mb_projects', 'finalized_artwork_url'],
+  ['mb_projects', 'visualizer_url'],
+  ['mb_projects', 'visualizer_wide_url'],
+  ['mb_visualizers', 'video_url'],
+  ['mb_visualizers', 'source_image_url'],
+] as const
+
+// Candidate URLs travel in the PostgREST query string, so they go out in
+// chunks: an account with hundreds of versions would otherwise build a request
+// line past the server's URL limit and fail the WHOLE scan — which, read
+// fail-safe, means deleting nothing at all.
+//
+// A COUNT CAP ALONE IS NOT ENOUGH, and this is not hypothetical. mf-audio's
+// bucket-root uploads are human filenames carrying raw spaces and parentheses
+// ("… - ALONE (moodmixformat REMIX) - MIX 2.1.wav"); percent-encoded they run
+// ~165 bytes each, so 50 of them build an ~8.2 KB request line — past the usual
+// 8,192-byte nginx/Kong `large_client_header_buffers` ceiling. That chunk 414s
+// before it reaches PostgREST. Production has ~114 such URLs and they ALL belong
+// to one account, so that account's erasure is exactly the case a flat count cap
+// would have degraded. This constant is therefore only the VALUE cap; the
+// binding limit is CHUNK_ENCODED_BUDGET, applied by chunkByEncodedLength().
+export const ASSET_URL_CHUNK = 50
+
+/**
+ * Run one `column IN (urls)` lookup. Returns the matching rows, or null if the
+ * query failed in a way that makes the scan untrustworthy.
+ *
+ * Injected rather than imported so this module stays free of '@/lib/supabase'
+ * (see PURE BY DESIGN above) and so the caller — not this file — decides which
+ * PostgREST errors are benign (e.g. a pre-migration-015 missing pin column).
+ */
+export type AssetUrlSelect = (
+  table: string,
+  column: string,
+  urls: readonly string[],
+) => Promise<readonly unknown[] | null>
+
+/**
+ * Which of `urls` are STILL named by rows, expressed as storage keys.
+ *
+ * FAILURE IS PER-CHUNK, NOT ALL-OR-NOTHING. This used to set one `failed` flag
+ * and return null if any single lookup failed, which made one pooler blip
+ * discard a whole account's cleanup. The scan now degrades the way
+ * DELETE /api/projects/[id] does: a chunk that cannot be answered has its URLs
+ * folded into the survivor set via assumedSurvivorRows(), so those specific
+ * objects are protected and every object the scan DID get an answer about is
+ * still handled. "We don't know" reads as "something still points at this".
+ *
+ * Null is now reserved for learning nothing at all — every chunk failed — which
+ * is a real outage worth reporting rather than a partial answer worth using.
+ *
+ * FAN-OUT IS BOUNDED. The old form was Promise.all over
+ * columns × ⌈urls/50⌉ with no limit: an account owning many projects could open
+ * ~150+ simultaneous PostgREST GETs, and since `IN (...)` is encoded into the
+ * query string, a flat count of 50 long URLs could exceed the request-line
+ * ceiling on its own. Chunks are now sized by ENCODED length and run through
+ * runBounded(). Account deletion is the heavier of the two callers — it fans out
+ * over every project a user owns, not one — so it needs this more than the
+ * project-delete path that motivated it.
+ *
+ * Deliberately takes NO user id. Scoping the scan by owner is precisely the bug
+ * it exists to prevent: PATCH /api/projects/[id] and POST
+ * /api/visualizer/finalize accept any Supabase storage URL (isSupabaseStorageUrl
+ * checks protocol and hostname only — not the bucket, not the path, not who
+ * owns the object), so one account can point a row at another account's live
+ * object. An owner-scoped scan would look straight past the very row that
+ * proves the object is still in use.
+ */
+export async function scanSurvivingKeys(
+  select: AssetUrlSelect,
+  urls: readonly string[],
+): Promise<AssetKeys | null> {
+  const projects: ProjectAssetRow[] = []
+  const versions: VersionAssetRow[] = []
+  const visualizers: VisualizerAssetRow[] = []
+
+  // URLs no lookup could answer for. Protected, not deleted.
+  const unresolved = new Set<string>()
+  let answered = 0
+
+  const chunks = chunkByEncodedLength(urls, CHUNK_ENCODED_BUDGET, ASSET_URL_CHUNK)
+
+  const tasks = ASSET_URL_COLUMNS.flatMap(([table, column]) => chunks.map(chunk => async () => {
+    const rows = await select(table, column, chunk)
+    if (rows === null) {
+      for (const url of chunk) unresolved.add(url)
+      return
+    }
+    answered++
+    if (table === 'mb_versions') versions.push(...(rows as VersionAssetRow[]))
+    else if (table === 'mb_projects') projects.push(...(rows as ProjectAssetRow[]))
+    else visualizers.push(...(rows as VisualizerAssetRow[]))
+  }))
+
+  await runBounded(tasks, SCAN_CONCURRENCY)
+
+  // Nothing came back at all — that is an outage, not a partial answer. Say so
+  // rather than handing back an empty survivor set, which would read as "no row
+  // references any of these" and authorise deleting every candidate.
+  if (answered === 0 && tasks.length > 0) return null
+
+  // Fold the unanswered URLs in as if a live row still named them. Routed back
+  // through the SAME collectAssetKeys derivation as everything else, so an
+  // assumed-surviving MP4 also protects its WebM twin.
+  const assumed = assumedSurvivorRows([...unresolved])
+
+  // Back through the SAME derivation the candidates came from, so a surviving
+  // MP4 also protects its WebM twin exactly as a doomed one would have named it.
+  return collectAssetKeys({
+    projects: [...projects, ...assumed.projects],
+    versions: [...versions, ...assumed.versions],
+    visualizers: [...visualizers, ...assumed.visualizers],
+  })
+}
+
 /** Merge two key sets, deduped per bucket. */
 export function unionKeys(a: AssetKeys, b: AssetKeys): AssetKeys {
   const merge = (bucket: AssetBucket) => [...new Set([...a[bucket], ...b[bucket]])]
@@ -197,8 +334,69 @@ export const ASSET_MAX_PAGES = 50
 export const ASSET_MAX_DEPTH = 3
 
 // Lowercase-or-uppercase canonical UUID, anchored. Nothing else may ever become
-// a listing prefix; see listProjectPrefix.
+// a listing prefix; see listProjectPrefix. Also the attribution test used by
+// keyProjectId below.
 const PROJECT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The project id a storage key attributes ITSELF to, or null when the key
+ * attributes itself to nobody.
+ *
+ * Only the first path segment counts, and only when it is a canonical UUID.
+ * Everything else — a bucket-root key with no separator at all, or a first
+ * segment like `covers` or `test-probe` — is UNATTRIBUTABLE and must return
+ * null rather than a guess. Callers treat null as "this key proves nothing
+ * about ownership", not as "this key is foreign".
+ *
+ * Case-insensitive, and normalised to lowercase: Postgres spells project ids
+ * lowercase while the iOS app spells UUIDs uppercase, and both spellings reach
+ * storage (production has 5 uppercase-UUID keys in mf-audio today).
+ */
+export function keyProjectId(key: string): string | null {
+  const slash = key.indexOf('/')
+  if (slash === -1) return null
+  const segment = key.slice(0, slash)
+  return PROJECT_ID_RE.test(segment) ? segment.toLowerCase() : null
+}
+
+/**
+ * Drop candidate keys whose own prefix attributes them to a project the
+ * deleting user does not own.
+ *
+ * WHY THIS EXISTS ON TOP OF THE SURVIVOR SCAN
+ * The scan answers "is anything still pointing at this object?". That misses
+ * one case: an object that sits under ANOTHER user's project prefix and is
+ * currently unreferenced — a superseded `finalized-<ts>.jpg` of theirs, say.
+ * A crafted `artwork_url` (isSupabaseStorageUrl validates protocol + hostname
+ * only) can make our rows name it, the scan finds no survivor, and account
+ * deletion would take a stranger's bytes with it. Key shape settles that case
+ * without a query, so the two filters cover different halves and both run.
+ *
+ * WHY IT CANNOT BE THE ONLY FILTER — the mf-audio root-key split
+ * 116 of 390 mf-audio objects sit at the BUCKET ROOT with no prefix at all, and
+ * they are NOT all the iOS `<UUID>-v<n>-<ts>.wav` shape: only 5 are. The other
+ * 111 are plain human filenames (`HALFWAY - MIX 1.wav`). Nothing in those keys
+ * names a project, so a filter that demanded a project-id prefix would refuse
+ * to delete every one of a user's own root uploads — leaving their audio in a
+ * PUBLIC bucket after a GDPR erasure, in the one bucket with no sweeper. Hence
+ * keyProjectId returns null for them and they pass through here untouched, to
+ * be judged by the survivor scan alone.
+ */
+export function filterToOwnedPrefixes(
+  candidates: AssetKeys,
+  ownedProjectIds: readonly string[],
+): AssetKeys {
+  const owned = new Set(ownedProjectIds.map(id => id.toLowerCase()))
+  const keep = (bucket: AssetBucket) => candidates[bucket].filter(key => {
+    const attributed = keyProjectId(key)
+    return attributed === null || owned.has(attributed)
+  })
+  return {
+    [AUDIO_BUCKET]: keep(AUDIO_BUCKET),
+    [ARTWORK_BUCKET]: keep(ARTWORK_BUCKET),
+    [VIDEO_BUCKET]: keep(VIDEO_BUCKET),
+  }
+}
 
 /**
  * Every object key under a project's own `<projectId>/` prefix.

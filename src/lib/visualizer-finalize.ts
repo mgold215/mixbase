@@ -13,7 +13,59 @@ import type { VizRecipe } from './fx/types.ts'
 // clients generate, and the extension decides the pipeline (mp4 = validate +
 // index; webm = server transcode like /api/visualizer/save always did).
 // Anything else — traversal, foreign prefixes, exotic extensions — is rejected.
-export const VIZ_KEY_RE = /^([0-9a-f-]{36})\/viz-[A-Za-z0-9_-]{1,64}\.(mp4|webm)$/
+//
+// THIS REGEX HAS A SECOND JOB. planReap (video-orphan-plan.ts) uses it as the
+// orphan sweep's shape filter: a key it does not match is counted as
+// keptForeignShape and is never deleted, on the reasoning that anything outside
+// this shape is not something this app wrote. So the regex is simultaneously
+// the gate on what may be WRITTEN and the recognizer for what may be REAPED,
+// and the two roles pull in opposite directions — widening it hands the sweep
+// permission to delete shapes it currently protects. It is deliberately not
+// widened; see VIZ_WEBM_STAMP_MAX for the bound that keeps the app inside it.
+export const VIZ_KEY_RE = /^([0-9a-f-]{36})\/viz-([A-Za-z0-9_-]{1,64})\.(mp4|webm)$/
+
+// What mp4TwinPath() (visualizer-encode.ts) appends to a webm basename when the
+// finalize webm lane transcodes a claim: `X.webm` → `X-h264.mp4`. Repeated here
+// rather than imported because visualizer-encode.ts pulls in ffmpeg and
+// child_process, and this module has to stay IO-free — it is imported by
+// video-orphan-plan.ts, which scripts/video-orphan-reaper-test.mjs loads in
+// plain Node. scripts/viz-key-shape-test.mjs holds the two together by
+// exhaustively checking that every claimable webm key's real twin still matches
+// VIZ_KEY_RE.
+export const VIZ_TWIN_SUFFIX = '-h264'
+
+// The stamp budget VIZ_KEY_RE grants (the `{1,64}` above).
+export const VIZ_STAMP_MAX = 64
+
+// The tighter budget a WEBM claim gets, and the whole fix for a leak that had no
+// cleanup path at all.
+//
+// The webm lane is the only one that DERIVES a second key from the claimed one:
+// it transcodes and writes the mp4 twin at mp4TwinPath(claimedKey), which spends
+// VIZ_TWIN_SUFFIX.length more characters on the basename. A claim whose stamp
+// already filled the 64-character budget therefore produced a twin of 65-69
+// characters — a key this app WROTE and then refused to recognize. planReap
+// counted it as keptForeignShape, so once it fell out of mb_visualizers (a
+// deleted row whose storage remove was refused, a heal that half-finished) it
+// was unreachable forever: invisible in Media, unnameable by DELETE
+// /api/visualizer/[id], missed by /api/auth/delete-account, and skipped by the
+// one sweep that exists to catch exactly that.
+//
+// THE FIX IS THE BOUND, NOT A WIDER REGEX. Teaching VIZ_KEY_RE to match 65-69
+// character stamps would close the leak by making the sweep ELIGIBLE TO DELETE a
+// shape it currently protects — and every trade in this lane is priced the other
+// way round (a leaked object costs storage until someone looks; a wrongly reaped
+// one destroys a render the user believes is saved). Refusing the over-long
+// claim up front costs nothing that can be observed: the longest stamp any
+// client has ever generated is a 13-character Date.now(), and the 83 objects in
+// production on 2026-08-17 were all 13 (or 18 for a twin) — see
+// scripts/viz-key-shape-test.mjs, which pins that census.
+//
+// The bound is also STRICTLY narrower than VIZ_KEY_RE, which is what makes it
+// safe on its own: an over-long webm that was signed before this shipped and
+// uploaded after still matches the recognizer, so the sweep still collects it.
+// Nothing is stranded by tightening the gate — only by loosening the recognizer.
+export const VIZ_WEBM_STAMP_MAX = VIZ_STAMP_MAX - VIZ_TWIN_SUFFIX.length
 
 export function parseVizStoragePath(
   projectId: string,
@@ -22,7 +74,11 @@ export function parseVizStoragePath(
   if (typeof storagePath !== 'string' || storagePath.length > 200) return null
   const m = VIZ_KEY_RE.exec(storagePath)
   if (!m || m[1] !== projectId) return null
-  return { ext: m[2] as 'mp4' | 'webm' }
+  const ext = m[3] as 'mp4' | 'webm'
+  // Only the webm lane derives a twin, so only a webm key has to leave room for
+  // one. An mp4 claim is indexed at the key it names and keeps the full budget.
+  if (ext === 'webm' && m[2].length > VIZ_WEBM_STAMP_MAX) return null
+  return { ext }
 }
 
 // Recipe payloads re-enter through the same validator the editor uses: the

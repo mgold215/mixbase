@@ -7,6 +7,19 @@
 //
 // src/lib/video-orphan-reaper.ts holds the Supabase half.
 
+// The shape filter below is the SAME regex /api/upload-url signs against and
+// /api/visualizer/finalize claims against, and that is load-bearing in one
+// direction only: every key the app can write must be inside it, because a key
+// outside it is kept forever (keptForeignShape) with no other cleanup path in
+// the codebase. The converse — widening it so the sweep recognizes more — is the
+// dangerous direction, since recognizing a shape is what makes it deletable.
+//
+// So when the app grew a key it could write but not recognize (the mp4 twin of a
+// long-stamped webm claim, whose derived basename overran the regex's 64-char
+// stamp budget), the fix went into the GATE — VIZ_WEBM_STAMP_MAX bounds a webm
+// claim so its twin still fits — and this regex was left exactly as it was.
+// Keep it that way: prove any future key shape fits this filter, rather than
+// stretching the filter to fit the key.
 import { VIZ_KEY_RE } from './visualizer-finalize.ts'
 
 // How old an object must be before it can be considered abandoned.

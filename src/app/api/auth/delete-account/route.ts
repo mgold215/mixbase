@@ -2,12 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
+import { isMissingVisualizerColumn } from '@/lib/schema-heal'
 import { removeStorageObjects } from '@/lib/storage-remove'
 import {
   AUDIO_BUCKET,
   ARTWORK_BUCKET,
   VIDEO_BUCKET,
   collectAssetKeys,
+  collectAssetUrls,
+  filterToOwnedPrefixes,
+  scanSurvivingKeys,
+  subtractKeys,
+  totalKeyCount,
+  type AssetKeys,
+  type AssetUrlSelect,
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
@@ -88,42 +96,40 @@ export async function POST(request: NextRequest) {
   // WebM twin the MP4 heal leaves behind, all deduped per bucket. Anything this
   // route derived by hand instead was free to drift from the project-delete
   // path — and did: source_image_url was missed entirely here.
-  const assetKeys = collectAssetKeys({
+  const assetRows = {
     projects: (projects ?? []),
     versions,
     visualizers: (visualizers ?? []) as VisualizerAssetRow[],
-  })
+  }
+  const collected = collectAssetKeys(assetRows)
+  const candidateUrls = collectAssetUrls(assetRows)
 
-  // Delete storage objects. A storage failure must NOT trap the user in an
-  // undeletable account, so we log loudly (for a later orphan sweep) and press
-  // on — DB-row deletion below is what actually gates the irreversible step.
+  // FILTER 1 (pure, cannot fail): a candidate whose key attributes itself to a
+  // project this user does not own is not ours to delete.
   //
-  // Removal is VERIFIED per key, not inferred from the absence of an error. A
-  // storage delete that RLS refuses returns 200 with `[]`, so the previous
-  // `if (error)` check was unreachable: this route reported a clean GDPR wipe
-  // while every byte stayed in a PUBLIC bucket, and the Sentry warnings that
-  // were supposed to feed a later sweep never fired once. Unconfirmed keys are
-  // now reported individually so a sweep has something to act on.
-  for (const bucket of [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET] as const) {
-    const paths = assetKeys[bucket]
-    if (paths.length === 0) continue
-    const outcome = await removeStorageObjects(bucket, paths)
-    if (outcome.ok) continue
-    console.error(
-      `[delete-account] ${bucket} cleanup incomplete for`, userId,
-      `— removed ${outcome.removed.length}/${paths.length}`,
-      outcome.error ?? '(no error reported; the delete was refused or the objects were already gone)',
+  // Storage objects are NOT privately owned by the row that names them.
+  // isSupabaseStorageUrl() — the only guard on PATCH /api/projects/[id]'s
+  // artwork_url and POST /api/visualizer/finalize's sourceImageUrl — checks the
+  // protocol and hostname and nothing else, so a crafted request can make one
+  // of THIS user's rows point at ANOTHER user's live artwork. Without this
+  // filter, deleting the crafting account destroys the victim's cover and
+  // leaves a 404 on their live project.
+  //
+  // Only keys that name a project id in their first segment are judged here.
+  // Bucket-root keys carry no owner at all (116 of 390 mf-audio objects, of
+  // which only 5 are the iOS `<UUID>-v<n>-<ts>.wav` shape — the rest are plain
+  // filenames like `HALFWAY - MIX 1.wav`), so demanding a prefix would refuse
+  // to erase a user's OWN audio and defeat the GDPR wipe in the one bucket with
+  // no sweeper. Those fall through to the reference check below instead.
+  const assetKeys = filterToOwnedPrefixes(collected, projectIds)
+  const foreign = totalKeyCount(collected) - totalKeyCount(assetKeys)
+  if (foreign > 0) {
+    // Not fatal, but it means rows of this user named objects under someone
+    // else's project prefix — worth seeing, since nothing legitimate does that.
+    console.warn(
+      `[delete-account] ${foreign} candidate object(s) for ${userId} sit under a project prefix this ` +
+      `user does not own — left in place rather than deleting another account's media.`,
     )
-    Sentry.captureMessage(`delete-account: ${bucket} cleanup incomplete`, {
-      level: 'warning',
-      extra: {
-        userId,
-        objectCount: paths.length,
-        removedCount: outcome.removed.length,
-        unconfirmed: outcome.unconfirmed,
-        error: outcome.error,
-      },
-    })
   }
 
   // Delete DB rows in dependency order, capturing every error. If ANY row
@@ -180,6 +186,19 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // Remove the bytes ONLY now, once every row of this user's is confirmed gone.
+  //
+  // The order is deliberate and must not be swapped back. Deleting bytes first
+  // (as this route used to) means the abort branch above returns "no changes
+  // were finalized" over an account whose every mix and cover has already been
+  // destroyed — live rows pointing at 404s, unrecoverable. Doing it here makes
+  // that message true, and it is what lets the survivor scan work at all: this
+  // user's own rows are gone, so anything still naming a candidate object is by
+  // definition a different, live owner. Same reasoning as the survivor scan in
+  // DELETE /api/projects/[id]. A storage failure still must NOT trap the user in
+  // an undeletable account, so it is logged for a later sweep, never returned.
+  await removeAccountAssets(userId, assetKeys, candidateUrls)
+
   // Delete the auth user last (cascades to profiles via FK). Log + Sentry the
   // failure like every branch above — this was the one 500 path that returned
   // silently, which made a real deletion failure (e.g. an invalid service-role
@@ -200,4 +219,78 @@ export async function POST(request: NextRequest) {
   response.cookies.delete('sb-authed')
   response.cookies.delete('sb-expires-at')
   return response
+}
+
+// The pin columns are the only ones that can legitimately be absent (migrations
+// 015 / 020). A missing column means there are no pins to protect, not a broken
+// scan — everything else failing means we cannot trust the answer.
+const OPTIONAL_SCAN_COLUMNS = new Set(['visualizer_url', 'visualizer_wide_url'])
+
+/**
+ * FILTER 2 (reference check): drop the user's storage objects, minus anything a
+ * row that SURVIVED the account deletion still points at.
+ *
+ * This is the filter that covers the key shapes filterToOwnedPrefixes cannot
+ * judge — above all the 116 bucket-root mf-audio objects, whose names carry no
+ * project id at all. For those, "is anybody else still using this?" is the only
+ * question that can be asked, and it has to be asked of the DB.
+ */
+async function removeAccountAssets(userId: string, candidates: AssetKeys, candidateUrls: string[]) {
+  if (totalKeyCount(candidates) === 0) return
+
+  const select: AssetUrlSelect = async (table, column, urls) => {
+    const { data, error } = await supabaseAdmin.from(table).select(column).in(column, [...urls])
+    if (error) {
+      if (OPTIONAL_SCAN_COLUMNS.has(column) && isMissingVisualizerColumn(error)) return []
+      console.error(`[delete-account] survivor scan failed on ${table}.${column}: ${error.message}`)
+      return null
+    }
+    return data ?? []
+  }
+
+  const survivors = await scanSurvivingKeys(select, candidateUrls)
+  if (!survivors) {
+    // Without the scan we cannot prove a key is unshared, and deleting a shared
+    // object destroys another account's live media — strictly worse than the
+    // leak. Fail towards leaking bytes, and make the sweep visible.
+    console.error(
+      `[delete-account] survivor scan failed for ${userId} — skipping storage cleanup to avoid deleting ` +
+      `objects another account still references. ${totalKeyCount(candidates)} object(s) may be orphaned.`,
+    )
+    Sentry.captureMessage('delete-account: survivor scan failed, storage cleanup skipped', {
+      level: 'warning',
+      extra: { userId, objectCount: totalKeyCount(candidates) },
+    })
+    return
+  }
+
+  const doomed = subtractKeys(candidates, survivors)
+
+  // Removal is VERIFIED per key, not inferred from the absence of an error. A
+  // storage delete that RLS refuses returns 200 with `[]`, so an `if (error)`
+  // check would be unreachable: this route reported a clean GDPR wipe while
+  // every byte stayed in a PUBLIC bucket, and the Sentry warnings that were
+  // supposed to feed a later sweep never fired once. Unconfirmed keys are
+  // reported individually so a sweep has something to act on.
+  for (const bucket of [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET] as const) {
+    const paths = doomed[bucket]
+    if (paths.length === 0) continue
+    const outcome = await removeStorageObjects(bucket, paths)
+    if (outcome.ok) continue
+    console.error(
+      `[delete-account] ${bucket} cleanup incomplete for`, userId,
+      `— removed ${outcome.removed.length}/${paths.length}`,
+      outcome.error ?? '(no error reported; the delete was refused or the objects were already gone)',
+    )
+    Sentry.captureMessage(`delete-account: ${bucket} cleanup incomplete`, {
+      level: 'warning',
+      extra: {
+        userId,
+        objectCount: paths.length,
+        removedCount: outcome.removed.length,
+        unconfirmed: outcome.unconfirmed,
+        error: outcome.error,
+      },
+    })
+  }
 }

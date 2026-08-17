@@ -385,8 +385,12 @@ check('removals are counted from CONFIRMED keys, not from the batch',
   /removed \+= outcome\.removed\.length/.test(reaper) && !/removed \+= batch\.length/.test(reaper))
 check('keys storage would not confirm are reported, not counted as removed',
   /unconfirmed \+= outcome\.unconfirmed\.length/.test(reaper))
+// Anchored on the SUMMARY line specifically. Matching a bare /confirmed removed/
+// anywhere in the file was satisfied by the per-key error log ("NOT confirmed
+// removed: <key>"), so the summary could go back to reporting the batch size and
+// this check would not have noticed — the exact defect it is named for.
 check('the summary line says "confirmed", so a no-op sweep cannot read as success',
-  /confirmed removed/.test(reaper))
+  /done — \$\{removed\} confirmed removed/.test(reaper))
 check('a batch that confirmed nothing at all aborts the sweep loudly',
   /outcome\.removed\.length === 0[\s\S]{0,300}?break/.test(reaper))
 
