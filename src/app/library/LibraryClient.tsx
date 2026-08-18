@@ -22,6 +22,17 @@ type LibraryTrack = {
   mb_projects: { title: string } | null
 }
 
+// Row/sync source → display name. A third source (MusicBrainz) backs Deezer
+// up, so the old `=== 'spotify' ? 'Spotify' : 'Deezer'` ternary would have
+// mislabelled every MusicBrainz row.
+const SOURCE_LABELS: Record<string, string> = {
+  spotify: 'Spotify',
+  deezer: 'Deezer',
+  musicbrainz: 'MusicBrainz',
+}
+const sourceLabel = (source: string | null | undefined) =>
+  (source && SOURCE_LABELS[source]) || 'the catalog source'
+
 type VersionLite = { id: string; project_id: string; version_number: number; status: string; audio_url: string; audio_filename: string | null }
 
 type Props = {
@@ -55,8 +66,9 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
     }
   }
 
-  // Sync pulls the discography (Spotify when keys are configured, Deezer
-  // otherwise) server-side and upserts it, then re-reads the merged library.
+  // Sync pulls the discography server-side (Spotify when keys are configured,
+  // otherwise Deezer with MusicBrainz behind it) and upserts it, then re-reads
+  // the merged library.
   async function handleSync() {
     setSyncing(true)
     setSyncError(null)
@@ -71,7 +83,7 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
       if (!res.ok) throw new Error(data.error ?? 'Sync failed')
       const listRes = await fetch('/api/library')
       if (listRes.ok) setTracks(await listRes.json())
-      const via = data.source === 'spotify' ? 'Spotify' : 'Deezer'
+      const via = sourceLabel(data.source)
       // Report what actually landed, not what was attempted. A run where most
       // writes failed used to render as a clean "Synced N tracks".
       if (data.failed > 0) {
@@ -195,7 +207,7 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
           </button>
         </div>
         <p className="text-xs text-[var(--text-muted)] mt-2.5">
-          Pulls your released songs from Spotify (or Deezer) — re-run it any time a new drop goes live. Re-released tracks keep one row under their original drop.
+          Pulls your released songs from Spotify, Deezer, or MusicBrainz — re-run it any time a new drop goes live. Re-released tracks keep one row under their original drop.
         </p>
         {syncMsg && (
           <p className="text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-xl px-3 py-2 mt-3">{syncMsg}</p>
@@ -233,7 +245,7 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-[var(--text)] truncate">{track.title}</span>
                         {track.source_url && (
-                          <a href={track.source_url} target="_blank" rel="noreferrer" title={`View on ${track.source === 'spotify' ? 'Spotify' : 'Deezer'}`} className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors flex-shrink-0">
+                          <a href={track.source_url} target="_blank" rel="noreferrer" title={`View on ${sourceLabel(track.source)}`} className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors flex-shrink-0">
                             <ExternalLink size={11} />
                           </a>
                         )}

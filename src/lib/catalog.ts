@@ -1,17 +1,20 @@
-// ─── Released-catalog lookup (Spotify → Deezer fallback) ────────────────────
+// ─── Released-catalog lookup (Spotify → Deezer → MusicBrainz) ───────────────
 // Pulls an artist's already-released discography — titles, release dates,
 // types, UPCs, and per-track ISRCs — so the pipeline can import past releases
 // and backfill the ISRCs that waterfall re-releases must reuse.
 //
-// Two sources, tried in this order:
+// Three sources, tried in this order:
 //   • Spotify Web API (client-credentials app token — public catalog data, no
 //     artist login needed). Requires SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET.
 //   • Deezer public API — zero credentials, works out of the box (DistroKid
 //     distributes to Deezer by default). Slower for ISRCs (one call per track,
 //     capped) but needs no setup.
+//   • MusicBrainz — keyless too, and the one source that reliably answers
+//     datacenter traffic: Deezer 403s some cloud IPs outright, which took the
+//     whole feature down in production even though it worked locally.
 //
-// The API-shaped mappers (mapSpotifyCatalog / mapDeezerCatalog) and the input
-// parser are pure so scripts/catalog-test.mjs can exercise them on fixtures
+// The API-shaped mappers (mapSpotifyCatalog / mapDeezerCatalog /
+// mapMusicBrainzCatalog) and the input parser are pure so scripts/catalog-test.mjs can exercise them on fixtures
 // without network.
 
 export type CatalogTrack = {
@@ -30,8 +33,11 @@ export type CatalogRelease = {
   tracks: CatalogTrack[]
 }
 
+// Which public source a catalog (or a stored library row) came from.
+export type CatalogSource = 'spotify' | 'deezer' | 'musicbrainz'
+
 export type ArtistCatalog = {
-  source: 'spotify' | 'deezer'
+  source: CatalogSource
   artistName: string
   artistUrl: string | null
   releases: CatalogRelease[]
@@ -41,9 +47,16 @@ export type ArtistCatalog = {
 // forwards the message verbatim instead of a generic 500.
 export class CatalogError extends Error {
   status: number
-  constructor(message: string, status = 502) {
+  /**
+   * The status the UPSTREAM source returned, when the failure came from one.
+   * Separate from `status` (what we hand the browser) so a caller can tell a
+   * refused request apart from a rejected query without parsing the message.
+   */
+  upstreamStatus?: number
+  constructor(message: string, status = 502, upstreamStatus?: number) {
     super(message)
     this.status = status
+    this.upstreamStatus = upstreamStatus
   }
 }
 
@@ -79,9 +92,36 @@ function typeFor(count: number, sourceType?: string | null): 'single' | 'ep' | '
 // 15s per upstream call — a hung source should fail the request, not pin it.
 const FETCH_TIMEOUT_MS = 15_000
 
+// Node's fetch sends no User-Agent at all, and the CDNs in front of these
+// public APIs answer that with a flat 403 from datacenter IPs — which is
+// exactly how "Sync Catalog" failed on Railway while working from a laptop.
+// Identify ourselves on every call (MusicBrainz asks for this outright).
+const CLIENT_HEADERS: Record<string, string> = {
+  'User-Agent': 'mixBASE/1.0 (https://mixbase.app)',
+  'Accept': 'application/json',
+}
+
+/** Which service a URL belongs to, for error messages a user can act on. */
+function upstreamName(url: string): string {
+  let host = ''
+  try { host = new URL(url).host } catch { /* non-URL — fall through */ }
+  if (host.includes('deezer')) return 'Deezer'
+  if (host.includes('musicbrainz')) return 'MusicBrainz'
+  if (host.includes('spotify')) return 'Spotify'
+  return 'The catalog source'
+}
+
 async function getJson(url: string, headers?: Record<string, string>): Promise<unknown> {
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-  if (!res.ok) throw new CatalogError(`Upstream request failed (${res.status})`)
+  const res = await fetch(url, {
+    headers: { ...CLIENT_HEADERS, ...headers },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (!res.ok) {
+    // A bare "Upstream request failed (403)" reached the user and named no
+    // source — leave a breadcrumb in the deploy log and say who refused.
+    console.error(`[catalog] ${upstreamName(url)} responded ${res.status} for ${url}`)
+    throw new CatalogError(`${upstreamName(url)} refused the request (${res.status})`, 502, res.status)
+  }
   return res.json()
 }
 
@@ -294,6 +334,136 @@ async function fetchDeezerCatalog(name: string): Promise<ArtistCatalog> {
   return mapDeezerCatalog(artist, albums)
 }
 
+// ── MusicBrainz (keyless fallback source) ────────────────────────────────────
+// Deezer's public API answers some datacenter IPs with a flat 403 — that is
+// how "Sync Catalog" broke in production while working from a laptop, and no
+// header or retry fixes an IP-level block. MusicBrainz is the other keyless
+// source that welcomes server traffic (it only asks for a descriptive
+// User-Agent), and it carries the two fields this feature exists for: per-
+// recording ISRCs and the release barcode (UPC). Browsing releases BY ARTIST
+// with recordings+isrcs included returns a whole indie discography in one or
+// two calls, so the fallback costs a second, not a minute.
+
+const MB_HEADERS = { 'User-Agent': 'mixBASE/1.0 (https://mixbase.app)' }
+const MB_API = 'https://musicbrainz.org/ws/2'
+const MB_PAGE = 100
+// MusicBrainz asks for ~1 request/second from applications.
+const MB_PACE_MS = 1100
+// A catalog this big is a label, not an artist — stop rather than page forever.
+const MB_MAX_RELEASES = 300
+
+// MusicBrainz lists every edition of a release (per country, per format). The
+// library wants one row per release, so collapse a release-group to its
+// richest edition — the one carrying the most ISRCs, since ISRC coverage is
+// uneven across editions and an ISRC is the field a waterfall re-release
+// cannot do without. The DATE always comes from the release-group's
+// first-release-date where known, so collapsing never reports a reissue date.
+function mbIsrcCount(release: CatalogRelease): number {
+  return release.tracks.filter(t => t.isrc).length
+}
+
+/**
+ * Pure mapper from a MusicBrainz artist + browsed releases (fetched with
+ * `inc=recordings+isrcs+release-groups`) to the normalized catalog.
+ */
+export function mapMusicBrainzCatalog(artist: any, releases: any[]): ArtistCatalog {
+  const byGroup = new Map<string, CatalogRelease>()
+
+  for (const release of releases) {
+    const group = release?.['release-group'] ?? null
+    const groupId: string = group?.id ?? release?.id ?? ''
+    if (!groupId) continue
+
+    const tracks: CatalogTrack[] = []
+    for (const medium of (release?.media ?? [])) {
+      for (const [i, t] of ((medium?.tracks ?? []) as any[]).entries()) {
+        const lengthMs = t?.length ?? t?.recording?.length ?? null
+        tracks.push({
+          trackNumber: t?.position ?? i + 1,
+          title: t?.title || t?.recording?.title || 'Untitled',
+          isrc: t?.recording?.isrcs?.[0] ?? null,
+          durationSeconds: lengthMs != null ? Math.round(lengthMs / 1000) : null,
+        })
+      }
+    }
+
+    const mapped: CatalogRelease = {
+      title: group?.title || release?.title || 'Untitled',
+      // The group's first-release-date is the ORIGINAL drop; a single edition's
+      // `date` may be a later reissue in another country.
+      releaseDate: group?.['first-release-date'] || release?.date || null,
+      releaseType: typeFor(tracks.length, String(group?.['primary-type'] ?? '').toLowerCase()),
+      upc: release?.barcode || null,
+      url: release?.id ? `https://musicbrainz.org/release/${release.id}` : null,
+      tracks,
+    }
+
+    const existing = byGroup.get(groupId)
+    // Richest edition wins: more ISRCs first, then the fuller tracklist.
+    if (!existing
+      || mbIsrcCount(mapped) > mbIsrcCount(existing)
+      || (mbIsrcCount(mapped) === mbIsrcCount(existing) && mapped.tracks.length > existing.tracks.length)) {
+      byGroup.set(groupId, mapped)
+    }
+  }
+
+  const out = [...byGroup.values()]
+  out.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
+  return {
+    source: 'musicbrainz',
+    artistName: artist?.name ?? 'Unknown artist',
+    artistUrl: artist?.id ? `https://musicbrainz.org/artist/${artist.id}` : null,
+    releases: out,
+  }
+}
+
+async function fetchMusicBrainzCatalog(name: string): Promise<ArtistCatalog> {
+  const escaped = name.replace(/["\\]/g, ' ').trim()
+  const search: any = await getJson(
+    `${MB_API}/artist?query=${encodeURIComponent(`artist:"${escaped}"`)}&fmt=json&limit=5`,
+    MB_HEADERS,
+  )
+  const candidates: any[] = search?.artists ?? []
+  if (!candidates.length) throw new CatalogError(`No artist found for "${name}"`, 404)
+  const artist = candidates.find(a => String(a?.name ?? '').toLowerCase() === name.trim().toLowerCase()) ?? candidates[0]
+
+  // ISRCs are the point of the sync, but they are not worth losing the whole
+  // fallback over: if this server's MusicBrainz rejects `inc=isrcs`, drop it
+  // and keep the titles/dates/UPCs — the per-row "Find ISRC" button fills the
+  // rest. A 503 here means "you went too fast", so it earns one paced retry.
+  let inc = 'recordings+isrcs+release-groups'
+  const browse = async (offset: number): Promise<any> => {
+    const url = (i: string) => `${MB_API}/release?artist=${artist.id}&inc=${i}&fmt=json&limit=${MB_PAGE}&offset=${offset}`
+    try {
+      return await getJson(url(inc), MB_HEADERS)
+    } catch (e) {
+      const upstream = e instanceof CatalogError ? e.upstreamStatus : undefined
+      if (upstream === 400 && inc.includes('isrcs')) {
+        console.error('[catalog] MusicBrainz rejected inc=isrcs — retrying without ISRCs')
+        inc = 'recordings+release-groups'
+        return await getJson(url(inc), MB_HEADERS)
+      }
+      if (upstream === 503) {
+        await new Promise(r => setTimeout(r, MB_PACE_MS * 2))
+        return await getJson(url(inc), MB_HEADERS)
+      }
+      throw e
+    }
+  }
+
+  const releases: any[] = []
+  for (let offset = 0; offset < MB_MAX_RELEASES; offset += MB_PAGE) {
+    if (offset > 0) await new Promise(r => setTimeout(r, MB_PACE_MS))
+    const page: any = await browse(offset)
+    const items: any[] = page?.releases ?? []
+    releases.push(...items)
+    if (items.length < MB_PAGE || releases.length >= (page?.['release-count'] ?? 0)) break
+  }
+  if (!releases.length) throw new CatalogError(`MusicBrainz lists no releases for "${artist.name}"`, 404)
+
+  return mapMusicBrainzCatalog(artist, releases)
+}
+
 // Resolve a pasted Spotify artist URL to the artist's display name using
 // Spotify's public oEmbed endpoint — no credentials needed. Lets the Deezer
 // fallback work even when the user gave us a Spotify link.
@@ -310,9 +480,12 @@ async function spotifyUrlToName(artistId: string): Promise<string | null> {
 
 /**
  * Fetch the artist's released catalog. `query` is whatever the user gave us —
- * a Spotify artist URL/URI/id or a plain artist name. Uses Spotify when API
- * keys are configured, otherwise falls back to Deezer (resolving a pasted
- * Spotify URL to a name via oEmbed first).
+ * a Spotify artist URL/URI/id or a plain artist name.
+ *
+ * Source order: Spotify when API keys are configured, otherwise Deezer with
+ * MusicBrainz behind it. The fallback is not belt-and-braces: Deezer's public
+ * API returns 403 to some datacenter IPs, so a keyless deployment that only
+ * knew Deezer could not sync at all from the host it actually runs on.
  */
 export async function fetchArtistCatalog(query: string): Promise<ArtistCatalog> {
   const q = query.trim()
@@ -320,18 +493,45 @@ export async function fetchArtistCatalog(query: string): Promise<ArtistCatalog> 
 
   if (spotifyConfigured()) return fetchSpotifyCatalog(q)
 
+  let name = q
   const spotifyId = parseSpotifyArtistId(q)
   if (spotifyId) {
-    const name = await spotifyUrlToName(spotifyId)
-    if (!name) {
+    const resolved = await spotifyUrlToName(spotifyId)
+    if (!resolved) {
       throw new CatalogError(
         'Could not resolve that Spotify link without API keys — enter the artist name instead, or set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET.',
         400,
       )
     }
-    return fetchDeezerCatalog(name)
+    name = resolved
   }
-  return fetchDeezerCatalog(q)
+
+  let deezerFailure: CatalogError | null = null
+  try {
+    const catalog = await fetchDeezerCatalog(name)
+    // An artist page with nothing on it is a miss, not an answer — a fresh
+    // DistroKid drop can be live on MusicBrainz before Deezer lists it.
+    if (catalog.releases.length) return catalog
+    deezerFailure = new CatalogError(`Deezer lists no releases for "${catalog.artistName}"`, 404)
+  } catch (e) {
+    deezerFailure = e instanceof CatalogError ? e : new CatalogError('Deezer lookup failed')
+  }
+
+  try {
+    return await fetchMusicBrainzCatalog(name)
+  } catch (e) {
+    const mb = e instanceof CatalogError ? e : new CatalogError('MusicBrainz lookup failed')
+    // Both keyless sources are out. Say what each one did — a 403 from a
+    // datacenter IP and "no such artist" need completely different fixes —
+    // and point at the credentials that make this path reliable.
+    const bothMissed = deezerFailure.status === 404 && mb.status === 404
+    throw new CatalogError(
+      bothMissed
+        ? `${deezerFailure.message}. ${mb.message}. Check the artist spelling, or paste your Spotify artist link.`
+        : `${deezerFailure.message}. Fallback: ${mb.message}. Set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET for a source that does not block server traffic.`,
+      bothMissed ? 404 : 502,
+    )
+  }
 }
 
 // ── Library flattening ───────────────────────────────────────────────────────
@@ -427,8 +627,6 @@ export function flattenCatalogTracks(catalog: ArtistCatalog): LibraryTrackRow[] 
 // "Find ISRC" button, deliberately not used for bulk sync).
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw upstream JSON */
-
-const MB_HEADERS = { 'User-Agent': 'mixBASE/1.0 (https://mixbase.app)' }
 
 /**
  * Pure: pick the recording ids worth an ISRC lookup from a MusicBrainz
