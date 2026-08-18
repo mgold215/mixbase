@@ -654,8 +654,13 @@ check('…and no new failure exit deletes bytes on an unknown',
 
 const store = stripComments(read('src/lib/visualizer-store.ts'))
 
+// The minted lane interpolates `keyProjectId` (projectId.toLowerCase()), not
+// projectId — VIZ_KEY_RE spells the project segment lowercase-hex only, so an
+// uppercase UUID would mint a key the orphan sweep cannot recognize. This
+// assertion pins the caller-supplied lane, so it must name the same identifier
+// the source does or it silently stops covering anything.
 check('storeVisualizer honours a caller-supplied key',
-  /const filename = args\.path \?\? `\$\{projectId\}\/viz-\$\{Date\.now\(\)\}\.\$\{ext\}`/.test(store))
+  /const filename = args\.path \?\? `\$\{keyProjectId\}\/viz-\$\{Date\.now\(\)\}\.\$\{ext\}`/.test(store))
 // A derived key never rotates, so a leftover object on it must be overwritable
 // or the clip is wedged forever; a minted key must NOT be, since anything
 // already sitting on it belongs to someone else.

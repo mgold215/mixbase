@@ -60,7 +60,7 @@ import {
   keyProjectId,
   filterToOwnedPrefixes,
   scanSurvivingKeys,
-  subtractKeys,
+  keysSafeToDelete,
 } from '../src/lib/project-assets.ts'
 // The bound the account path now shares with DELETE /api/projects/[id].
 import { SCAN_CONCURRENCY } from '../src/lib/survivor-scan-plan.ts'
@@ -176,14 +176,20 @@ function recordingSelect(rowsByColumn = {}, failOn = null) {
 {
   const survivorUrl = artUrl(`${PB}/victim-cover.jpg`)
   const { asked, select } = recordingSelect({ artwork_url: [{ artwork_url: survivorUrl }] })
-  const survivors = await scanSurvivingKeys(select, [survivorUrl, audioUrl(LEGACY_ROOT)])
+  const scan = await scanSurvivingKeys(select, [survivorUrl, audioUrl(LEGACY_ROOT)])
 
   check('a URL a surviving row still names comes back as a protected key',
-    survivors !== null && survivors[ARTWORK_BUCKET].includes(`${PB}/victim-cover.jpg`),
-    JSON.stringify(survivors))
+    scan !== null && scan.survivors[ARTWORK_BUCKET].includes(`${PB}/victim-cover.jpg`),
+    JSON.stringify(scan))
   check('a URL NOTHING still names is not protected',
-    survivors !== null && survivors[AUDIO_BUCKET].length === 0,
-    JSON.stringify(survivors?.[AUDIO_BUCKET]))
+    scan !== null && scan.survivors[AUDIO_BUCKET].length === 0,
+    JSON.stringify(scan?.survivors?.[AUDIO_BUCKET]))
+
+  // This path asks only the URL-scoped question, so it has no prefix pass to
+  // lose and must never hand back a downgraded scan. If it ever grows one, the
+  // bucket-root argument has to be re-derived for it rather than inherited.
+  check('the account path always reports FULL coverage',
+    scan !== null && scan.coverage === 'all', String(scan?.coverage))
 
   // Every (table, column) pair in the shared list must actually be queried — a
   // pair that is declared but never asked protects nothing.
@@ -197,17 +203,17 @@ function recordingSelect(rowsByColumn = {}, failOn = null) {
 // reads the wrong column off them and the survivor silently vanishes.
 {
   const { select } = recordingSelect({ audio_url: [{ audio_url: audioUrl(LEGACY_ROOT) }] })
-  const survivors = await scanSurvivingKeys(select, [audioUrl(LEGACY_ROOT)])
+  const scan = await scanSurvivingKeys(select, [audioUrl(LEGACY_ROOT)])
   check('an mb_versions hit is derived as an AUDIO key',
-    survivors !== null && survivors[AUDIO_BUCKET].includes(LEGACY_ROOT),
-    JSON.stringify(survivors))
+    scan !== null && scan.survivors[AUDIO_BUCKET].includes(LEGACY_ROOT),
+    JSON.stringify(scan))
 }
 {
   const { select } = recordingSelect({ source_image_url: [{ source_image_url: artUrl(`${PB}/s.jpg`) }] })
-  const survivors = await scanSurvivingKeys(select, [artUrl(`${PB}/s.jpg`)])
+  const scan = await scanSurvivingKeys(select, [artUrl(`${PB}/s.jpg`)])
   check('an mb_visualizers hit is derived as an ARTWORK key',
-    survivors !== null && survivors[ARTWORK_BUCKET].includes(`${PB}/s.jpg`),
-    JSON.stringify(survivors))
+    scan !== null && scan.survivors[ARTWORK_BUCKET].includes(`${PB}/s.jpg`),
+    JSON.stringify(scan))
 }
 
 // A surviving MP4 must also protect the WebM twin the transcode heal left
@@ -215,12 +221,12 @@ function recordingSelect(rowsByColumn = {}, failOn = null) {
 {
   const mp4 = vidUrl(`${PB}/viz-9-h264.mp4`)
   const { select } = recordingSelect({ video_url: [{ video_url: mp4 }] })
-  const survivors = await scanSurvivingKeys(select, [mp4])
+  const scan = await scanSurvivingKeys(select, [mp4])
   check('a surviving MP4 also protects its pre-conversion WebM twin',
-    survivors !== null
-    && survivors[VIDEO_BUCKET].includes(`${PB}/viz-9-h264.mp4`)
-    && survivors[VIDEO_BUCKET].includes(`${PB}/viz-9.webm`),
-    JSON.stringify(survivors?.[VIDEO_BUCKET]))
+    scan !== null
+    && scan.survivors[VIDEO_BUCKET].includes(`${PB}/viz-9-h264.mp4`)
+    && scan.survivors[VIDEO_BUCKET].includes(`${PB}/viz-9.webm`),
+    JSON.stringify(scan?.survivors?.[VIDEO_BUCKET]))
 }
 
 // Fail-safe, per chunk. A lookup that could not be answered cannot tell a shared
@@ -238,7 +244,7 @@ for (const failOn of [
   const key = `${PA}/a.jpg`
   const out = await scanSurvivingKeys(select, [artUrl(key)])
   check(`a failed lookup on ${failOn.table}.${failOn.column} PROTECTS the unanswered object`,
-    out !== null && out[ARTWORK_BUCKET].includes(key), JSON.stringify(out))
+    out !== null && out.survivors[ARTWORK_BUCKET].includes(key), JSON.stringify(out))
 }
 
 // ...but learning NOTHING is an outage, not a partial answer. If every lookup
@@ -302,7 +308,8 @@ for (const failOn of [
   let asked = false
   const out = await scanSurvivingKeys(async () => { asked = true; return [] }, [])
   check('an empty candidate list asks nothing and protects nothing',
-    !asked && JSON.stringify(out) === JSON.stringify(EMPTY), `asked=${asked} out=${JSON.stringify(out)}`)
+    !asked && out !== null && JSON.stringify(out.survivors) === JSON.stringify(EMPTY),
+    `asked=${asked} out=${JSON.stringify(out)}`)
 }
 
 // ── A4) The composed pipeline, against a crafted cross-account attack ────────
@@ -339,8 +346,9 @@ console.log('\n— composed pipeline: crafted cross-account references —')
     artwork_url: [{ artwork_url: artUrl(victimLive) }],
     audio_url: [{ audio_url: audioUrl(sharedRoot) }],
   })
-  const survivors = await scanSurvivingKeys(select, candidateUrls)
-  const doomed = subtractKeys(candidates, survivors)
+  const scan = await scanSurvivingKeys(select, candidateUrls)
+  const survivors = scan.survivors
+  const doomed = keysSafeToDelete(candidates, scan)
   const doomedArt = doomed[ARTWORK_BUCKET]
   const doomedAudio = doomed[AUDIO_BUCKET]
 
@@ -431,6 +439,49 @@ check('the candidate keys are passed through the owned-prefix filter',
 check('the candidate URLs for the survivor scan are collected from the same rows',
   /collectAssetKeys\(assetRows\)/.test(postBody) && /collectAssetUrls\(assetRows\)/.test(postBody))
 
+// ── The asset enumerations must not truncate ────────────────────────────────
+// These two carried no `.limit()` at all, which is NOT "no ceiling" — it hands
+// the decision to PostgREST's server-side `max-rows`, invisibly. This is also
+// the REACHABLE half of that bug: DELETE /api/projects/[id] enumerates one
+// project (max 20 versions), this enumerates every project an account owns (271
+// versions for the largest account today). Rows past the cut keep their audio in
+// a PUBLIC bucket after a GDPR erasure, in the one bucket with no sweeper.
+check('no asset enumeration in the account path carries a truncating .limit()',
+  !/\.limit\(\d+\)/.test(postBody), (postBody.match(/\.limit\(\d+\)/g) ?? []).join(' ') || 'none')
+
+check('both asset enumerations page through collectAllRows',
+  (postBody.match(/collectAllRows</g) ?? []).length === 2,
+  `${(postBody.match(/collectAllRows</g) ?? []).length} call(s)`)
+
+// Offset paging over an UNORDERED PostgREST result can repeat one row and skip
+// another; a skipped version is audio nothing will ever name again.
+check('every paged enumeration orders by the primary key, so offsets are stable',
+  (postBody.match(/\.order\('id', \{ ascending: true \}\)\.range\(offset, offset \+ limit - 1\)/g) ?? []).length === 2,
+  `${(postBody.match(/\.order\('id'/g) ?? []).length} ordered`)
+
+// The DIRECTION an incomplete enumeration must fail in. Every dependent of
+// mb_versions that carries user data cascades, and the row deletes are keyed by
+// project/user rather than by these lists — so an unreadable list costs bytes,
+// not PII. Blocking the erasure over that would trap the user in an undeletable
+// account, which this route explicitly must never do.
+{
+  const enumFailBlock = bracketedBlock(postBody, 'if (rows === null)')
+  check('the incomplete-enumeration branch was located',
+    enumFailBlock.length > 0 && /console\.error/.test(enumFailBlock), `${enumFailBlock.length} chars`)
+  check('an incomplete enumeration is logged and the deletion CONTINUES, never blocked',
+    !/return NextResponse/.test(enumFailBlock) && /Sentry\.captureMessage\(/.test(enumFailBlock))
+}
+
+// A page fetcher that turned an error into `[]` would end the enumeration at the
+// first blip and pass the truncated result off as complete.
+{
+  const pageFn = functionBody(routeSrc, 'async function fetchRowPage')
+  check('the page fetcher was located',
+    pageFn.length > 0 && /await query/.test(pageFn), `${pageFn.length} chars`)
+  check('a page error becomes null, never an empty page',
+    /if \(error\) \{[\s\S]*?return null/.test(pageFn) && !/return \[\]/.test(pageFn))
+}
+
 // ORDER: rows first, bytes second. The scan can only tell a stranger's row from
 // this user's own once this user's rows are gone.
 // Anchored to the `.delete()` chains specifically. `'mb_projects')` alone also
@@ -469,7 +520,7 @@ const removeFn = functionBody(routeSrc, 'async function removeAccountAssets')
 check('the removal helper was located, with its scan and its subtraction',
   removeFn.length > 0
   && /scanSurvivingKeys\(select, candidateUrls\)/.test(removeFn)
-  && /subtractKeys\(candidates, survivors\)/.test(removeFn),
+  && /keysSafeToDelete\(candidates, scan\)/.test(removeFn),
   `${removeFn.length} chars`)
 
 // The whole point: the scan must see OTHER accounts' rows. Scoping it to the
@@ -480,11 +531,18 @@ check('the survivor scan is NOT scoped to the deleting user',
 // The keys actually handed to storage are the SUBTRACTED set, not the raw
 // candidates — passing `candidates` here would make the scan decorative.
 check('the removal loop iterates the subtracted set, not the raw candidates',
-  /const doomed = subtractKeys\(candidates, survivors\)/.test(removeFn)
+  /const doomed = keysSafeToDelete\(candidates, scan\)/.test(removeFn)
   && /const paths = doomed\[bucket\]/.test(removeFn)
   && !/const paths = candidates\[bucket\]/.test(removeFn))
 
-const scanFailBlock = bracketedBlock(removeFn, 'if (!survivors)')
+// The coverage rule must be APPLIED, not merely available. A bare
+// subtractKeys(candidates, scan.survivors) here would spend a downgraded scan as
+// though it were a complete one — the exact confusion SurvivorScan encodes
+// against — so the raw subtraction is banned from this function outright.
+check('the removal helper does not subtract around the coverage rule',
+  !/subtractKeys\(/.test(removeFn))
+
+const scanFailBlock = bracketedBlock(removeFn, 'if (!scan)')
 check('the failed-scan branch was located',
   scanFailBlock.length > 0 && /console\.error/.test(scanFailBlock), `${scanFailBlock.length} chars`)
 check('a failed survivor scan removes NOTHING (fail towards leaking, not deleting)',

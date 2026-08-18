@@ -24,6 +24,17 @@ import type { VizRecipe } from './fx/types.ts'
 // widened; see VIZ_WEBM_STAMP_MAX for the bound that keeps the app inside it.
 export const VIZ_KEY_RE = /^([0-9a-f-]{36})\/viz-([A-Za-z0-9_-]{1,64})\.(mp4|webm)$/
 
+// The extensions VIZ_KEY_RE accepts, as a type the compiler can hold callers to.
+//
+// This exists because visualizer-store.ts chose its extension from a
+// content-type with a free-floating string ternary, and one arm of it minted
+// `.mov` — a key this app WROTE and this regex refuses, i.e. unreapable forever
+// (the exact shape VIZ_WEBM_STAMP_MAX below was introduced to close). Naming the
+// union and annotating the write site turns "add a third extension" from a
+// silent storage leak into a compile error, which is a bound no reviewer has to
+// remember to enforce.
+export type VizKeyExt = 'mp4' | 'webm'
+
 // What mp4TwinPath() (visualizer-encode.ts) appends to a webm basename when the
 // finalize webm lane transcodes a claim: `X.webm` → `X-h264.mp4`. Repeated here
 // rather than imported because visualizer-encode.ts pulls in ffmpeg and
@@ -70,11 +81,11 @@ export const VIZ_WEBM_STAMP_MAX = VIZ_STAMP_MAX - VIZ_TWIN_SUFFIX.length
 export function parseVizStoragePath(
   projectId: string,
   storagePath: unknown,
-): { ext: 'mp4' | 'webm' } | null {
+): { ext: VizKeyExt } | null {
   if (typeof storagePath !== 'string' || storagePath.length > 200) return null
   const m = VIZ_KEY_RE.exec(storagePath)
   if (!m || m[1] !== projectId) return null
-  const ext = m[3] as 'mp4' | 'webm'
+  const ext = m[3] as VizKeyExt
   // Only the webm lane derives a twin, so only a webm key has to leave room for
   // one. An mp4 claim is indexed at the key it names and keeps the full budget.
   if (ext === 'webm' && m[2].length > VIZ_WEBM_STAMP_MAX) return null
@@ -114,7 +125,7 @@ export const MP4_PROBE_BYTES = 2 * 1024 * 1024
 // The cap that applies to a claim, chosen by the extension the key carries.
 // One function so the two lanes can never drift apart on which ceiling is in
 // force — the webm number is deliberately the tighter of the two.
-export function maxFinalizeBytesFor(ext: 'mp4' | 'webm'): number {
+export function maxFinalizeBytesFor(ext: VizKeyExt): number {
   return ext === 'webm' ? MAX_FINALIZE_WEBM_BYTES : MAX_FINALIZE_BYTES
 }
 
@@ -169,7 +180,7 @@ export type ClipProbe = { codec: string | null; duration: number }
 // be stored and reported "Saved": ffmpeg failed it with "EBML header parsing
 // failed", the route swallowed that as a transcode miss, and the raw bytes got
 // indexed anyway.
-export function clipRejectionReason(probe: ClipProbe, ext: 'mp4' | 'webm'): string | null {
+export function clipRejectionReason(probe: ClipProbe, ext: VizKeyExt): string | null {
   if (!probe.codec) return 'no video track'
   if (ext === 'mp4' && probe.codec !== 'avc') return `codec ${probe.codec}`
   // Written as !(x >= y) so a NaN duration (unreadable container) rejects too.

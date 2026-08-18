@@ -8,17 +8,38 @@ import {
   AUDIO_BUCKET,
   ARTWORK_BUCKET,
   VIDEO_BUCKET,
+  collectAllRows,
   collectAssetKeys,
   collectAssetUrls,
   filterToOwnedPrefixes,
+  keysSafeToDelete,
   scanSurvivingKeys,
-  subtractKeys,
   totalKeyCount,
   type AssetKeys,
   type AssetUrlSelect,
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
+
+// Named rather than inlined into the signature — see the same type in
+// src/app/api/projects/[id]/route.ts.
+type RowQuery = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>
+
+/**
+ * Await one page of a PostgREST enumeration, mapping any failure to null.
+ *
+ * Null and `[]` must stay distinguishable: collectAllRows() stops on an empty
+ * page and gives up on a null one, so collapsing an error into `[]` here would
+ * end the enumeration early and pass the truncated result off as complete.
+ */
+async function fetchRowPage<T>(query: RowQuery, label: string): Promise<T[] | null> {
+  const { data, error } = await query
+  if (error) {
+    console.error(`[delete-account] enumerating ${label} failed: ${error.message}`)
+    return null
+  }
+  return (data ?? []) as T[]
+}
 
 // POST /api/auth/delete-account — permanently delete user and all their data
 // Deletes storage files first (GDPR), then DB rows, then the auth user.
@@ -68,13 +89,41 @@ export async function POST(request: NextRequest) {
   let versions: VersionAssetRow[] = []
 
   if (projectIds.length > 0) {
-    const { data } = await supabaseAdmin
-      .from('mb_versions')
-      .select('id, audio_url')
-      .in('project_id', projectIds)
-
-    versionIds = (data ?? []).map(v => v.id)
-    versions = (data ?? []) as VersionAssetRow[]
+    // PAGED. This select carried no `.limit()` at all, which is not "unbounded"
+    // — it silently inherits PostgREST's server-side `max-rows` ceiling, and a
+    // truncation you cannot see in the code is worse than one you can. It is
+    // also the REACHABLE instance of that bug: this fans out over every project
+    // a user owns, and the largest account today holds 271 versions against a
+    // per-project maximum of 20. Rows past the cut would have their audio left
+    // in a PUBLIC bucket after a GDPR erasure, in the one bucket with no sweeper.
+    const rows = await collectAllRows<{ id: string; audio_url: string | null }>(
+      (offset, limit) => fetchRowPage(
+        supabaseAdmin.from('mb_versions').select('id, audio_url').in('project_id', projectIds)
+          .order('id', { ascending: true }).range(offset, offset + limit - 1),
+        `versions for ${userId}`,
+      ))
+    if (rows === null) {
+      // Logged, NOT fatal. Checked against the live schema (2026-08-18) before
+      // choosing this: every dependent of mb_versions that matters here —
+      // mb_feedback, mb_feed_comments, mb_collab_requests — is ON DELETE
+      // CASCADE, and the mb_versions delete below is keyed by project rather
+      // than by this list, so the account still empties completely and no PII
+      // survives. What an incomplete read costs is only the byte cleanup for the
+      // rows it could not see. Blocking a GDPR erasure over a leak is the wrong
+      // trade and the wrong direction: this route must never trap a user in an
+      // undeletable account, so storage trouble is logged for a sweep, never
+      // returned. Same call the project-delete path makes.
+      console.error(
+        `[delete-account] could not enumerate versions for ${userId} — their audio will not be ` +
+        `cleaned up and needs a sweep. Row deletion continues.`,
+      )
+      Sentry.captureMessage('delete-account: version enumeration incomplete, audio may be orphaned', {
+        level: 'warning',
+        extra: { userId, projectCount: projectIds.length },
+      })
+    }
+    versionIds = (rows ?? []).map(v => v.id)
+    versions = (rows ?? []) as VersionAssetRow[]
   }
 
   // Visualizers (free canvas + AI + finished YouTube/Shorts) are keyed by
@@ -86,10 +135,23 @@ export async function POST(request: NextRequest) {
   // nullable and a row without one would otherwise be missed here. Row
   // SELECTION is what legitimately differs between the two delete paths; the
   // URL→key derivation below must not.
-  const { data: visualizers } = await supabaseAdmin
-    .from('mb_visualizers')
-    .select('id, video_url, source_image_url')
-    .eq('user_id', userId)
+  //
+  // Paged for the same reason as the versions enumeration above: no `.limit()`
+  // is not "no ceiling", it is PostgREST's own `max-rows` applied invisibly.
+  // Unlike versions this list feeds ONLY the byte cleanup — the row delete below
+  // is keyed by user_id — so an incomplete read is logged and the deletion
+  // proceeds rather than blocking the user's erasure over a leak.
+  const visualizers = await collectAllRows<VisualizerAssetRow>((offset, limit) => fetchRowPage(
+    supabaseAdmin.from('mb_visualizers').select('id, video_url, source_image_url').eq('user_id', userId)
+      .order('id', { ascending: true }).range(offset, offset + limit - 1),
+    `visualizers for ${userId}`,
+  ))
+  if (visualizers === null) {
+    console.error(
+      `[delete-account] could not enumerate visualizers for ${userId} — their video and source-image ` +
+      `bytes will not be cleaned up and need a sweep.`,
+    )
+  }
 
   // One shared derivation for both delete paths (src/lib/project-assets.ts):
   // source + finalized artwork, audio, visualizer videos AND the pre-conversion
@@ -99,7 +161,7 @@ export async function POST(request: NextRequest) {
   const assetRows = {
     projects: (projects ?? []),
     versions,
-    visualizers: (visualizers ?? []) as VisualizerAssetRow[],
+    visualizers: visualizers ?? [],
   }
   const collected = collectAssetKeys(assetRows)
   const candidateUrls = collectAssetUrls(assetRows)
@@ -248,8 +310,8 @@ async function removeAccountAssets(userId: string, candidates: AssetKeys, candid
     return data ?? []
   }
 
-  const survivors = await scanSurvivingKeys(select, candidateUrls)
-  if (!survivors) {
+  const scan = await scanSurvivingKeys(select, candidateUrls)
+  if (!scan) {
     // Without the scan we cannot prove a key is unshared, and deleting a shared
     // object destroys another account's live media — strictly worse than the
     // leak. Fail towards leaking bytes, and make the sweep visible.
@@ -264,7 +326,12 @@ async function removeAccountAssets(userId: string, candidates: AssetKeys, candid
     return
   }
 
-  const doomed = subtractKeys(candidates, survivors)
+  // Same coverage-aware helper DELETE /api/projects/[id] uses. This path has no
+  // prefix pass, so scanSurvivingKeys always reports coverage 'all' and the
+  // helper reduces to the subtraction it always did — but routing through it is
+  // what keeps the two delete paths deciding "may I delete this?" identically,
+  // which is the whole reason project-assets.ts exists.
+  const doomed = keysSafeToDelete(candidates, scan)
 
   // Removal is VERIFIED per key, not inferred from the absence of an error. A
   // storage delete that RLS refuses returns 200 with `[]`, so an `if (error)`

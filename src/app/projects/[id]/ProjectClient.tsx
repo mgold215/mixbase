@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
+import { useState, useRef, useEffect, type ChangeEvent, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
@@ -234,7 +234,29 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // ensureAudioChain calls createMediaElementSource on the app's one <audio>
   // element, which is irreversible for the page session and whose failure mode
   // is silence everywhere. Nothing on this page needs an EQ.
-  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, pause, refreshTracks } = usePlayer()
+  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, pause, refreshTracks, registerUnmeasuredVersions } = usePlayer()
+
+  // ── Self-healing duration backfill ─────────────────────────────────────────
+  // 40% of mb_versions rows have duration_seconds NULL, and the consequences are
+  // all over this page: the header omits the length, feedback markers can't be
+  // placed on the scrubber, and the archived list falls back to a live readout.
+  //
+  // This page is the only surface holding the FULL version list — current mix
+  // AND every archived mix — next to each row's stored value, so it is what
+  // knows which mixes are worth measuring. It does not do the measuring: the
+  // engine owns the one <audio> element, reads the length off the element
+  // itself, and writes it back once. Splitting it that way is what keeps the
+  // healing correct (no React state, which can lag or hold Infinity, in the
+  // path) and unduplicated (one writer for every playback surface).
+  //
+  // Registration is not gated on playback. Registering a mix costs a Map entry;
+  // the write only ever happens if the user actually plays it.
+  useEffect(() => {
+    const unmeasured = versions
+      .filter(v => v.duration_seconds == null)
+      .map(v => ({ versionId: v.id, url: audioProxyUrl(v.audio_url) }))
+    if (unmeasured.length > 0) registerUnmeasuredVersions(unmeasured)
+  }, [versions, registerUnmeasuredVersions])
 
   // Push edits to the rest of the app: the player's client-side track list
   // (refreshTracks) and the server-rendered pages cached by the router —

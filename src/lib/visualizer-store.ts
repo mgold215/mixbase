@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { ensureVisualizerSettingsColumn, isMissingVisualizerSettingsColumn } from '@/lib/schema-heal'
 import { claimAfterInsertFailure, claimPrecheck } from '@/lib/visualizer-claim'
 import { removeStorageObjectsLogged } from '@/lib/storage-remove'
+import { parseVizStoragePath, type VizKeyExt } from '@/lib/visualizer-finalize'
 
 // Shared persistence for generated visualizers. Both the AI path
 // (/api/visualizer/runway) and the free path (/api/visualizer/save) upload the
@@ -102,10 +103,92 @@ async function insertVisualizerRow(fields: {
 export async function storeVisualizer(args: StoreVisualizerArgs): Promise<StoredVisualizer | null> {
   const { userId, projectId, bytes, contentType, kind, title, sourceImageUrl, settings } = args
 
-  const ext = contentType.includes('mp4') ? 'mp4'
-    : contentType.includes('quicktime') ? 'mov'
+  // ── The key this function is allowed to mint ────────────────────────────────
+  // Everything below exists to guarantee ONE property: every key storeVisualizer
+  // writes is a key VIZ_KEY_RE recognizes. That regex is the orphan sweep's
+  // shape filter (planReap counts anything outside it as keptForeignShape and
+  // never deletes it), so an object this app writes and this app cannot
+  // recognize has no cleanup path ANYWHERE — invisible in Media, unnameable by
+  // DELETE /api/visualizer/[id] and /api/auth/delete-account (both start from a
+  // row's video_url), and skipped by the one sweep that exists to catch exactly
+  // that. Unreapable forever, for a bucket the user is billed for.
+  //
+  // THE FIX IS THE BOUND, NOT A WIDER REGEX — the same trade VIZ_WEBM_STAMP_MAX
+  // is priced on. Tightening what may be WRITTEN can never strand anything;
+  // only loosening the recognizer can, and loosening it would hand the sweep
+  // permission to delete shapes it currently protects.
+  //
+  // Two arms of the old key expression violated that property:
+  //
+  //   1. `contentType.includes('quicktime') ? 'mov'` minted `<pid>/viz-<ts>.mov`.
+  //      VIZ_KEY_RE matches (mp4|webm) and nothing else. This was NOT
+  //      theoretical: /api/visualizer/save takes contentType from `file.type` —
+  //      the multipart part header, which the client writes — and mf-video's
+  //      allowed_mime_types is ['video/webm','video/mp4','video/quicktime'], so
+  //      the storage layer accepts the upload. A plain H.264 MP4 labelled
+  //      video/quicktime passes the save lane's demux probe (mediabunny sniffs
+  //      the container, not the label, and reports 'avc'), skips the transcode
+  //      (the label does not contain 'webm') and lands here. /api/visualizer/
+  //      runway is the second door: it forwards Runway's response content-type
+  //      verbatim. So the extension is now typed VizKeyExt — re-adding a third
+  //      arm is a compile error, not a silent leak — and quicktime joins the mp4
+  //      lane. Only the KEY changes; `contentType` is still uploaded verbatim,
+  //      so the object's header keeps describing its real bytes, and no consumer
+  //      reads the extension anyway (ffmpeg and mediabunny sniff the container,
+  //      the delete paths slice the key out of the URL).
+  //
+  //      Note the `: 'webm'` default is deliberately left alone. An unlabelled
+  //      stream stored as .webm costs one redundant boot-heal transcode; stored
+  //      as .mp4 it would be a real webm the heal never finds (it scans
+  //      video_url like '%.webm'), i.e. silently unplayable on iOS forever.
+  //
+  //   2. The project segment was interpolated raw, but VIZ_KEY_RE spells it
+  //      `[0-9a-f-]{36}` — LOWERCASE hex only — while the routes admit an
+  //      UPPERCASE UUID: isUuid()'s regex carries /i, and userOwnsProject()'s
+  //      .eq('id', projectId) hits a uuid column, whose comparison Postgres
+  //      performs case-insensitively (verified against production). So an owner
+  //      posting their own project id in uppercase to /api/visualizer/{free,save,
+  //      runway} or /api/finalize-video passed every gate and minted
+  //      `<UPPERCASE-UUID>/viz-<ts>.mp4` — unreapable for the same reason. This
+  //      is not a hypothetical typo: Swift's UUID.uuidString is uppercase, the
+  //      native app calls these routes, and the identical mistake already
+  //      happened in mf-audio — 5 of its 391 objects are
+  //      `<UPPERCASE-UUID>-v<n>-<ts>.wav`, written by the iOS app straight to the
+  //      bucket root (measured 2026-08-18; see project-assets.ts). Five, not the
+  //      115 an earlier note claimed: 116 mf-audio keys sit at the bucket root,
+  //      but 111 of those are plain human filenames like "HALFWAY - MIX 1.wav",
+  //      not the iOS UUID shape. Five is still precedent — the point is that this
+  //      exact mistake reached production once already, not that it did so often.
+  //      MixbaseAPI.swift
+  //      currently writes .lowercased() at every call site, which is a
+  //      per-caller mitigation; this is the bound.
+  //
+  //      The signed-URL lane already failed closed here — /api/upload-url
+  //      refuses to sign any mf-video key outside VIZ_KEY_RE — so this only
+  //      restores parity for the server-mint lane.
+  const ext: VizKeyExt = contentType.includes('mp4') || contentType.includes('quicktime')
+    ? 'mp4'
     : 'webm'
-  const filename = args.path ?? `${projectId}/viz-${Date.now()}.${ext}`
+  const keyProjectId = projectId.toLowerCase()
+  const filename = args.path ?? `${keyProjectId}/viz-${Date.now()}.${ext}`
+
+  // The property itself, asserted rather than reasoned about. parseVizStoragePath
+  // is the SAME gate /api/visualizer/finalize applies to an inbound claim, so
+  // there is one definition of "a key this app may hold" and the write path
+  // cannot drift away from the recognizer without failing here first. It also
+  // covers the caller-supplied `path` lane (finalize's mp4 twin, already
+  // validated there — this is belt and braces) and any future arm anyone adds
+  // above.
+  //
+  // Refusing is the correct failure: returning null makes the caller report
+  // "Failed to save visualizer", which is a visible, retryable, recoverable
+  // outcome. Writing the object anyway is not recoverable by anything.
+  if (!parseVizStoragePath(keyProjectId, filename)) {
+    console.error(
+      `[visualizer-store] refusing to write a key the orphan sweep cannot recognize: ${filename}`,
+    )
+    return null
+  }
 
   // upsert follows the key, and both settings are load-bearing:
   //

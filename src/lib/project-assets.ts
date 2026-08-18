@@ -189,6 +189,104 @@ export function totalKeyCount(keys: AssetKeys): number {
   return keys[AUDIO_BUCKET].length + keys[ARTWORK_BUCKET].length + keys[VIDEO_BUCKET].length
 }
 
+/**
+ * How much of the candidate set a COMPLETED scan is entitled to authorise.
+ *
+ * This is deliberately a third state, distinct from both "here are the
+ * survivors" and null. Null already means "I learned nothing, protect
+ * everything", and an EMPTY survivor set already means "I asked, and nothing
+ * references these" — the one confusion this whole module exists to prevent.
+ * Partial coverage is neither of those, and folding it into either one is how a
+ * partial answer silently becomes a licence to delete.
+ *
+ *   'all'              — every question was answered, or degraded per-chunk into
+ *                        the survivor set. Any candidate the survivors do not
+ *                        name may go.
+ *   'bucket-root-only' — the PREFIX pass could not be answered. Only candidates
+ *                        with no path separator at all may go; see below.
+ *
+ * WHY A PASS-2 OUTAGE COSTS BUCKET-ROOT KEYS NOTHING
+ * DELETE /api/projects/[id] asks its question twice. Pass 1 is
+ * `column IN (urls)` over the exact URLs the deleted rows named. Pass 2 is
+ * `column LIKE '%/<id>/%'`, and it exists because the prefix LISTING turns up
+ * objects no column of ours ever named (202 superseded `finalized-<ts>.jpg`
+ * renders in production), so pass 1 cannot speak for those at all.
+ *
+ * A pass-2 row comes back BECAUSE its column value matches `%/<id>/%`, and the
+ * query selects only that one column — so every key pass 2 can contribute is
+ * derived from a URL containing `/<id>/`. In a canonical Supabase public URL,
+ * `https://<host>/storage/v1/object/public/<bucket>/<key>`, nothing between the
+ * host and the bucket segment is a UUID, so `/<id>/` can only land inside
+ * `<key>` — and a key containing `/<id>/` necessarily contains a `/`. A key with
+ * NO separator therefore sits entirely outside anything pass 2 could ever have
+ * said about it. Pass 1 asked about it by exact URL and got an answer; losing
+ * pass 2 subtracts nothing from what we know. Treating those keys as unprovable
+ * is not caution, it is discarding an answer we already have — and for mf-audio
+ * that is 116 of 391 objects, in the one bucket with no sweeper.
+ *
+ * THE ONE RESIDUAL, STATED RATHER THAN HIDDEN
+ * The argument leans on the URL being canonical. storagePathFromUrl() slices
+ * from the marker without checking what precedes it, so a crafted value like
+ * `https://<host>/<id>/storage/v1/object/public/mf-audio/<root key>` would be a
+ * pass-2 hit deriving a slash-free key, and isSupabaseStorageUrl() — the only
+ * guard on POST /api/versions' audio_url and PATCH's artwork_url — validates
+ * protocol and hostname only, so such a value is insertable. Two things bound
+ * it: measured 2026-08-18, all 552 non-null URLs across all seven columns in
+ * production are canonical and none is not; and a URL of that shape does not
+ * resolve to the object it names, so it is a broken row rather than a live
+ * reference — the bytes back nothing that currently works. Note also that an
+ * attacker wanting to protect that object has the far easier route of naming its
+ * canonical URL, which pass 1 catches.
+ */
+export type ScanCoverage = 'all' | 'bucket-root-only'
+
+/**
+ * The result of a survivor scan that completed well enough to be acted on.
+ *
+ * Callers must branch on `coverage` before subtracting — use keysSafeToDelete()
+ * rather than reaching for subtractKeys() directly, or a degraded scan reads as
+ * a complete one.
+ */
+export type SurvivorScan = {
+  /** Keys a surviving row still names, PLUS every key the scan could not vouch for. */
+  survivors: AssetKeys
+  coverage: ScanCoverage
+}
+
+/**
+ * Candidate keys that sit at a bucket ROOT — no path separator anywhere.
+ *
+ * Production shape check (2026-08-18): all 116 such objects are in mf-audio;
+ * mf-artwork and mf-video have none. This is still written per-bucket rather
+ * than audio-only because the reasoning in ScanCoverage is about key SHAPE, not
+ * about which bucket the key lives in, and a bucket-root artwork object is one
+ * upload away from existing.
+ */
+export function bucketRootKeys(candidates: AssetKeys): AssetKeys {
+  const keep = (bucket: AssetBucket) => candidates[bucket].filter(key => !key.includes('/'))
+  return {
+    [AUDIO_BUCKET]: keep(AUDIO_BUCKET),
+    [ARTWORK_BUCKET]: keep(ARTWORK_BUCKET),
+    [VIDEO_BUCKET]: keep(VIDEO_BUCKET),
+  }
+}
+
+/**
+ * The candidate keys a scan actually authorises deleting: the coverage rule and
+ * the survivor subtraction, applied in that order.
+ *
+ * ONE implementation for both delete paths, for the same reason collectAssetKeys
+ * is shared — if DELETE /api/projects/[id] and POST /api/auth/delete-account
+ * decide "may I delete this?" differently, one of them eventually answers yes
+ * about a shared object. The account path never degrades (it has no prefix
+ * pass), so today it always takes the 'all' branch; routing it through here
+ * anyway is what stops the two from drifting the day it grows one.
+ */
+export function keysSafeToDelete(candidates: AssetKeys, scan: SurvivorScan): AssetKeys {
+  const eligible = scan.coverage === 'all' ? candidates : bucketRootKeys(candidates)
+  return subtractKeys(eligible, scan.survivors)
+}
+
 // The (table, column) pairs that can name one of our candidate objects — the
 // same list DELETE /api/projects/[id]'s survivor scan walks, hoisted here so
 // the two delete paths cannot drift apart on WHICH references count. A pair
@@ -248,6 +346,13 @@ export type AssetUrlSelect = (
  * Null is now reserved for learning nothing at all — every chunk failed — which
  * is a real outage worth reporting rather than a partial answer worth using.
  *
+ * Returns a SurvivorScan, not a bare AssetKeys, so the shape is the same one
+ * DELETE /api/projects/[id] hands back and one keysSafeToDelete() serves both.
+ * Coverage here is always 'all': this path asks only the URL-scoped question, so
+ * there is no prefix pass to lose. If a prefix pass is ever added, the
+ * bucket-root reasoning in ScanCoverage has to be re-derived for it — it is a
+ * property of what that specific LIKE can match, not a general licence.
+ *
  * FAN-OUT IS BOUNDED. The old form was Promise.all over
  * columns × ⌈urls/50⌉ with no limit: an account owning many projects could open
  * ~150+ simultaneous PostgREST GETs, and since `IN (...)` is encoded into the
@@ -268,7 +373,7 @@ export type AssetUrlSelect = (
 export async function scanSurvivingKeys(
   select: AssetUrlSelect,
   urls: readonly string[],
-): Promise<AssetKeys | null> {
+): Promise<SurvivorScan | null> {
   const projects: ProjectAssetRow[] = []
   const versions: VersionAssetRow[] = []
   const visualizers: VisualizerAssetRow[] = []
@@ -305,11 +410,14 @@ export async function scanSurvivingKeys(
 
   // Back through the SAME derivation the candidates came from, so a surviving
   // MP4 also protects its WebM twin exactly as a doomed one would have named it.
-  return collectAssetKeys({
-    projects: [...projects, ...assumed.projects],
-    versions: [...versions, ...assumed.versions],
-    visualizers: [...visualizers, ...assumed.visualizers],
-  })
+  return {
+    survivors: collectAssetKeys({
+      projects: [...projects, ...assumed.projects],
+      versions: [...versions, ...assumed.versions],
+      visualizers: [...visualizers, ...assumed.visualizers],
+    }),
+    coverage: 'all',
+  }
 }
 
 /** Merge two key sets, deduped per bucket. */
@@ -320,6 +428,75 @@ export function unionKeys(a: AssetKeys, b: AssetKeys): AssetKeys {
     [ARTWORK_BUCKET]: merge(ARTWORK_BUCKET),
     [VIDEO_BUCKET]: merge(VIDEO_BUCKET),
   }
+}
+
+// Rows per page when a delete path enumerates its OWN rows, and the
+// "don't loop forever" ceiling.
+export const ROW_PAGE_SIZE = 1000
+export const ROW_MAX_PAGES = 50
+
+/**
+ * One page of rows, or null if the page could not be fetched.
+ *
+ * Injected rather than imported, same as AssetUrlSelect, so this module stays
+ * free of '@/lib/supabase' and scripts can drive collectAllRows() with a fake.
+ *
+ * CALLERS MUST ORDER BY A UNIQUE COLUMN. PostgREST gives no ordering guarantee
+ * without one, and offset paging over an unordered result can hand back the same
+ * row twice and skip another entirely — which for this use is a version whose
+ * audio is never enumerated, i.e. the exact orphan being fixed, arrived at by a
+ * different route.
+ */
+export type RowPage<T> = (offset: number, limit: number) => Promise<readonly T[] | null>
+
+/**
+ * Every row an enumeration can reach, or null when the answer cannot be trusted.
+ *
+ * WHY THIS EXISTS
+ * DELETE /api/projects/[id] enumerated versions and visualizers with a flat
+ * `.limit(1000)`. Row 1001 onward was dropped with NO error, no warning and no
+ * trace: those rows then CASCADE away with the project, after which nothing can
+ * ever name their bytes again (only mf-video has a sweeper). Unreachable today —
+ * the largest project has 20 versions — but "silently drops data past a
+ * hard-coded number" is the defect, not the number. POST
+ * /api/auth/delete-account had the same enumeration with no cap written at all,
+ * which is worse: it inherits PostgREST's server-side `max-rows` ceiling, and
+ * that truncation is invisible from the code. Its largest account is at 271
+ * versions today, an order of magnitude closer to the ceiling than any project.
+ *
+ * TWO RULES, BOTH ABOUT THE SAME HAZARD: THE SERVER MAY SHORTEN A PAGE.
+ * PostgREST enforces its own `max-rows` regardless of the range asked for, so a
+ * page can come back short without being the last page. Both of the obvious
+ * paginators get that wrong, in opposite directions:
+ *   * stopping on a SHORT page truncates — the original bug, one layer down and
+ *     harder to see. So this stops only on an EMPTY page.
+ *   * advancing the offset by the page SIZE skips whatever the server withheld —
+ *     ask for 1000, get 500, resume at 1000, and rows 500-999 are never
+ *     enumerated. So the offset advances by the number of rows RECEIVED.
+ * Together those two make the walk correct under a server cap of any size,
+ * including one nobody knew was there. The cost is one extra round trip per
+ * enumeration, on a path where the row is not yet deleted, the user is told
+ * nothing either way, and correctness outranks latency.
+ *
+ * Returns null rather than a short list on failure OR on hitting the page
+ * ceiling: a partial enumeration read as complete is what leaks the bytes, so
+ * both are reported to the caller as "I could not answer", and the caller logs
+ * that a sweep is owed. ROW_MAX_PAGES also bounds a server that ignores the
+ * range header, which would otherwise loop forever.
+ */
+export async function collectAllRows<T>(
+  fetchPage: RowPage<T>,
+  pageSize: number = ROW_PAGE_SIZE,
+  maxPages: number = ROW_MAX_PAGES,
+): Promise<T[] | null> {
+  const rows: T[] = []
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await fetchPage(rows.length, pageSize)
+    if (batch === null) return null
+    if (batch.length === 0) return rows
+    rows.push(...batch)
+  }
+  return null
 }
 
 // Objects per listing page, and the "don't loop forever" ceiling — a storage

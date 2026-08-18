@@ -67,6 +67,7 @@ const SUITES = [
   'survivor-scan-bound-test.mjs',
   'delete-account-scope-test.mjs',
   'archived-playback-test.mjs',
+  'duration-backfill-test.mjs',
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
   'catalog-test.mjs',

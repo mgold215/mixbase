@@ -48,6 +48,9 @@ import {
   ARTWORK_BUCKET,
   VIDEO_BUCKET,
   ASSET_PAGE_SIZE,
+  ROW_PAGE_SIZE,
+  ROW_MAX_PAGES,
+  collectAllRows,
   storagePathFromUrl,
   collectAssetKeys,
   collectAssetUrls,
@@ -296,6 +299,104 @@ for (const bad of ['', null, undefined, 'b0642fc1', '../', '/', 'not-a-uuid',
     out === null && calls < 500, `calls=${calls}`)
 }
 
+// ── B2) The row paginator ──────────────────────────────────────────────────
+console.log('\n— row enumeration paging —')
+
+// The enumeration that feeds every candidate key used to be `.limit(1000)`:
+// row 1001 onward was dropped with no error and no warning, and those rows
+// CASCADE away with the project moments later, after which nothing can ever
+// name their bytes again. Unreachable at today's sizes (largest project = 20
+// versions) — but the account path ran the SAME enumeration with no cap written
+// at all, which silently inherits PostgREST's server-side `max-rows`, and its
+// largest account is at 271 versions. Silent truncation is the defect; the
+// number is incidental.
+
+// A pager that RECORDS the ranges it was asked for, so "did it actually page?"
+// is measured rather than assumed.
+function pager(rows, { failOnPage = -1, serverCap = Infinity } = {}) {
+  const asked = []
+  const fetchPage = async (offset, limit) => {
+    asked.push({ offset, limit })
+    if (asked.length - 1 === failOnPage) return null
+    // A server may hand back FEWER rows than asked for — PostgREST's own
+    // `max-rows` does exactly this. That is the case a "short page ⇒ last page"
+    // paginator gets silently wrong.
+    return rows.slice(offset, offset + Math.min(limit, serverCap))
+  }
+  return { asked, fetchPage }
+}
+
+{
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: i }))
+  const { asked, fetchPage } = pager(rows)
+  const out = await collectAllRows(fetchPage, 10, 50)
+  check('paging concatenates every row, in order',
+    out !== null && out.length === 25 && out.every((r, i) => r.id === i), `got=${out?.length}`)
+  // Four requests, not three: the fourth is the empty page that PROVES the
+  // third was the last one. Inferring it from the third being short is the
+  // truncation this helper exists to refuse.
+  check('paging advances the offset by the rows already gathered, and confirms the end',
+    asked.length === 4 && JSON.stringify(asked.map(a => a.offset)) === '[0,10,20,25]',
+    JSON.stringify(asked.map(a => a.offset)))
+}
+
+// THE assertion this helper exists for. With a server cap below the page size
+// every page is short, so a paginator that stopped on a short page would return
+// the first 4 rows of 25 and call it complete — silently, exactly like the
+// `.limit(1000)` it replaced.
+{
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: i }))
+  const { asked, fetchPage } = pager(rows, { serverCap: 4 })
+  const out = await collectAllRows(fetchPage, 10, 50)
+  check('a SHORT page does not end the enumeration (a server-side row cap cannot truncate us)',
+    out !== null && out.length === 25 && out.every((r, i) => r.id === i), `got=${out?.length} of 25`)
+  // The other half of the same hazard: resuming at offset+pageSize after a
+  // shortened page would step straight over the rows the server withheld.
+  check('...and the offsets follow what was RECEIVED, so nothing is stepped over',
+    JSON.stringify(asked.map(a => a.offset)) === '[0,4,8,12,16,20,24,25]',
+    JSON.stringify(asked.map(a => a.offset)))
+}
+
+// An exact multiple must not stop one page early, and must not lose the tail.
+{
+  const rows = Array.from({ length: 20 }, (_, i) => ({ id: i }))
+  const { asked, fetchPage } = pager(rows)
+  const out = await collectAllRows(fetchPage, 10, 50)
+  check('a full final page is followed by the empty page that ends it',
+    out !== null && out.length === 20 && asked.length === 3, `rows=${out?.length} pages=${asked.length}`)
+  check('the confirming request starts exactly past the last row',
+    asked[2].offset === 20, String(asked[2].offset))
+}
+
+check('an enumeration with no rows at all is an empty list, NOT a failure',
+  JSON.stringify(await collectAllRows(pager([]).fetchPage, 10, 50)) === '[]')
+
+// A partial read must never be handed back as complete — that is the orphan.
+{
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: i }))
+  const { fetchPage } = pager(rows, { failOnPage: 1 })
+  check('a failed page returns null, NOT the rows gathered so far',
+    (await collectAllRows(fetchPage, 10, 50)) === null)
+}
+{
+  const { fetchPage } = pager([{ id: 0 }], { failOnPage: 0 })
+  check('a failure on the FIRST page returns null, not an empty list',
+    (await collectAllRows(fetchPage, 10, 50)) === null)
+}
+
+// A server ignoring the range header must terminate, and must terminate as a
+// FAILURE — a truncated list here would be indistinguishable from a real one.
+{
+  let calls = 0
+  const fetchPage = async () => { calls++; return [{ id: 0 }] }
+  const out = await collectAllRows(fetchPage, 10, 7)
+  check('a pager that never advances fails instead of looping forever',
+    out === null && calls === 7, `out=${out === null ? 'null' : out.length} calls=${calls}`)
+}
+
+check('the shared page size and ceiling are sane bounds',
+  ROW_PAGE_SIZE > 0 && ROW_MAX_PAGES > 1, `pageSize=${ROW_PAGE_SIZE} maxPages=${ROW_MAX_PAGES}`)
+
 // ── C) Source contracts over the route ─────────────────────────────────────
 console.log('\n— route contract —')
 
@@ -320,6 +421,34 @@ check('the row delete is still gated on ownership',
 check('version and visualizer lookups are scoped to the owned project id',
   /from\('mb_versions'\)\.select\('audio_url'\)\.eq\('project_id', id\)/.test(deleteSrc)
   && /from\('mb_visualizers'\)\.select\('video_url, source_image_url'\)\.eq\('project_id', id\)/.test(deleteSrc))
+
+// The truncating cap is gone, and gone in favour of paging rather than a bigger
+// magic number. Both enumerations, both routes — the account path ran the same
+// query with no cap written at all, which is the same bug wearing a disguise.
+check('no enumeration in the delete path carries a truncating .limit()',
+  !/\.limit\(1000\)/.test(deleteSrc) && !/\.limit\(\d+\)/.test(deleteSrc),
+  (deleteSrc.match(/\.limit\(\d+\)/g) ?? []).join(' ') || 'none')
+
+check('both project enumerations page through collectAllRows',
+  (deleteSrc.match(/collectAllRows</g) ?? []).length === 2,
+  `${(deleteSrc.match(/collectAllRows</g) ?? []).length} call(s)`)
+
+// Offset paging over an UNORDERED PostgREST result can repeat one row and skip
+// another — and a skipped version is an audio file nothing will ever name again,
+// which is the same orphan arrived at from a different direction.
+check('every paged enumeration orders by the primary key, so offsets are stable',
+  (deleteSrc.match(/\.order\('id', \{ ascending: true \}\)\.range\(offset, offset \+ limit - 1\)/g) ?? []).length === 2,
+  `${(deleteSrc.match(/\.order\('id'/g) ?? []).length} ordered`)
+
+// A page fetcher that turned an error into `[]` would end the enumeration at
+// the first blip and report the truncated result as complete.
+{
+  const pageFn = functionBody(routeSrc, 'async function fetchRowPage')
+  check('the page fetcher was located',
+    pageFn.length > 0 && /await query/.test(pageFn), `${pageFn.length} chars`)
+  check('a page error becomes null, never an empty page',
+    /if \(error\) \{[\s\S]*?return null/.test(pageFn) && !/if \(error\)[\s\S]{0,80}?return \[\]/.test(pageFn))
+}
 
 // ORDER: enumerate → delete row → remove bytes. Swapping the last two destroys
 // live media whenever the row delete fails.
@@ -346,8 +475,19 @@ check('no bytes are touched when the delete matched no row',
 check('removal goes through the VERIFYING helper, not a raw .remove()',
   /removeStorageObjectsLogged\(/.test(routeSrc) && !/storage\.from\([^)]*\)\.remove\(/.test(routeSrc))
 
-check('a failed survivor scan removes NOTHING (fail towards leaking, not deleting)',
-  /if \(!survivors\) \{[\s\S]{0,400}?return\b/.test(routeSrc))
+// Sliced as the real block rather than the `[\s\S]{0,400}` window this used to
+// be — see source-contract.mjs on why character windows rot. The window was
+// also measuring the WHOLE file, so it would have matched an `if (!survivors)`
+// anywhere in it.
+{
+  const removeFn = functionBody(routeSrc, 'async function removeProjectAssets')
+  const nullBlock = bracketedBlock(removeFn, 'if (!scan)')
+  check('the removal helper and its null-scan branch were located',
+    removeFn.length > 0 && nullBlock.length > 0 && /console\.error/.test(nullBlock),
+    `remove=${removeFn.length} nullBranch=${nullBlock.length} chars`)
+  check('a survivor scan that learned NOTHING removes NOTHING (fail towards leaking, not deleting)',
+    /\breturn\b/.test(nullBlock) && !/keysSafeToDelete|removeStorageObjectsLogged/.test(nullBlock))
+}
 
 check('unconfirmed removal is logged loudly as orphaned bytes',
   /ORPHANED BYTES/.test(read('src/app/api/projects/[id]/route.ts')))

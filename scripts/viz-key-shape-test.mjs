@@ -31,7 +31,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { stripComments } from './source-contract.mjs'
+import { functionBody, stripComments } from './source-contract.mjs'
 import {
   VIZ_KEY_RE,
   VIZ_STAMP_MAX,
@@ -212,6 +212,14 @@ corpus.push(
   `${PID.toUpperCase()}/viz-1.mp4`,
   `${PID}x/viz-1.mp4`,
   `/${PID}/viz-1.mp4`,
+  // The two shapes storeVisualizer could MINT but the recognizer refuses —
+  // section 5 is about closing them at the write site. They live in the shared
+  // corpus so the before/after classification comparison above also proves the
+  // recognizer's answer for them is unchanged: still refused, still protected
+  // from the sweep. Closing the leak must not make either newly deletable.
+  `${PID}/viz-1786736865181.mov`,
+  `${PID.toUpperCase()}/viz-1786736865181.mp4`,
+  `${PID.toUpperCase()}/viz-1786736865181.mov`,
 )
 
 const classifyDelta = corpus.filter(k => OLD_VIZ_KEY_RE.test(k) !== VIZ_KEY_RE.test(k))
@@ -412,6 +420,173 @@ check('the recognizer itself still spells the budget it always did',
 
 check('the finalize route re-validates the twin key it is about to write',
   /if \(!parseVizStoragePath\(projectId, twinPath\)\)/.test(route))
+
+// ── 5. The WRITE PATH cannot mint a key the recognizer refuses ──────────────
+// Section 1 pins the recognizer. This pins the other half of the contract:
+// storeVisualizer() (src/lib/visualizer-store.ts) is the ONLY site in the
+// codebase that mints an mf-video key from scratch. Every other writer either
+// derives one from an already-validated claim (mp4TwinPath, in the finalize
+// lane and the boot heal) or is /api/upload-url, which refuses to sign anything
+// VIZ_KEY_RE rejects. So if that one expression can produce a key outside the
+// regex, the app writes objects it can never reap — and nothing downstream can
+// rescue them, because every delete path starts from a row's video_url.
+//
+// TWO arms of it could:
+//
+//   * `contentType.includes('quicktime') ? 'mov'`. contentType is externally
+//     influenced on both lanes that reach it — /api/visualizer/save takes it
+//     from `file.type`, the multipart part header the CLIENT writes, and
+//     /api/visualizer/runway forwards the Runway response's content-type
+//     verbatim. mf-video's allowed_mime_types is
+//     ['video/webm','video/mp4','video/quicktime'], so the storage layer accepts
+//     the upload rather than rejecting it. This was reachable, not latent.
+//
+//   * the project segment was interpolated raw, while VIZ_KEY_RE spells it
+//     `[0-9a-f-]{36}` — LOWERCASE hex. isUuid()'s regex carries /i and Postgres
+//     compares uuid columns case-insensitively, so an UPPERCASE project id
+//     cleared both the shape check and the ownership check and minted a key
+//     nothing can ever name. Swift's UUID.uuidString is uppercase and the same
+//     mistake already happened in mf-audio (115 of 389 objects are
+//     `<UPPERCASE-UUID>-v<n>-<ts>.wav`).
+//
+// Neither is fixed by widening the regex. Both are fixed at the mint.
+
+const store = stripComments(read('src/lib/visualizer-store.ts'))
+const storeFn = functionBody(store, 'export async function storeVisualizer')
+
+// The shipped key expression, transcribed — and the one it replaced. Same
+// device as OLD_VIZ_KEY_RE above: a hand-written mirror is only evidence while
+// the source-contract checks below prove the source still says exactly this.
+const STAMP = 1786736865181
+const mintKey = (projectId, contentType) => {
+  const ext = contentType.includes('mp4') || contentType.includes('quicktime') ? 'mp4' : 'webm'
+  return `${projectId.toLowerCase()}/viz-${STAMP}.${ext}`
+}
+const oldMintKey = (projectId, contentType) => {
+  const ext = contentType.includes('mp4') ? 'mp4'
+    : contentType.includes('quicktime') ? 'mov'
+    : 'webm'
+  return `${projectId}/viz-${STAMP}.${ext}`
+}
+
+// Every content-type that can actually arrive, plus what a sloppy or hostile
+// client can assert. The three the bucket permits are the ones that become
+// objects; the list is deliberately wider so the property is not tested only on
+// the inputs someone remembered.
+const CONTENT_TYPES = [
+  'video/mp4',                       // free, finalize, video-jobs — hardcoded
+  'video/webm',                      // save's default when file.type is empty
+  'video/quicktime',                 // ← the leak, and the bucket allows it
+  'video/mp4; codecs="avc1.42E01E"', // what a real File.type looks like
+  'video/webm;codecs=vp9',
+  'VIDEO/QUICKTIME',
+  'application/octet-stream',
+  'binary/octet-stream',
+  'video/x-quicktime',
+  'text/html',
+  '',
+]
+const PID_CASINGS = [PID, PID.toUpperCase(), PID.slice(0, 18) + PID.slice(18).toUpperCase()]
+
+{
+  const minted = []
+  for (const pid of PID_CASINGS) for (const ct of CONTENT_TYPES) minted.push(mintKey(pid, ct))
+
+  const unrecognized = minted.filter(k => !VIZ_KEY_RE.test(k))
+  check('every key the write path can mint is one the sweep RECOGNIZES',
+    unrecognized.length === 0, unrecognized.slice(0, 3).join(' | '))
+  // Recognized is necessary but not sufficient: the claim gate is the stricter
+  // of the two, and the write path must stay inside BOTH or the finalize lane
+  // could not re-derive anything from a key this function produced.
+  const unclaimable = minted.filter(k => !parseVizStoragePath(k.slice(0, 36), k))
+  check('…and one the shared claim gate ACCEPTS, not merely one the regex tolerates',
+    unclaimable.length === 0, unclaimable.slice(0, 3).join(' | '))
+  // Anti-vacuity, both directions: the corpus is the size it claims, it really
+  // contains the two defect shapes, and the mint has not passed by collapsing
+  // every input onto a single safe extension.
+  //
+  // The three membership assertions are named literals rather than a
+  // `.some(…includes('quicktime'))` predicate on purpose. A self-referential
+  // size check (`minted.length === CONTENT_TYPES.length * …`) proves the loops
+  // ran but says NOTHING about what they ran over — deleting an entry keeps it
+  // green, which is exactly how a corpus quietly shrinks to the one input
+  // someone was thinking about. The literals below are the three content-types
+  // mf-video's allowed_mime_types permits, i.e. the only ones that can become
+  // objects at all, so none of them may leave this list.
+  check('…over a corpus that actually exercises both defects',
+    minted.length === CONTENT_TYPES.length * PID_CASINGS.length
+    && CONTENT_TYPES.length >= 10
+    && CONTENT_TYPES.includes('video/mp4')
+    && CONTENT_TYPES.includes('video/webm')
+    && CONTENT_TYPES.includes('video/quicktime')
+    && PID_CASINGS.length >= 3
+    && PID_CASINGS.some(p => p !== p.toLowerCase()),
+    `${minted.length} minted keys from ${CONTENT_TYPES.length} content-types`)
+  check('…and the mint still produces BOTH lanes, not one safe extension',
+    new Set(minted.map(k => k.slice(k.lastIndexOf('.')))).size === 2,
+    [...new Set(minted.map(k => k.slice(k.lastIndexOf('.'))))].join(','))
+
+  // Fail-first witness: the SAME inputs through the expression that shipped.
+  const oldMinted = []
+  for (const pid of PID_CASINGS) for (const ct of CONTENT_TYPES) oldMinted.push(oldMintKey(pid, ct))
+  const oldUnrecognized = [...new Set(oldMinted.filter(k => !VIZ_KEY_RE.test(k)))]
+  check('witness: the old expression minted keys the sweep files as foreign',
+    oldUnrecognized.length > 0, `${oldUnrecognized.length} distinct, of ${oldMinted.length} mints`)
+  check('witness: …including a .mov, from a content-type the bucket accepts',
+    oldUnrecognized.includes(`${PID}/viz-${STAMP}.mov`)
+    && oldMintKey(PID, 'video/quicktime').endsWith('.mov'))
+  check('witness: …and an UPPERCASE project segment, from an id every gate admits',
+    oldUnrecognized.includes(`${PID.toUpperCase()}/viz-${STAMP}.mp4`)
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(PID.toUpperCase()))
+  // Permanent rather than merely wasteful: the sweep is the last cleanup path
+  // that does not start from a row, and it keeps every one of them forever.
+  const foreignPlan = planReap(oldUnrecognized.map(key => ({ key, createdAt: AGED })), new Set(), NOW)
+  check('witness: …none of which the sweep would EVER delete',
+    foreignPlan.reap.length === 0 && foreignPlan.keptForeignShape === oldUnrecognized.length,
+    `reap ${foreignPlan.reap.length}, foreign ${foreignPlan.keptForeignShape}`)
+  // THE FIX IS THE BOUND, NOT A WIDER REGEX. Those keys are still unrecognized
+  // after the fix, so no object already in the bucket became newly deletable —
+  // the app simply stopped being able to create them.
+  check('the fix did not teach the recognizer .mov or uppercase — it stopped writing them',
+    oldUnrecognized.every(k => !VIZ_KEY_RE.test(k))
+    && !VIZ_KEY_RE.test(`${PID}/viz-1.mov`)
+    && !VIZ_KEY_RE.test(`${PID.toUpperCase()}/viz-1.mp4`)
+    && !parseVizStoragePath(PID, `${PID}/viz-1.mov`)
+    && !parseVizStoragePath(PID.toUpperCase(), `${PID.toUpperCase()}/viz-1.mp4`))
+}
+
+// ── Source contract: the mirror above is the code that ships ────────────────
+
+check('the storeVisualizer body was located, and the slice is bounded to it',
+  storeFn.length > 0 && storeFn.includes('.upload(filename, bytes')
+  && storeFn.includes('insertVisualizerRow'),
+  `${storeFn.length} chars`)
+check('no .mov arm survives anywhere in the store',
+  !/'mov'/.test(store) && !/\.mov/.test(store))
+check('the extension is annotated with the recognizer\'s own union type',
+  /const ext: VizKeyExt = contentType\.includes\('mp4'\) \|\| contentType\.includes\('quicktime'\)\s*\?\s*'mp4'\s*:\s*'webm'/
+    .test(storeFn))
+check('…imported from the module that owns VIZ_KEY_RE, never redeclared here',
+  /import \{ parseVizStoragePath, type VizKeyExt \} from '@\/lib\/visualizer-finalize'/.test(store)
+  && !/VIZ_KEY_RE\s*=/.test(store)
+  && !/type VizKeyExt\s*=/.test(store))
+check('the project segment is lowercased before it can become a key',
+  /const keyProjectId = projectId\.toLowerCase\(\)/.test(storeFn)
+  && /const filename = args\.path \?\? `\$\{keyProjectId\}\/viz-\$\{Date\.now\(\)\}\.\$\{ext\}`/.test(storeFn))
+check('…and the raw projectId never reaches a key on its own',
+  !/`\$\{projectId\}\/viz-/.test(store))
+
+{
+  const iGate = storeFn.indexOf('parseVizStoragePath(keyProjectId, filename)')
+  const iUpload = storeFn.indexOf('.upload(filename, bytes')
+  check('the minted key is re-checked against the shared claim gate',
+    iGate !== -1, 'no gate found')
+  check('…BEFORE the bytes are written, which is the only order that helps',
+    iGate !== -1 && iUpload !== -1 && iGate < iUpload, `gate@${iGate} upload@${iUpload}`)
+  check('…refusing the write outright rather than truncating or rewriting the key',
+    /if \(!parseVizStoragePath\(keyProjectId, filename\)\) \{[\s\S]*?return null/.test(storeFn)
+    && !/filename\s*=/.test(storeFn.slice(iGate, iUpload)))
+}
 
 console.log(failures === 0 ? '\nAll viz-key-shape tests passed' : `\n${failures} viz-key-shape test(s) FAILED`)
 process.exit(failures === 0 ? 0 : 1)

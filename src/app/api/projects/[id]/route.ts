@@ -8,14 +8,17 @@ import {
   AUDIO_BUCKET,
   ARTWORK_BUCKET,
   VIDEO_BUCKET,
+  bucketRootKeys,
+  collectAllRows,
   collectAssetKeys,
   collectAssetUrls,
+  keysSafeToDelete,
   listProjectPrefix,
-  subtractKeys,
   totalKeyCount,
   unionKeys,
   type AssetKeys,
   type ProjectAssetRow,
+  type SurvivorScan,
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
@@ -176,20 +179,36 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   let candidates = EMPTY_KEYS
   let candidateUrls: string[] = []
   if (project) {
-    const [versionsRes, visualizersRes] = await Promise.all([
-      supabaseAdmin.from('mb_versions').select('audio_url').eq('project_id', id).limit(1000),
-      supabaseAdmin.from('mb_visualizers').select('video_url, source_image_url').eq('project_id', id).limit(1000),
+    // PAGED, not `.limit(1000)`. The old cap dropped row 1001 onward silently —
+    // no error, no warning — and those rows CASCADE away with the project
+    // moments later, after which nothing can ever name their bytes again.
+    // Unreachable at today's sizes (the largest project has 20 versions), but a
+    // cap that loses data without saying so is the bug regardless of how far off
+    // the number is. collectAllRows pages until an EMPTY page and reports null
+    // rather than a short list, so neither a failure nor a server-side row cap
+    // can pass itself off as "that was all of them".
+    const [versionRows, visualizerRows] = await Promise.all([
+      collectAllRows<VersionAssetRow>((offset, limit) => fetchRowPage(
+        supabaseAdmin.from('mb_versions').select('audio_url').eq('project_id', id)
+          .order('id', { ascending: true }).range(offset, offset + limit - 1),
+        `versions for ${id}`,
+      )),
+      collectAllRows<VisualizerAssetRow>((offset, limit) => fetchRowPage(
+        supabaseAdmin.from('mb_visualizers').select('video_url, source_image_url').eq('project_id', id)
+          .order('id', { ascending: true }).range(offset, offset + limit - 1),
+        `visualizers for ${id}`,
+      )),
     ])
     // A failed enumeration must not read as "this project owned nothing" — that
     // is precisely how the bytes go missing. Log it and keep going: the user's
     // delete must still succeed, and the operator needs to know a sweep is owed.
-    for (const [label, res] of [['versions', versionsRes], ['visualizers', visualizersRes]] as const) {
-      if (res.error) console.error(`[project delete] could not enumerate ${label} for ${id}: ${res.error.message} — storage cleanup will be incomplete`)
+    for (const [label, rows] of [['versions', versionRows], ['visualizers', visualizerRows]] as const) {
+      if (rows === null) console.error(`[project delete] could not enumerate ${label} for ${id} — storage cleanup will be incomplete`)
     }
     const rows = {
       projects: [project as ProjectAssetRow],
-      versions: (versionsRes.data ?? []) as VersionAssetRow[],
-      visualizers: (visualizersRes.data ?? []) as VisualizerAssetRow[],
+      versions: versionRows ?? [],
+      visualizers: visualizerRows ?? [],
     }
     candidates = collectAssetKeys(rows)
     candidateUrls = collectAssetUrls(rows)
@@ -236,6 +255,29 @@ const EMPTY_KEYS: AssetKeys = { 'mf-audio': [], 'mf-artwork': [], 'mf-video': []
 
 const ASSET_BUCKETS = [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET] as const
 
+// Named rather than inlined into the signature so the helper's body is the
+// first braced region after its name — scripts/source-contract.mjs slices
+// functions that way, and an inline object type silently hands it the type
+// literal instead of the code it is meant to police.
+type RowQuery = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>
+
+/**
+ * Await one page of a PostgREST enumeration, mapping any failure to null.
+ *
+ * Null and `[]` must stay distinguishable all the way up: collectAllRows() stops
+ * on an empty page and gives up on a null one, so collapsing an error into `[]`
+ * here would end the enumeration early and report the truncated result as
+ * complete — the precise failure the paging replaced `.limit(1000)` to avoid.
+ */
+async function fetchRowPage<T>(query: RowQuery, label: string): Promise<T[] | null> {
+  const { data, error } = await query
+  if (error) {
+    console.error(`[project delete] enumerating ${label} failed: ${error.message}`)
+    return null
+  }
+  return (data ?? []) as T[]
+}
+
 /**
  * List `<projectId>/` in all three buckets.
  *
@@ -279,8 +321,8 @@ async function listProjectPrefixes(id: string): Promise<AssetKeys> {
 async function removeProjectAssets(id: string, candidates: AssetKeys, candidateUrls: string[]) {
   if (totalKeyCount(candidates) === 0) return
 
-  const survivors = await survivingAssetKeys(candidateUrls, id)
-  if (!survivors) {
+  const scan = await survivingAssetKeys(candidateUrls, id)
+  if (!scan) {
     // The scan is what tells shared objects apart from exclusively-owned ones.
     // Without it we cannot prove a key is safe to delete, and deleting a shared
     // object destroys another project's live media. Leak deliberately.
@@ -291,7 +333,23 @@ async function removeProjectAssets(id: string, candidates: AssetKeys, candidateU
     return
   }
 
-  const doomed = subtractKeys(candidates, survivors)
+  // keysSafeToDelete applies the coverage rule BEFORE subtracting, so a scan
+  // that lost its prefix pass cannot be spent as though it were complete. Doing
+  // this by hand — `subtractKeys(candidates, scan.survivors)` — is the mistake
+  // the SurvivorScan shape exists to make hard to write.
+  const doomed = keysSafeToDelete(candidates, scan)
+
+  if (scan.coverage !== 'all') {
+    // Partial, and loud about which half was skipped. The withheld keys are the
+    // ones only the prefix pass could have vouched for; they leak, as before.
+    const withheld = totalKeyCount(candidates) - totalKeyCount(bucketRootKeys(candidates))
+    console.error(
+      `[project delete] survivor scan for ${id} lost its prefix pass — deleting only the ` +
+      `${totalKeyCount(doomed)} bucket-root object(s) pass 1 could vouch for and leaving ${withheld} ` +
+      `prefixed object(s) in place. Those may be orphaned and need a sweep.`,
+    )
+  }
+
   for (const bucket of [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET] as const) {
     const paths = doomed[bucket]
     if (paths.length === 0) continue
@@ -329,16 +387,25 @@ async function removeProjectAssets(id: string, candidates: AssetKeys, candidateU
  * safety property is unchanged in the direction that matters — unknown still
  * means "keep", never "delete" — but one bad chunk no longer abandons cleanup
  * for the whole project, which is what made this feature a no-op on precisely
- * the large projects it exists for. A pass-2 failure still nulls the scan: its
- * LIKE is not scoped to any enumerable set of URLs, so there is no subset left
- * that can be proven safe.
+ * the large projects it exists for.
+ *
+ * A pass-2 failure no longer nulls the scan either; it DOWNGRADES it to
+ * coverage 'bucket-root-only'. Pass 2's LIKE is not scoped to an enumerable set
+ * of URLs, so most candidates genuinely become unprovable — but a key with no
+ * path separator is not one of them. Every key pass 2 could contribute is
+ * derived from a URL containing `/<id>/`, which in a canonical Supabase URL puts
+ * `<id>/` inside the key itself; a slash-free key is therefore outside anything
+ * pass 2 could have said, and pass 1 already answered for it by exact URL. See
+ * ScanCoverage in src/lib/project-assets.ts for the full derivation and its one
+ * stated residual. Discarding those answers was leaving 116 of 391 mf-audio
+ * objects — the bucket with no sweeper — unreclaimable on a single failed query.
  *
  * Deliberately NOT scoped to the deleting user: PATCH only checks that
  * artwork_url is *a* Supabase storage URL, so one account can point a project
  * at another account's object. Scoping the scan by owner would let that pin be
  * used to delete a stranger's artwork.
  */
-async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys | null> {
+async function survivingAssetKeys(urls: string[], id: string): Promise<SurvivorScan | null> {
   const projects: ProjectAssetRow[] = []
   const versions: VersionAssetRow[] = []
   const visualizers: VisualizerAssetRow[] = []
@@ -346,7 +413,12 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
   // URLs the scan could not get an answer about, treated exactly as if a
   // surviving row still named them. See `run` below.
   const unresolved = new Set<string>()
-  let failed = false
+  // Set when the UNSCOPED prefix pass gives up. Downgrades coverage rather than
+  // failing the scan — see the header comment.
+  let prefixFailed = false
+  // How many queries came back with a usable answer. Zero means we learned
+  // nothing at all, which must stay distinguishable from "asked, found nothing".
+  let answered = 0
 
   // Every URL column that can name one of our candidate objects. Missing the
   // table/column pair here is how a shared object gets deleted, so keep this
@@ -401,12 +473,19 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
         error = { message: thrown instanceof Error ? thrown.message : String(thrown) }
       }
       if (!error) {
+        answered++
         absorb(table, data ?? [])
         return
       }
       // A missing pin column means there are no pins to protect, not a broken
-      // scan (migrations 015 / 020). Never retried — it cannot heal.
-      if (optional.has(column) && isMissingVisualizerColumn(error)) return
+      // scan (migrations 015 / 020). Never retried — it cannot heal. Counted as
+      // ANSWERED because it is one: a column that does not exist cannot be
+      // holding a reference. The injected select in delete-account already
+      // reports this case as an empty row set for the same reason.
+      if (optional.has(column) && isMissingVisualizerColumn(error)) {
+        answered++
+        return
+      }
       lastError = error
     }
 
@@ -422,8 +501,10 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
     }
 
     // Unscoped failure: pass 2's LIKE spans every key under the project prefix,
-    // so no subset of the candidates can still be proven safe. Fail the scan.
-    failed = true
+    // so nothing the LISTING turned up can be proven safe any more. Downgrade
+    // coverage instead of failing outright — the bucket-root keys pass 1
+    // answered for are provably outside what this query could ever have said.
+    prefixFailed = true
   }
 
   // Chunked ONCE — the URL list is the same for every column.
@@ -462,17 +543,21 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<AssetKeys
   // first place.
   await runBounded(queries, SCAN_CONCURRENCY)
 
-  // A scan we cannot complete cannot tell a shared object from an exclusively
-  // owned one, and deleting a shared object destroys another project's live
-  // media. Fail towards leaking bytes, never towards deleting them.
-  if (failed) return null
+  // Not one query answered. That is an outage, not a partial answer: handing
+  // back an empty survivor set here would read as "no row references any of
+  // these" and authorise deleting every candidate, which is the single confusion
+  // this return type exists to prevent. Same rule as scanSurvivingKeys().
+  if (answered === 0 && queries.length > 0) return null
 
   const found = collectAssetKeys({ projects, versions, visualizers })
-  if (unresolved.size === 0) return found
 
   // Fold the unanswered URLs in as though they were survivors — through the
   // SHARED derivation, so their keys are worked out exactly the way the
   // candidate keys were (WebM twins included) rather than by a second parser
   // that could drift out of step with it.
-  return unionKeys(found, collectAssetKeys(assumedSurvivorRows([...unresolved])))
+  const survivors = unresolved.size === 0
+    ? found
+    : unionKeys(found, collectAssetKeys(assumedSurvivorRows([...unresolved])))
+
+  return { survivors, coverage: prefixFailed ? 'bucket-root-only' : 'all' }
 }

@@ -41,7 +41,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { stripComments, functionBody } from './source-contract.mjs'
+import { stripComments, functionBody, bracketedBlock } from './source-contract.mjs'
 import {
   SCAN_CONCURRENCY,
   CHUNK_ENCODED_BUDGET,
@@ -56,6 +56,9 @@ import {
   ARTWORK_BUCKET,
   VIDEO_BUCKET,
   collectAssetKeys,
+  bucketRootKeys,
+  keysSafeToDelete,
+  storagePathFromUrl,
 } from '../src/lib/project-assets.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -288,6 +291,147 @@ console.log('\n— unresolved URLs are protected as survivors —')
     keys[AUDIO_BUCKET].length === 0 && keys[ARTWORK_BUCKET].length === 0 && keys[VIDEO_BUCKET].length === 0)
 }
 
+// ── C2) Pass-2 partial recovery: the claim, proved against the real code ───
+console.log('\n— pass-2 partial recovery —')
+
+// THE CLAIM
+// When only the PREFIX pass (pass 2, `column LIKE '%/<id>/%'`) fails, keys with
+// no path separator may still be deleted, because pass 2 could never have
+// vouched for them and pass 1 already answered for them by exact URL.
+//
+// The load-bearing half is provable rather than asserted, so it is proved here
+// against the REAL storagePathFromUrl rather than restated: for a canonical
+// Supabase public URL, matching pass 2's pattern IMPLIES the derived key
+// contains a separator. Contrapositive: a slash-free key can never come back
+// from pass 2, so losing pass 2 tells us nothing new about it.
+{
+  // Exactly what PostgREST evaluates for `.like(column, '%/<id>/%')`. The
+  // pattern carries no other wildcards — `id` is a validated UUID — so a plain
+  // substring test is the whole of it.
+  const pass2Matches = (url) => url.includes(`/${PROJECT}/`)
+
+  // A corpus spanning every canonical shape production actually holds, plus the
+  // ones that would break a careless implementation.
+  const corpus = [
+    audioUrl(`${PROJECT}/1786795143590.wav`),                 // web upload, own prefix
+    audioUrl('HALFWAY - MIX 1.wav'),                          // 111 of 116 root keys
+    audioUrl('A9241D7E-A296-49CE-8D92-5C76533BAB0F-v19-1.wav'), // iOS root key: UUID, NO separator
+    audioUrl(`${PROJECT}/nested/deep.wav`),
+    artUrl(`${PROJECT}/finalized-2.jpg`),
+    artUrl(`covers/${PROJECT}/legacy.jpg`),                   // the one legacy shape in production
+    artUrl('727255a7-fd23-42f9-aa7c-63acf9898093/other.jpg'), // another project's prefix
+    vidUrl(`${PROJECT}/viz-9-h264.mp4`),
+    vidUrl('viz-root-h264.mp4'),
+    // A root key that happens to CONTAIN the project id without a separator
+    // around it — the near-miss that makes the `/…/` anchoring load-bearing.
+    audioUrl(`${PROJECT}-v3-1786837847.wav`),
+  ]
+  const buckets = [AUDIO_BUCKET, ARTWORK_BUCKET, VIDEO_BUCKET]
+  const keyOf = (url) => buckets.map(b => storagePathFromUrl(url, b)).find(k => k !== null) ?? null
+
+  // Positive locator: if the corpus derived no keys at all, the implication
+  // below would hold vacuously over an empty set and prove nothing.
+  const derived = corpus.map(keyOf).filter(k => k !== null)
+  check('the recovery corpus derives a key for every URL in it',
+    derived.length === corpus.length, `${derived.length}/${corpus.length}`)
+
+  // Both sides must be non-empty, or the implication is vacuous in one direction.
+  const matching = corpus.filter(pass2Matches)
+  const rootKeys = corpus.filter(u => !keyOf(u).includes('/'))
+  check('the corpus contains BOTH pass-2 matches and separator-free keys',
+    matching.length > 0 && rootKeys.length > 0,
+    `matches=${matching.length} rootKeys=${rootKeys.length}`)
+
+  check('THE PROOF: every canonical URL pass 2 can match derives a key containing a separator',
+    matching.every(u => keyOf(u).includes('/')),
+    matching.filter(u => !keyOf(u).includes('/')).join(' ') || 'no counterexample')
+
+  // The contrapositive, stated the way the recovery actually uses it.
+  check('...so no separator-free key is reachable by the prefix pass',
+    rootKeys.every(u => !pass2Matches(u)),
+    rootKeys.filter(pass2Matches).join(' ') || 'none reachable')
+
+  // The near-miss, called out on its own: a bucket-root key whose NAME starts
+  // with the project id must not be mistaken for a prefixed one.
+  const nearMiss = audioUrl(`${PROJECT}-v3-1786837847.wav`)
+  check('a root key merely CONTAINING the project id is still root, and still unmatched',
+    !keyOf(nearMiss).includes('/') && !pass2Matches(nearMiss), keyOf(nearMiss))
+
+  // The residual the source comment declares, asserted rather than left implied:
+  // an OFF-CANONICAL URL breaks the implication. Production has zero of these
+  // (all 552 non-null URLs measured 2026-08-18 are canonical), but a test that
+  // pretended the hole did not exist would be the dishonest kind of green.
+  const crafted = `${SB}/${PROJECT}/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`
+  check('the ONE documented residual is real: an off-canonical URL escapes the proof',
+    pass2Matches(crafted) && !keyOf(crafted).includes('/'), keyOf(crafted))
+}
+
+// ── C3) The coverage rule itself, driven by the real key filters ───────────
+console.log('\n— coverage rule —')
+
+const EMPTY_KEYS = { 'mf-audio': [], 'mf-artwork': [], 'mf-video': [] }
+const keySet = (o) => ({ ...EMPTY_KEYS, ...o });
+
+{
+  const candidates = keySet({
+    'mf-audio': ['HALFWAY - MIX 1.wav', `${PROJECT}/web.wav`],
+    'mf-artwork': [`${PROJECT}/finalized-old.jpg`],
+    'mf-video': ['viz-root.mp4', `${PROJECT}/viz-9.mp4`],
+  })
+
+  const roots = bucketRootKeys(candidates)
+  check('bucketRootKeys keeps separator-free keys and drops prefixed ones',
+    roots[AUDIO_BUCKET].length === 1 && roots[AUDIO_BUCKET][0] === 'HALFWAY - MIX 1.wav'
+    && roots[ARTWORK_BUCKET].length === 0
+    && roots[VIDEO_BUCKET].length === 1 && roots[VIDEO_BUCKET][0] === 'viz-root.mp4',
+    JSON.stringify(roots))
+
+  // FULL coverage: everything the survivors do not name may go.
+  const full = keysSafeToDelete(candidates, { survivors: EMPTY_KEYS, coverage: 'all' })
+  check('full coverage authorises every unreferenced candidate',
+    full[AUDIO_BUCKET].length === 2 && full[ARTWORK_BUCKET].length === 1 && full[VIDEO_BUCKET].length === 2,
+    JSON.stringify(full))
+
+  // DEGRADED coverage: only the separator-free keys.
+  const partial = keysSafeToDelete(candidates, { survivors: EMPTY_KEYS, coverage: 'bucket-root-only' })
+  check('degraded coverage authorises the bucket-root keys pass 1 answered for',
+    partial[AUDIO_BUCKET].includes('HALFWAY - MIX 1.wav') && partial[VIDEO_BUCKET].includes('viz-root.mp4'),
+    JSON.stringify(partial))
+  check('degraded coverage withholds every PREFIXED key (only pass 2 could vouch for those)',
+    !partial[AUDIO_BUCKET].includes(`${PROJECT}/web.wav`)
+    && partial[ARTWORK_BUCKET].length === 0
+    && !partial[VIDEO_BUCKET].includes(`${PROJECT}/viz-9.mp4`),
+    JSON.stringify(partial))
+
+  // Degrading coverage must not switch the survivor subtraction off: a
+  // bucket-root object pass 1 found a live referrer for is still protected.
+  const stillReferenced = keysSafeToDelete(candidates, {
+    survivors: keySet({ 'mf-audio': ['HALFWAY - MIX 1.wav'] }),
+    coverage: 'bucket-root-only',
+  })
+  check('a bucket-root key a SURVIVOR still names is protected even under degraded coverage',
+    !stillReferenced[AUDIO_BUCKET].includes('HALFWAY - MIX 1.wav'),
+    JSON.stringify(stillReferenced[AUDIO_BUCKET]))
+
+  // The direction that matters most: degraded is a strict SUBSET of full, never
+  // a superset. If this ever inverts, the recovery is deleting more than a
+  // healthy scan would.
+  const flat = (k) => [...k[AUDIO_BUCKET], ...k[ARTWORK_BUCKET], ...k[VIDEO_BUCKET]]
+  check('degraded coverage never authorises anything full coverage would not',
+    flat(partial).every(k => flat(full).includes(k)) && flat(partial).length < flat(full).length,
+    `partial=${flat(partial).length} full=${flat(full).length}`)
+}
+
+// An EMPTY survivor set is a real answer ("asked, nothing references these") and
+// must keep authorising deletion. Conflating it with "unknown" is what would
+// turn this whole feature back into a no-op.
+{
+  const candidates = keySet({ 'mf-audio': ['solo.wav'] })
+  const out = keysSafeToDelete(candidates, { survivors: EMPTY_KEYS, coverage: 'all' })
+  check('an EMPTY survivor set still authorises deletion (it is an answer, not a shrug)',
+    out[AUDIO_BUCKET].includes('solo.wav'), JSON.stringify(out))
+}
+
 // ── D) The route must actually use the planner, and stay fail-safe ─────────
 console.log('\n— route contract —')
 
@@ -331,19 +475,43 @@ check('a failed query is retried once before being given up on',
 check('a thrown transport fault is caught rather than escaping the route',
   /catch \(thrown\)/.test(survivorFn))
 
-// ORDER: the scoped branch must RETURN before the whole-scan failure flag is
-// reached, or a recoverable chunk failure would still nuke the cleanup.
+// ORDER: the scoped branch must RETURN before the unscoped downgrade is
+// reached, or a recoverable chunk failure would also cost the prefix pass.
 {
   const iProtect = survivorFn.indexOf('if (protect)')
-  const iFailed = survivorFn.indexOf('failed = true')
-  const between = iProtect !== -1 && iFailed !== -1 ? survivorFn.slice(iProtect, iFailed) : ''
-  check('the scoped-failure branch comes before the whole-scan failure flag',
-    iProtect !== -1 && iFailed !== -1 && iProtect < iFailed, `protect=${iProtect} failed=${iFailed}`)
+  const iDowngrade = survivorFn.indexOf('prefixFailed = true')
+  const between = iProtect !== -1 && iDowngrade !== -1 ? survivorFn.slice(iProtect, iDowngrade) : ''
+  check('the scoped-failure branch comes before the coverage downgrade',
+    iProtect !== -1 && iDowngrade !== -1 && iProtect < iDowngrade,
+    `protect=${iProtect} downgrade=${iDowngrade}`)
   check('the scoped-failure branch returns instead of falling through to it',
     between.length > 0 && /\breturn\b/.test(between))
-  check('the whole-scan failure flag is set in exactly one place',
-    survivorFn.split('failed = true').length - 1 === 1)
+  check('the coverage downgrade is set in exactly one place',
+    survivorFn.split('prefixFailed = true').length - 1 === 1)
 }
+
+// The downgrade must be reachable ONLY from the unscoped (pass-2) branch. If a
+// scoped chunk failure could also set it, one bad chunk would cost every
+// prefixed object its cleanup — the regression this whole degradation replaced.
+{
+  const iProtect = survivorFn.indexOf('if (protect)')
+  const beforeProtect = iProtect !== -1 ? survivorFn.slice(0, iProtect) : survivorFn
+  check('nothing before the scoped-failure branch can downgrade coverage',
+    iProtect !== -1 && !/prefixFailed = true/.test(beforeProtect))
+}
+
+// "Learned nothing" must remain its own answer. Returning a survivor set here
+// would read as "no row references any of these" and authorise deleting every
+// candidate — the single confusion the return type exists to prevent.
+check('a scan where NOTHING answered still returns null, not an empty survivor set',
+  /if \(answered === 0 && queries\.length > 0\) return null/.test(survivorFn))
+check('the answered counter is incremented on a successful query',
+  /if \(!error\) \{\s*answered\+\+/.test(survivorFn))
+
+// The coverage value is what the caller branches on; a scan that always claimed
+// 'all' would silently re-enable the unsafe deletes on a pass-2 outage.
+check('the returned coverage reflects whether the prefix pass survived',
+  /coverage: prefixFailed \? 'bucket-root-only' : 'all'/.test(survivorFn))
 
 check('unresolved URLs are folded in through the SHARED derivation',
   /unionKeys\(found, collectAssetKeys\(assumedSurvivorRows\(/.test(survivorFn))
@@ -359,10 +527,30 @@ check('the survivor scan is still NOT scoped to the deleting user',
 
 const removeFn = functionBody(routeSrc, 'async function removeProjectAssets')
 check('the removal function body was located',
-  removeFn.length > 0 && /subtractKeys\(/.test(removeFn), `${removeFn.length} chars`)
-check('a null (unscoped-failure) scan still removes NOTHING',
-  /if \(!survivors\) \{/.test(removeFn)
-  && /\breturn\b/.test(removeFn.slice(removeFn.indexOf('if (!survivors)'), removeFn.indexOf('subtractKeys'))))
+  removeFn.length > 0 && /keysSafeToDelete\(/.test(removeFn), `${removeFn.length} chars`)
+
+// A null scan means "I learned nothing" and must still remove NOTHING. Sliced
+// as the real `if (!scan)` block rather than a character window, so an edit that
+// moves the two apart cannot quietly stop measuring anything.
+{
+  const nullBlock = bracketedBlock(removeFn, 'if (!scan)')
+  check('the null-scan branch was located',
+    nullBlock.length > 0 && /console\.error/.test(nullBlock), `${nullBlock.length} chars`)
+  check('a null (learned-nothing) scan still removes NOTHING',
+    /\breturn\b/.test(nullBlock)
+    && !/keysSafeToDelete|removeStorageObjectsLogged/.test(nullBlock))
+  check('the null-scan branch returns BEFORE anything is subtracted',
+    removeFn.indexOf('if (!scan)') < removeFn.indexOf('keysSafeToDelete('))
+}
+
+// The coverage rule must be applied by the SHARED helper. A hand-written
+// subtractKeys(candidates, scan.survivors) here would spend a downgraded scan as
+// though it were complete, which is precisely the deletion this change must not
+// authorise — so the raw subtraction is banned from the function outright.
+check('the removal helper does not subtract around the coverage rule',
+  !/subtractKeys\(/.test(removeFn))
+check('a partial-coverage scan is reported, not silently narrowed',
+  /scan\.coverage !== 'all'/.test(removeFn) && /console\.error/.test(removeFn))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`)
 process.exit(failures === 0 ? 0 : 1)
