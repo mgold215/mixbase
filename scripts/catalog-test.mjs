@@ -10,7 +10,7 @@
 //
 // Run: node scripts/catalog-test.mjs   (also part of `npm run test:renderers`)
 
-import { parseSpotifyArtistId, mapSpotifyCatalog, mapDeezerCatalog, flattenCatalogTracks, mergeLibraryRow, pickMusicBrainzRecordingIds } from '../src/lib/catalog.ts'
+import { parseSpotifyArtistId, mapSpotifyCatalog, mapDeezerCatalog, mapMusicBrainzCatalog, flattenCatalogTracks, mergeLibraryRow, pickMusicBrainzRecordingIds } from '../src/lib/catalog.ts'
 
 let failures = 0
 function check(name, cond, detail = '') {
@@ -97,6 +97,62 @@ const sparse = mapSpotifyCatalog({}, [{ tracks: {} }, {}], new Map())
 check('spotify: sparse payload survives', sparse.releases.length === 2 && sparse.artistName === 'Unknown artist')
 const dzSparse = mapDeezerCatalog({}, [{}])
 check('deezer: sparse payload survives', dzSparse.releases.length === 1 && dzSparse.releases[0].tracks.length === 0)
+
+// ── mapMusicBrainzCatalog ────────────────────────────────────────────────────
+// MusicBrainz is the fallback that keeps the feature alive where Deezer 403s
+// the server's IP. Its shape is the awkward one: every release-group carries
+// several editions (per country/format) whose ISRC coverage differs, and the
+// edition's own `date` is often a reissue rather than the original drop.
+const mbArtist = { id: 'artist-mbid', name: 'Test Artist' }
+const mbReleases = [
+  { // US edition of the EP — thin: only one ISRC
+    id: 'rel-us', title: 'EP One', date: '2024-11-08', barcode: '198000000003',
+    'release-group': { id: 'rg-ep', title: 'EP One', 'first-release-date': '2024-11-08', 'primary-type': 'EP' },
+    media: [{ tracks: [
+      { position: 1, title: 'A', length: 190000, recording: { id: 'rec-a', title: 'A', isrcs: ['USABC2400009'] } },
+      { position: 2, title: 'B', length: 200000, recording: { id: 'rec-b', title: 'B', isrcs: [] } },
+    ] }],
+  },
+  { // 2026 Japanese reissue of the SAME release-group — fully coded
+    id: 'rel-jp', title: 'EP One (Japan)', date: '2026-02-01', barcode: '498000000003',
+    'release-group': { id: 'rg-ep', title: 'EP One', 'first-release-date': '2024-11-08', 'primary-type': 'EP' },
+    media: [{ tracks: [
+      { position: 1, title: 'A', length: 190000, recording: { id: 'rec-a', title: 'A', isrcs: ['USABC2400009'] } },
+      { position: 2, title: 'B', length: 200000, recording: { id: 'rec-b', title: 'B', isrcs: ['USABC2400010'] } },
+    ] }],
+  },
+  { // A later single, so ordering is testable
+    id: 'rel-single', title: 'New Drop', date: '2025-06-13', barcode: '198000000002',
+    'release-group': { id: 'rg-single', title: 'New Drop', 'first-release-date': '2025-06-13', 'primary-type': 'Single' },
+    media: [{ tracks: [{ position: 1, title: 'New Drop', length: 201000, recording: { id: 'rec-n', title: 'New Drop', isrcs: ['USABC2500002'] } }] }],
+  },
+]
+const mb = mapMusicBrainzCatalog(mbArtist, mbReleases)
+check('musicbrainz: source tagged', mb.source === 'musicbrainz')
+check('musicbrainz: artist name + url mapped',
+  mb.artistName === 'Test Artist' && mb.artistUrl === 'https://musicbrainz.org/artist/artist-mbid')
+check('musicbrainz: editions of one release-group collapse to a single row',
+  mb.releases.length === 2, `got ${mb.releases.length}`)
+check('musicbrainz: newest release first', mb.releases[0].title === 'New Drop', `got ${mb.releases[0]?.title}`)
+const mbEp = mb.releases.find(r => r.title === 'EP One')
+check('musicbrainz: the edition with MORE ISRCs wins the collapse',
+  mbEp.tracks.every(t => t.isrc) && mbEp.tracks[1].isrc === 'USABC2400010')
+check('musicbrainz: date comes from the release-group, so a reissue never rewrites the drop date',
+  mbEp.releaseDate === '2024-11-08', String(mbEp.releaseDate))
+check('musicbrainz: barcode mapped as UPC', mbEp.upc === '498000000003')
+check('musicbrainz: ms length → rounded seconds', mbEp.tracks[0].durationSeconds === 190)
+check('musicbrainz: 2 tracks typed single', mbEp.releaseType === 'single')
+check('musicbrainz: release url points at the chosen edition',
+  mbEp.url === 'https://musicbrainz.org/release/rel-jp')
+check('musicbrainz: missing isrcs → null, not undefined',
+  mapMusicBrainzCatalog(mbArtist, [mbReleases[0]]).releases[0].tracks[1].isrc === null)
+check('musicbrainz: sparse payload survives',
+  mapMusicBrainzCatalog({}, [{ id: 'x' }, {}]).releases.length === 1)
+// The flattener must treat a MusicBrainz catalog exactly like the others.
+const mbFlat = flattenCatalogTracks(mb)
+check('musicbrainz: flattens to one row per recording',
+  mbFlat.length === 3, `got ${mbFlat.length}`)
+check('musicbrainz: source carried onto rows', mbFlat.every(r => r.source === 'musicbrainz'))
 
 // ── flattenCatalogTracks ─────────────────────────────────────────────────────
 // The waterfall shape: "Old Single" appears on its own 2024 drop AND re-released
