@@ -8,6 +8,13 @@ import { announcePlay, onOtherSourcePlay, onSourceStop, claimMediaSession, canRe
 
 export type LoopMode = 'none' | 'all' | 'one'
 
+/** A mix whose `duration_seconds` row is NULL, paired with the proxied URL the
+ *  engine will load for it — see the self-healing backfill below. */
+export type UnmeasuredVersion = {
+  versionId: string
+  url: string
+}
+
 /** An entry in the URL-based queue (e.g. the community feed): everything
  *  playUrl needs to start the track and label the mini player / lock screen. */
 export type UrlQueueEntry = {
@@ -54,6 +61,12 @@ type PlayerCtx = {
    *  mini-player/lock-screen transport follows it, and there is exactly ONE
    *  end-of-track policy (loop modes keep precedence). */
   setUrlQueue: (entries: UrlQueueEntry[]) => void
+  /** Tell the engine which mixes have NO stored duration, so it can write the
+   *  one it measures back to the row (see the backfill notes further down).
+   *  Callers supply the proxied URL the engine will actually load, and only for
+   *  versions whose `duration_seconds` really is null. Idempotent — safe to call
+   *  on every render pass. */
+  registerUnmeasuredVersions: (entries: UnmeasuredVersion[]) => void
   playTrack: (projectId: string) => void
   /** Play any URL through the shared audio element (shows in mini player).
    *  Pass startAt (seconds) to begin playback at a position — e.g. jumping to a
@@ -138,6 +151,81 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // A seek requested before metadata loaded (e.g. restoring last position). Applied on
   // 'loadedmetadata' since setting currentTime before the media is seekable is a no-op.
   const pendingSeekRef = useRef<number | null>(null)
+
+  // ── Self-healing duration backfill ─────────────────────────────────────────
+  // 144 of 363 production mb_versions rows have duration_seconds NULL — iOS
+  // uploads that predate the field, plus web uploads whose upload-time probe
+  // timed out or came back non-finite (which JSON-encodes to null). The length
+  // is therefore missing from the version list, the collection/album-share
+  // payloads and the video finaliser, all of which carry workarounds for it.
+  //
+  // Nothing needs to go and re-read 23 GB of audio to fix that: this element
+  // measures the true duration every single time a mix plays. When it does, and
+  // the row is known to be empty, write it back. The catalog heals as people
+  // listen.
+  //
+  // Two refs, because the two halves of the knowledge live in different places:
+  //  · targets — absolute audio URL → version id, for rows a page has told us
+  //    are NULL. The engine cannot work this out alone: Track (from /api/tracks)
+  //    carries no duration_seconds, and playUrl sources carry no version id at all.
+  //  · attempted — version ids tried this session. One shot each: a failed PATCH
+  //    must not turn into a request every time the user replays the mix.
+  const durationTargetsRef = useRef<Map<string, string>>(new Map())
+  const durationAttemptedRef = useRef<Set<string>>(new Set())
+
+  /**
+   * Write back the duration this element just measured, if the loaded source is
+   * a registered NULL row. Fire-and-forget by construction: nothing awaits it,
+   * nothing surfaces on failure, and it is called from a media event handler
+   * that returns immediately — playback is never held up by it.
+   */
+  const attemptDurationBackfill = useCallback((audio: HTMLAudioElement) => {
+    // currentSrc, not currentUrl state or audio.src: it is the element's own
+    // account of what is actually loaded right now, already absolute, and it
+    // cannot lag a render behind a track change the way the React mirrors can.
+    const versionId = durationTargetsRef.current.get(audio.currentSrc)
+    if (!versionId) return
+    if (durationAttemptedRef.current.has(versionId)) return
+
+    const seconds = audio.duration
+    // THE guard. `duration` is NaN until metadata is parsed and Infinity for a
+    // stream whose length the browser cannot determine — and audio here is
+    // *streamed* through /api/audio, which only forwards Content-Length when
+    // Supabase sends one. Persisting either would replace "we don't know" with
+    // a permanent lie, and the write-once rule server-side means it could never
+    // be corrected. Bailing out is free: a later 'durationchange' with a real
+    // value still heals the row, because nothing is marked attempted here.
+    if (!Number.isFinite(seconds) || seconds <= 0) return
+
+    // Marked BEFORE the request so an in-flight PATCH cannot be double-sent by
+    // the second metadata event of the same load.
+    durationAttemptedRef.current.add(versionId)
+    // The server independently validates the number and refuses to overwrite a
+    // non-null row, so this request is advisory — it is allowed to fail, and it
+    // is deliberately not retried, reported, or awaited.
+    void fetch(`/api/versions/${versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration_seconds: Math.round(seconds) }),
+    }).catch(() => { /* offline / navigating away — the next session tries again */ })
+  }, [])
+
+  const registerUnmeasuredVersions = useCallback((entries: UnmeasuredVersion[]) => {
+    if (typeof window === 'undefined') return
+    for (const { versionId, url } of entries) {
+      // Absolute, to match audio.currentSrc — audioProxyUrl() returns a
+      // same-origin path ('/api/audio/…'), which would never compare equal.
+      // Resolved against document.baseURI, which is the base the browser itself
+      // uses when it turns the element's src attribute into currentSrc.
+      durationTargetsRef.current.set(new URL(url, document.baseURI).href, versionId)
+    }
+    // A mix can already be loaded and measured before the page that knows its
+    // row is NULL ever mounts (the mini player was playing it while the user
+    // navigated here). No further metadata event is coming for that load, so
+    // heal it now rather than waiting for the next play.
+    const audio = audioRef.current
+    if (audio) attemptDurationBackfill(audio)
+  }, [attemptDurationBackfill])
 
   // Live mirror of currentProjectId so the (mount-once) audio event listeners can read it
   // without re-subscribing on every track change.
@@ -251,7 +339,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current
     if (!audio) return
 
-    const syncDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
+    // Called by BOTH 'loadedmetadata' and 'durationchange', which is exactly
+    // what the backfill needs: some sources report Infinity at loadedmetadata
+    // and only settle on a real length in a later durationchange.
+    //
+    // Infinity is treated as "unknown" (0) here, not just NaN. A streamed source
+    // whose length the browser can't determine reports Infinity, and letting
+    // that reach state made the scrubber's `currentTime / duration` collapse to
+    // 0% forever and rendered "Infinity" through formatDuration's fallbacks.
+    const syncDuration = () => {
+      const d = audio.duration
+      setDuration(Number.isFinite(d) && d > 0 ? d : 0)
+      attemptDurationBackfill(audio)
+    }
 
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime)
@@ -364,7 +464,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener('error', onError)
       audio.removeEventListener('emptied', onEmptied)
     }
-  }, [savePosition])
+  }, [savePosition, attemptDurationBackfill])
 
   const currentTrack = useMemo<Track | null>(() => {
     if (currentProjectId) return tracks.find(t => t.project_id === currentProjectId) ?? null
@@ -809,6 +909,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setShuffle,
       setQueue,
       setUrlQueue,
+      registerUnmeasuredVersions,
       playTrack,
       playUrl,
       pause,

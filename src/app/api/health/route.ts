@@ -43,6 +43,44 @@ export async function GET() {
     db = 'error'
   }
 
+  // Has a user session attached itself to the shared admin client?
+  //
+  // `adminPower` above cannot answer this. It was built to catch degradation to
+  // ANON, which shows up as "sees zero rows" — but a client demoted to a USER
+  // still sees that user's own profile row, so the count stays > 0 and the probe
+  // reports healthy. That is exactly what happened: for months health said
+  // `admin_power: true` while every server-side storage delete was being refused
+  // by RLS and silently reporting success (see src/lib/supabase.ts).
+  //
+  // This check is precise instead of inferential — supabase-js prefers a session
+  // token over the API key for every PostgREST and Storage call, so the presence
+  // of ANY session here means the process is no longer acting as service_role.
+  //
+  // Usually in-memory, but NOT always: getSession() → __loadSession refreshes an
+  // EXPIRED stored session over the network. So on a leaked-and-just-expired
+  // session whose refresh then fails, the session is cleared and this reports
+  // `false` for a process that was leaking a moment ago. The false negative is
+  // in the safe direction and cannot mask a live leak, but don't read a single
+  // `false` as proof the process was never demoted.
+  //
+  // Reported and logged rather than folded into `ok`: consistent with
+  // `admin_power`, and a 503 here would take the site down over a condition the
+  // code now makes unreachable.
+  let adminSessionLeak = false
+  try {
+    const { data } = await supabaseAdmin.auth.getSession()
+    adminSessionLeak = !!data.session
+    if (adminSessionLeak) {
+      console.error(
+        '[health] SHARED ADMIN CLIENT HAS A USER SESSION — it is acting as `authenticated`, not `service_role`. ' +
+        'Server-side storage deletes will be silently refused and cleanup paths will report false success. ' +
+        'Something called a session-establishing auth method on supabaseAdmin; use createSessionClient() instead.',
+      )
+    }
+  } catch {
+    // A client with no auth storage can throw here; that is not a leak.
+  }
+
   // Whether THIS process holds a key that actually grants service-role power —
   // not merely whether the variable is set. A missing key OR a wrong key (the
   // anon key pasted into SUPABASE_SERVICE_ROLE_KEY) both degrade the admin
@@ -55,7 +93,14 @@ export async function GET() {
   // status-based Railway healthcheck may not contradict each other.
   const ok = db === 'ok' && serviceRoleKeyValid
   return Response.json(
-    { ok, db, service_key: serviceRoleKeyValid, admin_power: adminPower, ts: Date.now() },
+    {
+      ok,
+      db,
+      service_key: serviceRoleKeyValid,
+      admin_power: adminPower,
+      admin_session_leak: adminSessionLeak,
+      ts: Date.now(),
+    },
     { status: ok ? 200 : 503 }
   )
 }

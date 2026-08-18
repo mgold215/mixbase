@@ -1,14 +1,19 @@
 'use client'
 
-import { useState, useRef, type ChangeEvent, type ReactNode } from 'react'
+import { useState, useRef, useEffect, type ChangeEvent, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
-import MasterCheck from '@/components/MasterCheck'
+import MasterCheck, { writeLoudnessCache } from '@/components/MasterCheck'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { loudnessFromRow, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
+import { measureLoudness, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
+import {
+  AUTO_MEASURE_MAX_FILE_BYTES, autoMeasureProbeFrames, fitsAutoMeasureBudget, canAttemptAutoMeasure,
+} from '@/lib/loudness-auto'
 import { trackShareUrl } from '@/lib/share-url'
 import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
@@ -36,6 +41,144 @@ const Visualizer = dynamic(() => import('@/components/Visualizer'), { ssr: false
 const VideoFinalizer = dynamic(() => import('@/components/VideoFinalizer'), { ssr: false })
 
 type VersionWithFeedback = Version & { mb_feedback: Feedback[] }
+
+// ─── Auto-measure loudness after an upload ───────────────────────────────────
+// Measuring a mix has always been possible (MasterCheck's "Measure loudness"
+// button), but it costs a full RE-DOWNLOAD: the button fetches the track back
+// out of Supabase storage purely to decode it. At the end of an upload the
+// browser is still holding the local `File`, so the same measurement is
+// available without the round trip. That saving — not "free CPU" — is the whole
+// justification for doing this automatically.
+//
+// Everything here is at module scope and takes only what it needs. It captures
+// no component state and returns nothing to the upload flow, so there is no way
+// for it to interfere with the upload that triggered it.
+
+/**
+ * Decode the just-uploaded file and measure it — but only if this device can do
+ * so cheaply. Returns null for every "not worth it" and every failure, which
+ * the caller treats identically: no number, no error, nothing said.
+ *
+ * Three gates, cheapest first:
+ *   1. File bytes, before anything is read into memory.
+ *   2. Decoded memory — the same `canMeasureInBrowser` ceiling the manual
+ *      button uses, computed from the exact decoded shape.
+ *   3. Measured time on THIS device, via a short timing probe.
+ */
+async function measureUploadedFile(file: File): Promise<LoudnessMeasurement | null> {
+  // Gate 1. Bounds the arrayBuffer() allocation before it happens — a 2 GB
+  // upload (the app's ceiling) must never be pulled into memory by a background
+  // task nobody asked for. Checked here as well as in the conjunction below,
+  // because the conjunction can only run once the bytes are already read.
+  if (file.size > AUTO_MEASURE_MAX_FILE_BYTES) return null
+
+  let ctx: AudioContext | null = null
+  try {
+    const bytes = await file.arrayBuffer()
+    ctx = new AudioContext()
+    const decoded = await ctx.decodeAudioData(bytes)
+
+    // Gate 2. Exact sample count and channel layout in hand — refuse before
+    // allocating the filter working set rather than during it. Note this is
+    // derived from the DECODED audio, never from `duration_seconds`, which is
+    // null on 141 of 357 production rows (every iOS upload). A compressed file
+    // is exactly why the byte cap above is not sufficient on its own.
+    if (!canAttemptAutoMeasure(file.size, decoded.length, decoded.numberOfChannels, canMeasureInBrowser)) return null
+
+    const channels: Float32Array[] = []
+    for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
+
+    // Gate 3. Time a short prefix to learn what this device costs per sample,
+    // then extrapolate. The probe's LOUDNESS is discarded and never shown — a
+    // prefix of a mix with a quiet intro reads nothing like the mix (that false
+    // premise is what got this feature deferred once already). It is a
+    // stopwatch, nothing more.
+    const probeFrames = autoMeasureProbeFrames(decoded.sampleRate, decoded.length)
+    if (probeFrames <= 0) return null
+    const probeStart = performance.now()
+    measureLoudness(channels.map(ch => ch.subarray(0, probeFrames)), decoded.sampleRate)
+    const probeMs = performance.now() - probeStart
+    if (!fitsAutoMeasureBudget(probeMs, probeFrames, decoded.length)) return null
+
+    return measureLoudness(channels, decoded.sampleRate)
+  } catch {
+    // Unsupported codec, a decode failure, an AudioContext the browser refused,
+    // out of memory — all the same answer. The mix uploaded fine; it simply has
+    // no measurement yet, and the manual button still works.
+    return null
+  } finally {
+    // Free the decoder — a lingering context competes with playback. Wrapped
+    // rather than `.catch()`-ed: older WebKit returns undefined from close()
+    // instead of a promise, and a TypeError thrown from a `finally` would
+    // replace the value being returned. The caller swallows it either way, but
+    // this keeps the "cannot fail" guarantee where this function states it.
+    try { await ctx?.close() } catch { /* already closed, or no promise */ }
+  }
+}
+
+/**
+ * Fire-and-forget the measurement once the version row exists.
+ *
+ * STRUCTURALLY UNABLE TO AFFECT THE UPLOAD. It is called after the upload has
+ * already reported success, it is not awaited, it returns void rather than a
+ * promise anyone could accidentally await, and every stage inside it swallows
+ * its own failures. The upload path cannot observe this running, finishing, or
+ * failing.
+ *
+ * Deferred to idle so the decode never competes with the render that just
+ * added the new mix to the page. `requestIdleCallback` carries a timeout so a
+ * permanently busy tab still gets its measurement instead of silently never
+ * measuring; browsers without it (older Safari) fall back to a plain delay.
+ */
+// Serializes auto-measures. Each one is allowed up to the `canMeasureInBrowser`
+// ceiling on its own; two uploaded back to back could otherwise decode at the
+// same time and double that, which is exactly the peak the gate exists to cap.
+// A tail-chained promise keeps them one at a time without dropping any, and a
+// rejection can never poison the chain because the body below never rejects.
+let autoMeasureChain: Promise<void> = Promise.resolve()
+
+function scheduleAutoMeasure(
+  file: File,
+  versionId: string,
+  onSaved: (row: VersionLoudnessRow) => void,
+): void {
+  const run = () => {
+    autoMeasureChain = autoMeasureChain.then(async () => {
+      try {
+        const m = await measureUploadedFile(file)
+        if (!m) return
+
+        // Cache FIRST, then persist. If the POST fails (offline, rate limited,
+        // or migration 032 still unapplied and its runtime heal not yet won),
+        // the number survives locally and MasterCheck's existing backfill
+        // pushes it up on the next mount. No retry logic needed here.
+        writeLoudnessCache(versionId, m)
+
+        // The existing hardened route — rate limited, range validated, server
+        // clock, and already carrying the missing-column heal for 032. This is
+        // deliberately the SAME door the manual button uses; a second write
+        // path would be a second thing to keep honest.
+        const res = await fetch(`/api/versions/${versionId}/loudness`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(m),
+        })
+        if (!res.ok) return
+        const data = await res.json().catch(() => null)
+        if (data?.version) onSaved(data.version as VersionLoudnessRow)
+      } catch {
+        // Nothing to report. The upload succeeded; this did not happen.
+      }
+    })
+  }
+
+  try {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 15_000 })
+    else setTimeout(run, 1_200)
+  } catch {
+    // Even the scheduling is guarded — this must never throw into the caller.
+  }
+}
 
 type Props = {
   project: Project
@@ -87,7 +230,33 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   }
   const router = useRouter()
 
-  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, refreshTracks } = usePlayer()
+  // Deliberately NOT pulled from the context: ensureAudioChain / setEQGains.
+  // ensureAudioChain calls createMediaElementSource on the app's one <audio>
+  // element, which is irreversible for the page session and whose failure mode
+  // is silence everywhere. Nothing on this page needs an EQ.
+  const { playUrl, currentUrl, currentTime, duration, isPlaying, seek, togglePlay, pause, refreshTracks, registerUnmeasuredVersions } = usePlayer()
+
+  // ── Self-healing duration backfill ─────────────────────────────────────────
+  // 40% of mb_versions rows have duration_seconds NULL, and the consequences are
+  // all over this page: the header omits the length, feedback markers can't be
+  // placed on the scrubber, and the archived list falls back to a live readout.
+  //
+  // This page is the only surface holding the FULL version list — current mix
+  // AND every archived mix — next to each row's stored value, so it is what
+  // knows which mixes are worth measuring. It does not do the measuring: the
+  // engine owns the one <audio> element, reads the length off the element
+  // itself, and writes it back once. Splitting it that way is what keeps the
+  // healing correct (no React state, which can lag or hold Infinity, in the
+  // path) and unduplicated (one writer for every playback surface).
+  //
+  // Registration is not gated on playback. Registering a mix costs a Map entry;
+  // the write only ever happens if the user actually plays it.
+  useEffect(() => {
+    const unmeasured = versions
+      .filter(v => v.duration_seconds == null)
+      .map(v => ({ versionId: v.id, url: audioProxyUrl(v.audio_url) }))
+    if (unmeasured.length > 0) registerUnmeasuredVersions(unmeasured)
+  }, [versions, registerUnmeasuredVersions])
 
   // Push edits to the rest of the app: the player's client-side track list
   // (refreshTracks) and the server-rendered pages cached by the router —
@@ -464,6 +633,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         setUploadStatus('')
         setUploading(false)
         syncAfterMutation()
+        // Measure the mix from the File we still have in hand, skipping the
+        // re-download MasterCheck's button would pay. Scheduled from HERE, after
+        // the new row is in `versions`, so the result folds into a row that
+        // exists — and after the upload has already reported success, so it
+        // cannot delay or fail it. Not awaited, by design.
+        scheduleAutoMeasure(file, newVersion.id as string, row => handleMeasured(newVersion.id as string, row))
       }, 600)
     } else {
       setUploadStatus(`Error: ${newVersion.error ?? 'Unknown error'}`)
@@ -490,7 +665,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       if (res.ok) {
         const newVersion = await res.json()
         setVersions(prev => [{ ...newVersion, mb_feedback: [] }, ...prev])
-        setArchivedOpen(false)
+        closeArchived()
         syncAfterMutation()
       } else {
         flashError('Could not restore that mix — please try again.')
@@ -598,6 +773,49 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // Current mix = highest version_number (index 0, sorted desc). Everything else is archived.
   const currentMix = versions[0] ?? null
   const archivedVersions = versions.slice(1)
+
+  // ── Closing the archive ends the audition it started ───────────────────────
+  // Archived mixes play through the app's ONE shared <audio> element (see the
+  // modal below), so leaving the modal would otherwise leave an old mix playing
+  // in the mini player with no obvious way back to it.
+  //
+  // The stop is keyed on the URL rather than on a "we started it" flag: if the
+  // user was already playing the CURRENT mix when they opened the archive, that
+  // playback is not ours to stop. Every close path — the X, the backdrop, and
+  // Restore — goes through here, which is why setArchivedOpen(false) appears
+  // exactly once in this file.
+  function closeArchived() {
+    if (currentUrl && archivedVersions.some(av => audioProxyUrl(av.audio_url) === currentUrl)) pause()
+    setArchivedOpen(false)
+  }
+
+  // ── Cross-version loudness ─────────────────────────────────────────────────
+  // A measurement now lives on the version row (migration 032), so the page can
+  // show what CHANGED between two mixes — the thing a DAW can't tell you,
+  // because it only ever has one bounce open.
+
+  function mixLabelFor(v: Version): string {
+    return v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`
+  }
+
+  // The comparison partner for a mix is the nearest OLDER mix that actually has
+  // a stored measurement — NOT simply the one before it. Skipping unmeasured
+  // mixes is what makes the delta appear as soon as any two points in the
+  // history have numbers, instead of only when two consecutive uploads happen to
+  // have been measured.
+  function previousMeasuredFor(index: number): { loudness: LoudnessInput; label: string } | null {
+    for (let i = index + 1; i < versions.length; i++) {
+      const loudness = loudnessFromRow(versions[i])
+      if (loudness) return { loudness, label: mixLabelFor(versions[i]) }
+    }
+    return null
+  }
+
+  // Fold the saved columns straight back into the version row so the readout and
+  // every later comparison update without a refetch.
+  function handleMeasured(versionId: string, row: VersionLoudnessRow) {
+    setVersions(prev => prev.map(v => (v.id === versionId ? { ...v, ...row } : v)))
+  }
 
   return (
     <div className={inModal ? '' : 'pt-14'}>
@@ -798,6 +1016,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onToggleAllowDownload={updateAllowDownload}
                 shareEnabled={Boolean(project.share_token)}
                 parseMixLabel={parseMixLabel}
+                loudness={loudnessFromRow(currentMix)}
+                previousMeasured={previousMeasuredFor(0)}
+                onMeasured={handleMeasured}
               />
             )}
 
@@ -948,46 +1169,112 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
           style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
-          onClick={e => { if (e.target === e.currentTarget) setArchivedOpen(false) }}
+          onClick={e => { if (e.target === e.currentTarget) closeArchived() }}
         >
           <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
               <h3 className="text-sm font-semibold text-[var(--text)]">Archived Mixes</h3>
-              <button onClick={() => setArchivedOpen(false)} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+              <button onClick={() => closeArchived()} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
                 <X size={16} />
               </button>
             </div>
             <div className="overflow-y-auto max-h-96 divide-y" style={{ borderColor: 'var(--border)' }}>
-              {archivedVersions.map(av => (
-                <div key={av.id} className="flex items-center gap-4 px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[var(--text)]">
-                      {av.label || parseMixLabel(av.audio_filename ?? '') || `Mix ${av.version_number}`}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
-                      <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                      {av.duration_seconds && <span>{formatDuration(av.duration_seconds)}</span>}
-                      {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
+              {archivedVersions.map((av, i) => {
+                // `i + 1` because archivedVersions is versions.slice(1).
+                const previous = previousMeasuredFor(i + 1)
+                const avLabel = mixLabelFor(av)
+                // Same proxied URL the download link and MasterCheck use. It has
+                // to be the proxy: Supabase's public URLs don't reliably send
+                // Accept-Ranges, so a raw URL plays but cannot seek or report a
+                // duration — and it would never match `currentUrl` below either.
+                const avUrl = audioProxyUrl(av.audio_url)
+                // "Is this the mix playing?" is asked of the shared engine, not
+                // of local state. That is what makes one-at-a-time structural
+                // rather than bookkeeping: there is a single <audio> element, so
+                // starting one archived mix stops whatever else was playing, and
+                // no second row can believe it is still active.
+                const avActive = currentUrl === avUrl
+                const avPlaying = avActive && isPlaying
+                return (
+                <div key={av.id} className="px-5 py-4 hover:bg-[var(--surface-2)] transition-colors">
+                  <div className="flex items-center gap-3">
+                    {/* 36px round target — big enough to hit on a phone, and a
+                        plain tap (no drag) so it never fights the list scroll. */}
+                    <button
+                      onClick={() => {
+                        if (avActive) togglePlay()
+                        else playUrl(avUrl, project.title, undefined, artwork ?? undefined, avLabel)
+                      }}
+                      aria-label={avPlaying ? `Pause ${avLabel}` : `Play ${avLabel}`}
+                      title={avPlaying ? `Pause ${avLabel}` : `Play ${avLabel}`}
+                      className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full transition-colors"
+                      style={avActive
+                        ? { backgroundColor: 'rgba(45,212,191,0.12)', border: '1px solid #2dd4bf', color: '#2dd4bf' }
+                        : { backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+                    >
+                      {avPlaying ? <Pause size={13} /> : <Play size={13} />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-[var(--text)] flex items-center gap-2 flex-wrap">
+                        {avLabel}
+                        {avActive && (
+                          <span className="text-[10px] text-[#2dd4bf] bg-[#2dd4bf]/10 px-1.5 py-0.5 rounded-full leading-none">
+                            {isPlaying ? 'Playing' : 'Paused'}
+                          </span>
+                        )}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
+                        <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                        {/* While it plays, the stored length gives way to the real
+                            one — which is the only length there is for the many
+                            rows whose duration_seconds is null (iOS uploads). */}
+                        {avActive ? (
+                          <span className="tabular-nums">{formatDuration(currentTime)} / {formatDuration(duration || av.duration_seconds)}</span>
+                        ) : av.duration_seconds ? (
+                          <span>{formatDuration(av.duration_seconds)}</span>
+                        ) : null}
+                        {av.file_size_bytes && <span>{formatFileSize(av.file_size_bytes)}</span>}
+                      </div>
                     </div>
+                    <StatusBadge status={av.status} size="sm" />
+                    <a
+                      href={`${avUrl}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
+                      download={av.audio_filename ?? 'mix.wav'}
+                      className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
+                      title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
+                    >
+                      <Download size={13} />
+                    </a>
+                    <button
+                      onClick={() => restoreVersion(av)}
+                      disabled={restoring}
+                      className="text-xs font-medium text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors flex-shrink-0"
+                    >
+                      {restoring ? 'Restoring…' : 'Restore'}
+                    </button>
                   </div>
-                  <StatusBadge status={av.status} size="sm" />
-                  <a
-                    href={`${audioProxyUrl(av.audio_url)}?download=1&filename=${encodeURIComponent(av.audio_filename ?? 'mix.wav')}`}
-                    download={av.audio_filename ?? 'mix.wav'}
-                    className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0"
-                    title={`Download original file${av.audio_filename ? ` (${av.audio_filename})` : ''}`}
-                  >
-                    <Download size={13} />
-                  </a>
-                  <button
-                    onClick={() => restoreVersion(av)}
-                    disabled={restoring}
-                    className="text-xs font-medium text-[#2dd4bf] hover:text-[#5eead4] disabled:opacity-50 disabled:cursor-wait transition-colors flex-shrink-0"
-                  >
-                    {restoring ? 'Restoring…' : 'Restore'}
-                  </button>
+
+                  {/* Archived mixes get the full master check too, and this is
+                      not cosmetic: a comparison needs two measured points, and
+                      the older one is always in here. Without a way to measure
+                      an archived mix the delta would have exactly one data point
+                      forever — and opening this modal also backfills the
+                      pre-persistence localStorage readings for every old mix at
+                      once. */}
+                  <div className="mt-3">
+                    <MasterCheck
+                      versionId={av.id}
+                      audioUrl={avUrl}
+                      fileSizeBytes={av.file_size_bytes ?? null}
+                      initial={loudnessFromRow(av)}
+                      previous={previous?.loudness ?? null}
+                      previousLabel={previous?.label ?? null}
+                      onMeasured={row => handleMeasured(av.id, row)}
+                    />
+                  </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
             <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)' }}>
               <p className="text-[11px] text-[var(--text-muted)]">Restoring a mix makes it the current version. The old one stays in this archive.</p>
@@ -1025,6 +1312,11 @@ type CurrentMixCardProps = {
   /** Project has a share link, so the download toggle actually reaches someone. */
   shareEnabled: boolean
   parseMixLabel: (filename: string) => string | null
+  /** Stored BS.1770-4 measurement for this mix (migration 032), or null. */
+  loudness: LoudnessInput | null
+  /** Nearest older mix that has one, for the delta. */
+  previousMeasured: { loudness: LoudnessInput; label: string } | null
+  onMeasured: (versionId: string, row: VersionLoudnessRow) => void
 }
 
 function CurrentMixCard({
@@ -1032,7 +1324,7 @@ function CurrentMixCard({
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
   onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
-  shareEnabled, parseMixLabel,
+  shareEnabled, parseMixLabel, loudness, previousMeasured, onMeasured,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1226,8 +1518,17 @@ function CurrentMixCard({
         )}
 
         {/* Measured loudness + per-DSP normalization verdict — the substance
-            behind the pipeline's "Mastering done" checkbox. */}
-        <MasterCheck versionId={version.id} audioUrl={vUrl} fileSizeBytes={version.file_size_bytes ?? null} />
+            behind the pipeline's "Mastering done" checkbox — plus the delta
+            against the last measured mix. */}
+        <MasterCheck
+          versionId={version.id}
+          audioUrl={vUrl}
+          fileSizeBytes={version.file_size_bytes ?? null}
+          initial={loudness}
+          previous={previousMeasured?.loudness ?? null}
+          previousLabel={previousMeasured?.label ?? null}
+          onMeasured={row => onMeasured(version.id, row)}
+        />
 
         {/* Status */}
         <div className="flex gap-1.5 flex-wrap">

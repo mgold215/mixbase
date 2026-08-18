@@ -230,11 +230,18 @@ struct NewProjectView: View {
 
                     // Step 3: Create version 1
                     uploadProgress = "Creating version..."
+                    // Same three fields as ProjectDetailView's upload path — the
+                    // name comes from the picked file, size and duration from the
+                    // scratch copy we still hold. Omitting them left every mix
+                    // created from this screen with no name, size or duration.
                     _ = try await SupabaseService.shared.createVersion(
                         projectId: project.id,
                         versionNumber: 1,
                         audioUrl: audioPublicUrl,
-                        label: label.isEmpty ? nil : label
+                        label: label.isEmpty ? nil : label,
+                        audioFilename: fileURL.lastPathComponent,
+                        durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
+                        fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)
                     )
                 }
 

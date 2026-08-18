@@ -1,4 +1,34 @@
 import Foundation
+import AVFoundation
+
+// MARK: - Audio file metadata
+
+/// Size and duration for a local audio file, probed just before upload.
+///
+/// Both are best-effort and return nil rather than throwing: a version whose
+/// duration could not be read must still upload. `createVersion` omits nil
+/// fields entirely, so a failed probe leaves the column absent rather than
+/// writing a null over something real.
+enum AudioFileMetadata {
+    /// Size on disk in bytes.
+    static func fileSize(of url: URL) -> Int? {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]) else { return nil }
+        return values.fileSize
+    }
+
+    /// Duration in whole seconds. Rounded, to match what the web app writes
+    /// (`Math.round(audio.duration)`), so the two upload paths agree.
+    static func durationSeconds(of url: URL) async -> Int? {
+        let asset = AVURLAsset(url: url)
+        guard let duration = try? await asset.load(.duration) else { return nil }
+        let seconds = CMTimeGetSeconds(duration)
+        // A non-finite or zero duration means the probe failed, not that the
+        // mix is empty — an indeterminate CMTime is exactly what a still-copying
+        // or unsupported file yields.
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        return Int(seconds.rounded())
+    }
+}
 
 // MARK: - SupabaseService
 // A "singleton" service — meaning there's only one instance shared across the whole app.
@@ -220,11 +250,25 @@ class SupabaseService {
     }
 
     /// Create a new version for a project
+    /// Create a version row.
+    ///
+    /// `audioFilename`, `durationSeconds` and `fileSizeBytes` are REQUIRED to be
+    /// supplied wherever they're knowable, and every caller has them: the picked
+    /// file's `lastPathComponent`, the on-disk size, and an AVAsset probe. They
+    /// were omitted here originally, so every mix uploaded from this app landed
+    /// with all three NULL — the row exists and the audio plays, but the version
+    /// shows no name, no duration and no size, which reads to the user as "the
+    /// upload didn't work". It also left `duration_seconds` null on 141 of 357
+    /// rows in production, and the web app's loudness gate reads a null size as
+    /// "unknown", not "small".
     func createVersion(
         projectId: UUID,
         versionNumber: Int,
         audioUrl: String,
-        label: String?
+        label: String?,
+        audioFilename: String? = nil,
+        durationSeconds: Int? = nil,
+        fileSizeBytes: Int? = nil
     ) async throws -> Version {
         var fields: [String: Any] = [
             "project_id": projectId.uuidString,
@@ -234,6 +278,11 @@ class SupabaseService {
             "allow_download": false
         ]
         if let label = label { fields["label"] = label }
+        // Omit rather than send NSNull: a null write would clobber a value a
+        // later heal or the web app had already filled in.
+        if let audioFilename = audioFilename { fields["audio_filename"] = audioFilename }
+        if let durationSeconds = durationSeconds { fields["duration_seconds"] = durationSeconds }
+        if let fileSizeBytes = fileSizeBytes { fields["file_size_bytes"] = fileSizeBytes }
 
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_versions", method: "POST", body: body)
@@ -665,8 +714,13 @@ class SupabaseService {
 
     /// Generic in-memory upload to a Supabase Storage bucket — fine for images,
     /// wrong for audio (use the streaming variant above for anything big).
+    ///
+    /// Requires a signed-in session for the same reason the streaming variant
+    /// does: migration 029 moves the storage INSERT policies to `authenticated`,
+    /// and this used to fall back to the PUBLIC anon key when no session was
+    /// loaded — which would turn into a 403 the moment 029 is applied.
     private func uploadFile(data: Data, filename: String, bucket: String) async throws -> String {
-        let bearerToken = accessToken ?? supabaseKey
+        guard let bearerToken = accessToken else { throw SupabaseError.notSignedIn }
         var request = uploadRequest(filename: filename, bucket: bucket, token: bearerToken)
         request.httpBody = data
 

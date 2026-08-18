@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createSessionClient } from '@/lib/supabase'
 import { loginLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 
 const COOKIE_OPTS = {
@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password })
+  // Throwaway client: signing in on the shared admin client would attach this
+  // user's token to it and demote every later server-side write to `authenticated`.
+  const { data, error } = await createSessionClient().auth.signInWithPassword({ email, password })
 
   if (error || !data.session) {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })

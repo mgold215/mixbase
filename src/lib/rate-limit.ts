@@ -106,6 +106,14 @@ export const vizSaveLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 // caps how often one user can ask, the gate caps how many run at once.
 export const freeRenderLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
 
+// Loudness writes: 60 per hour per user. The expensive half of a master check
+// happens in the BROWSER (decode + BS.1770 filtering), so this route costs the
+// server one small update — the cap exists to bound a runaway client or a
+// re-measure loop, not spend. Sized well above a real session (one write per
+// mix measured, plus a one-off silent backfill per version whose reading is
+// still sitting in localStorage from before persistence existed).
+export const loudnessLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
+
 // Feedback: 20 per hour per IP — public endpoint, stops spam
 export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 

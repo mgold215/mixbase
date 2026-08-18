@@ -1,17 +1,28 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Gauge, AlertCircle, AlertTriangle, Check } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Gauge, AlertCircle, AlertTriangle, Check, GitCompareArrows } from 'lucide-react'
 import { measureLoudness, masterVerdict, dspDeltas, formatLufs, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
+import { compareLoudness, sanitizeLoudness, toMeasurement, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
 
-// ─── Master check — measured loudness on the current mix ─────────────────────
+// ─── Master check — measured loudness on one mix ─────────────────────────────
 // Turns "mastering done?" from a self-reported checkbox into a fact: BS.1770-4
 // integrated loudness + sample peak, measured in the browser from the same
 // audio the platforms will get, with per-DSP normalization deltas ("Spotify
 // will turn this down 2.3 dB") and a triaged verdict. Runs on demand — a full
 // decode is seconds of CPU and tens of MB of memory, not something to do on
-// every page view — and caches per version in localStorage, so each mix is
-// measured once and the number is there instantly on every later visit.
+// every page view.
+//
+// Since migration 032 the number is also PERSISTED per version, which is what
+// makes the block below the readout possible: the delta against the previous
+// measured mix, separating "you moved the fader" from "you spent the dynamics".
+// One tap on a button that already existed now compounds across the version
+// history instead of dying in this device's localStorage.
+//
+// localStorage is kept as a second-line cache (it still answers instantly while
+// the row loads, and it covers a failed POST), and on mount a reading that
+// exists locally but NOT in the database is silently pushed up — that backfills
+// every measurement taken before persistence shipped, with zero user action.
 
 type Props = {
   /** Cache key — measurements are immutable per version upload. */
@@ -19,6 +30,15 @@ type Props = {
   /** Proxied audio URL (audioProxyUrl-wrapped, same-origin). */
   audioUrl: string
   fileSizeBytes: number | null
+  /** The stored measurement for THIS version, read off the mb_versions row. */
+  initial?: LoudnessInput | null
+  /** The stored measurement for the nearest older mix that has one. */
+  previous?: LoudnessInput | null
+  /** What to call that older mix in the heading ("Mix 6"). */
+  previousLabel?: string | null
+  /** Fired with the saved columns so the page can update its version state
+   *  without a refetch. */
+  onMeasured?: (row: VersionLoudnessRow) => void
 }
 
 // Guard on the DOWNLOAD only. This is deliberately not the memory gate — the
@@ -33,36 +53,82 @@ function readCache(versionId: string): LoudnessMeasurement | null {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + versionId)
     if (!raw) return null
-    const p = JSON.parse(raw)
-    // -Infinity survives JSON as null — restore it so the verdict logic holds.
-    return {
-      integratedLufs: p.integratedLufs ?? -Infinity,
-      shortTermMaxLufs: p.shortTermMaxLufs ?? -Infinity,
-      samplePeakDb: p.samplePeakDb ?? -Infinity,
-      gatedBlockCount: p.gatedBlockCount ?? 0,
-    }
+    const clean = sanitizeLoudness(JSON.parse(raw))
+    // -Infinity survives JSON as null — toMeasurement restores it so the verdict
+    // logic holds. (This used to be four hand-written `?? -Infinity` lines here;
+    // it now shares the API's validator, so a corrupt cache entry can't feed a
+    // nonsense delta either.)
+    return clean ? toMeasurement(clean) : null
   } catch {
     return null
   }
 }
 
-function writeCache(versionId: string, m: LoudnessMeasurement) {
+/**
+ * Exported because the upload path measures too (ProjectClient auto-measures a
+ * fresh mix from the local File, skipping the re-download this component would
+ * otherwise pay). Both writers must use the SAME key and shape or the reading
+ * this component shows and the one the backfill pushes up would drift apart.
+ */
+export function writeLoudnessCache(versionId: string, m: LoudnessMeasurement) {
   try {
     localStorage.setItem(CACHE_PREFIX + versionId, JSON.stringify(m))
   } catch { /* storage full or unavailable — measuring again later is fine */ }
 }
 
-export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Props) {
-  const [measurement, setMeasurement] = useState<LoudnessMeasurement | null>(null)
+export default function MasterCheck({
+  versionId, audioUrl, fileSizeBytes,
+  initial = null, previous = null, previousLabel = null, onMeasured,
+}: Props) {
+  // Measured in THIS session — takes precedence over anything stored.
+  const [measured, setMeasured] = useState<LoudnessMeasurement | null>(null)
+  const [cached, setCached] = useState<LoudnessMeasurement | null>(null)
   const [measuring, setMeasuring] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Show a previously measured result instantly on mount / version switch.
+  // The parent re-creates onMeasured on every render, so it is held in a ref
+  // rather than a dependency: putting it in the array below would re-fire the
+  // backfill effect (and its POST) on every unrelated keystroke on the page.
+  const onMeasuredRef = useRef(onMeasured)
+  useEffect(() => { onMeasuredRef.current = onMeasured })
+
+  // Reset on version switch. Note `initial` is read during render instead of
+  // being copied into state — it arrives with the server-rendered row, so
+  // treating it as state would only create a way for the two to disagree.
   useEffect(() => {
-    setMeasurement(readCache(versionId))
+    setMeasured(null)
+    setCached(readCache(versionId))
     setError(null)
     setMeasuring(false)
   }, [versionId])
+
+  const persist = useCallback(async (m: LoudnessMeasurement) => {
+    try {
+      const res = await fetch(`/api/versions/${versionId}/loudness`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(m),
+      })
+      if (!res.ok) return
+      const data = await res.json().catch(() => null)
+      if (data?.version) onMeasuredRef.current?.(data.version as VersionLoudnessRow)
+    } catch {
+      // The number is on screen and in localStorage either way. A failed save
+      // must never look like a failed measurement — the user did the expensive
+      // part, and the next measure (or the backfill on the next visit) retries.
+    }
+  }, [versionId])
+
+  // Free backfill: this version was measured before persistence existed, so the
+  // reading is sitting in localStorage while the row has nothing. Push it up
+  // silently. No user action, and it is what gives the cross-version delta a
+  // second data point on day one instead of after two more manual measurements.
+  const hasStored = initial != null
+  useEffect(() => {
+    if (hasStored) return
+    const local = readCache(versionId)
+    if (local) void persist(local)
+  }, [versionId, hasStored, persist])
 
   // Known-huge uploads are refused before we even offer the button. A null size
   // is NOT treated as small — it's simply unknown, and the authoritative check
@@ -94,8 +160,9 @@ export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Prop
       const channels: Float32Array[] = []
       for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
       const m = measureLoudness(channels, decoded.sampleRate)
-      writeCache(versionId, m)
-      setMeasurement(m)
+      writeLoudnessCache(versionId, m)
+      setMeasured(m)
+      void persist(m)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not measure this file')
     } finally {
@@ -104,6 +171,13 @@ export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Prop
       setMeasuring(false)
     }
   }
+
+  // Display precedence: this session's measurement, then the stored row, then
+  // this device's cache.
+  const measurement = measured ?? (initial ? toMeasurement(initial) : cached)
+  // compareLoudness returns null unless both sides are fully measured, so this
+  // whole block simply doesn't render until there is something real to say.
+  const comparison = compareLoudness(previous, sanitizeLoudness(measurement))
 
   const issueIcon = (level: 'error' | 'warning' | 'info') =>
     level === 'error' ? <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
@@ -155,6 +229,23 @@ export default function MasterCheck({ versionId, audioUrl, fileSizeBytes }: Prop
               loudest 3s {formatLufs(measurement.shortTermMaxLufs)}
             </span>
           </div>
+
+          {/* The comparison no DAW can make: what changed since the last mix,
+              and how much of it was level versus limiting. */}
+          {comparison && (
+            <div className="rounded-lg px-2.5 py-2 space-y-1" style={{ border: '1px solid var(--border)' }}>
+              <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+                <GitCompareArrows size={11} />
+                vs {previousLabel ?? 'the previous mix'}
+              </p>
+              {comparison.lines.map((line, i) => (
+                <div key={i} className={`flex items-start gap-2 text-xs ${issueTone(line.level)}`}>
+                  {issueIcon(line.level)}
+                  <span>{line.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* What each platform's normalizer will do with this master. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">

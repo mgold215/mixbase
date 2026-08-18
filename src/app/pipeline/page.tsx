@@ -44,6 +44,19 @@ export default async function PipelinePage() {
       .limit(1000),
   ])
 
+  // The board's own data. A failure here must NOT fall through to empty arrays:
+  // rendered as emptiness it is indistinguishable from a brand-new account, so
+  // the user reads "my releases are gone" (or the version picker says "No
+  // versions yet" for a project that has plenty) and nobody ever files it as a
+  // bug. That is the opposite of the two reads above, which degrade on purpose
+  // and say so — those are convenience prefill, these are the page.
+  //
+  // Throwing hands the request to src/app/error.tsx, the route-level boundary
+  // that exists for exactly this ("unhandled render/data errors in any page"):
+  // branded recovery screen, Try again, and the error captured to Sentry.
+  const loadError = releasesRes.error ?? projectsRes.error ?? versionsRes.error
+  if (loadError) throw new Error(`Pipeline data failed to load: ${loadError.message}`)
+
   // Strip the join helper column so PipelineClient's prop shape is unchanged.
   const versions = (versionsRes.data ?? []).map(v => ({
     id: v.id,

@@ -115,6 +115,14 @@ export function defaultRecipe(effectId: EffectId, format: VizFormat, seed: numbe
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
 
+// Same RFC 4122 shape as isUuid() in src/lib/validators.ts, inlined rather than
+// imported: that module is server-side (it calls Buffer in
+// projectIdFromUploadId and derives module-level state from process.env for the
+// SSRF allow-list), while recipe.ts is bundled into the browser AND loaded by
+// scripts/fx-test.mjs under Node type-stripping. Pulling it in would ship
+// upload/SSRF helpers to the client for one regex. Keep the two in sync.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
@@ -147,9 +155,14 @@ export function validateRecipe(raw: unknown): VizRecipe | null {
     ? rawPalette.colors.filter((c): c is string => typeof c === 'string' && HEX_COLOR.test(c)).slice(0, 8)
     : []
 
+  // versionId must be a real mb_versions UUID, not just a short string: this
+  // segment is persisted to mb_visualizers.settings and phase 2 resolves the id
+  // against the versions table. Anything else — a path, an injection attempt, a
+  // stale non-UUID draft — drops the whole audio segment to null, which is the
+  // already-supported "synthetic BPM" mode rather than an error.
   const rawAudio = isRecord(raw.audio) ? raw.audio : null
   const audio =
-    rawAudio && typeof rawAudio.versionId === 'string' && rawAudio.versionId.length <= 64
+    rawAudio && typeof rawAudio.versionId === 'string' && UUID_RE.test(rawAudio.versionId)
       ? {
           versionId: rawAudio.versionId,
           startSec: Math.max(0, finiteOr(rawAudio.startSec, 0)),
