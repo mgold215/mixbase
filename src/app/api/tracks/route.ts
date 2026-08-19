@@ -12,6 +12,11 @@ export type Track = {
   /** Project visualizer video (Spotify-Canvas style) — loops in the player while the track plays */
   visualizer_url: string | null
   audio_url: string
+  /** Stored length of this mix, or null on a row that has never been measured
+   *  (~40% of the catalog). Carried so the engine can tell a healed row from an
+   *  unhealed one — without it the mini player and /player can see every
+   *  project but heal none of them. See the backfill notes in PlayerContext. */
+  duration_seconds: number | null
   status: string
   version: string
   uploaded_at: number
@@ -61,7 +66,7 @@ export async function GET(request: NextRequest) {
 
   const selectVersions = (withVisualizer: boolean) => supabaseAdmin
     .from('mb_versions')
-    .select(`id, project_id, label, version_number, audio_url, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
+    .select(`id, project_id, label, version_number, audio_url, duration_seconds, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
     .eq('mb_projects.user_id', userId)
     .order('version_number', { ascending: false })
 
@@ -109,6 +114,10 @@ export async function GET(request: NextRequest) {
       artwork_url: p?.finalized_artwork_url ?? p?.artwork_url ?? null,
       visualizer_url: p?.visualizer_url ?? null,
       audio_url: v.audio_url,
+      // `?? null` so an absent column (a deploy that beats a migration) reads as
+      // "not measured" rather than undefined — the engine tests this with
+      // `== null` and must never mistake either for a real length.
+      duration_seconds: v.duration_seconds ?? null,
       status: v.status ?? 'WIP',
       version: v.label || `v${v.version_number}`,
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),

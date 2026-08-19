@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { isUuid, canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
 import { finalVideoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
@@ -41,8 +41,16 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
-  const { project_id } = body
-  if (!isUuid(project_id)) {
+  // Canonical, not merely valid. The render job carries this id all the way to
+  // storeVisualizer, which mints `<projectId>/viz-<ts>.<ext>` — a key Storage
+  // keeps verbatim while every gate on the way there is a uuid column that does
+  // not. storeVisualizer lowercases defensively at the mint itself; doing it
+  // here as well means the id written to mb_visualizers.project_id and the id
+  // baked into the key are the same string, so the row can always name its own
+  // object. This is the shipped iOS app's most likely entry point into this
+  // class — Swift's UUID.uuidString is uppercase.
+  const project_id = canonicalUuid(body.project_id)
+  if (!project_id) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
   const format: VideoFormat = body.format === 'shorts' ? 'shorts' : 'youtube'

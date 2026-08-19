@@ -8,6 +8,48 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
 }
 
+/**
+ * The ONE spelling of a UUID that may become a Supabase Storage object key.
+ *
+ * WHY THIS EXISTS RATHER THAN JUST DROPPING THE `/i` ABOVE
+ * Three facts compose into a defect that neither one causes alone:
+ *
+ *   1. UUID_RE carries `/i`, so isUuid() accepts `ABCDEF01-…` as readily as
+ *      `abcdef01-…`. That is deliberate and must stay: Swift's
+ *      `UUID.uuidString` is UPPERCASE, the shipped native app calls these
+ *      routes, and MixbaseAPI.swift's `.lowercased()` is written per call site.
+ *      A case-sensitive isUuid() would turn any missed call site into a hard
+ *      400 — a functional regression in an app that is already in the store.
+ *   2. Every ownership gate resolves against a Postgres `uuid` COLUMN, and
+ *      Postgres compares uuids by value, not by text:
+ *      `'ABCDEF01-…'::uuid = 'abcdef01-…'::uuid` is true (verified against
+ *      production). So an uppercase id passes `ownsProject` / `.eq('id', …)`
+ *      exactly like the lowercase one. The gate is not the problem.
+ *   3. Supabase Storage keys are plain text and are stored VERBATIM — case and
+ *      all. Postgres normalises; the bucket does not.
+ *
+ * Compose them and an authenticated owner, posting their OWN project id in
+ * uppercase, mints `<UPPERCASE-UUID>/<file>` — a real object, in a bucket the
+ * user is billed for, that no cleanup path can name. Every reaper, survivor
+ * scan and orphan census starts from a project id READ BACK from Postgres,
+ * which always renders lowercase, and matches it as text (`listProjectPrefix`
+ * walks `${projectId}/`, planReap filters on VIZ_KEY_RE's lowercase
+ * `[0-9a-f-]{36}`). None of them can see an uppercase prefix. The object is
+ * unreapable, and it is mintable on demand.
+ *
+ * So the bound goes where the id CROSSES from the case-insensitive world
+ * (Postgres, ownership) into the case-sensitive one (storage keys): validate
+ * and canonicalise in a single step, so a caller cannot accidentally take the
+ * validated-but-uncanonical value. `isUuid` stays exactly as it is — routes
+ * that merely READ by id keep working with either spelling.
+ *
+ * Returns null (never throws, never a wrong id) when the value is not a UUID,
+ * so callers refuse with the same 400 they already had.
+ */
+export function canonicalUuid(value: unknown): string | null {
+  return isUuid(value) ? value.toLowerCase() : null
+}
+
 // ── Server-side fetch allowlist (SSRF guard) ────────────────────────────────
 // Every media asset the app stores is a Supabase Storage *public* URL on the
 // project host (mf-audio / mf-artwork / mf-video buckets, all produced by

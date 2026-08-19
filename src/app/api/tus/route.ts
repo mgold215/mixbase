@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { uploadLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { ownsProject } from '@/lib/ownership'
-import { isUuid } from '@/lib/validators'
+import { canonicalUuid } from '@/lib/validators'
 
 // Disable body parsing — we stream the body straight through to Supabase
 export const maxDuration = 300
@@ -42,6 +42,37 @@ function parseUploadMetadata(header: string | null): Record<string, string> {
   return out
 }
 
+// Re-emit an `Upload-Metadata` header with `objectName` replaced by `key`.
+//
+// This route forwards the CLIENT'S metadata header upstream verbatim, and that
+// header — not any variable in this file — is what Supabase turns into the
+// storage object key. So validating a normalised/canonical copy of objectName
+// and then forwarding the raw one authorizes one key and writes another. Two
+// ways that bit us, both of which produce an object no cleanup path can name
+// (every reaper matches the lowercase, slash-normalised id Postgres hands back):
+//   * an UPPERCASE project segment — see canonicalUuid in @/lib/validators;
+//   * a `\`-separated or leading-`/` objectName, which the checks below fold
+//     away before validating but which Supabase would have stored as written.
+//
+// Every OTHER pair is passed through byte-identically rather than re-encoded:
+// parseUploadMetadata cannot distinguish a valueless TUS key from one whose
+// value failed to decode, so round-tripping the whole header through it could
+// silently rewrite metadata this route has no business touching. When
+// `objectName` is absent (never, for a real upload — it is required below) the
+// pair is appended so the returned header still describes the validated key.
+function withObjectName(header: string | null, key: string): string {
+  const encoded = Buffer.from(key, 'utf8').toString('base64')
+  const pairs = (header ?? '').split(',').map(p => p.trim()).filter(Boolean)
+  let replaced = false
+  const out = pairs.map(pair => {
+    if (pair.split(' ')[0] !== 'objectName') return pair
+    replaced = true
+    return `objectName ${encoded}`
+  })
+  if (!replaced) out.push(`objectName ${encoded}`)
+  return out.join(',')
+}
+
 // POST — create a new TUS upload session at Supabase using the service-role key.
 // The service-role key bypasses Supabase's anon per-file size limit.
 //
@@ -79,13 +110,19 @@ export async function POST(req: NextRequest) {
   ) {
     return NextResponse.json({ error: 'Invalid object name' }, { status: 400 })
   }
-  const projectId = segments[0]
-  if (!isUuid(projectId)) {
+  const projectId = canonicalUuid(segments[0])
+  if (!projectId) {
     return NextResponse.json({ error: 'Invalid object name' }, { status: 400 })
   }
   if (!(await ownsProject(projectId, userId))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+
+  // The key Supabase will actually store: the normalised path with the id
+  // segment in its canonical spelling. Everything downstream must travel on
+  // THIS value, never on meta.objectName — see withObjectName.
+  segments[0] = projectId
+  const storageKey = segments.join('/')
 
   // Enforce the declared size cap (defence-in-depth alongside the bucket limit).
   const declaredLength = Number(req.headers.get('upload-length'))
@@ -98,10 +135,14 @@ export async function POST(req: NextRequest) {
     'Tus-Resumable': req.headers.get('tus-resumable') ?? '1.0.0',
     'x-upsert': 'true',
   }
-  for (const h of ['upload-length', 'upload-metadata', 'upload-defer-length', 'content-type']) {
+  for (const h of ['upload-length', 'upload-defer-length', 'content-type']) {
     const v = req.headers.get(h)
     if (v) forwardHeaders[h] = v
   }
+  // Deliberately NOT copied from the request alongside the headers above: the
+  // metadata is the one header whose contents this route has just validated,
+  // so it is re-emitted around the validated key rather than passed through.
+  forwardHeaders['upload-metadata'] = withObjectName(req.headers.get('upload-metadata'), storageKey)
 
   const upstream = await fetch(SUPABASE_TUS, {
     method: 'POST',

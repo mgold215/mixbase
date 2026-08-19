@@ -384,6 +384,18 @@ export async function indexVisualizer(args: {
   title: string
   sourceImageUrl?: string | null
   settings?: unknown
+  // Whether a definitively-failed insert may take the object's bytes with it.
+  // Defaults true, which is right for the finalize/save lanes: there the object
+  // was uploaded moments ago FOR this claim, so bytes with no row are litter
+  // nothing will collect.
+  //
+  // /api/visualizer/recover passes false, because on that lane the reasoning
+  // inverts. Those bytes are exactly what the user is asking to get back — they
+  // already survived one lost claim — so deleting them on a transient PostgREST
+  // blip would destroy the thing the request exists to rescue, and the caller
+  // could never offer it again. A failed recovery must leave the object exactly
+  // as it found it: still unclaimed, still recoverable on the next attempt.
+  removeOnFailure?: boolean
 }): Promise<StoredVisualizer | null> {
   const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(args.storagePath)
   const videoUrl = urlData.publicUrl
@@ -416,7 +428,7 @@ export async function indexVisualizer(args: {
     const raced = await visualizerByVideoUrl(videoUrl)
     const decision = claimAfterInsertFailure(raced, args.userId)
     if (decision === 'reuse') return { id: raced!.id, video_url: videoUrl }
-    if (decision === 'remove-bytes') {
+    if (decision === 'remove-bytes' && args.removeOnFailure !== false) {
       await removeStorageObjectsLogged(VIDEO_BUCKET, [args.storagePath], 'visualizer-store failed claim')
     }
     return null

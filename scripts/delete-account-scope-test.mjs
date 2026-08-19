@@ -449,14 +449,14 @@ check('the candidate URLs for the survivor scan are collected from the same rows
 check('no asset enumeration in the account path carries a truncating .limit()',
   !/\.limit\(\d+\)/.test(postBody), (postBody.match(/\.limit\(\d+\)/g) ?? []).join(' ') || 'none')
 
-check('both asset enumerations page through collectAllRows',
-  (postBody.match(/collectAllRows</g) ?? []).length === 2,
+check('all four enumerations page through collectAllRows',
+  (postBody.match(/collectAllRows</g) ?? []).length === 4,
   `${(postBody.match(/collectAllRows</g) ?? []).length} call(s)`)
 
 // Offset paging over an UNORDERED PostgREST result can repeat one row and skip
 // another; a skipped version is audio nothing will ever name again.
 check('every paged enumeration orders by the primary key, so offsets are stable',
-  (postBody.match(/\.order\('id', \{ ascending: true \}\)\.range\(offset, offset \+ limit - 1\)/g) ?? []).length === 2,
+  (postBody.match(/\.order\('id', \{ ascending: true \}\)\.range\(offset, offset \+ limit - 1\)/g) ?? []).length === 4,
   `${(postBody.match(/\.order\('id'/g) ?? []).length} ordered`)
 
 // The DIRECTION an incomplete enumeration must fail in. Every dependent of

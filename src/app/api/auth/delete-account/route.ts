@@ -17,9 +17,16 @@ import {
   totalKeyCount,
   type AssetKeys,
   type AssetUrlSelect,
+  type ProjectAssetRow,
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
+// The SAME request-line bound DELETE /api/projects/[id] applies to its survivor
+// scan, reused rather than reinvented. An `.in()` list travels in the query
+// string, so the hazard is identical wherever one is built from a list whose
+// length the user controls — and two places sizing that list differently is the
+// bug class src/lib/survivor-scan-plan.ts exists to prevent.
+import { chunkByEncodedLength } from '@/lib/survivor-scan-plan'
 
 // Named rather than inlined into the signature — see the same type in
 // src/app/api/projects/[id]/route.ts.
@@ -78,10 +85,46 @@ export async function POST(request: NextRequest) {
 
   // Gather projects (with both artwork URLs) and version IDs before deleting
   // anything. Folding the URLs into this select avoids a second full scan.
-  const { data: projects } = await supabaseAdmin
-    .from('mb_projects')
-    .select('id, artwork_url, finalized_artwork_url')
-    .eq('user_id', userId)
+  //
+  // PAGED, AND ITS ERROR IS READ. It had neither. `const { data: projects } =`
+  // discarded the error object outright, so a failed read was indistinguishable
+  // from "this user owns no projects" — and every consequence of that is silent:
+  // an empty projectIds skips the versions enumeration, empties the candidate
+  // key set, and hands filterToOwnedPrefixes an empty owned set, after which the
+  // route reports a clean GDPR erasure having cleaned up nothing at all. The
+  // missing range is the same defect one layer down: no `.limit()` is not "no
+  // ceiling", it is PostgREST's server-side `max-rows` applied invisibly.
+  //
+  // WHAT AN INCOMPLETE READ HERE COSTS — checked against the live FK graph
+  // (pg_constraint, 2026-08-19) rather than assumed, because the answer is what
+  // decides whether this branch may abort. It costs BYTES, not PII: mb_projects
+  // is deleted by `.eq('user_id', …)` below, NOT by this list, and every child of
+  // mb_projects is ON DELETE CASCADE — mb_versions, mb_activity,
+  // mb_collection_items, mb_visualizers, mb_favorites, mb_press_kits,
+  // mb_social_posts, mb_spotify_links, mb_curator_submissions and sb_submissions
+  // all read confdeltype 'c'. So the account still empties completely and no PII
+  // survives; what is lost is the URL list naming this user's artwork and audio.
+  // That is the versions enumeration's trade exactly, so it takes the versions
+  // enumeration's answer: log, report, CONTINUE. Blocking a GDPR erasure over a
+  // storage leak would trap the user in an undeletable account, which this route
+  // must never do. A failed row DELETE is the opposite case and still aborts —
+  // see the dbErrors gate below.
+  const projects = await collectAllRows<ProjectAssetRow & { id: string }>(
+    (offset, limit) => fetchRowPage(
+      supabaseAdmin.from('mb_projects').select('id, artwork_url, finalized_artwork_url').eq('user_id', userId)
+        .order('id', { ascending: true }).range(offset, offset + limit - 1),
+      `projects for ${userId}`,
+    ))
+  if (projects === null) {
+    console.error(
+      `[delete-account] could not enumerate projects for ${userId} — none of their artwork or audio can ` +
+      `be named, so NO storage cleanup will happen and all of it needs a sweep. Row deletion continues.`,
+    )
+    Sentry.captureMessage('delete-account: project enumeration incomplete, storage cleanup skipped', {
+      level: 'warning',
+      extra: { userId },
+    })
+  }
 
   const projectIds = (projects ?? []).map(p => p.id)
 
@@ -96,12 +139,28 @@ export async function POST(request: NextRequest) {
     // a user owns, and the largest account today holds 271 versions against a
     // per-project maximum of 20. Rows past the cut would have their audio left
     // in a PUBLIC bucket after a GDPR erasure, in the one bucket with no sweeper.
-    const rows = await collectAllRows<{ id: string; audio_url: string | null }>(
-      (offset, limit) => fetchRowPage(
-        supabaseAdmin.from('mb_versions').select('id, audio_url').in('project_id', projectIds)
-          .order('id', { ascending: true }).range(offset, offset + limit - 1),
-        `versions for ${userId}`,
-      ))
+    //
+    // CHUNKED TOO, on the other axis. Paging bounds how many rows come BACK;
+    // `.in('project_id', projectIds)` is how many ids go OUT, and it rides in
+    // the query string. Chunk boundaries are per-filter, so each chunk gets its
+    // own independent offset walk.
+    const collectedVersions: { id: string; audio_url: string | null }[] = []
+    let versionsComplete = true
+    for (const chunk of chunkByEncodedLength(projectIds)) {
+      const page = await collectAllRows<{ id: string; audio_url: string | null }>(
+        (offset, limit) => fetchRowPage(
+          supabaseAdmin.from('mb_versions').select('id, audio_url').in('project_id', chunk)
+            .order('id', { ascending: true }).range(offset, offset + limit - 1),
+          `versions for ${userId}`,
+        ))
+      if (page === null) { versionsComplete = false; break }
+      collectedVersions.push(...page)
+    }
+    // One unanswered chunk makes the WHOLE list untrustworthy, same contract
+    // collectAllRows applies to one unanswered page: a partial enumeration read
+    // as complete is what leaks bytes silently, and this list is only ever spent
+    // on byte cleanup.
+    const rows = versionsComplete ? collectedVersions : null
     if (rows === null) {
       // Logged, NOT fatal. Checked against the live schema (2026-08-18) before
       // choosing this: every dependent of mb_versions that matters here —
@@ -203,24 +262,72 @@ export async function POST(request: NextRequest) {
     if (error) dbErrors.push(`${label}: ${error.message}`)
   }
 
-  if (versionIds.length > 0) {
-    await del(supabaseAdmin.from('mb_feedback').delete().in('version_id', versionIds), 'mb_feedback')
+  // EVERY `.in()` BELOW IS CHUNKED, and on this path that is not a precaution —
+  // one of them is over the wire limit in production right now.
+  //
+  // An `.in()` list is serialized into the query string, so its length is part
+  // of the HTTP request line, which nginx/Kong caps at the usual 8,192-byte
+  // `large_client_header_buffers`. A canonical UUID costs 39 encoded characters
+  // in that list (36 for the id, 3 for the `%2C` separator — postgrest-js
+  // appends through url.searchParams, so the commas are percent-encoded too).
+  // Measured against the live row counts (2026-08-19):
+  //   * projectIds — 46 for the largest account = 1,794 characters. Latent.
+  //   * versionIds — 271 for that same account = 10,569 characters. NOT latent:
+  //     that request line is ~2.4 KB PAST the ceiling, so the mb_feedback delete
+  //     414s before it reaches PostgREST, lands in dbErrors, and trips the abort
+  //     gate below. That account cannot be erased at all today, and the failure
+  //     grows with the account rather than resolving.
+  // A count cap alone would not be a fix here either — see ASSET_URL_CHUNK — so
+  // this uses the shared length-aware chunker rather than a second mechanism.
+  // Chunking a delete is safe to do blindly: each statement removes its own
+  // rows, per-chunk errors accumulate in dbErrors, and an empty list yields zero
+  // chunks, which is why the old `length > 0` guards are gone rather than kept.
+  for (const chunk of chunkByEncodedLength(versionIds)) {
+    await del(supabaseAdmin.from('mb_feedback').delete().in('version_id', chunk), 'mb_feedback')
   }
-  if (projectIds.length > 0) {
-    await del(supabaseAdmin.from('mb_activity').delete().in('project_id', projectIds), 'mb_activity')
-    await del(supabaseAdmin.from('mb_versions').delete().in('project_id', projectIds), 'mb_versions')
+  for (const chunk of chunkByEncodedLength(projectIds)) {
+    await del(supabaseAdmin.from('mb_activity').delete().in('project_id', chunk), 'mb_activity')
+    await del(supabaseAdmin.from('mb_versions').delete().in('project_id', chunk), 'mb_versions')
   }
+
+  // mb_activity AGAIN, by owner. The by-project delete above cannot reach a row
+  // whose project_id is NULL, and mb_activity.user_id references auth.users with
+  // NO ACTION (verified in pg_constraint, 2026-08-19) — so one such row is
+  // enough to make auth.admin.deleteUser fail on a foreign-key violation and
+  // leave the account permanently undeletable. Exactly the Submitbase trap
+  // documented further down, in a table nobody had checked. Production holds one
+  // of these rows today, and it belongs to the 46-project account above.
+  // Cascade does not save this case: mb_activity CASCADEs from mb_projects, and
+  // a row with no project_id has no mb_projects row to cascade from.
+  await del(supabaseAdmin.from('mb_activity').delete().eq('user_id', userId), 'mb_activity (by owner)')
   // Visualizers are keyed by user_id (not project) — delete by owner.
   await del(supabaseAdmin.from('mb_visualizers').delete().eq('user_id', userId), 'mb_visualizers')
 
-  const { data: collections } = await supabaseAdmin
-    .from('mb_collections')
-    .select('id')
-    .eq('user_id', userId)
+  // Paged and error-checked for the same reasons as the projects select — it
+  // carried the same uncapped, error-discarding shape (4 rows for the largest
+  // account today, so the truncation is latent here too).
+  //
+  // Failure is even cheaper here than for projects: mb_collection_items is ON
+  // DELETE CASCADE from mb_collections, and mb_collections is deleted by owner
+  // just below, so this whole enumeration is belt-and-braces and an unreadable
+  // list costs nothing at all. It is kept, error-checked, because "the cascade
+  // covers it" is a property of the schema that a future migration can revoke
+  // silently. Logged without Sentry for that reason — there is no sweep owed.
+  const collections = await collectAllRows<{ id: string }>((offset, limit) => fetchRowPage(
+    supabaseAdmin.from('mb_collections').select('id').eq('user_id', userId)
+      .order('id', { ascending: true }).range(offset, offset + limit - 1),
+    `collections for ${userId}`,
+  ))
+  if (collections === null) {
+    console.error(
+      `[delete-account] could not enumerate collections for ${userId} — relying on the ` +
+      `mb_collection_items CASCADE from mb_collections to clear them.`,
+    )
+  }
   const collectionIds = (collections ?? []).map(c => c.id)
 
-  if (collectionIds.length > 0) {
-    await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', collectionIds), 'mb_collection_items')
+  for (const chunk of chunkByEncodedLength(collectionIds)) {
+    await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', chunk), 'mb_collection_items')
   }
 
   await del(supabaseAdmin.from('mb_collections').delete().eq('user_id', userId), 'mb_collections')

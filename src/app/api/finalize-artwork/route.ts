@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
 
 export const runtime = 'nodejs'
@@ -18,8 +18,12 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { project_id } = body
-  if (!isUuid(project_id)) {
+  // Canonical, not merely valid: project_id becomes the prefix of the rendered
+  // object's storage key below, and Storage keeps a key's case verbatim while
+  // the ownership select is a uuid column that does not. An uppercase spelling
+  // would pass every gate and mint an object no reaper can name.
+  const project_id = canonicalUuid(body.project_id)
+  if (!project_id) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
 

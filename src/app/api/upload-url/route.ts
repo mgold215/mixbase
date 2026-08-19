@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { uploadLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { ownsProject } from '@/lib/ownership'
-import { isUuid } from '@/lib/validators'
+import { isUuid, canonicalUuid } from '@/lib/validators'
 import { VIZ_KEY_RE } from '@/lib/visualizer-finalize'
 
 // Buckets the client is allowed to request a signed upload URL for.
@@ -41,7 +41,23 @@ export async function POST(req: NextRequest) {
   if (normalized.split('/').some(seg => seg === '..' || seg === '.' || seg.includes('\0'))) {
     return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
   }
-  const safeFilename = normalized.replace(/^\/+/, '')
+
+  // Canonicalise the leading id segment INSIDE THE KEY, before anything reads
+  // it. The client hands us the WHOLE key here, and the key is what Supabase
+  // stores verbatim — so lowercasing only the variable we validate would
+  // authorize a canonical id while signing an uppercase one, and an uppercase
+  // key is unreapable (see canonicalUuid). Rewriting the key first makes the id
+  // we validate, the id we authorize, and the key we sign the same string by
+  // construction. A non-UUID first segment is left untouched and refused two
+  // lines below, exactly as before.
+  //
+  // Order matters: the traversal/null-byte rejection above already ran, and a
+  // canonical UUID contains no `/`, `.` or `\0`, so this substitution cannot
+  // reintroduce anything that check just refused.
+  const segments = normalized.replace(/^\/+/, '').split('/')
+  const canonicalFirst = canonicalUuid(segments[0])
+  if (canonicalFirst) segments[0] = canonicalFirst
+  const safeFilename = segments.join('/')
 
   // Rejecting `..` is NOT enough on its own: every key in these buckets is a
   // perfectly ordinary `<projectId>/<timestamp>.<ext>` path, so traversal was

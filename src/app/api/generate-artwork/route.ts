@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
-import { isUuid } from '@/lib/validators'
+import { canonicalUuid } from '@/lib/validators'
 import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook } from '@/lib/artwork-models'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
@@ -78,10 +78,16 @@ export async function POST(request: NextRequest) {
 
   // Two targets: a project's artwork, or a collection's cover. Exactly one id.
   const isCollection = !!collection_id
-  const targetId: string = isCollection ? collection_id : project_id
+  // Canonical, not merely valid: targetId is BOTH the DB key and the storage
+  // key prefix (`<targetId>/ai-…` or `covers/<targetId>/ai-…`), and only one of
+  // those two normalises case. Postgres would match an uppercase spelling on the
+  // ownership select below; Storage would keep it, minting an object outside
+  // every reaper's reach. Canonicalising here means the id that clears the gate
+  // is the same string that reaches both.
+  const targetId = canonicalUuid(isCollection ? collection_id : project_id)
 
   // Reject malformed ids before they reach a storage key or DB write.
-  if (!isUuid(targetId)) {
+  if (!targetId) {
     return NextResponse.json(
       { error: `Valid ${isCollection ? 'collection_id' : 'project_id'} is required` },
       { status: 400 }

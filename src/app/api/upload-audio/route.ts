@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { canonicalUuid } from '@/lib/validators'
 
 const MAX_AUDIO_SIZE = 500 * 1024 * 1024 // 500MB — Supabase Pro project limit
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
   const formData = await request.formData().catch(() => null)
   if (!formData) return NextResponse.json({ error: 'Invalid form data' }, { status: 400 })
   const file = formData.get('file') as File | null
-  const projectId = formData.get('project_id') as string
+  const projectId = canonicalUuid(formData.get('project_id'))
   const type = (formData.get('type') as string) ?? 'audio'  // 'audio' | 'artwork'
 
   if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -49,7 +49,14 @@ export async function POST(request: NextRequest) {
   // projectId becomes a storage-key prefix below — reject anything that isn't a
   // real UUID to block path traversal / malformed keys, then confirm ownership so
   // a user can't write into another user's project folder (IDOR).
-  if (!isUuid(projectId)) {
+  //
+  // canonicalUuid rather than isUuid because of what the prefix DOES: Postgres
+  // would accept the uppercase spelling on the ownership select below (uuid
+  // columns compare by value), but Supabase Storage keeps the key's case
+  // verbatim, so `<UPPERCASE-UUID>/…` would be a real object that no reaper can
+  // name. Validating and canonicalising in one step means the id that clears
+  // this gate is the only id that can reach the key.
+  if (!projectId) {
     return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
   const { data: ownerRow, error: ownerErr } = await supabaseAdmin
