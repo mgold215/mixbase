@@ -61,17 +61,21 @@ request 2026-08-14), applying refuted migration 028, new paid infrastructure.
 - ~7 profiles, ~2 active humans: every trend is directional, never statistically significant.
 - Numbers in reports must name their source; a claim with no source is an opinion.
 
-## Scheduling & governance (v2, same day — per Matt's directive)
+## Scheduling & relationship to the ops agents (v3 — Matt's final directive, 2026-08-19)
 
-Matt's 2026-08-19 evening directive: the exec layer must not run beside the existing
-`mixbase-product-management` daily task — it must GOVERN it, fully autonomously, shipping
-continuously, using opus subagents for judgment work and sonnet for mechanical work. The
-`exec-daily-meeting` skill is therefore the operating protocol OF that daily run (meeting →
-prioritized queue → execute → ship each green unit via `ship-to-prod` → CHRO retro). The
-separate "mixbase-exec-daily" routine is disabled; "mixbase-exec-office-hours" (hourly,
-7am–11pm ET) remains as the between-runs Slack responder and continuous shipper. The takeover
-binds through the two things the daily run always reads first: the memory backlog's standing
-directive and this repo's skills.
+**The executives are independent oversight. Other agents work; the executives evaluate their
+work.** The `mixbase-product-management` daily run and sibling automations operate exactly as
+before. The `mixbase-exec-daily` routine fires afterwards (~8:06 AM ET): the four execs treat
+the ops run's report as claims, verify them independently, grade the run (scorecard in the
+minutes), remediate delivery failures (shipping stranded fully-gated green work is the only
+work execs do themselves), and feed evaluations + recommended priorities back through the
+memory backlog — the ops agents read them as input, not orders. Subagent tiering: opus for
+the execs and any verification where a wrong conclusion misleads Matt; sonnet for mechanical
+checks. `mixbase-exec-office-hours` (hourly, 7am–11pm ET) answers Matt's Slack messages
+between meetings and ships stranded green work under the same rules.
+
+(A v2 iteration briefly had the exec layer *govern* the ops run; Matt rejected it the same
+evening — evaluation, not takeover.)
 
 ## Alternatives considered
 

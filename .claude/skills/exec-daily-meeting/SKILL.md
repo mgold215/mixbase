@@ -1,21 +1,22 @@
 ---
 name: exec-daily-meeting
-description: The executive governance protocol for the mixbase-product-management daily run — the CEO/CFO/CTO/CHRO layer RUNS the daily iteration, ships continuously through ship-to-prod, and reports through Slack. Use at the START of every mixbase-product-management run, when the scheduled routine fires, or when Matt asks to "run the exec meeting" / "hold the board meeting" / "what do the execs think".
+description: Run the mixBASE daily executive meeting — CEO, CFO, CTO, CHRO independently EVALUATE the work of the ops agents (the mixbase-product-management daily run and sibling automations), grade delivery, remediate stranded shipments, and report to Matt through Slack. Use when the "mixbase-exec-daily" routine fires, or when Matt asks to "run the exec meeting" / "hold the board meeting" / "what do the execs think".
 ---
 
-# mixBASE Executive Governance (v2 — governs the daily product-management run)
+# mixBASE Daily Executive Meeting (v3 — independent oversight)
 
-**Standing directive from Matt (2026-08-19): the executive layer runs the daily
-product-management iteration autonomously and ships continuously — one delivery pipeline,
-not a separate meeting beside the ops run.** This skill is HOW the daily run operates,
-start to finish. Exec role definitions: `.claude/agents/exec-{ceo,cfo,cto,chro}.md`.
-Design doc: `docs/superpowers/specs/2026-08-19-executive-layer-design.md`.
+**The executives do not do the ops work. Other agents work; the executives evaluate their
+work** (Matt's directive, 2026-08-19). The `mixbase-product-management` daily run and the
+other automations operate exactly as before; this meeting runs afterwards, audits what they
+did, grades it, fixes delivery failures, and reports to Matt. Exec role definitions:
+`.claude/agents/exec-{ceo,cfo,cto,chro}.md`. Design doc:
+`docs/superpowers/specs/2026-08-19-executive-layer-design.md`.
 
 ## Slack channels (all visible to Matt — his messages are binding directives)
 
 | Channel | ID | Purpose |
 |---|---|---|
-| #mixbase-boardroom | `C0BS7TTH5CG` | Minutes, decisions, action list, execution log |
+| #mixbase-boardroom | `C0BS7TTH5CG` | Minutes, run scorecard, decisions, action list |
 | #mixbase-ceo-office | `C0BRBJMTXLN` | CEO private feedback ↔ Matt's directives |
 | #mixbase-cfo-office | `C0BRH7PHJQL` | CFO private feedback ↔ Matt's directives |
 | #mixbase-cto-office | `C0BR7A58JAF` | CTO private feedback ↔ Matt's directives |
@@ -24,57 +25,63 @@ Design doc: `docs/superpowers/specs/2026-08-19-executive-layer-design.md`.
 ATTEMPT every Slack call before believing any auth banner. If Slack truly fails, write the
 minutes into the memory backlog and flag the outage — never skip the meeting.
 
-## Model tiering for subagents (Matt's directive: opus and sonnet where appropriate)
+## Model tiering for subagents (opus and sonnet where appropriate)
 
-- **opus** — executive reasoning and synthesis, architecture decisions, code review,
-  adversarial verification of another agent's work, anything where a wrong conclusion ships.
-- **sonnet** — mechanical work: recon SQL and log pulls, censuses/greps, smoke tests,
-  formatting, Slack posting, single-file well-specified edits.
-- Rule of thumb: if the subagent's output will be trusted without independent re-verification,
-  it runs on opus; if it's cheap to check or mechanical, sonnet.
+- **opus** — the four execs themselves, adversarial verification of an ops agent's claims,
+  anything where a wrong conclusion misleads Matt.
+- **sonnet** — mechanical checks: recon SQL, log pulls, greps, smoke tests, Slack posting.
 
-## The run, in order
+## Protocol
 
-### 1. Morning meeting (sets the day's priorities)
-- Read Matt's messages in all five channels since the last minutes — binding.
-- Fact pack (bounded, ≤ ~10 calls): memory backlog, prod `/api/health`, `git fetch` +
-  worktree scan for stranded work, one Supabase counts SQL, Sentry new-issue check.
-- Convene all four execs as parallel **opus** subagents (each embodies its role file; returns
-  REPORT / CHALLENGE / ACTIONS_AUTO / ACTIONS_MATT / PRIVATE_NOTE).
-- Synthesize minutes in the CEO's voice; post to the boardroom; post each PRIVATE_NOTE to its
-  office channel. Never silently drop a disagreement.
-- The meeting's output is the run's work queue, priority-ordered by the CEO.
+### Phase 0 — Matt's directives
+Read all five channels since the last minutes. A directive in an office channel binds that
+exec; a boardroom directive binds everyone. Answer any unanswered Matt question first, in-channel.
 
-### 2. Execution (the ops work, under CTO direction)
-- Work the queue with subagents tiered per the table above; disjoint file ownership across
-  concurrent agents; brief them with premises they can refute.
-- **Ship each unit as it goes green — do not batch.** Full gate first (`npm run lint`,
-  `npm run build`, `npm test`, gitleaks), then follow the `ship-to-prod` skill to completion.
-  If the session's permission layer declines any push or merge step, that is FAILED TO
-  DELIVER: execute the CTO's push-denial protocol immediately (recovery command + one-click
-  link to #mixbase-cto-office) — never a quiet footnote, never a workaround.
-- Post one-line progress notes to the boardroom thread as things ship.
+### Phase 1 — Evidence pack (bounded, ≤ ~10 calls)
+1. The ops team's own report: the memory backlog's newest run section (their account of
+   what they did — treat as CLAIMS to verify, not facts).
+2. Independent checks: prod `/api/health` · `git fetch` + worktree scan (did claimed ships
+   actually reach `origin/main`? is green work stranded?) · one Supabase counts SQL ·
+   Sentry new-issue check.
 
-### 3. Always human-gated — never autonomous
-Destructive or irreversible data operations (deleting user data, account erasure, storage
-reaping), new spend or paid infrastructure, pricing/tier changes, Stripe live mode, App Store
-resubmission, migration 028 (refuted — never apply), and changes to permission settings or
-this governance protocol's authority boundaries. These go to ACTIONS_MATT with a
-recommendation and a default-on-silence date where sensible.
+### Phase 2 — Executive session (parallel opus subagents)
+Each exec evaluates the ops work in their domain and returns REPORT / CHALLENGE /
+ACTIONS_AUTO / ACTIONS_MATT / PRIVATE_NOTE:
+- **CTO:** did claimed green gates actually pass? did shipped work actually deploy? any
+  regression, security drift, or stranded delivery?
+- **CEO:** did the run work on the right things? does output match stated priorities?
+- **CFO:** what did the run cost vs produce? any spend or waste signal?
+- **CHRO:** process quality — briefing defects, duplicated effort across sessions, lessons
+  left un-promoted to durable docs, Matt's queue net-reduced or grown?
 
-### 4. Close of run (CHRO)
-- Retro: what shipped, what stalled, briefing defects, lessons → promote durable ones into
-  skills/AGENTS.md the same day (via the normal PR gate).
-- Append a dated EXEC MEETING section (≤15 lines) to the memory backlog: decisions, ship log,
-  action-list delta, any Matt directives received — so the next run starts current.
-- Verify Matt's ask-list net-reduced his queue; consolidate if it grew.
+### Phase 3 — Synthesis (chair, CEO's voice)
+Minutes with a **run scorecard**: a letter grade per domain with one line of evidence each,
+disagreements resolved or escalated, decisions numbered, action list split auto vs Matt.
 
-## Between runs
+### Phase 4 — Publish
+Minutes → boardroom; each PRIVATE_NOTE verbatim → its office channel.
+
+### Phase 5 — Remediation auto-lane (the only work execs do themselves)
+- Ship stranded fully-gated green work: re-run the full gate on the exact tree
+  (`npm run lint`, `npm run build`, `npm test`), then follow `ship-to-prod` to completion.
+  If any push/merge is declined by the permission layer: FAILED TO DELIVER — post the exact
+  recovery command + one-click PR link to #mixbase-cto-office immediately. Never work around
+  a denial; never leave it as a footnote.
+- Re-run flaky CI; correct wrong facts in memory; promote durable lessons into skills/AGENTS.md
+  via the normal PR gate.
+- Everything else is feedback, not action: append a dated EXEC MEETING section (≤15 lines) to
+  the memory backlog — evaluations, recommended priorities, Matt directives — for the ops
+  agents to read. **The execs recommend; the ops run decides its own execution.**
+
+### Always human-gated — never autonomous
+Destructive/irreversible data ops, new spend, pricing/tier changes, Stripe live, App Store
+resubmission, migration 028 (refuted — never apply), permission/settings changes. These go to
+ACTIONS_MATT with a recommendation and a default-on-silence date where sensible.
+
+## Between meetings
 The `mixbase-exec-office-hours` routine (hourly, 7am–11pm ET) answers Matt's Slack messages
-as the channel's exec and, when it finds fully-gated green work stranded off `origin/main`,
-drives it through `ship-to-prod` (same denial-escalation rule). The daily run remains the
-deep-work vehicle; office hours keep latency low and delivery continuous.
+as the channel's exec and ships stranded green work it finds — same rules as Phase 5.
 
 ## Cost discipline (the CFO is watching)
-Tier aggressively — most subagent work is sonnet-grade. Opus is for judgment, not plumbing.
-If a phase fails, note it in the minutes rather than retrying more than once.
+One meeting ≈ 4 opus subagents + ~20 orchestrator calls. Don't fan out further; don't re-run
+execs for polish. If a phase fails, note it in the minutes rather than retrying more than once.
