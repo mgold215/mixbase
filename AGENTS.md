@@ -48,6 +48,10 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 - The `/player` waveform is **decorative, not real**: `generateWaveform()` is an LCG seeded by `project_id`, so the shape is stable per project but carries zero information about the audio. Don't cite it as analysis, and don't "fix" it without deciding to build real peak extraction.
 - **Features this app does NOT have** (verified absent 2026-08-03 — don't build on them): A/B version compare (one shared `<audio>` in `PlayerContext`, no two-source switching); a `WaveformPlayer` component (the name appears nowhere in `src/`).
 
+# Testing
+- **Unit suites live in `scripts/*-test.mjs`**, run by `scripts/run-renderer-tests.mjs` (`npm test`). `tests/` is Playwright e2e ONLY — a unit suite dropped there never runs. The runner hard-fails if any `scripts/*-test.mjs` exists on disk but is unregistered, so register new suites centrally in its `SUITES` array (when briefing subagents, have them report new test filenames rather than editing the shared array).
+- `npm test` never touches `.next`; only `build` and `lint` collide with each other. Tests can safely run while a build runs.
+
 # Auth Model
 Multi-user with Supabase Auth (email + password). `POST /api/auth` calls `supabaseAdmin.auth.signInWithPassword()` and sets `sb-access-token` + `sb-refresh-token` cookies. `POST /api/auth/signup` creates new accounts. Middleware verifies the access token locally against `SUPABASE_JWT_SECRET` (HS256; `getUser()` round-trip only as fallback) and injects `X-User-Id` header. All data tables have `user_id` columns with RLS policies enforcing per-user isolation (migration 005). Deliberate exception: the community feed (`/feed`, `GET /api/feed`, `mb_feed_comments`) is cross-user by design — every signed-in artist sees all users' uploads and comments (server-side via `supabaseAdmin`).
 
