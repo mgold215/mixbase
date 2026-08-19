@@ -61,10 +61,17 @@ request 2026-08-14), applying refuted migration 028, new paid infrastructure.
 - ~7 profiles, ~2 active humans: every trend is directional, never statistically significant.
 - Numbers in reports must name their source; a claim with no source is an opinion.
 
-## Scheduling
+## Scheduling & governance (v2, same day — per Matt's directive)
 
-A daily scheduled routine ("mixbase-exec-daily") runs the meeting each morning after the existing
-product-management run has finished, so the meeting always reviews a fresh ops report.
+Matt's 2026-08-19 evening directive: the exec layer must not run beside the existing
+`mixbase-product-management` daily task — it must GOVERN it, fully autonomously, shipping
+continuously, using opus subagents for judgment work and sonnet for mechanical work. The
+`exec-daily-meeting` skill is therefore the operating protocol OF that daily run (meeting →
+prioritized queue → execute → ship each green unit via `ship-to-prod` → CHRO retro). The
+separate "mixbase-exec-daily" routine is disabled; "mixbase-exec-office-hours" (hourly,
+7am–11pm ET) remains as the between-runs Slack responder and continuous shipper. The takeover
+binds through the two things the daily run always reads first: the memory backlog's standing
+directive and this repo's skills.
 
 ## Alternatives considered
 
