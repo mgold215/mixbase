@@ -336,19 +336,68 @@ check('registration is not wired into playUrl (the unauthenticated feed/share pa
 check('the backfill work never touches the Web Audio chain',
   !/ensureAudioChain|createMediaElementSource/.test(registerEffect))
 
-// ── D. Public surfaces still cannot spam a failing PATCH ─────────────────────
-// /api/tracks is owner-scoped (section A proved the 401), so an anonymous
-// visitor's `tracks` stays empty and the effect above registers nothing. The
-// remaining way to break that is for a public component to start registering
-// rows itself — every PATCH it sent could only 401, forever.
+// ── D. Public surfaces write duration ONLY through the token-scoped route ────
+// This section used to assert the opposite: that ShareClient and AlbumPlayer
+// contained no `duration_seconds` at all. That was right on 2026-08-19 and is
+// wrong on 2026-08-20, so it is worth stating plainly why it changed rather
+// than quietly relaxing it.
+//
+// The old rule existed for ONE reason, recorded in its own comment: every write
+// these components could send "could only 401, forever", because the only write
+// path was the owner-scoped PATCH /api/versions/[id] and these pages have no
+// session. The rule was never "public surfaces must not heal" — it was "public
+// surfaces must not spam a doomed request".
+//
+// POST /api/share/<token>/duration removes that premise: it authorises the
+// write from the share token the visitor already holds, so these requests now
+// succeed. 145 of 364 rows are NULL and the project-level share link only ever
+// resolves the LATEST mix, so without this the 110 older versions could never
+// be healed by anyone but the artist.
+//
+// What must still hold — and what these checks now pin — is the part that was
+// actually load-bearing:
+//   1. Neither component may reach the AUTHENTICATED route. A PATCH to
+//      /api/versions/[id] from here is the doomed request the old rule banned,
+//      and it is still doomed.
+//   2. Neither may register into the /api/tracks heal (section A proved that
+//      path 401s for an anonymous visitor, so it would register nothing and
+//      retry forever).
+//   3. A non-finite reading must never leave the client. `duration` is NaN
+//      before metadata parses and Infinity for a stream of unknown length; the
+//      write is write-once, so a persisted lie could never be corrected. The
+//      server refuses both independently — this is the client-side half of that
+//      defence, and it must not be removed on the grounds that the server
+//      checks too.
 console.log('\npublic surfaces\n')
 
 for (const path of ['src/app/share/[token]/ShareClient.tsx', 'src/components/AlbumPlayer.tsx']) {
+  const file = path.split('/').pop()
   const src = stripComments(read(path))
-  check(`${path.split('/').pop()} registers nothing to heal`,
+  check(`${file} registers nothing to heal`,
     !src.includes('registerUnmeasuredVersions'))
-  check(`${path.split('/').pop()} sends no duration PATCH of its own`,
-    !/duration_seconds/.test(src))
+  // The ban is on the OWNER-scoped route specifically, not on the concept of a
+  // duration write — matching '/api/versions' rather than 'duration_seconds'.
+  check(`${file} never writes duration through the authenticated route`,
+    !/\/api\/versions/.test(src))
+  // If it heals at all, it must do so through the token-scoped route and must
+  // gate the reading first. Guarded on the file actually sending one, so this
+  // section keeps meaning something if a future player stops healing entirely.
+  if (/duration_seconds/.test(src)) {
+    check(`${file} heals only via POST /api/share/<token>/duration`,
+      /\/api\/share\/\$\{encodeURIComponent\([A-Za-z]+\)\}\/duration/.test(src))
+    // Bind the guard to the SAME identifier that is actually sent, rather than
+    // just looking for `Number.isFinite(` anywhere in the file. Both components
+    // use Number.isFinite several times for unrelated display formatting, so
+    // the loose form passed even with the real guard deleted — a vacuous check
+    // is worse than no check, because it reads as coverage.
+    const sent = /duration_seconds:\s*Math\.round\(([A-Za-z_$][\w$]*)\)/.exec(src)
+    check(`${file} — located the identifier it sends`, !!sent)
+    if (sent) {
+      const ident = sent[1]
+      check(`${file} refuses a non-finite ${ident} before sending`,
+        new RegExp(`!\\s*Number\\.isFinite\\(\\s*${ident}\\s*\\)`).test(src))
+    }
+  }
 }
 
 // ── E. The constraints this change had to honour ─────────────────────────────

@@ -39,6 +39,13 @@ const PUBLIC_PATHS = [
   '/api/auth/logout',
   '/api/auth/refresh', // must be reachable without a valid session
   '/api/feedback',
+  // Share-token-scoped duration backfill, posted by the anonymous listeners on
+  // /share/<token> and /album/<…>/<token>. NOTE: '/share/' above does NOT cover
+  // this — matching is startsWith() on the pathname, and '/api/share/…' does
+  // not start with '/share/'. The trailing slash keeps it from matching a
+  // sibling like '/api/shared'; it is still a PREFIX, so anything ever added
+  // under /api/share/ inherits public status and must gate on the token itself.
+  '/api/share/',
   '/api/audio',
   '/api/artwork', // public mf-artwork proxy — iOS lock-screen fetches it cookie-less
   '/api/health',

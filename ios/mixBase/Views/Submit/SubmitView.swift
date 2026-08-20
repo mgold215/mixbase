@@ -77,7 +77,7 @@ struct SubmitView: View {
                 })
             }
             .sheet(item: $showCuratorDetail) { curator in
-                CuratorDetailSheet(curator: curator, submissions: submissions.filter { $0.curatorId == curator.id.uuidString })
+                CuratorDetailSheet(curator: curator, submissions: submissions.filter { $0.curatorId == curator.id.postgresString })
             }
         }
     }
@@ -409,8 +409,8 @@ struct SubmitView: View {
     // MARK: - Submission Row
     @ViewBuilder
     private func submissionRow(submission: Submission) -> some View {
-        let curator = curators.first(where: { $0.id.uuidString == submission.curatorId })
-        let project = projects.first(where: { $0.id.uuidString == submission.projectId })
+        let curator = curators.first(where: { $0.id.postgresString == submission.curatorId })
+        let project = projects.first(where: { $0.id.postgresString == submission.projectId })
 
         HStack(spacing: 12) {
             // Status dot
@@ -543,12 +543,12 @@ struct SubmitView: View {
 
         do {
             var fields: [String: Any] = [
-                "curator_id": curator.id.uuidString,
-                "project_id": project.id.uuidString,
+                "curator_id": curator.id.postgresString,
+                "project_id": project.id.postgresString,
                 "channel": curator.contactMethod ?? "email",
                 "message": pitchMessage,
             ]
-            if let versionId = latest?.id.uuidString { fields["version_id"] = versionId }
+            if let versionId = latest?.id.postgresString { fields["version_id"] = versionId }
             if let url = shareUrl { fields["share_url"] = url }
 
             let submission = try await SupabaseService.shared.createSubmission(fields)
