@@ -17,9 +17,16 @@ import {
   totalKeyCount,
   type AssetKeys,
   type AssetUrlSelect,
+  type ProjectAssetRow,
   type VersionAssetRow,
   type VisualizerAssetRow,
 } from '@/lib/project-assets'
+// The SAME request-line bound DELETE /api/projects/[id] applies to its survivor
+// scan, reused rather than reinvented. An `.in()` list travels in the query
+// string, so the hazard is identical wherever one is built from a list whose
+// length the user controls — and two places sizing that list differently is the
+// bug class src/lib/survivor-scan-plan.ts exists to prevent.
+import { chunkByEncodedLength } from '@/lib/survivor-scan-plan'
 
 // Named rather than inlined into the signature — see the same type in
 // src/app/api/projects/[id]/route.ts.
@@ -41,12 +48,127 @@ async function fetchRowPage<T>(query: RowQuery, label: string): Promise<T[] | nu
   return (data ?? []) as T[]
 }
 
+/**
+ * True when a PostgREST error means "this table isn't in this environment".
+ *
+ * Deliberately the SAME idiom src/lib/schema-heal.ts already uses for its own
+ * optional relations (isMissingFeedCommentsTable, isMissingLibraryTracksTable)
+ * rather than a second mechanism: match the SQL state 42P01, or a message that
+ * both names THIS table and reads as a missing relation. 'schema cache' is in
+ * the pattern because PostgREST answers an unknown table with PGRST205
+ * ("Could not find the table 'public.x' in the schema cache") rather than a
+ * Postgres error, and that is the form a fresh deploy actually sees.
+ *
+ * Requiring the table NAME is what keeps this narrow. Swallowing every
+ * missing-relation error would let an error about some OTHER relation — a
+ * broken view, a dropped FK target — silently pass for "optional table absent"
+ * and skip a deletion that really did fail. That error must still abort.
+ */
+function isMissingRelation(error: { code?: string; message?: string } | null, table: string): boolean {
+  if (!error) return false
+  if (error.code === '42P01' && !!error.message?.includes(table)) return true
+  return !!error.message && error.message.includes(table) && /does not exist|relation|schema cache/.test(error.message)
+}
+
+// Tables belonging to OTHER products that share this Supabase project — and,
+// critically, share its auth.users. mixMASH (Railway services mixmash-api /
+// -worker / -web, migration mixmash_initial) keys these to auth.users with
+// confdeltype 'a', so a single row makes auth.admin.deleteUser fail and this
+// user's mixBASE account becomes permanently undeletable.
+//
+// NOT deleted from here — see the pre-flight below for the reasoning. Listed by
+// NAME ONLY and probed for nothing but a count, so mixBASE never reads another
+// product's user data and nothing here depends on mixMASH's columns, its FK
+// ordering, or its schema staying as it is today. If any of these tables is
+// renamed, dropped, or given an ON DELETE CASCADE, this probe degrades to "not
+// blocking" and the erasure simply proceeds.
+const FOREIGN_BLOCKING_TABLES = ['mm_mixes', 'mm_tracks', 'mm_render_jobs'] as const
+
+/**
+ * Count rows in other products' tables that would block auth.admin.deleteUser.
+ *
+ * Returns the blocking tables (empty when clear), or null if the question could
+ * not be answered. A table that does not exist here is NOT a blocker — a fresh
+ * environment has the mb_* tables but none of the mm_* ones, and treating that
+ * as a blocker would invent a new way to make an account undeletable.
+ */
+async function countForeignBlockers(
+  userId: string,
+): Promise<{ table: string; count: number }[] | null> {
+  const blockers: { table: string; count: number }[] = []
+  for (const table of FOREIGN_BLOCKING_TABLES) {
+    // head + exact count: we need the NUMBER, never the rows. Reading another
+    // product's records to decide our own deletion would be exactly the
+    // overreach this pre-flight exists to avoid.
+    const { count, error } = await supabaseAdmin
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+    if (error) {
+      if (isMissingRelation(error, table)) continue
+      console.error(`[delete-account] could not probe ${table} for ${userId}: ${error.message}`)
+      return null
+    }
+    if ((count ?? 0) > 0) blockers.push({ table, count: count ?? 0 })
+  }
+  return blockers
+}
+
 // POST /api/auth/delete-account — permanently delete user and all their data
 // Deletes storage files first (GDPR), then DB rows, then the auth user.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  // ── PRE-FLIGHT: can this erasure finish at all? ─────────────────────────────
+  // FIRST, before Stripe, before a single row or byte is touched.
+  //
+  // This Supabase project is shared by several of Matt's products, and they
+  // share ONE auth.users. mixMASH keys mm_mixes / mm_tracks / mm_render_jobs to
+  // auth.users with NO ACTION, so if this user has any mixMASH data, the very
+  // LAST statement of this route — auth.admin.deleteUser — dies on a raw
+  // foreign-key violation. By then the Stripe subscription is cancelled, every
+  // mixBASE row is deleted and every byte is gone: the user has lost everything
+  // AND still has an account, and the 500 they get names no cause. That is the
+  // worst outcome this route can produce, and today nothing detects it.
+  //
+  // Asking the question up front converts it into a clean, retryable refusal
+  // that changes nothing. It costs three counting queries on the happy path.
+  //
+  // WHY DETECT AND NOT DELETE. Reaching into another product's tables looked
+  // like the obvious fix and is worse on the merits:
+  //   * mm_tracks.storage_path / stems_path and mm_mixes.render_path are the
+  //     ONLY pointers to that audio, and it lives in mixMASH's storage buckets,
+  //     which this route cannot sweep. Deleting the rows would destroy the
+  //     index while leaving the bytes — the personal data survives and nothing
+  //     can find it again. For a GDPR erasure that is a step backwards.
+  //   * Doing it safely means encoding mixMASH's FK order here (mm_mix_items
+  //     references mm_tracks NOT NULL with NO ACTION, so mm_mixes must be
+  //     deleted before mm_tracks), which hard-couples mixBASE to a schema it
+  //     does not own and cannot test against.
+  // So: refuse precisely, name the table and the count, and let the erasure be
+  // completed by whoever owns that data. Zero rows exist in any of these tables
+  // today, so this branch is unreachable in production right now — it exists so
+  // that the first mixMASH user to request deletion produces a one-line
+  // diagnosis instead of an unexplainable 500.
+  const foreignBlockers = await countForeignBlockers(userId)
+  if (foreignBlockers === null || foreignBlockers.length > 0) {
+    const detail = foreignBlockers === null
+      ? 'the pre-flight probe itself failed'
+      : foreignBlockers.map(b => `${b.table}=${b.count}`).join(', ')
+    console.error(`[delete-account] refusing to start erasure for ${userId} — ${detail}`)
+    Sentry.captureMessage('delete-account: blocked by another product\'s rows on the shared auth user', {
+      level: 'error',
+      extra: { userId, blockers: foreignBlockers ?? 'probe failed' },
+    })
+    // Nothing has been touched, so this is honest and the user can retry once
+    // the blocking data is cleared.
+    return NextResponse.json(
+      { error: 'Your account could not be deleted automatically because other data is still linked to it. Nothing was changed — support has been notified.' },
+      { status: 409 },
+    )
   }
 
   // Cancel any active Stripe subscription FIRST — once profiles is deleted the
@@ -78,10 +200,46 @@ export async function POST(request: NextRequest) {
 
   // Gather projects (with both artwork URLs) and version IDs before deleting
   // anything. Folding the URLs into this select avoids a second full scan.
-  const { data: projects } = await supabaseAdmin
-    .from('mb_projects')
-    .select('id, artwork_url, finalized_artwork_url')
-    .eq('user_id', userId)
+  //
+  // PAGED, AND ITS ERROR IS READ. It had neither. `const { data: projects } =`
+  // discarded the error object outright, so a failed read was indistinguishable
+  // from "this user owns no projects" — and every consequence of that is silent:
+  // an empty projectIds skips the versions enumeration, empties the candidate
+  // key set, and hands filterToOwnedPrefixes an empty owned set, after which the
+  // route reports a clean GDPR erasure having cleaned up nothing at all. The
+  // missing range is the same defect one layer down: no `.limit()` is not "no
+  // ceiling", it is PostgREST's server-side `max-rows` applied invisibly.
+  //
+  // WHAT AN INCOMPLETE READ HERE COSTS — checked against the live FK graph
+  // (pg_constraint, 2026-08-19) rather than assumed, because the answer is what
+  // decides whether this branch may abort. It costs BYTES, not PII: mb_projects
+  // is deleted by `.eq('user_id', …)` below, NOT by this list, and every child of
+  // mb_projects is ON DELETE CASCADE — mb_versions, mb_activity,
+  // mb_collection_items, mb_visualizers, mb_favorites, mb_press_kits,
+  // mb_social_posts, mb_spotify_links, mb_curator_submissions and sb_submissions
+  // all read confdeltype 'c'. So the account still empties completely and no PII
+  // survives; what is lost is the URL list naming this user's artwork and audio.
+  // That is the versions enumeration's trade exactly, so it takes the versions
+  // enumeration's answer: log, report, CONTINUE. Blocking a GDPR erasure over a
+  // storage leak would trap the user in an undeletable account, which this route
+  // must never do. A failed row DELETE is the opposite case and still aborts —
+  // see the dbErrors gate below.
+  const projects = await collectAllRows<ProjectAssetRow & { id: string }>(
+    (offset, limit) => fetchRowPage(
+      supabaseAdmin.from('mb_projects').select('id, artwork_url, finalized_artwork_url').eq('user_id', userId)
+        .order('id', { ascending: true }).range(offset, offset + limit - 1),
+      `projects for ${userId}`,
+    ))
+  if (projects === null) {
+    console.error(
+      `[delete-account] could not enumerate projects for ${userId} — none of their artwork or audio can ` +
+      `be named, so NO storage cleanup will happen and all of it needs a sweep. Row deletion continues.`,
+    )
+    Sentry.captureMessage('delete-account: project enumeration incomplete, storage cleanup skipped', {
+      level: 'warning',
+      extra: { userId },
+    })
+  }
 
   const projectIds = (projects ?? []).map(p => p.id)
 
@@ -96,12 +254,28 @@ export async function POST(request: NextRequest) {
     // a user owns, and the largest account today holds 271 versions against a
     // per-project maximum of 20. Rows past the cut would have their audio left
     // in a PUBLIC bucket after a GDPR erasure, in the one bucket with no sweeper.
-    const rows = await collectAllRows<{ id: string; audio_url: string | null }>(
-      (offset, limit) => fetchRowPage(
-        supabaseAdmin.from('mb_versions').select('id, audio_url').in('project_id', projectIds)
-          .order('id', { ascending: true }).range(offset, offset + limit - 1),
-        `versions for ${userId}`,
-      ))
+    //
+    // CHUNKED TOO, on the other axis. Paging bounds how many rows come BACK;
+    // `.in('project_id', projectIds)` is how many ids go OUT, and it rides in
+    // the query string. Chunk boundaries are per-filter, so each chunk gets its
+    // own independent offset walk.
+    const collectedVersions: { id: string; audio_url: string | null }[] = []
+    let versionsComplete = true
+    for (const chunk of chunkByEncodedLength(projectIds)) {
+      const page = await collectAllRows<{ id: string; audio_url: string | null }>(
+        (offset, limit) => fetchRowPage(
+          supabaseAdmin.from('mb_versions').select('id, audio_url').in('project_id', chunk)
+            .order('id', { ascending: true }).range(offset, offset + limit - 1),
+          `versions for ${userId}`,
+        ))
+      if (page === null) { versionsComplete = false; break }
+      collectedVersions.push(...page)
+    }
+    // One unanswered chunk makes the WHOLE list untrustworthy, same contract
+    // collectAllRows applies to one unanswered page: a partial enumeration read
+    // as complete is what leaks bytes silently, and this list is only ever spent
+    // on byte cleanup.
+    const rows = versionsComplete ? collectedVersions : null
     if (rows === null) {
       // Logged, NOT fatal. Checked against the live schema (2026-08-18) before
       // choosing this: every dependent of mb_versions that matters here —
@@ -203,24 +377,97 @@ export async function POST(request: NextRequest) {
     if (error) dbErrors.push(`${label}: ${error.message}`)
   }
 
-  if (versionIds.length > 0) {
-    await del(supabaseAdmin.from('mb_feedback').delete().in('version_id', versionIds), 'mb_feedback')
+  // del()'s contract, minus ONE pre-identified failure: this table not existing
+  // in this environment. Everything else still lands in dbErrors and still
+  // aborts — "optional" is about the table's PRESENCE, never about whether its
+  // rows were really deleted.
+  //
+  // This distinction is the whole point. Several tables the erasure must clear
+  // are absent from db-init's SCHEMA_SQL and arrive only via supabase/migrations,
+  // so a freshly bootstrapped environment genuinely does not have them. Routing
+  // those through plain del() would push a "relation does not exist" string into
+  // dbErrors and trip the abort gate below — turning a hardening change into a
+  // brand-new way to make account deletion impossible, which is precisely the
+  // bug class this whole sweep exists to close.
+  const delOptional = async (
+    p: PromiseLike<{ error: { code?: string; message: string } | null }>,
+    label: string,
+  ) => {
+    const { error } = await p
+    if (!error) return
+    if (isMissingRelation(error, label)) {
+      console.warn(`[delete-account] optional table ${label} is not present in this environment — skipped`)
+      return
+    }
+    dbErrors.push(`${label}: ${error.message}`)
   }
-  if (projectIds.length > 0) {
-    await del(supabaseAdmin.from('mb_activity').delete().in('project_id', projectIds), 'mb_activity')
-    await del(supabaseAdmin.from('mb_versions').delete().in('project_id', projectIds), 'mb_versions')
+
+  // EVERY `.in()` BELOW IS CHUNKED, and on this path that is not a precaution —
+  // one of them is over the wire limit in production right now.
+  //
+  // An `.in()` list is serialized into the query string, so its length is part
+  // of the HTTP request line, which nginx/Kong caps at the usual 8,192-byte
+  // `large_client_header_buffers`. A canonical UUID costs 39 encoded characters
+  // in that list (36 for the id, 3 for the `%2C` separator — postgrest-js
+  // appends through url.searchParams, so the commas are percent-encoded too).
+  // Measured against the live row counts (2026-08-19):
+  //   * projectIds — 46 for the largest account = 1,794 characters. Latent.
+  //   * versionIds — 271 for that same account = 10,569 characters. NOT latent:
+  //     that request line is ~2.4 KB PAST the ceiling, so the mb_feedback delete
+  //     414s before it reaches PostgREST, lands in dbErrors, and trips the abort
+  //     gate below. That account cannot be erased at all today, and the failure
+  //     grows with the account rather than resolving.
+  // A count cap alone would not be a fix here either — see ASSET_URL_CHUNK — so
+  // this uses the shared length-aware chunker rather than a second mechanism.
+  // Chunking a delete is safe to do blindly: each statement removes its own
+  // rows, per-chunk errors accumulate in dbErrors, and an empty list yields zero
+  // chunks, which is why the old `length > 0` guards are gone rather than kept.
+  for (const chunk of chunkByEncodedLength(versionIds)) {
+    await del(supabaseAdmin.from('mb_feedback').delete().in('version_id', chunk), 'mb_feedback')
   }
+  for (const chunk of chunkByEncodedLength(projectIds)) {
+    await del(supabaseAdmin.from('mb_activity').delete().in('project_id', chunk), 'mb_activity')
+    await del(supabaseAdmin.from('mb_versions').delete().in('project_id', chunk), 'mb_versions')
+  }
+
+  // mb_activity AGAIN, by owner. The by-project delete above cannot reach a row
+  // whose project_id is NULL, and mb_activity.user_id references auth.users with
+  // NO ACTION (verified in pg_constraint, 2026-08-19) — so one such row is
+  // enough to make auth.admin.deleteUser fail on a foreign-key violation and
+  // leave the account permanently undeletable. Exactly the Submitbase trap
+  // documented further down, in a table nobody had checked. Production holds one
+  // of these rows today, and it belongs to the 46-project account above.
+  // Cascade does not save this case: mb_activity CASCADEs from mb_projects, and
+  // a row with no project_id has no mb_projects row to cascade from.
+  await del(supabaseAdmin.from('mb_activity').delete().eq('user_id', userId), 'mb_activity (by owner)')
   // Visualizers are keyed by user_id (not project) — delete by owner.
   await del(supabaseAdmin.from('mb_visualizers').delete().eq('user_id', userId), 'mb_visualizers')
 
-  const { data: collections } = await supabaseAdmin
-    .from('mb_collections')
-    .select('id')
-    .eq('user_id', userId)
+  // Paged and error-checked for the same reasons as the projects select — it
+  // carried the same uncapped, error-discarding shape (4 rows for the largest
+  // account today, so the truncation is latent here too).
+  //
+  // Failure is even cheaper here than for projects: mb_collection_items is ON
+  // DELETE CASCADE from mb_collections, and mb_collections is deleted by owner
+  // just below, so this whole enumeration is belt-and-braces and an unreadable
+  // list costs nothing at all. It is kept, error-checked, because "the cascade
+  // covers it" is a property of the schema that a future migration can revoke
+  // silently. Logged without Sentry for that reason — there is no sweep owed.
+  const collections = await collectAllRows<{ id: string }>((offset, limit) => fetchRowPage(
+    supabaseAdmin.from('mb_collections').select('id').eq('user_id', userId)
+      .order('id', { ascending: true }).range(offset, offset + limit - 1),
+    `collections for ${userId}`,
+  ))
+  if (collections === null) {
+    console.error(
+      `[delete-account] could not enumerate collections for ${userId} — relying on the ` +
+      `mb_collection_items CASCADE from mb_collections to clear them.`,
+    )
+  }
   const collectionIds = (collections ?? []).map(c => c.id)
 
-  if (collectionIds.length > 0) {
-    await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', collectionIds), 'mb_collection_items')
+  for (const chunk of chunkByEncodedLength(collectionIds)) {
+    await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', chunk), 'mb_collection_items')
   }
 
   await del(supabaseAdmin.from('mb_collections').delete().eq('user_id', userId), 'mb_collections')
@@ -234,6 +481,25 @@ export async function POST(request: NextRequest) {
   // directory (user_id IS NULL) untouched.
   await del(supabaseAdmin.from('sb_submissions').delete().eq('user_id', userId), 'sb_submissions')
   await del(supabaseAdmin.from('sb_curators').delete().eq('user_id', userId), 'sb_curators')
+
+  // mixBASE's OWN remaining NO ACTION references to auth.users, verified in
+  // pg_constraint on production (2026-08-20): both read confdeltype 'a', so one
+  // surviving row is enough to make auth.admin.deleteUser fail on a foreign-key
+  // violation and leave the account permanently undeletable — a Guideline
+  // 5.1.1(v) / GDPR erasure bug, not just a 500. Both hold zero rows today and
+  // nothing in this repo writes to either (migration 006 leftovers from the
+  // single-user era; grepped across src/ AND ios/), so this closes a latent
+  // wedge rather than fixing a live break.
+  //
+  // mb_favorites is deleted BY OWNER rather than left to its CASCADE from
+  // mb_projects, for exactly the reason mb_activity is: a row favouriting
+  // SOMEONE ELSE's project has no project of this user's to cascade from.
+  //
+  // delOptional, not del: neither table is in db-init's SCHEMA_SQL, so a freshly
+  // bootstrapped environment has neither, and a missing table must not abort an
+  // erasure. See the note on isMissingRelation.
+  await delOptional(supabaseAdmin.from('mb_favorites').delete().eq('user_id', userId), 'mb_favorites')
+  await delOptional(supabaseAdmin.from('mb_spotify_auth').delete().eq('user_id', userId), 'mb_spotify_auth')
 
   if (dbErrors.length > 0) {
     // Leave the account intact and retryable rather than half-deleting it.

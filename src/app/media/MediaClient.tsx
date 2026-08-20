@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Check, X, ExternalLink, Download, Film, Trash2 } from 'lucide-react'
+import { Check, X, ExternalLink, Download, Film, Trash2, RotateCcw } from 'lucide-react'
 import { downloadImage, saveMedia, type SaveMediaOptions } from '@/lib/download'
 import { visualizerKindLabel, availableKinds, filterByKind } from '@/lib/visualizer-kinds'
 
@@ -20,6 +20,17 @@ type VisualizerItem = {
   project_id: string | null
   kind: string
   created_at: string
+}
+
+// One render that reached storage but never got an mb_visualizers row — see
+// GET /api/visualizer/recover.
+type Recoverable = {
+  path: string
+  video_url: string
+  size: number | null
+  created_at: string | null
+  project_id: string
+  project_title: string
 }
 
 type Props = {
@@ -45,6 +56,76 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
   // iOS second-tap share: the bytes are fetched but Safari needs a fresh tap
   // to open the share sheet (transient activation expired mid-download).
   const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
+
+  // ── Unclaimed renders ──────────────────────────────────────────────────────
+  // Saving a visualizer is two steps — the browser PUTs the video straight to
+  // storage, then POSTs a claim that indexes it. If the claim never arrives
+  // (tab closed, browser killed, network dropped) the bytes are there and the
+  // render is simply absent from this page, with no error anywhere. On
+  // 2026-08-14 that happened eight times in 2.5 minutes for one project.
+  //
+  // So the page asks on load. An empty answer (and every failure — a 503 from
+  // an incomplete scan included) shows nothing at all: this banner must never
+  // appear speculatively.
+  const [unsaved, setUnsaved] = useState<Recoverable[]>([])
+  const [recovering, setRecovering] = useState(false)
+  const [recoverErr, setRecoverErr] = useState<string | null>(null)
+
+  const loadUnsaved = useCallback(async () => {
+    try {
+      const res = await fetch('/api/visualizer/recover')
+      if (!res.ok) return
+      const data = await res.json() as { recoverable?: Recoverable[] }
+      setUnsaved(Array.isArray(data.recoverable) ? data.recoverable : [])
+    } catch {
+      // Offline or mid-deploy. Silence is right: nothing is broken from the
+      // user's point of view until we can actually name what is missing.
+    }
+  }, [])
+
+  useEffect(() => { void loadUnsaved() }, [loadUnsaved])
+
+  // "8 renders from KICK IT W/U didn't save" reads far better than a bare
+  // count, and one project is by far the common case (a burst of retries on the
+  // same track). Only fall back to the count when more than one is involved.
+  const unsavedProjects = Array.from(new Set(unsaved.map(u => u.project_title)))
+  const unsavedLabel = `${unsaved.length} render${unsaved.length === 1 ? '' : 's'}`
+    + (unsavedProjects.length === 1 ? ` from ${unsavedProjects[0]}` : '')
+    + ` didn${'’'}t finish saving`
+
+  async function recoverUnsaved() {
+    setRecovering(true)
+    setRecoverErr(null)
+    try {
+      // The route caps how many paths one call may claim, so send a bounded
+      // slice and re-ask afterwards. Anything left over simply keeps the banner
+      // up with a smaller count, which is honest and needs no client-side loop.
+      const res = await fetch('/api/visualizer/recover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: unsaved.slice(0, 25).map(u => u.path) }),
+      })
+      if (!res.ok) {
+        setRecoverErr('Could not restore those renders — please try again.')
+        return
+      }
+      const data = await res.json() as { recovered?: unknown[]; failed?: { error?: string }[] }
+      const failed = data.failed ?? []
+      // A partial result is the normal shape here, not an error state: report
+      // it and still refresh, because whatever DID come back is now in the grid.
+      if (failed.length > 0 && (data.recovered?.length ?? 0) === 0) {
+        setRecoverErr(failed[0]?.error ?? 'Could not restore those renders.')
+      } else if (failed.length > 0) {
+        setRecoverErr(`${failed.length} could not be restored.`)
+      }
+      router.refresh()
+      await loadUnsaved()
+    } catch {
+      setRecoverErr('Could not restore those renders — check your connection.')
+    } finally {
+      setRecovering(false)
+    }
+  }
 
   const runDownload = (run: (opts: SaveMediaOptions) => Promise<void>) => {
     setDownloadErr(null)
@@ -129,6 +210,39 @@ export default function MediaClient({ projects, collections, visualizers }: Prop
             All generated artwork and visualizers — click any image to assign it, or make a video from it.
           </p>
         </div>
+
+        {/* Unclaimed renders — sits ABOVE the Visualizers section and outside
+            its `visualizers.length > 0` guard on purpose: the worst case is a
+            user whose renders ALL failed to claim, who therefore has an empty
+            library and would never see a banner nested inside it. */}
+        {unsaved.length > 0 && (
+          <div
+            className="mb-6 rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2"
+            style={{ border: '1px solid var(--surface-2)', backgroundColor: 'var(--surface)' }}
+            role="status"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium" style={{ color: 'var(--text)' }}>{unsavedLabel}</p>
+              <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                They finished rendering but never made it into your library. Nothing was lost — put them back.
+              </p>
+              {recoverErr && (
+                <p className="text-[11px] mt-1" style={{ color: 'var(--danger, #ef4444)' }} role="alert">
+                  {recoverErr}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={recoverUnsaved}
+              disabled={recovering}
+              className="flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+              style={{ backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }}
+            >
+              <RotateCcw size={12} />
+              {recovering ? 'Restoring…' : 'Recover'}
+            </button>
+          </div>
+        )}
 
         {/* Visualizers — every saved video the user owns (canvas + AI loops,
             plus finished YouTube/Shorts renders since PR #42) */}

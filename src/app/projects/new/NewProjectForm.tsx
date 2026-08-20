@@ -214,7 +214,19 @@ export default function NewProjectForm() {
     try {
       duration = await new Promise((resolve) => {
         const audio = new Audio(audioProxyUrl(audioUrl))
-        audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
+        // Guard the reading, don't just round it. `audio.duration` is NaN until
+        // metadata parses and Infinity for a stream whose length the browser
+        // cannot determine — and this plays through /api/audio, which forwards
+        // Content-Length only when Supabase sends one. Today both survive as a
+        // harmless NULL purely because JSON.stringify turns NaN and Infinity
+        // into `null`; the column is right by accident, not by intent. Resolve
+        // null explicitly so that stays true if this value ever travels any
+        // other way (a query param, String(d), a display, a later read-back) —
+        // duration_seconds is written ONCE, so a stored lie is uncorrectable.
+        audio.addEventListener('loadedmetadata', () => {
+          const seconds = Math.round(audio.duration)
+          resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : null)
+        })
         audio.addEventListener('error', () => resolve(null))
         setTimeout(() => resolve(null), 8000)
       })

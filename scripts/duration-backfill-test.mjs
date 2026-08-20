@@ -154,7 +154,14 @@ function query(table) {
   return q
 }
 
-export const supabaseAdmin = { from: (table) => query(table) }
+export const supabaseAdmin = {
+  from: (table) => query(table),
+  // tier.ts's isPlatformOwner() reaches for this deciding the owner exemption
+  // for the rate limiter. Answering "no such user" keeps the limiter on its
+  // ordinary path; without it the lookup throws into tier.ts's catch and the
+  // suite logs a failure line per request.
+  auth: { admin: { getUserById: async () => ({ data: { user: null }, error: null }) } },
+}
 export const SUPABASE_URL = 'https://example.supabase.co'
 export const supabase = supabaseAdmin
 `
@@ -164,9 +171,30 @@ registerHooks({
   resolve(spec, ctx, next) {
     // next/server has no bare-subpath export map entry Node can resolve.
     if (spec === 'next/server') return next('next/server.js', ctx)
-    if (spec === '@/lib/supabase') return { url: STUB_URL, shortCircuit: true, format: 'module' }
+    // Both spellings of the same module. The alias is what the ROUTE writes;
+    // the relative form is what src/lib/* modules use to reach their siblings,
+    // and src/lib/tier.ts (pulled in by the rate limiter) takes that path. Both
+    // must land on the in-memory store, or half the graph would talk to a real
+    // Supabase client.
+    if (spec === '@/lib/supabase' || spec === './supabase') {
+      return { url: STUB_URL, shortCircuit: true, format: 'module' }
+    }
     if (spec.startsWith('@/')) {
       return { url: pathToFileURL(join(root, 'src', spec.slice(2) + '.ts')).href, shortCircuit: true, format: 'module-typescript' }
+    }
+    // Extensionless RELATIVE specifiers. Webpack resolves them, Node's ESM
+    // resolver does not — so `await import('./tier')` inside src/lib/rate-limit.ts
+    // is correct in the app but unresolvable here, and the route stopped being
+    // importable at all the moment it gained a rate limiter. Retry with .ts
+    // rather than let ERR_MODULE_NOT_FOUND pass for a real failure; anything
+    // that is not a resolution failure still propagates.
+    if (spec.startsWith('./') || spec.startsWith('../')) {
+      try {
+        return next(spec, ctx)
+      } catch (err) {
+        if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err
+        return next(spec + '.ts', ctx)
+      }
     }
     return next(spec, ctx)
   },

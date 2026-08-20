@@ -599,7 +599,25 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         const audio = new Audio(audioProxyUrl(audioUrl))
         // Only need duration — don't buffer the whole file we just uploaded.
         audio.preload = 'metadata'
-        audio.addEventListener('loadedmetadata', () => resolve(Math.round(audio.duration)))
+        audio.addEventListener('loadedmetadata', () => {
+          // This probe is where NEW nulls are minted, so it must resolve an
+          // honest null rather than a number-shaped non-number.
+          // `loadedmetadata` does not guarantee a usable duration: it is NaN if
+          // metadata parsed without a length, and Infinity for a stream whose
+          // length the browser cannot determine — and this reads back through
+          // /api/audio, which only forwards Content-Length when Supabase sends
+          // one. `Math.round` propagates both unchanged.
+          //
+          // Today JSON.stringify happens to hide that (`{"d":Infinity}` is not
+          // JSON, so both encode to null and the column ends up NULL either
+          // way) — which is exactly why it went unnoticed. The bug is that the
+          // value is only correct by accident: any change to how it travels (a
+          // query param, `String(d)`, a client-side display, a future heal that
+          // reads it back) turns a silent null into "NaN" or a stored Infinity
+          // that the write-once rule could never let anyone correct.
+          const d = audio.duration
+          resolve(Number.isFinite(d) && d > 0 ? Math.round(d) : null)
+        })
         audio.addEventListener('error', () => resolve(null))
         setTimeout(() => resolve(null), 8000)
       })

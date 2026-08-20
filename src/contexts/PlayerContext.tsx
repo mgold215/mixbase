@@ -227,6 +227,35 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (audio) attemptDurationBackfill(audio)
   }, [attemptDurationBackfill])
 
+  // Register the engine's OWN track list. The project page registers the full
+  // version history of the one project it has open; this reaches the latest mix
+  // of EVERY project the user has, which is the widest coverage available —
+  // and it is what makes the mini player and /player able to heal at all. They
+  // play from this list, so before /api/tracks carried duration_seconds they
+  // could not tell a healed row from an unhealed one and healed nothing.
+  //
+  // Track.id is the mb_versions row id (see /api/tracks), which is exactly the
+  // id the PATCH needs; no extra request is made to find it.
+  //
+  // Public surfaces cost nothing here. /api/tracks is owner-scoped and answers
+  // 401 to an anonymous caller, so on a share page `tracks` stays empty, this
+  // loop registers nothing, and no PATCH is ever attempted — which matters
+  // because a PATCH from there could only 401 in a loop. Signed-in surfaces
+  // inherit the existing one-shot rule: attemptDurationBackfill marks a version
+  // attempted before it sends, so a row that cannot be healed is tried once per
+  // session, not once per play.
+  useEffect(() => {
+    const unmeasured = tracks
+      // `== null` catches both the NULL row and a column missing from an older
+      // deploy's payload. A real 0 is not possible (the server refuses to store
+      // one) and would not be treated as unknown here anyway.
+      .filter(t => t.duration_seconds == null)
+      .map(t => ({ versionId: t.id, url: audioProxyUrl(t.audio_url) }))
+    // Skip the call entirely once the catalog is healed — every refetch of the
+    // list re-runs this, and there is nothing to register then.
+    if (unmeasured.length > 0) registerUnmeasuredVersions(unmeasured)
+  }, [tracks, registerUnmeasuredVersions])
+
   // Live mirror of currentProjectId so the (mount-once) audio event listeners can read it
   // without re-subscribing on every track change.
   const currentProjectIdRef = useRef<string | null>(null)
@@ -477,6 +506,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       artwork_url: customMeta.artwork_url,
       visualizer_url: null,
       audio_url: currentUrl,
+      // A playUrl source has no mb_versions row of its own here, so there is
+      // nothing to report and nothing to heal from this shape.
+      duration_seconds: null,
       status: 'WIP',
       version: customMeta.versionLabel,
       uploaded_at: 0,

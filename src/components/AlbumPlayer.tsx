@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ChangeEvent } from 'react'
+import { useParams } from 'next/navigation'
 import Image from 'next/image'
 import { Play, Pause, SkipBack, SkipForward } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
@@ -130,6 +131,58 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     })
   }, [sourceId])
 
+  // ── Self-healing duration backfill (public half) ───────────────────────────
+  // 145 of 364 mb_versions rows have duration_seconds NULL, and this player
+  // shows the damage plainly: `totalDuration` above refuses to display an album
+  // runtime at all if ANY track's duration is missing, and those rows render a
+  // blank cell in the tracklist. The signed-in surfaces heal through
+  // PlayerContext → PATCH /api/versions/[id], but the public album page has no
+  // session, so it could never reach that route.
+  //
+  // POST /api/share/<token>/duration accepts the reading under the authority of
+  // the album token in the address bar. Two properties of this component shape
+  // the call:
+  //
+  //  · A track here is identified by its PROJECT id — `AlbumPlayerTrack.id` is
+  //    `mb_collection_items.project_id` (see src/lib/album-share.ts); the album
+  //    payload carries no version ids at all. So the request names the project
+  //    and the SERVER resolves the version, exactly as the album loader does
+  //    (newest mix of that project). The client never gets to name a row.
+  //  · Only tracks whose stored `duration` is null are ever posted. A healed
+  //    catalogue makes no requests.
+  const params = useParams<{ token?: string }>()
+  // Present only on the public /album/<artist>/<title>/<token> route. The other
+  // mount site (/collections/<id>, signed in) has no token param, so it simply
+  // never heals through the public door — which is correct: that page is the
+  // artist's own, and its healing belongs to the authenticated path.
+  const albumToken = typeof params?.token === 'string' ? params.token : null
+  const healAttemptedRef = useRef<Set<string>>(new Set())
+  const healDuration = useCallback((audio: HTMLAudioElement, track: AlbumPlayerTrack | undefined) => {
+    if (!albumToken || !track) return
+    // Nothing to heal — the row already has a length.
+    if (track.duration != null) return
+    if (healAttemptedRef.current.has(track.id)) return
+
+    const seconds = audio.duration
+    // THE guard. `duration` is NaN until metadata is parsed and Infinity for a
+    // stream whose length the browser cannot determine — and every mix here is
+    // *streamed* through /api/audio, which only forwards Content-Length when
+    // Supabase sends one. The server refuses both independently; this stops one
+    // ever leaving the client, because the write is once-only and a stored lie
+    // could never afterwards be corrected. Not marking `attempted` here is
+    // deliberate: a later 'durationchange' carrying a real value still heals.
+    if (!Number.isFinite(seconds) || seconds <= 0) return
+
+    // Marked BEFORE the request: auto-advance and the metadata events of one
+    // load would otherwise fire this several times for the same track.
+    healAttemptedRef.current.add(track.id)
+    void fetch(`/api/share/${encodeURIComponent(albumToken)}/duration`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: track.id, duration_seconds: Math.round(seconds) }),
+    }).catch(() => { /* offline / navigating away — the next listener tries again */ })
+  }, [albumToken])
+
   // Wire audio events. Depends on `index` so onEnded always advances from the
   // track that actually finished (re-binding on change is cheap).
   useEffect(() => {
@@ -146,7 +199,12 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
         }
       }
     }
-    const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
+    const onDuration = () => {
+      // Number.isFinite, not isNaN: isNaN(Infinity) is false, so the old test
+      // let a non-finite reading through into the time readout and the scrubber.
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      healDuration(audio, track)
+    }
     const onPlay = () => {
       setIsPlaying(true)
       announcePlay(sourceId)
@@ -177,6 +235,11 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     audio.addEventListener('ended', onEnded)
     // Pause when another source (the app's shared player) starts playing.
     const unsubscribe = onOtherSourcePlay(sourceId, () => audio.pause())
+    // This effect re-binds on every track change, and metadata for the new src
+    // can already be parsed by the time it does (warm cache, fast 206) — no
+    // further 'durationchange' is coming for that load. Heal from what the
+    // element already knows; the guard inside no-ops when it knows nothing yet.
+    healDuration(audio, track)
     return () => {
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('durationchange', onDuration)
@@ -185,7 +248,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       audio.removeEventListener('ended', onEnded)
       unsubscribe()
     }
-  }, [index, tracks, findPlayable, sourceId, claimTransport, coverUrl, artistName])
+  }, [index, tracks, findPlayable, sourceId, claimTransport, coverUrl, artistName, healDuration])
 
   // After a track change commits (new src is on the element), start playback
   // if the change came from an explicit play intent.

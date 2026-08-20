@@ -30,6 +30,63 @@ enum AudioFileMetadata {
     }
 }
 
+// MARK: - Storage key components
+
+extension UUID {
+    /// This id, spelled the one way a Supabase Storage KEY may spell it.
+    ///
+    /// WHY THIS EXISTS
+    /// `UUID.uuidString` is UPPERCASE on Apple platforms. Postgres compares
+    /// `uuid` columns by VALUE, so an uppercase id passes every ownership gate
+    /// and every `?id=eq.…` filter identically to the lowercase one. Supabase
+    /// Storage does not: object keys are plain text stored VERBATIM.
+    ///
+    /// Compose those two facts and an uppercase id in a key mints a real,
+    /// billed object that ownership checks accept but that NO cleanup path can
+    /// ever name — every reaper, prefix census and orphan scan starts from an
+    /// id read back OUT of Postgres, which always renders lowercase, and then
+    /// matches it as TEXT. Production carries 5 such objects in mf-audio today.
+    ///
+    /// So: canonicalise the UUID COMPONENT, here, at the point where an id
+    /// crosses from the case-insensitive world into the case-sensitive one.
+    /// Deliberately NOT done by lowercasing the whole filename inside
+    /// `uploadRequest` — a filename is not guaranteed to be UUID-only forever,
+    /// and a blanket `.lowercased()` there would silently corrupt any future
+    /// caller that puts user text or a case-sensitive token in a key.
+    ///
+    /// Reads are unaffected: existing rows store a full public URL and keep
+    /// working untouched. This is a write-path rule only.
+    var storageKeyComponent: String { uuidString.lowercased() }
+
+    /// This id, spelled the way POSTGRES renders it.
+    ///
+    /// WHY THIS IS SEPARATE FROM storageKeyComponent
+    /// Both lowercase, for opposite reasons, and merging them would make one of
+    /// the two comments a lie:
+    ///
+    ///   * `storageKeyComponent` exists because Supabase Storage does NOT
+    ///     normalise. A key is bytes, so the uppercase spelling mints a second,
+    ///     unreachable object.
+    ///   * `postgresString` exists because Postgres DOES normalise. A `uuid`
+    ///     column always renders lowercase (RFC 4122 canonical form), so any id
+    ///     that has round-tripped through PostgREST comes back lowercase.
+    ///
+    /// The bug that follows is a TEXT comparison. Swift renders uuids uppercase,
+    /// so `someUUID.uuidString == rowValueFromPostgREST` is not "usually right";
+    /// it is ALWAYS FALSE whenever the row value came from a `uuid` column. That
+    /// shipped in SubmitView: every submission rendered a nil curator and a nil
+    /// project because the join was a case-sensitive string compare.
+    ///
+    /// Use this for BOTH sides of the rule — the value written into an id field,
+    /// and the value compared against one read back — so the two halves cannot
+    /// drift apart the way they did there.
+    ///
+    /// NOT needed for `?id=eq.\(uuid)` REST filters: those are parsed by
+    /// Postgres as a uuid literal, which is case-insensitive, so both spellings
+    /// select the same row. Left alone deliberately rather than churned.
+    var postgresString: String { uuidString.lowercased() }
+}
+
 // MARK: - SupabaseService
 // A "singleton" service — meaning there's only one instance shared across the whole app.
 // It handles all communication with your Supabase database using plain HTTP requests.
@@ -271,7 +328,7 @@ class SupabaseService {
         fileSizeBytes: Int? = nil
     ) async throws -> Version {
         var fields: [String: Any] = [
-            "project_id": projectId.uuidString,
+            "project_id": projectId.postgresString,
             "version_number": versionNumber,
             "audio_url": audioUrl,
             "status": "WIP",
@@ -349,7 +406,7 @@ class SupabaseService {
             "dsp_youtube": false,
             "dsp_amazon": false
         ]
-        if let projectId = projectId { fields["project_id"] = projectId.uuidString }
+        if let projectId = projectId { fields["project_id"] = projectId.postgresString }
         if let releaseDate = releaseDate {
             // Format as "yyyy-MM-dd" since the column is a date, not a timestamp
             let formatter = DateFormatter()
@@ -453,7 +510,7 @@ class SupabaseService {
 
     /// Upload a collection cover image to mf-artwork; returns the public URL.
     func uploadCollectionCover(data: Data, collectionId: UUID) async throws -> String {
-        let filename = "collection-\(collectionId.uuidString.lowercased())-\(Int(Date().timeIntervalSince1970)).jpg"
+        let filename = "collection-\(collectionId.storageKeyComponent)-\(Int(Date().timeIntervalSince1970)).jpg"
         return try await uploadFile(data: data, filename: filename, bucket: "mf-artwork")
     }
 
@@ -469,8 +526,8 @@ class SupabaseService {
     /// Add a project to a collection at a given position
     func addToCollection(collectionId: UUID, projectId: UUID, position: Int) async throws -> CollectionItem {
         let fields: [String: Any] = [
-            "collection_id": collectionId.uuidString,
-            "project_id": projectId.uuidString,
+            "collection_id": collectionId.postgresString,
+            "project_id": projectId.postgresString,
             "position": position
         ]
         let body = try JSONSerialization.data(withJSONObject: fields)

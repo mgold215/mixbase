@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
+import { checkUserLimit, loudnessLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 // GET /api/versions/[id] — get one version with its feedback (owner only)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -67,6 +68,15 @@ function parseBackfillSeconds(raw: unknown): number | null {
   return seconds
 }
 
+/**
+ * True only for a JSON object — the one body shape this handler can read keys
+ * off. `typeof null === 'object'` and arrays are objects too, so both are named
+ * explicitly rather than assumed away.
+ */
+function isPatchBody(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 // PATCH /api/versions/[id] — update a version (owner only, via project ownership)
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -74,8 +84,25 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
   const { id } = await ctx.params
   if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
-  const body = await request.json().catch(() => null)
-  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  const body: unknown = await request.json().catch(() => null)
+  // A PARSED body is not an OBJECT body, and the difference was a 500.
+  // `JSON.parse('5')` is the number 5 — truthy, so the old `if (!body)` waved it
+  // through, and `'status' in 5` throws "Cannot use 'in' operator", which
+  // surfaced as an unhandled 500 on a request the client got wrong. The same
+  // held for `true` and for any JSON string (`"hi"`).
+  //
+  // isPatchBody() collapses that whole class into one honest 400:
+  //   * parse failure          → null
+  //   * the literal `null`     → typeof 'object' but not an object; the old
+  //                              `!body` caught it only by accident, and the
+  //                              next refactor to `body !== undefined` would
+  //                              have re-armed the crash
+  //   * numbers/booleans/strings → the cases that actually threw
+  //   * arrays                 → did NOT throw (`'status' in []` is false) but
+  //                              fell through to "No valid fields to update",
+  //                              which blames the caller's field names for a
+  //                              body that could never have carried any
+  if (!isPatchBody(body)) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   const allowed = ['status', 'label', 'private_notes', 'public_notes', 'change_log', 'allow_download'] as const
   const patch: Record<string, unknown> = {}
@@ -97,6 +124,34 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
   }
 
+  // Rate limit, modelled exactly on the sibling POST /api/versions/[id]/loudness:
+  // same checkUserLimit() key derivation (the middleware's X-User-Id, never
+  // anything from the body), same 429 + rateLimitHeaders() shape, same rollback
+  // when the request turns out not to own the row.
+  //
+  // It SHARES loudnessLimiter with that route rather than introducing a budget
+  // of its own. Sharing one limiter across the routes of a feature family is the
+  // established convention here — catalogLimiter covers /api/library and
+  // /api/library/find-isrc, vizSaveLimiter covers three visualizer routes,
+  // uploadLimiter covers /api/tus and /api/upload-url — and these two are the
+  // same family in the strictest sense: same URL prefix, same table, same
+  // ownership join, and the same driver. Both are written by the player rather
+  // than typed by the artist (loudness after a master check, duration after
+  // 'loadedmetadata'), so one 60/hour pool bounds the runaway-client loop that
+  // is the actual risk on both. Neither spends money or CPU.
+  //
+  // Placed AFTER the body validation above and BEFORE the ownership read below,
+  // which is the same ordering the visualizer routes pin: a malformed request
+  // must not cost the caller a credit, and a credit must be held before any
+  // query runs.
+  const rl = await checkUserLimit(loudnessLimiter, userId)
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many version updates — try again later' },
+      { status: 429, headers: rateLimitHeaders(rl) },
+    )
+  }
+
   // Verify ownership through the parent project before mutating.
   // duration_seconds is read here so the write-once rule can be decided from
   // the STORED value — never from anything the request claims.
@@ -107,7 +162,12 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     .eq('mb_projects.user_id', userId)
     .single()
 
-  if (!versionCheck) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!versionCheck) {
+    // The window counts work performed, not rejected attempts — same refund the
+    // loudness route makes on its own 404.
+    loudnessLimiter.rollback(userId)
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
   // The backfill is its OWN update rather than another key folded into `patch`.
   // Two reasons, both about the `.is('duration_seconds', null)` filter:

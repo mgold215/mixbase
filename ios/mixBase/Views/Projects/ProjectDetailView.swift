@@ -537,7 +537,7 @@ struct ProjectDetailView: View {
             }
 
             // Upload to Supabase Storage
-            let filename = "\(projectId.uuidString)-\(Int(Date().timeIntervalSince1970)).jpg"
+            let filename = "\(projectId.storageKeyComponent)-\(Int(Date().timeIntervalSince1970)).jpg"
             let publicUrl = try await SupabaseService.shared.uploadArtwork(data: data, filename: filename)
 
             // Update the project's artwork URL
@@ -673,7 +673,7 @@ struct ProjectDetailView: View {
         do {
             let ext = url.pathExtension.lowercased()
             let nextVersion = (versions.map(\.versionNumber).max() ?? 0) + 1
-            let filename = "\(project.id.uuidString)-v\(nextVersion)-\(Int(Date().timeIntervalSince1970)).\(ext)"
+            let filename = "\(project.id.storageKeyComponent)-v\(nextVersion)-\(Int(Date().timeIntervalSince1970)).\(ext)"
 
             uploadProgress = "Uploading audio… 0%"
             let audioUrl = try await SupabaseService.shared.uploadAudio(fileURL: tempURL, filename: filename) { fraction in

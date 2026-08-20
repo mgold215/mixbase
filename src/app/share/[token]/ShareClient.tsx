@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react'
+import { useParams } from 'next/navigation'
 import Image from 'next/image'
 import { Play, Pause, MessageSquare, ChevronDown, Download } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
@@ -42,6 +43,13 @@ function downloadFileName(audioUrl: string, title: string): string {
 }
 
 export default function ShareClient({ version }: Props) {
+  // The share token this page was addressed by. Read from the route rather than
+  // taken as a prop: page.tsx deliberately hands this component the MINIMISED
+  // public projection of the row (see the Props note above), and the token is
+  // not part of it — it is in the URL the visitor already has.
+  const params = useParams<{ token?: string }>()
+  const shareToken = typeof params?.token === 'string' ? params.token : null
+
   const audioRef = useRef<HTMLAudioElement>(null)
   const vizVideoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -82,12 +90,59 @@ export default function ShareClient({ version }: Props) {
     }
   }, [artworkUrl])
 
+  // ── Self-healing duration backfill (public half) ───────────────────────────
+  // 145 of 364 mb_versions rows have duration_seconds NULL. The signed-in
+  // surfaces heal themselves through PlayerContext → PATCH /api/versions/[id],
+  // but that route is owner-only and this page has no session at all: its
+  // listener is whoever the artist sent the link to. Nothing here could reach
+  // it, so before this the share player — one of the places an un-healed back
+  // catalogue actually gets played — measured the true length on every play and
+  // threw it away.
+  //
+  // POST /api/share/<token>/duration takes that reading under the authority of
+  // the token already in the address bar. Fire-and-forget by construction:
+  // nothing awaits it, nothing surfaces on failure, and it runs from a media
+  // event handler that returns immediately, so playback never waits on it.
+  const healAttemptedRef = useRef(false)
+  const healDuration = useCallback((audio: HTMLAudioElement) => {
+    if (healAttemptedRef.current || !shareToken) return
+
+    const seconds = audio.duration
+    // THE guard, and the reason this is a function and not one line at the call
+    // site. `duration` is NaN until metadata is parsed and Infinity for a stream
+    // whose length the browser cannot determine — and audio here is *streamed*
+    // through /api/audio, which only forwards Content-Length when Supabase sends
+    // one. The server refuses both independently, but a non-finite reading must
+    // never leave this client in the first place: persisting one would replace
+    // "we don't know" with a permanent lie that the write-once rule could never
+    // let anyone correct. Bailing out is free — a later 'durationchange' with a
+    // real value still heals, because nothing is marked attempted here.
+    if (!Number.isFinite(seconds) || seconds <= 0) return
+
+    // Marked BEFORE the request so the second metadata event of the same load
+    // cannot double-send, and so a row that cannot be healed is tried once per
+    // page view rather than once per event.
+    healAttemptedRef.current = true
+    void fetch(`/api/share/${encodeURIComponent(shareToken)}/duration`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // versionId can only NARROW what the token resolves to server-side — it
+      // is a cross-check, never the thing that authorises the write.
+      body: JSON.stringify({ versionId: version.id, duration_seconds: Math.round(seconds) }),
+    }).catch(() => { /* offline / navigating away — the next visitor tries again */ })
+  }, [shareToken, version.id])
+
   // Wire audio events
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
     const onTime = () => setCurrentTime(audio.currentTime)
-    const onDuration = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration)
+    const onDuration = () => {
+      // Number.isFinite, not isNaN: isNaN(Infinity) is false, so the old test
+      // let a non-finite reading through into the time readout.
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+      healDuration(audio)
+    }
     const onPlay = () => { setIsPlaying(true); announcePlay('share-player') }
     const onPause = () => { setIsPlaying(false); announceStop('share-player') }
     const onEnded = () => { setIsPlaying(false); announceStop('share-player') }
@@ -98,6 +153,11 @@ export default function ShareClient({ version }: Props) {
     audio.addEventListener('ended', onEnded)
     // Pause when another source (the app's shared player) starts playing.
     const unsubscribe = onOtherSourcePlay('share-player', () => audio.pause())
+    // Metadata can already be parsed by the time these listeners attach (a warm
+    // cache, or a fast 206 from /api/audio), and no further 'durationchange' is
+    // coming for that load. Heal from what the element already knows; the guard
+    // inside makes this a no-op when it knows nothing yet.
+    healDuration(audio)
     return () => {
       // Unmount kills this player's audio without a 'pause' event.
       announceStop('share-player')
@@ -108,7 +168,9 @@ export default function ShareClient({ version }: Props) {
       audio.removeEventListener('ended', onEnded)
       unsubscribe()
     }
-  }, [])
+    // healDuration is a useCallback over (shareToken, version.id) — both fixed
+    // for the life of this page — so this effect still mounts exactly once.
+  }, [healDuration])
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current
