@@ -15,6 +15,8 @@ Do NOT babysit staging. The user does not check staging, and merging is not gate
 
 Run the `preflight-checks` skill (at minimum `npm run lint` and `npm run build` — both must pass). Never push code that fails either.
 
+Gate in a **clean worktree**, never the main checkout, with `NODE_ENV` unset — untracked tool junk in the checkout and an exported `NODE_ENV=production` (strips devDeps on install) have each produced thousands of phantom lint errors (2026-08-19 and 08-20; full detail in the `mixbase-local-gate-environment` memory).
+
 ### 2. Get the work onto `tst`
 
 ```bash
