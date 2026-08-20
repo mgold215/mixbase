@@ -48,3 +48,7 @@ ios/mixBase/Utilities/Config.swift
 tests/e2e/.auth.json
 
 test-results/
+
+# agent tool scratch dirs — untracked junk here has caused phantom lint failures
+.agents/
+.codex/
