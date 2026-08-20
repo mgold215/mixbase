@@ -671,6 +671,14 @@ struct CollectionDetailView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
+                // The floating MiniPlayerBar (ContentView) overlays ~60pt of
+                // content above the tab bar — without this inset it buries the
+                // last row (Add Track) whenever something is playing.
+                .safeAreaInset(edge: .bottom) {
+                    if audioService.currentVersion != nil {
+                        Color.clear.frame(height: 76)
+                    }
+                }
             }
         }
         .navigationTitle(collection.title)

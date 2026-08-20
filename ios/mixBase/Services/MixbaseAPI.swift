@@ -234,9 +234,19 @@ final class MixbaseAPI {
         ])
     }
 
+    /// Wrapper that swallows a single undecodable feed row. Decoding the feed
+    /// as a plain [FeedItem] means ONE malformed entry (e.g. a legacy ownerless
+    /// upload whose user_id serializes as "") blanks the entire community feed.
+    private struct LossyFeedItem: Decodable {
+        let item: FeedItem?
+        init(from decoder: Decoder) {
+            item = try? FeedItem(from: decoder)
+        }
+    }
+
     func fetchFeed() async throws -> [FeedItem] {
         let data = try await requestData(path: "/api/feed", method: "GET")
-        return try decoder.decode([FeedItem].self, from: data)
+        return try decoder.decode([LossyFeedItem].self, from: data).compactMap(\.item)
     }
 
     /// Leave a comment on another artist's upload. Returns the saved comment
