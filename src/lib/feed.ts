@@ -205,6 +205,11 @@ export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
     .from('mb_versions')
     .select('id, project_id, label, version_number, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
     .not('audio_url', 'is', null)
+    // Ownerless projects (residue of the fixed iOS null-owner insert bug) must
+    // not reach a cross-user feed: their user_id serializes as "", which strict
+    // clients reject as a UUID — one such row blanked the entire iOS feed —
+    // and an entry with no author can't be blocked or reported (Guideline 1.2).
+    .not('mb_projects.user_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(RAW_VERSION_FETCH)
   if (error) throw new Error(error.message)
