@@ -64,11 +64,24 @@ export type ProjectAssetRow = {
 }
 export type VersionAssetRow = { audio_url?: string | null }
 export type VisualizerAssetRow = { video_url?: string | null; source_image_url?: string | null }
+/**
+ * A collection (album / EP) cover.
+ *
+ * TWO spellings, both real. `cover_url` is what every current writer uses;
+ * `artwork_url` is migration 004's original name, still READ and rendered by
+ * the shipped iOS app (ios/mixBase/Models/Collection.swift:12). Either column
+ * can also be absent depending on how a given database was bootstrapped —
+ * migration 004 creates `artwork_url`, /api/db-init creates `cover_url` — so
+ * callers must treat a missing-column error as "nothing to protect", not as a
+ * broken scan.
+ */
+export type CollectionAssetRow = { cover_url?: string | null; artwork_url?: string | null }
 
 export type AssetRows = {
   projects?: readonly ProjectAssetRow[]
   versions?: readonly VersionAssetRow[]
   visualizers?: readonly VisualizerAssetRow[]
+  collections?: readonly CollectionAssetRow[]
 }
 
 export type AssetKeys = Record<AssetBucket, string[]>
@@ -134,6 +147,25 @@ export function collectAssetKeys(rows: AssetRows): AssetKeys {
     addArtwork(v.source_image_url)
   }
 
+  // A collection cover is an mf-artwork object like any other, and it is NOT
+  // confined to a collection-shaped key. Collection "TYPE II" in production
+  // covers itself with `fcbf028c-…/ai-1783622744357.webp` — an object sitting
+  // INSIDE project "TRENCH"'s prefix — because the app deliberately lets a user
+  // set any artwork in their catalog as a collection cover
+  // (ios/.../ArtworkLibraryView.swift, src/app/media/MediaClient.tsx).
+  //
+  // That made mb_collections the one referrer the survivor scan could not see,
+  // and the consequence was concrete: deleting project TRENCH would nominate
+  // that object (it is under TRENCH's prefix), find no surviving reference
+  // (mb_collections was not among the columns asked), and delete a live album
+  // cover out from under a collection that still exists. mb_collections does
+  // not cascade on project delete — only mb_collection_items does — so the
+  // collection row survives, pointing at bytes that are gone.
+  for (const c of rows.collections ?? []) {
+    addArtwork(c.cover_url)
+    addArtwork(c.artwork_url)
+  }
+
   return {
     [AUDIO_BUCKET]: [...audio],
     [ARTWORK_BUCKET]: [...artwork],
@@ -157,6 +189,7 @@ export function collectAssetUrls(rows: AssetRows): string[] {
     add(p.visualizer_url); add(p.visualizer_wide_url)
   }
   for (const v of rows.visualizers ?? []) { add(v.video_url); add(v.source_image_url) }
+  for (const c of rows.collections ?? []) { add(c.cover_url); add(c.artwork_url) }
   return [...urls]
 }
 
@@ -300,7 +333,50 @@ export const ASSET_URL_COLUMNS = [
   ['mb_projects', 'visualizer_wide_url'],
   ['mb_visualizers', 'video_url'],
   ['mb_visualizers', 'source_image_url'],
+  // Added 2026-08-21 after a live case was found: a collection cover pointing
+  // INSIDE a project's prefix, invisible to this list, would have been deleted
+  // by that project's delete. See collectAssetKeys' collections loop.
+  ['mb_collections', 'cover_url'],
+  ['mb_collections', 'artwork_url'],
 ] as const
+
+/**
+ * The `table.column` pairs above that may legitimately not exist on a database.
+ *
+ * Keyed by TABLE AND COLUMN, never by column alone: 'artwork_url' names both
+ * mb_projects.artwork_url — which is load-bearing and whose absence is a broken
+ * scan — and mb_collections.artwork_url, which is migration 004 legacy and is
+ * routinely absent. A column-only key would have made a genuine mb_projects
+ * failure look optional and silently authorise a delete.
+ *
+ *   visualizer_url / visualizer_wide_url — the pins, migrations 015 / 020.
+ *   mb_collections.*                     — mb_collections is created by
+ *                                          migration 004 on some databases and
+ *                                          by /api/db-init on others, and the
+ *                                          two disagree on the column name.
+ *
+ * A column that does not exist cannot be holding a reference, so this counts as
+ * an ANSWERED question, not a failed one.
+ */
+export const OPTIONAL_ASSET_URL_COLUMNS: ReadonlySet<string> = new Set([
+  'mb_projects.visualizer_url',
+  'mb_projects.visualizer_wide_url',
+  'mb_collections.cover_url',
+  'mb_collections.artwork_url',
+])
+
+/**
+ * Does this PostgREST error say the column simply isn't there?
+ *
+ * Deliberately the same loose message test as isMissingVisualizerColumn (which
+ * it generalises): PostgREST reports an unknown column in the message rather
+ * than with a stable code, and the caller has already narrowed to a column it
+ * declared optional. Scoped per column so one absent column cannot excuse a
+ * failure on a different one.
+ */
+export function errorNamesColumn(error: { message?: string } | null, column: string): boolean {
+  return !!error?.message && error.message.includes(column)
+}
 
 // Candidate URLs travel in the PostgREST query string, so they go out in
 // chunks: an account with hundreds of versions would otherwise build a request

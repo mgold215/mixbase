@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
@@ -61,8 +60,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Project title is required to finalize' }, { status: 400 })
   }
 
-  const supabase = await createClient()
-
   // SSRF guard: the source is fetched server-side, so refuse anything that isn't
   // a Supabase Storage URL (the only shape artwork_url legitimately takes).
   if (!isSupabaseStorageUrl(project.artwork_url)) {
@@ -78,7 +75,18 @@ export async function POST(request: NextRequest) {
   )
 
   const filename = `${project_id}/finalized-${Date.now()}.jpg`
-  const { data: uploadData, error: uploadError } = await supabase.storage
+  // supabaseAdmin (service role), NOT the cookie-scoped SSR client this route
+  // used until 2026-08-21. That client is built with the ANON key
+  // (src/lib/supabase-server.ts, now deleted) and never found a session,
+  // because the app sets `sb-access-token` while @supabase/ssr looks for
+  // `sb-<ref>-auth-token` — so every upload here went in as role `anon`.
+  // Proof it was never anything else: all 275 server-written mf-artwork
+  // objects have `owner_id = null`, while the 13 iOS-written ones carry a real
+  // uid. That worked only because the INSERT policy was `roles={public}`.
+  // Migration 029 narrowed it to `authenticated` on 2026-08-21, which would
+  // have made this a hard RLS denial — a 500 on every Finalize — and 029's own
+  // header wrongly lists this route as already using the service role.
+  const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
     .from('mf-artwork')
     .upload(filename, finalBuffer, { contentType: 'image/jpeg', upsert: false })
 
@@ -87,7 +95,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
   }
 
-  const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
+  const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const finalUrl = urlData.publicUrl
 
   const { error: dbError } = await supabaseAdmin

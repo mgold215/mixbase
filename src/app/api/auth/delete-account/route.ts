@@ -11,6 +11,7 @@ import {
   collectAllRows,
   collectAssetKeys,
   collectAssetUrls,
+  type CollectionAssetRow,
   filterToOwnedPrefixes,
   keysSafeToDelete,
   scanSurvivingKeys,
@@ -327,6 +328,38 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // Collections (albums / EPs) carry a cover image in mf-artwork, and until
+  // 2026-08-21 this route never looked at it — the enumeration below used to
+  // live in the row-delete phase and selected `id` only, so a cover was never a
+  // candidate and its bytes survived the user's erasure in a PUBLIC bucket.
+  //
+  // It is not a theoretical shape: production holds
+  // `collection-<id>-<ts>.jpg` at the mf-audio-style BUCKET ROOT, named by
+  // nothing but mb_collections.cover_url. Root keys attribute themselves to no
+  // project, so FILTER 1 passes them through and only a row reference can ever
+  // name them — which is precisely the reference this route was missing.
+  //
+  // select('*') for the same reason the projects select uses it: BOTH cover
+  // spellings can be absent depending on how a database was bootstrapped
+  // (migration 004 creates `artwork_url`, /api/db-init creates `cover_url`),
+  // and PostgREST rejects the WHOLE select when one named column is missing.
+  //
+  // Enumerated ONCE, here, and reused for the mb_collection_items delete below.
+  // Two enumerations of the same rows is the drift this file keeps being bitten
+  // by; a failure is logged and erasure proceeds, exactly as before.
+  const collections = await collectAllRows<{ id: string } & CollectionAssetRow>((offset, limit) => fetchRowPage(
+    supabaseAdmin.from('mb_collections').select('*').eq('user_id', userId)
+      .order('id', { ascending: true }).range(offset, offset + limit - 1),
+    `collections for ${userId}`,
+  ))
+  if (collections === null) {
+    console.error(
+      `[delete-account] could not enumerate collections for ${userId} — their cover bytes will not ` +
+      `be cleaned up, and mb_collection_items falls back to the CASCADE from mb_collections.`,
+    )
+  }
+  const collectionIds = (collections ?? []).map(c => c.id)
+
   // One shared derivation for both delete paths (src/lib/project-assets.ts):
   // source + finalized artwork, audio, visualizer videos AND the pre-conversion
   // WebM twin the MP4 heal leaves behind, all deduped per bucket. Anything this
@@ -336,6 +369,7 @@ export async function POST(request: NextRequest) {
     projects: (projects ?? []),
     versions,
     visualizers: visualizers ?? [],
+    collections: collections ?? [],
   }
   const collected = collectAssetKeys(assetRows)
   const candidateUrls = collectAssetUrls(assetRows)
@@ -443,29 +477,11 @@ export async function POST(request: NextRequest) {
   // Visualizers are keyed by user_id (not project) — delete by owner.
   await del(supabaseAdmin.from('mb_visualizers').delete().eq('user_id', userId), 'mb_visualizers')
 
-  // Paged and error-checked for the same reasons as the projects select — it
-  // carried the same uncapped, error-discarding shape (4 rows for the largest
-  // account today, so the truncation is latent here too).
-  //
-  // Failure is even cheaper here than for projects: mb_collection_items is ON
-  // DELETE CASCADE from mb_collections, and mb_collections is deleted by owner
-  // just below, so this whole enumeration is belt-and-braces and an unreadable
-  // list costs nothing at all. It is kept, error-checked, because "the cascade
-  // covers it" is a property of the schema that a future migration can revoke
-  // silently. Logged without Sentry for that reason — there is no sweep owed.
-  const collections = await collectAllRows<{ id: string }>((offset, limit) => fetchRowPage(
-    supabaseAdmin.from('mb_collections').select('id').eq('user_id', userId)
-      .order('id', { ascending: true }).range(offset, offset + limit - 1),
-    `collections for ${userId}`,
-  ))
-  if (collections === null) {
-    console.error(
-      `[delete-account] could not enumerate collections for ${userId} — relying on the ` +
-      `mb_collection_items CASCADE from mb_collections to clear them.`,
-    )
-  }
-  const collectionIds = (collections ?? []).map(c => c.id)
-
+  // collectionIds came from the ASSET-phase enumeration above — the same rows,
+  // read once. mb_collection_items is ON DELETE CASCADE from mb_collections
+  // (deleted just below), so this loop is belt-and-braces; it is kept because
+  // "the cascade covers it" is a schema property a future migration can revoke
+  // silently, and an unreadable list therefore costs nothing here.
   for (const chunk of chunkByEncodedLength(collectionIds)) {
     await del(supabaseAdmin.from('mb_collection_items').delete().in('collection_id', chunk), 'mb_collection_items')
   }
