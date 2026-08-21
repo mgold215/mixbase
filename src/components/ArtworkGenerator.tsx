@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, type ChangeEvent } from 'react'
-import { Sparkles, Upload, X, Wand2, Download } from 'lucide-react'
+import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
+import { Sparkles, Upload, X, Wand2, Download, RotateCcw } from 'lucide-react'
 import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { IMAGE_MODELS } from '@/lib/artwork-models'
+// Type-only: erased at compile time, so the client bundle never pulls in
+// artwork-history.ts's server-side dependency chain.
+import type { ArtworkHistoryItem } from '@/lib/artwork-history'
 
 type Position =
   | 'top-left' | 'top-center' | 'top-right'
@@ -80,6 +83,13 @@ export default function ArtworkGenerator({
   const [showRule, setShowRule] = useState(true)
   const [filter, setFilter] = useState<Filter>('none')
   const [color, setColor] = useState('#FFFFFF')
+  // Artwork History. Deliberately a separate error slot from `error` above:
+  // that one is shared by generate / upload / finalize and is rendered in two
+  // places, so a failed history load would have surfaced as a spurious
+  // "generate failed" message under the Generate panel.
+  const [history, setHistory] = useState<ArtworkHistoryItem[]>([])
+  const [historyError, setHistoryError] = useState('')
+  const [restoring, setRestoring] = useState<string | null>(null)
 
   // Source artwork (Generate / Upload result) — what the renderer reads.
   const sourceUrl = currentArtwork ?? null
@@ -87,6 +97,56 @@ export default function ArtworkGenerator({
   // exported version. If they Generate or Upload again the parent clears
   // currentFinalized and we fall back to the new source.
   const previewUrl = currentFinalized ?? sourceUrl
+
+  // Refetched whenever the live artwork changes, because every Generate,
+  // Upload and Finalize adds an object to this project's prefix — the strip
+  // would otherwise be stale the moment the user does the thing it documents.
+  const loadHistory = useCallback(async () => {
+    if (!showActions) return
+    try {
+      const res = await fetch(`/api/projects/${projectId}/artwork-history`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Could not load artwork history.')
+      setHistory(data.items ?? [])
+      setHistoryError('')
+    } catch (err) {
+      // Never speculative: an empty strip is indistinguishable from "no
+      // history", so a failure has to say so rather than silently render
+      // nothing and imply the user's past artwork does not exist.
+      setHistory([])
+      setHistoryError(err instanceof Error ? err.message : 'Could not load artwork history.')
+    }
+  }, [projectId, showActions])
+
+  useEffect(() => { void loadHistory() }, [loadHistory, currentArtwork, currentFinalized])
+
+  async function handleRestore(item: ArtworkHistoryItem) {
+    setRestoring(item.path)
+    setHistoryError('')
+    try {
+      const res = await fetch(`/api/projects/${projectId}/artwork-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: item.path }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Could not restore that artwork.')
+      // Mirror the server's own rule (artworkRestorePatch): a finalized render
+      // IS the finished cover, so it replaces only the finalized slot; a source
+      // image replaces artwork_url and clears the finalized render made from
+      // the old source. Same callback pair Generate and Upload use.
+      if (data.restored === 'finalized') {
+        onFinalizedUpdated(data.finalized_artwork_url)
+      } else {
+        onArtworkUpdated(data.artwork_url)
+        onFinalizedUpdated(null)
+      }
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Could not restore that artwork.')
+    } finally {
+      setRestoring(null)
+    }
+  }
 
   async function handleFinalize() {
     if (!sourceUrl) return
@@ -263,6 +323,63 @@ export default function ArtworkGenerator({
         </div>
       )}
       {error && !generating && <p className="text-red-400 text-xs">{error}</p>}
+
+      {/* Previous artwork — every image this project has had, live one flagged.
+          Restoring never deletes: the cover it replaces drops back into this
+          strip. Hidden entirely when the only images are the live ones, so a
+          project with a single cover gains no empty chrome. */}
+      {showActions && mode === 'idle' && (historyError || history.some(i => !i.current)) && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">
+            Previous artwork
+          </p>
+          {historyError ? (
+            <p className="text-red-400 text-xs" role="alert">{historyError}</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-2">
+                {history.map(item => (
+                  <button
+                    key={item.path}
+                    type="button"
+                    onClick={() => handleRestore(item)}
+                    disabled={item.current || restoring !== null}
+                    aria-label={
+                      item.current
+                        ? 'Current artwork'
+                        : `Restore ${item.kind === 'finalized' ? 'finalized' : item.kind === 'generated' ? 'generated' : 'uploaded'} artwork${item.createdAt ? ` from ${new Date(item.createdAt).toLocaleDateString()}` : ''}`
+                    }
+                    title={item.current ? 'Current artwork' : 'Restore this artwork'}
+                    className={`relative aspect-square rounded-lg overflow-hidden border transition-colors focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[#2dd4bf] ${
+                      item.current
+                        ? 'border-[#2dd4bf] cursor-default'
+                        : 'border-[#333] hover:border-[#2dd4bf] disabled:opacity-40 disabled:cursor-wait'
+                    }`}
+                  >
+                    {/* alt="" — the button already carries the accessible name,
+                        so naming the image too would double-announce it. */}
+                    <Image src={item.url} alt="" fill unoptimized className="object-cover" />
+                    {item.current && (
+                      <span className="absolute inset-x-0 bottom-0 bg-[#2dd4bf] text-[#0a0a0a] text-[9px] font-semibold text-center py-0.5">
+                        Current
+                      </span>
+                    )}
+                    {restoring === item.path && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/60">
+                        <span className="w-3 h-3 border border-[#2dd4bf]/30 border-t-[#2dd4bf] rounded-full animate-spin" />
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-[#777] flex items-center gap-1">
+                <RotateCcw size={10} />
+                Tap any image to make it current again. Nothing here is ever deleted.
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
 
       {/* Finalize button + guidance — gated on showFinalize so the project

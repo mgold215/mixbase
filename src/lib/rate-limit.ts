@@ -139,6 +139,17 @@ export const catalogLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
 // runaway client loop from flooding the directory or activity log.
 export const sbWriteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 })
 
+// Artwork history browse + restore: 120 per hour per user. Deliberately NOT
+// sharing a sibling limiter, which is this file's usual convention — the
+// nearest candidates all carry a written rationale about work this route does
+// not do (vizSaveLimiter is sized around an ffmpeg fork, artworkLimiter around
+// Replicate spend), and a shared limiter whose comment describes different work
+// is worse documentation than an honest new one. A GET here is one storage
+// listing plus one row read, and a POST is a single UPDATE; the cap exists to
+// bound a runaway client, not spend. Sized for the project page firing a GET on
+// every Artwork-tab open across a long session.
+export const artworkHistoryLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 })
+
 // ── Helper to extract a usable key from a request ────────────────────────────
 // Only three limiters are keyed by IP — login (10/15min), signup (5/hr) and
 // public feedback (20/hr). Everything else is keyed by authenticated user, so

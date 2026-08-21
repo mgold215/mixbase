@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
@@ -61,7 +60,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
-  const supabase = await createClient()
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   const { project_id, collection_id, prompt, model = 'flux', vary = false } = body
@@ -242,7 +240,13 @@ export async function POST(request: NextRequest) {
     : 'jpg'
 
   const filename = `${isCollection ? `covers/${targetId}` : targetId}/ai-${Date.now()}.${extension}`
-  const { data: uploadData, error: uploadError } = await supabase.storage
+  // supabaseAdmin (service role) — see the twin comment in
+  // /api/finalize-artwork. This route used the ANON-key SSR client until
+  // 2026-08-21; migration 029 narrowing the mf-artwork INSERT policy to
+  // `authenticated` turned that into a hard RLS denial. The failure mode here
+  // was the more expensive of the two: Replicate is billed BEFORE this upload,
+  // so every attempt and every retry spent real money and then 500'd.
+  const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
     .from('mf-artwork')
     .upload(filename, imageBytes, { contentType, upsert: false })
 
@@ -256,7 +260,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save generated image. Please try again.' }, { status: 500 })
   }
 
-  const { data: urlData } = supabase.storage.from('mf-artwork').getPublicUrl(uploadData.path)
+  const { data: urlData } = supabaseAdmin.storage.from('mf-artwork').getPublicUrl(uploadData.path)
   const artworkUrl = urlData.publicUrl
 
   // Persist the URL. For a collection we just set its cover; for a project we

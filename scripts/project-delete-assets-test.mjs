@@ -527,14 +527,29 @@ check('the survivor scan is NOT scoped to the deleting user',
 check('the survivor scan also matches references INTO the project prefix',
   /\.like\(column, `%\/\$\{id\}\/%`\)/.test(survivorFn))
 
-// The (table, column) pairs the scan actually queries — read out of the
-// `columns` array literal itself, so a name that merely appears somewhere else
-// in the file proves nothing.
-const columnsBlock = bracketedBlock(survivorFn, 'const columns = [', '[', ']')
+// The (table, column) pairs the scan actually queries.
+//
+// Until 2026-08-21 this was a `const columns = [...]` literal INSIDE the route,
+// and this test parsed it there. That literal was a hand-maintained second copy
+// of ASSET_URL_COLUMNS, and the two had already drifted — neither carried
+// mb_collections, so a project delete could destroy a live album cover. The
+// route now consumes the shared constant, which makes the coverage property
+// below true by construction rather than by vigilance.
+//
+// So the pairs are read from the shared list, and the route is separately
+// asserted to USE it. Both halves are needed: reading the shared list alone
+// would pass even if the route quietly reintroduced its own literal.
+const assetsSrcForColumns = stripComments(read('src/lib/project-assets.ts'))
+const columnsBlock = bracketedBlock(assetsSrcForColumns, 'export const ASSET_URL_COLUMNS = [', '[', ']')
 const scanned = [...columnsBlock.matchAll(/\[\s*'([^']+)'\s*,\s*'([^']+)'\s*\]/g)].map(m => `${m[1]}.${m[2]}`)
 
-check('the survivor scan\'s column list was located as an array literal',
+check('ASSET_URL_COLUMNS was located as an array literal',
   columnsBlock.length > 0 && scanned.length > 0, `${scanned.length} pair(s): ${scanned.join(' ')}`)
+
+check('the survivor scan consumes ASSET_URL_COLUMNS rather than its own literal',
+  /const columns = ASSET_URL_COLUMNS\b/.test(survivorFn)
+  && !/const columns = \[/.test(survivorFn),
+  'a second literal is how this drifted out of step and lost mb_collections')
 
 // Each of these is a way for a LIVE project to still name a doomed object.
 // Dropping mb_projects.artwork_url is the shared-artwork case: production has
@@ -548,6 +563,12 @@ for (const pair of [
   'mb_projects.visualizer_wide_url',
   'mb_visualizers.video_url',
   'mb_visualizers.source_image_url',
+  // Added 2026-08-21. A collection cover is not confined to a collection-shaped
+  // key: production collection "TYPE II" covers itself with an object inside
+  // project "TRENCH"'s prefix, and mb_collections does NOT cascade on project
+  // delete. Without these two pairs, deleting TRENCH deletes TYPE II's cover.
+  'mb_collections.cover_url',
+  'mb_collections.artwork_url',
 ]) {
   check(`the survivor scan queries ${pair}`, scanned.includes(pair))
 }

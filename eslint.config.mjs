@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Agent scratch directories. Gitignored, but eslint does not read
+    // .gitignore, so it walked them and reported warnings on files no human
+    // wrote — the same untracked-tool-junk-in-the-checkout class that produced
+    // two 16k phantom-error incidents (2026-08-19 / 08-20) and sent a run
+    // chasing an environment problem as if it were a code problem.
+    ".remember/**",
+    ".agents/**",
+    ".codex/**",
   ]),
 ]);
 

@@ -7,8 +7,11 @@ import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 import {
   AUDIO_BUCKET,
   ARTWORK_BUCKET,
+  ASSET_URL_COLUMNS,
+  OPTIONAL_ASSET_URL_COLUMNS,
   VIDEO_BUCKET,
   bucketRootKeys,
+  errorNamesColumn,
   collectAllRows,
   collectAssetKeys,
   collectAssetUrls,
@@ -17,6 +20,7 @@ import {
   totalKeyCount,
   unionKeys,
   type AssetKeys,
+  type CollectionAssetRow,
   type ProjectAssetRow,
   type SurvivorScan,
   type VersionAssetRow,
@@ -409,6 +413,7 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<SurvivorS
   const projects: ProjectAssetRow[] = []
   const versions: VersionAssetRow[] = []
   const visualizers: VisualizerAssetRow[] = []
+  const collections: CollectionAssetRow[] = []
 
   // URLs the scan could not get an answer about, treated exactly as if a
   // surviving row still named them. See `run` below.
@@ -420,27 +425,21 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<SurvivorS
   // nothing at all, which must stay distinguishable from "asked, found nothing".
   let answered = 0
 
-  // Every URL column that can name one of our candidate objects. Missing the
-  // table/column pair here is how a shared object gets deleted, so keep this
-  // list in step with collectAssetKeys().
-  const columns = [
-    ['mb_versions', 'audio_url'],
-    ['mb_projects', 'artwork_url'],
-    ['mb_projects', 'finalized_artwork_url'],
-    ['mb_projects', 'visualizer_url'],
-    ['mb_projects', 'visualizer_wide_url'],
-    ['mb_visualizers', 'video_url'],
-    ['mb_visualizers', 'source_image_url'],
-  ] as const
-
-  // The pin columns are the only ones that can be legitimately absent
-  // (migrations 015 / 020). A missing column means there are no pins to protect,
-  // not a broken scan.
-  const optional = new Set(['visualizer_url', 'visualizer_wide_url'])
+  // Every URL column that can name one of our candidate objects, imported from
+  // project-assets rather than re-listed here.
+  //
+  // It WAS re-listed here — a second literal that had to be kept in step with
+  // ASSET_URL_COLUMNS and collectAssetKeys() by hand, which is exactly the "two
+  // places deriving the same answer differently" bug that module exists to
+  // prevent. The two had already drifted: neither carried mb_collections, and
+  // fixing only one of them would have left this scan blind. Importing the
+  // shared constant removes the drift as a possibility rather than re-fixing it.
+  const columns = ASSET_URL_COLUMNS
 
   const absorb = (table: string, rows: unknown[]) => {
     if (table === 'mb_versions') versions.push(...(rows as VersionAssetRow[]))
     else if (table === 'mb_projects') projects.push(...(rows as ProjectAssetRow[]))
+    else if (table === 'mb_collections') collections.push(...(rows as CollectionAssetRow[]))
     else visualizers.push(...(rows as VisualizerAssetRow[]))
   }
 
@@ -477,12 +476,15 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<SurvivorS
         absorb(table, data ?? [])
         return
       }
-      // A missing pin column means there are no pins to protect, not a broken
-      // scan (migrations 015 / 020). Never retried — it cannot heal. Counted as
-      // ANSWERED because it is one: a column that does not exist cannot be
-      // holding a reference. The injected select in delete-account already
-      // reports this case as an empty row set for the same reason.
-      if (optional.has(column) && isMissingVisualizerColumn(error)) {
+      // A column that may legitimately not exist on this database (the pins from
+      // migrations 015 / 020, and either mb_collections cover spelling) means
+      // there is nothing there to protect, not a broken scan. Never retried — it
+      // cannot heal. Counted as ANSWERED because it is one: a column that does
+      // not exist cannot be holding a reference. The injected select in
+      // delete-account already reports this case as an empty row set for the
+      // same reason. Keyed on `table.column`, not column — see
+      // OPTIONAL_ASSET_URL_COLUMNS for why that distinction is load-bearing.
+      if (OPTIONAL_ASSET_URL_COLUMNS.has(`${table}.${column}`) && errorNamesColumn(error, column)) {
         answered++
         return
       }
@@ -549,7 +551,7 @@ async function survivingAssetKeys(urls: string[], id: string): Promise<SurvivorS
   // this return type exists to prevent. Same rule as scanSurvivingKeys().
   if (answered === 0 && queries.length > 0) return null
 
-  const found = collectAssetKeys({ projects, versions, visualizers })
+  const found = collectAssetKeys({ projects, versions, visualizers, collections })
 
   // Fold the unanswered URLs in as though they were survivors — through the
   // SHARED derivation, so their keys are worked out exactly the way the
