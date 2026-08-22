@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
+import { finalizeArtworkLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -14,6 +15,11 @@ export const maxDuration = 60
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  const limit = await checkUserLimit(finalizeArtworkLimiter, userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
+  }
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })

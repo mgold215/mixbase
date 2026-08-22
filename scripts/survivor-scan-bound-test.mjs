@@ -357,13 +357,41 @@ console.log('\n— pass-2 partial recovery —')
   check('a root key merely CONTAINING the project id is still root, and still unmatched',
     !keyOf(nearMiss).includes('/') && !pass2Matches(nearMiss), keyOf(nearMiss))
 
-  // The residual the source comment declares, asserted rather than left implied:
-  // an OFF-CANONICAL URL breaks the implication. Production has zero of these
-  // (all 552 non-null URLs measured 2026-08-18 are canonical), but a test that
-  // pretended the hole did not exist would be the dishonest kind of green.
-  const crafted = `${SB}/${PROJECT}/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`
-  check('the ONE documented residual is real: an off-canonical URL escapes the proof',
-    pass2Matches(crafted) && !keyOf(crafted).includes('/'), keyOf(crafted))
+  // ── The residual this block used to assert is now CLOSED (2026-08-22) ─────
+  //
+  // Until today storagePathFromUrl() searched for the marker with indexOf() and
+  // sliced from wherever it landed, so the marker was a substring anyone could
+  // smuggle into a user-writable column. This block asserted that hole was real
+  // rather than pretending it away — the honest thing to do while it existed.
+  // The function is now ANCHORED on the full canonical origin + bucket prefix,
+  // so each of these derives NOTHING and can no longer nominate another
+  // account's object for deletion. Kept as the regression guard, inverted.
+  //
+  // keyOf() is called through a null-safe wrapper here on purpose: the previous
+  // version of this check did `keyOf(x).includes('/')`, so the moment the hole
+  // closed the suite died with a TypeError instead of reporting a result. A
+  // test that goes red by crashing names nothing.
+  const hasSep = (url) => (keyOf(url) ?? '').includes('/')
+  const escapes = [
+    ['marker smuggled into the path', `${SB}/${PROJECT}/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`],
+    ['marker on a foreign host', `https://evil.example/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`],
+    ['marker nested under a foreign host', `https://evil.example/x/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`],
+    ['no host at all (relative)', `/storage/v1/object/public/mf-audio/HALFWAY - MIX 1.wav`],
+    ['http, not https', `http://${SB.replace('https://', '')}/storage/v1/object/public/mf-audio/x.wav`],
+  ]
+  for (const [label, url] of escapes) {
+    check(`off-canonical URL derives NO key — ${label}`, keyOf(url) === null, String(keyOf(url)))
+  }
+
+  // The counterweight, and the reason this must be a string compare rather than
+  // new URL(): 110 production audio URLs carry LITERAL spaces because that is
+  // the object's real name in the bucket. Parsing re-encodes them to %20, and a
+  // delete issued against the encoded name matches nothing — every legacy object
+  // would silently stop being reaped while the delete reported success.
+  const spaced = audioUrl('5 AM IN ARLINGTON (Mix) - MIX 2.wav')
+  check('a canonical key with LITERAL spaces survives byte-for-byte (no %20 re-encoding)',
+    keyOf(spaced) === '5 AM IN ARLINGTON (Mix) - MIX 2.wav', String(keyOf(spaced)))
+  check('...and is still correctly seen as a bucket-root key', !hasSep(spaced), String(keyOf(spaced)))
 }
 
 // ── C3) The coverage rule itself, driven by the real key filters ───────────

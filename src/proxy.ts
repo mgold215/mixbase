@@ -23,6 +23,23 @@ if (!JWT_KEY) {
 }
 
 // Routes that never require authentication
+// Exact-match public routes. A LEAF route (one with no children) belongs here,
+// never in PUBLIC_PATHS: as a startsWith() prefix it would hand public status to
+// any sibling whose name merely begins the same way — '/api/feedback' covers a
+// future '/api/feedback-export', '/api/health' covers '/api/health-internal'.
+// PUBLIC_PATHS is reserved for paths that genuinely have a public SUBTREE.
+const PUBLIC_EXACT = new Set([
+  '/',                    // public landing page
+  '/api/auth',            // login — /api/auth/me etc. must stay protected
+  '/api/auth/signup',
+  '/api/auth/logout',
+  '/api/auth/refresh',    // must be reachable without a valid session
+  '/api/feedback',
+  '/api/health',
+  '/api/db-init',
+  '/api/stripe/webhook',  // Stripe posts without user cookies; signature-verified internally
+])
+
 const PUBLIC_PATHS = [
   '/login',
   '/signup',
@@ -35,10 +52,6 @@ const PUBLIC_PATHS = [
   '/share/',
   '/album/', // canonical public album share player (token-addressed)
   '/auth/callback',
-  '/api/auth/signup',
-  '/api/auth/logout',
-  '/api/auth/refresh', // must be reachable without a valid session
-  '/api/feedback',
   // Share-token-scoped duration backfill, posted by the anonymous listeners on
   // /share/<token> and /album/<…>/<token>. NOTE: '/share/' above does NOT cover
   // this — matching is startsWith() on the pathname, and '/api/share/…' does
@@ -46,14 +59,16 @@ const PUBLIC_PATHS = [
   // sibling like '/api/shared'; it is still a PREFIX, so anything ever added
   // under /api/share/ inherits public status and must gate on the token itself.
   '/api/share/',
-  '/api/audio',
-  '/api/artwork', // public mf-artwork proxy — iOS lock-screen fetches it cookie-less
-  '/api/health',
-  '/api/db-init',
+  // Trailing slashes are LOAD-BEARING. Matching is startsWith(), so the bare
+  // '/api/artwork' spelling made every future sibling silently public — on
+  // 2026-08-21 an artwork-history route was one naming decision away from
+  // shipping with no auth at all under exactly this prefix. Both are
+  // [...path] catch-alls, so nothing legitimately requests the bare form.
+  '/api/audio/',
+  '/api/artwork/', // public mf-artwork proxy — iOS lock-screen fetches it cookie-less
   // NOTE: /api/tus is intentionally NOT public. It proxies to Supabase Storage
   // with the service-role key; leaving it unauthenticated allowed anonymous
   // arbitrary upload/overwrite. It now requires a session (see api/tus routes).
-  '/api/stripe/webhook', // Stripe posts without user cookies; signature-verified internally
   // PWA static assets — must load logged-out or service-worker install breaks
   '/sw.js',
   '/manifest.json',
@@ -224,12 +239,11 @@ export async function proxy(request: NextRequest) {
   const baseHeaders = new Headers(request.headers)
   baseHeaders.delete('x-user-id')
 
-  // /api/auth (login) needs exact match — /api/auth/me etc. must be protected
-  // '/' is the public landing page — exact match only, never a PUBLIC_PATHS
-  // prefix (startsWith('/') would make every route public)
+  // PUBLIC_EXACT holds every leaf route (see its definition for why a leaf must
+  // never be a startsWith() prefix). '/' is the clearest case: as a prefix it
+  // would make the entire site public.
   if (
-    pathname === '/' ||
-    pathname === '/api/auth' ||
+    PUBLIC_EXACT.has(pathname) ||
     PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')

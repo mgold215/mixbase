@@ -68,6 +68,8 @@ const SUITES = [
   'loudness-auto-test.mjs',
   'project-delete-assets-test.mjs',
   'survivor-scan-bound-test.mjs',
+  'survivor-scan-routing-test.mjs',
+  'asset-url-write-guard-test.mjs',
   'delete-account-scope-test.mjs',
   'delete-account-bound-test.mjs',
   'archived-playback-test.mjs',

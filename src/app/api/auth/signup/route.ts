@@ -69,7 +69,10 @@ export async function POST(request: NextRequest) {
   // and is validated; the cookie outlives it so middleware can refresh.
   response.cookies.set('sb-access-token', signInData.session.access_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
   response.cookies.set('sb-refresh-token', signInData.session.refresh_token, { ...COOKIE_OPTS, maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
-  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 })
+  // Non-httpOnly cookies — readable by client JS. `secure` mirrors the token
+  // cookies (and /api/auth + /api/auth/refresh, the other two writers of this
+  // same set of four): this route was the one place that omitted it.
+  response.cookies.set('sb-authed', '1', { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: 60 * 60 * 24 * 30 })
+  response.cookies.set('sb-expires-at', String(expiresAt), { path: '/', sameSite: 'lax', secure: COOKIE_OPTS.secure, maxAge: 60 * 60 * 24 * 30 })
   return response
 }

@@ -210,13 +210,22 @@ const { POST: DELETE_ACCOUNT } = await import(
 const { PATCH } = await import(pathToFileURL(join(root, 'src/app/api/versions/[id]/route.ts')).href)
 const { NextRequest } = await import('next/server.js')
 
-async function eraseAccount(userId = USER) {
+// Each erasure scenario is a DIFFERENT user, and not merely for tidiness:
+// POST /api/auth/delete-account is rate limited per user (accountDeleteLimiter,
+// 5/hr) because it is the least reversible route in the app. Driving a dozen
+// scenarios as one id would exhaust that budget and turn every later assertion
+// into a 429 — which is exactly what happened when the limiter landed. Reusing
+// one id was also the less realistic setup: an account can only be deleted once.
+let eraseSeq = 0
+const nextUser = () => `aaaaaaaa-0000-4000-8000-${String(++eraseSeq).padStart(12, '0')}`
+
+async function eraseAccount(userId = nextUser()) {
   const req = new NextRequest('http://localhost/api/auth/delete-account', {
     method: 'POST',
     headers: userId ? { 'X-User-Id': userId } : {},
   })
   const res = await DELETE_ACCOUNT(req)
-  return { status: res.status, body: await res.json() }
+  return { status: res.status, body: await res.json(), userId }
 }
 
 const VERSION_ID = '11111111-1111-4111-8111-111111111111'
@@ -244,7 +253,7 @@ console.log('A. account erasure completes when nothing is in the way')
   const res = await eraseAccount()
   check('a clean erasure returns ok', res.status === 200 && res.body.ok === true,
     `status ${res.status} ${JSON.stringify(res.body)}`)
-  check('the auth user is actually deleted', db().deletedUser === USER)
+  check('the auth user is actually deleted', db().deletedUser === res.userId)
   const deletes = callsOf('delete')
   check('mb_favorites is swept', deletes.includes('mb_favorites'))
   check('mb_spotify_auth is swept', deletes.includes('mb_spotify_auth'))
@@ -262,7 +271,7 @@ for (const [label, error] of [
   const res = await eraseAccount()
   check(`${label} → erasure still succeeds`, res.status === 200 && res.body.ok === true,
     `status ${res.status} ${JSON.stringify(res.body)}`)
-  check(`${label} → the auth user is still deleted`, db().deletedUser === USER)
+  check(`${label} → the auth user is still deleted`, db().deletedUser === res.userId)
 }
 {
   reset()
@@ -271,7 +280,7 @@ for (const [label, error] of [
     message: "Could not find the table 'public.mb_spotify_auth' in the schema cache",
   }
   const res = await eraseAccount()
-  check('the other optional table is covered too', res.status === 200 && db().deletedUser === USER,
+  check('the other optional table is covered too', res.status === 200 && db().deletedUser === res.userId,
     `status ${res.status}`)
 }
 
@@ -328,7 +337,7 @@ console.log('\nD. another product\'s rows block the erasure BEFORE anything is t
   const res = await eraseAccount()
   check('mm_* tables absent from this environment do NOT block', res.status === 200 && res.body.ok === true,
     `status ${res.status} ${JSON.stringify(res.body)}`)
-  check('the erasure completed', db().deletedUser === USER)
+  check('the erasure completed', db().deletedUser === res.userId)
 }
 {
   reset()
@@ -339,7 +348,7 @@ console.log('\nD. another product\'s rows block the erasure BEFORE anything is t
     }
   }
   const res = await eraseAccount()
-  check('the schema-cache spelling is covered too', res.status === 200 && db().deletedUser === USER,
+  check('the schema-cache spelling is covered too', res.status === 200 && db().deletedUser === res.userId,
     `status ${res.status}`)
 }
 {

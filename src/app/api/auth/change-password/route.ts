@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, createSessionClient } from '@/lib/supabase'
+import { passwordChangeLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 
 // POST /api/auth/change-password — verify current password, then update
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  const limit = await checkUserLimit(passwordChangeLimiter, userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   const body = await request.json().catch(() => null)
