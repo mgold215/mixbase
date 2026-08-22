@@ -153,6 +153,36 @@ check(
   /allow_download:\s*prevAllow\b/.test(toggleFn)
 )
 
+// ── The version-number uniqueness net must actually be strung up ────────────
+//
+// POST /api/versions computes version_number as max+1 from a fresh read, then
+// inserts. Two concurrent uploads to the same project both read the same max
+// and both write it; the ONLY thing that turns the loser into a retryable
+// conflict instead of a silent duplicate "v2" is a unique index on
+// (project_id, version_number).
+//
+// That index has never existed in production — migration 017 was applied
+// without it. And the self-heal that would create it was called ONLY from
+// inside the 23505 (unique_violation) handler, an error the index itself
+// raises. So the heal fired only on the error its own absence made impossible,
+// and the retry loop above it was dead code. Same shape as the two other
+// findings this repo keeps hitting: a correct-looking safety mechanism sitting
+// on a path nothing can reach.
+//
+// The fix is an ordering property, so that is what is asserted: the ensure must
+// happen BEFORE the insert loop, unconditionally.
+const iEnsure = createRoute.indexOf('ensureVersionUniqueIndex()')
+const iLoop = createRoute.indexOf('for (let attempt = 0')
+check('the unique-index heal is invoked at all', iEnsure !== -1)
+check('...BEFORE the insert loop, not from inside the conflict handler',
+  iEnsure !== -1 && iLoop !== -1 && iEnsure < iLoop)
+check('...unconditionally — not gated on an attempt counter or an error code',
+  !/if \s*\([^)]*attempt[^)]*\)\s*(void\s+)?ensureVersionUniqueIndex/.test(createRoute))
+check('...and awaited, so the constraint is in place for THIS insert',
+  /await ensureVersionUniqueIndex\(\)/.test(createRoute))
+check('the 23505 retry loop it protects is still there',
+  createRoute.includes("'23505'") && iLoop !== -1)
+
 if (failures > 0) {
   console.error(`\ndownload-default: ${failures} check(s) failed`)
   process.exit(1)

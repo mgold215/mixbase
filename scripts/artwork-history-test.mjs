@@ -177,10 +177,17 @@ check('proxy.ts still declares PUBLIC_PATHS as an array literal', !!publicBlock)
 const publicPaths = [...(publicBlock?.[1] ?? '').matchAll(/'([^']+)'/g)].map(m => m[1])
 check('PUBLIC_PATHS parsed', publicPaths.length > 5, `${publicPaths.length} entries`)
 
-// The trap, stated as an assertion: `/api/artwork` IS public, so the obvious
-// address for this feature would have been unauthenticated.
-check('PUBLIC_PATHS still contains /api/artwork (the trap is real, not folklore)',
-  publicPaths.includes('/api/artwork'))
+// The trap, stated as an assertion: the `/api/artwork` subtree IS public, so
+// the obvious address for this feature would have been unauthenticated.
+// The entry gained a trailing slash on 2026-08-22 — it is still a startsWith()
+// PREFIX, so the trap it creates for anything named `/api/artwork/<x>` is
+// unchanged; the slash only stops it swallowing a sibling like
+// `/api/artwork-history`. Asserted on the prefix, not the exact spelling, so a
+// future re-tightening does not read as the trap having disappeared.
+check('the /api/artwork subtree is still public (the trap is real, not folklore)',
+  publicPaths.some(p => p === '/api/artwork' || p === '/api/artwork/'))
+check('...and it is a prefix, not an exact match, so children inherit it',
+  publicPaths.some(p => p.startsWith('/api/artwork')))
 check('middleware still matches PUBLIC_PATHS with startsWith',
   /PUBLIC_PATHS\.some\(p => pathname\.startsWith\(p\)\)/.test(stripComments(proxySrc)),
   'if this becomes an exact match the trap dissolves and this section can relax')
@@ -287,8 +294,8 @@ check('ASSET_URL_COLUMNS names mb_collections.artwork_url (migration 004 legacy,
 // column whose answer it then throws away.
 const fromCollections = collectAssetKeys({
   collections: [{
-    cover_url: `https://h/storage/v1/object/public/mf-artwork/${PID}/ai-1783622744357.webp`,
-    artwork_url: `https://h/storage/v1/object/public/mf-artwork/${OTHER}/cover.jpg`,
+    cover_url: `https://mdefkqaawrusoaojstpq.supabase.co/storage/v1/object/public/mf-artwork/${PID}/ai-1783622744357.webp`,
+    artwork_url: `https://mdefkqaawrusoaojstpq.supabase.co/storage/v1/object/public/mf-artwork/${OTHER}/cover.jpg`,
   }],
 })
 check('collectAssetKeys derives keys from a collection row',

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid } from '@/lib/validators'
+import { isUuid, isJsonObject } from '@/lib/validators'
 import { checkUserLimit, loudnessLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 
 // GET /api/versions/[id] — get one version with its feedback (owner only)
@@ -68,15 +68,6 @@ function parseBackfillSeconds(raw: unknown): number | null {
   return seconds
 }
 
-/**
- * True only for a JSON object — the one body shape this handler can read keys
- * off. `typeof null === 'object'` and arrays are objects too, so both are named
- * explicitly rather than assumed away.
- */
-function isPatchBody(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 // PATCH /api/versions/[id] — update a version (owner only, via project ownership)
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -91,7 +82,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   // surfaced as an unhandled 500 on a request the client got wrong. The same
   // held for `true` and for any JSON string (`"hi"`).
   //
-  // isPatchBody() collapses that whole class into one honest 400:
+  // isJsonObject() collapses that whole class into one honest 400:
   //   * parse failure          → null
   //   * the literal `null`     → typeof 'object' but not an object; the old
   //                              `!body` caught it only by accident, and the
@@ -102,7 +93,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   //                              fell through to "No valid fields to update",
   //                              which blames the caller's field names for a
   //                              body that could never have carried any
-  if (!isPatchBody(body)) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  if (!isJsonObject(body)) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   const allowed = ['status', 'label', 'private_notes', 'public_notes', 'change_log', 'allow_download'] as const
   const patch: Record<string, unknown> = {}

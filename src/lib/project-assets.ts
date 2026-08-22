@@ -14,6 +14,11 @@ import {
   chunkByEncodedLength,
   runBounded,
 } from './survivor-scan-plan.ts'
+// Relative + extension-full, and validators.ts is itself import-free, so this
+// still loads under `node --experimental-strip-types` for the unit suites.
+// Imported rather than re-spelled: the guard and the derivation MUST anchor on
+// the same host and marker, or a value one accepts is one the other misreads.
+import { SUPABASE_HOST, STORAGE_PUBLIC_PREFIX } from './validators.ts'
 
 // Which storage objects a project's rows account for.
 //
@@ -48,12 +53,42 @@ export type AssetBucket = typeof AUDIO_BUCKET | typeof ARTWORK_BUCKET | typeof V
  * Pull the storage object key out of a Supabase public URL for a given bucket.
  * Returns null for anything that isn't an object in that bucket — a transient
  * Replicate/Runway URL, an empty column, or another bucket's object.
+ *
+ * ANCHORED, NOT SEARCHED. This used to be `url.indexOf(marker)` and slice from
+ * wherever it landed, which made the marker a substring anyone could smuggle:
+ *
+ *   https://evil.example/x/storage/v1/object/public/mf-artwork/<victimKey>
+ *   /storage/v1/object/public/mf-artwork/<victimKey>          (relative — no host at all)
+ *
+ * Both parsed to `<victimKey>`. That matters because this function answers two
+ * different questions with the same string: "which keys does this row account
+ * for" (delete candidates) and "which keys are still referenced" (survivors).
+ * A crafted value in a user-writable column therefore nominated ANOTHER
+ * account's object for deletion, while the victim's own row — holding the
+ * canonical URL, a different string — never matched the survivor lookup that
+ * would have saved it.
+ *
+ * Anchoring on the full origin + path prefix closes both shapes for every column
+ * at once, including the ones whose write-site guard is weaker than it looks and
+ * the one (mb_collections.cover_url) that iOS writes straight to PostgREST,
+ * bypassing every route-level check.
+ *
+ * DELIBERATELY A STRING COMPARE, NOT `new URL()`. Parsing normalises, and
+ * normalising changes the answer: 110 production audio URLs carry LITERAL
+ * spaces (`…/mf-audio/5 AM IN ARLINGTON (Mix) - MIX 2.wav`) because that is
+ * genuinely the object's name in the bucket. `new URL(...).pathname` re-encodes
+ * those to `%20`, and a delete issued against the encoded name matches nothing
+ * — it would have silently stopped reaping every legacy object while reporting
+ * success. The key must come back byte-for-byte as stored. Verified before
+ * tightening: all 565 asset URLs in production parse identically before and
+ * after, and zero are percent-encoded.
  */
 export function storagePathFromUrl(url: string | null | undefined, bucket: string): string | null {
   if (!url) return null
-  const marker = `/storage/v1/object/public/${bucket}/`
-  const idx = url.indexOf(marker)
-  return idx !== -1 ? url.slice(idx + marker.length) : null
+  const prefix = `https://${SUPABASE_HOST}${STORAGE_PUBLIC_PREFIX}${bucket}/`
+  if (!url.startsWith(prefix)) return null
+  const key = url.slice(prefix.length)
+  return key.length > 0 ? key : null
 }
 
 export type ProjectAssetRow = {
@@ -453,6 +488,7 @@ export async function scanSurvivingKeys(
   const projects: ProjectAssetRow[] = []
   const versions: VersionAssetRow[] = []
   const visualizers: VisualizerAssetRow[] = []
+  const collections: CollectionAssetRow[] = []
 
   // URLs no lookup could answer for. Protected, not deleted.
   const unresolved = new Set<string>()
@@ -466,10 +502,39 @@ export async function scanSurvivingKeys(
       for (const url of chunk) unresolved.add(url)
       return
     }
+    // EXHAUSTIVE, and `answered++` comes AFTER routing on purpose.
+    //
+    // This used to end in a bare `else visualizers.push(...)`, which swept every
+    // table that wasn't mb_versions/mb_projects into the visualizer bucket. When
+    // mb_collections joined ASSET_URL_COLUMNS (2026-08-21) it landed there — and
+    // a `{cover_url, artwork_url}` row run through the visualizer derivation,
+    // which reads video_url/source_image_url, yields NOTHING. The scan asked the
+    // right question, got the right answer, and dropped it on the floor.
+    //
+    // The `answered++` ordering is the part that made it dangerous rather than
+    // merely wrong: counting the chunk as answered reported coverage:'all', so a
+    // live album cover that no longer appeared among the survivors read as
+    // "confidently unreferenced" and was authorised for deletion. A chunk that
+    // simply failed would have been folded into `unresolved` and PROTECTED.
+    //
+    // So an answer we cannot interpret is now treated exactly like an answer we
+    // never got. The `never` assignment makes the next table added to
+    // ASSET_URL_COLUMNS a COMPILE error rather than a silent wrongful delete;
+    // the runtime arm behind it fails in the safe direction (leak, not delete)
+    // for anything that reaches production another way.
+    switch (table) {
+      case 'mb_versions': versions.push(...(rows as VersionAssetRow[])); break
+      case 'mb_projects': projects.push(...(rows as ProjectAssetRow[])); break
+      case 'mb_visualizers': visualizers.push(...(rows as VisualizerAssetRow[])); break
+      case 'mb_collections': collections.push(...(rows as CollectionAssetRow[])); break
+      default: {
+        const unrouted: never = table
+        void unrouted
+        for (const url of chunk) unresolved.add(url)
+        return
+      }
+    }
     answered++
-    if (table === 'mb_versions') versions.push(...(rows as VersionAssetRow[]))
-    else if (table === 'mb_projects') projects.push(...(rows as ProjectAssetRow[]))
-    else visualizers.push(...(rows as VisualizerAssetRow[]))
   }))
 
   await runBounded(tasks, SCAN_CONCURRENCY)
@@ -491,6 +556,9 @@ export async function scanSurvivingKeys(
       projects: [...projects, ...assumed.projects],
       versions: [...versions, ...assumed.versions],
       visualizers: [...visualizers, ...assumed.visualizers],
+      // No `assumed.collections`: an unresolved URL is already protected as
+      // artwork via assumed.projects, and a cover is an mf-artwork object.
+      collections,
     }),
     coverage: 'all',
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid } from '@/lib/validators'
+import { uploadLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 
 const MAX_AUDIO_SIZE = 500 * 1024 * 1024 // 500MB — Supabase Pro project limit
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024  // 50MB for artwork
@@ -35,6 +36,11 @@ export async function POST(request: NextRequest) {
   // routes; we read it explicitly so the storage write is always tied to a user.
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  const limit = await checkUserLimit(uploadLimiter, userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
+  }
 
   // Guard the multipart parse — a malformed/empty body otherwise throws an opaque
   // 500. Mirrors the `request.json().catch(() => null)` guard on JSON routes.

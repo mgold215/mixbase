@@ -150,6 +150,39 @@ export const sbWriteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 }
 // every Artwork-tab open across a long session.
 export const artworkHistoryLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 120 })
 
+// Finalize artwork: 30 per hour per user. NOT shared with artworkLimiter, whose
+// cap is sized around Replicate SPEND — this route calls no model. What it does
+// cost is real though, and it was the only heavy media route with no limiter at
+// all: a server-side fetch, a full sharp decode/composite plus an opentype.js
+// glyph render (CPU, on the same Railway container as the 2-slot ffmpeg gate),
+// and an upload that mints a NEW `<project>/finalized-<ts>.jpg` every call
+// (upsert:false — nothing is ever replaced). Looped, it pins CPU and grows
+// mf-artwork without bound. 30/hr covers trying several text treatments across
+// a few covers in one sitting.
+export const finalizeArtworkLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
+
+// Password change: 10 per hour per user. Every request runs a real
+// signInWithPassword with a caller-supplied current_password, so without a cap
+// the route is an unbounded password-guessing oracle against the account whose
+// session you already hold — the last step of a session-theft takeover. It also
+// protects everyone else: unbounded auth calls all leave from Railway's single
+// egress IP, and tripping GoTrue's abuse detection there rate-limits LOGIN for
+// every user of the app.
+export const passwordChangeLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 10 })
+
+// Account deletion: 5 per hour per user. A legitimate user does this once, ever.
+// The cap is not really about load — it bounds the blast radius of a stolen
+// session against the single most destructive, least reversible route in the
+// app (every byte, every row, and the Stripe subscription).
+//
+// Deliberately NOT step-up auth. Requiring current_password here — the obvious
+// stronger fix, and what /api/auth/change-password already does for a strictly
+// LESS destructive action — would break account deletion on every iOS build
+// already on a phone: MixbaseAPI.deleteAccount() posts no body at all, and that
+// is the one flow App Store Guideline 5.1.1(v) requires to always work. Step-up
+// auth needs the iOS change to ship and roll out FIRST. Tracked, not forgotten.
+export const accountDeleteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 })
+
 // ── Helper to extract a usable key from a request ────────────────────────────
 // Only three limiters are keyed by IP — login (10/15min), signup (5/hr) and
 // public feedback (20/hr). Everything else is keyed by authenticated user, so

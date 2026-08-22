@@ -39,6 +39,25 @@ export async function POST(request: NextRequest) {
 
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
+  // The index that makes the retry loop below mean anything must EXIST before
+  // the insert races, so it is ensured up front rather than from inside the
+  // conflict handler.
+  //
+  // It used to be nudged only on a 23505 — and 23505 is raised BY the unique
+  // index. Production has never had it (migration 017 was applied without its
+  // index; pg_indexes on mb_versions shows only the pkey, the share_token
+  // unique, and two plain btrees), so the conflict could not fire, so the heal
+  // could not run, so the index could not appear. The heal only ever fired on
+  // the error that its own absence made impossible, and the 4-attempt loop
+  // underneath it was dead code guarding a race nothing was catching.
+  //
+  // Awaited, not fire-and-forget: the point is that the constraint is in place
+  // for THIS insert. It is memoized per process (schema-heal.ts), so this costs
+  // one Management API call per container lifetime, and it resolves false
+  // rather than throwing if it cannot run — a heal that fails must never block
+  // an upload.
+  await ensureVersionUniqueIndex()
+
   // Assign version_number as max+1, retrying on a unique-violation (23505) from
   // the (project_id, version_number) index. Concurrent uploads to the same
   // project race on the max read; the unique index (migration 017) turns the
@@ -75,8 +94,6 @@ export async function POST(request: NextRequest) {
     lastError = insert.error
     // 23505 = unique_violation → another upload took this number; recompute+retry.
     if (insert.error.code !== '23505') break
-    // First conflict also nudges the self-heal in case the index just landed.
-    if (attempt === 0) void ensureVersionUniqueIndex()
   }
 
   if (!data) {

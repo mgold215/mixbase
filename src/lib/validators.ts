@@ -9,6 +9,24 @@ export function isUuid(value: unknown): value is string {
 }
 
 /**
+ * True only for a JSON object — the one body shape a handler can read keys off.
+ *
+ * `await request.json()` returns whatever parsed, and `JSON.parse('5')` is 5,
+ * which is TRUTHY. So the common `if (!body) return 400` guard waves through
+ * numbers, booleans and strings, and the next line — `'field' in body` or
+ * `body.field?.trim()` — throws a TypeError that surfaces as an opaque 500 on
+ * what is really a malformed request. `typeof null === 'object'` and arrays are
+ * objects too, so both are named explicitly rather than assumed away.
+ *
+ * Lives here rather than in a route because six handlers need the same guard,
+ * and a validation rule copied into six files is one edit away from drifting —
+ * the exact failure that let mb_collections fall out of the survivor scan.
+ */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
  * The ONE spelling of a UUID that may become a Supabase Storage object key.
  *
  * WHY THIS EXISTS RATHER THAN JUST DROPPING THE `/i` ABOVE
@@ -60,7 +78,7 @@ export function canonicalUuid(value: unknown): string | null {
 // Restrict server fetches to the Supabase host — mirrors the check already in
 // /api/visualizer/runway. Host is read from the env (falls back to the prod
 // project) so it follows the project if it is ever re-pointed.
-const SUPABASE_HOST = (() => {
+export const SUPABASE_HOST = (() => {
   try {
     return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co').hostname
   } catch {
@@ -68,8 +86,28 @@ const SUPABASE_HOST = (() => {
   }
 })()
 
-// True only for an https:// URL on the Supabase Storage host — the sole shape
-// any legitimately-stored audio / artwork / visualizer URL ever takes.
+/**
+ * The one path prefix a public Storage object URL ever has. Exported because
+ * project-assets.ts must anchor on the SAME string it is validated against —
+ * two spellings of this marker is how a guard and its consumer drift apart.
+ */
+export const STORAGE_PUBLIC_PREFIX = '/storage/v1/object/public/'
+
+/** The only buckets this app stores assets in. */
+export const ASSET_BUCKETS = ['mf-audio', 'mf-artwork', 'mf-video'] as const
+
+// True only for an https:// URL to a public object in one of OUR buckets on the
+// Supabase Storage host — the sole shape any legitimately-stored audio /
+// artwork / visualizer URL ever takes.
+//
+// The path half of this check was missing until 2026-08-22: host+protocol alone
+// accepted e.g. https://<ref>.supabase.co/rest/v1/profiles?select=*, which the
+// server-side fetchers (finalize-artwork, visualizer/free, video-render) would
+// then dutifully request. Nothing was exploitable — those APIs need an apikey
+// header these fetches don't send — but the guard was materially weaker than
+// its name and than every call site's comment claimed. Verified before
+// tightening: all 565 asset URLs stored in production match this shape, so no
+// existing row changes meaning.
 export function isSupabaseStorageUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false
   let url: URL
@@ -78,7 +116,10 @@ export function isSupabaseStorageUrl(value: unknown): value is string {
   } catch {
     return false
   }
-  return url.protocol === 'https:' && url.hostname === SUPABASE_HOST
+  if (url.protocol !== 'https:' || url.hostname !== SUPABASE_HOST) return false
+  if (!url.pathname.startsWith(STORAGE_PUBLIC_PREFIX)) return false
+  const bucket = url.pathname.slice(STORAGE_PUBLIC_PREFIX.length).split('/')[0]
+  return (ASSET_BUCKETS as readonly string[]).includes(bucket)
 }
 
 // A TUS resumable-upload id, safe to interpolate into the upstream Storage URL.

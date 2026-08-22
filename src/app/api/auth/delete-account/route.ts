@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isMissingVisualizerColumn } from '@/lib/schema-heal'
 import { removeStorageObjects } from '@/lib/storage-remove'
+import { accountDeleteLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 import {
   AUDIO_BUCKET,
   ARTWORK_BUCKET,
@@ -12,6 +12,8 @@ import {
   collectAssetKeys,
   collectAssetUrls,
   type CollectionAssetRow,
+  OPTIONAL_ASSET_URL_COLUMNS,
+  errorNamesColumn,
   filterToOwnedPrefixes,
   keysSafeToDelete,
   scanSurvivingKeys,
@@ -121,6 +123,14 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  // Bounds the blast radius of a stolen session against the least reversible
+  // route in the app. See accountDeleteLimiter for why this is a cap and not
+  // the step-up password check /api/auth/change-password already has.
+  const limit = await checkUserLimit(accountDeleteLimiter, userId)
+  if (!limit.allowed) {
+    return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
   }
 
   // ── PRE-FLIGHT: can this erasure finish at all? ─────────────────────────────
@@ -565,10 +575,23 @@ export async function POST(request: NextRequest) {
   return response
 }
 
-// The pin columns are the only ones that can legitimately be absent (migrations
-// 015 / 020). A missing column means there are no pins to protect, not a broken
-// scan — everything else failing means we cannot trust the answer.
-const OPTIONAL_SCAN_COLUMNS = new Set(['visualizer_url', 'visualizer_wide_url'])
+// Which columns may legitimately be absent is decided in ONE place, shared with
+// DELETE /api/projects/[id] (OPTIONAL_ASSET_URL_COLUMNS in project-assets.ts).
+//
+// This route used to keep its own `new Set(['visualizer_url',
+// 'visualizer_wide_url'])`, which had already drifted: it never learned about
+// mb_collections.cover_url / .artwork_url, so on a /api/db-init-bootstrapped
+// database (where mb_collections is absent) the scan returned null for those
+// chunks, folded every candidate into `unresolved`, and skipped the cleanup
+// entirely — erasure defeated, silently. Failing towards a leak is the right
+// DIRECTION, but the drift is the defect: a duplicated rule is one edit from
+// disagreeing with the rule it copies, which is the whole reason
+// project-assets.ts exists.
+//
+// Keyed on `table.column`, never column alone — `artwork_url` names both
+// mb_projects (load-bearing) and mb_collections (routinely absent), so a
+// column-only key would excuse a real mb_projects failure and turn a broken
+// scan into a licence to delete.
 
 /**
  * FILTER 2 (reference check): drop the user's storage objects, minus anything a
@@ -585,7 +608,7 @@ async function removeAccountAssets(userId: string, candidates: AssetKeys, candid
   const select: AssetUrlSelect = async (table, column, urls) => {
     const { data, error } = await supabaseAdmin.from(table).select(column).in(column, [...urls])
     if (error) {
-      if (OPTIONAL_SCAN_COLUMNS.has(column) && isMissingVisualizerColumn(error)) return []
+      if (OPTIONAL_ASSET_URL_COLUMNS.has(`${table}.${column}`) && errorNamesColumn(error, column)) return []
       console.error(`[delete-account] survivor scan failed on ${table}.${column}: ${error.message}`)
       return null
     }
