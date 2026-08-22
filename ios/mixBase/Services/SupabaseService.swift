@@ -331,7 +331,9 @@ class SupabaseService {
             "project_id": projectId.postgresString,
             "version_number": versionNumber,
             "audio_url": audioUrl,
-            "status": "WIP",
+            // Smart status: "MASTER 2.wav" is a Master, everything else a Mix —
+            // same filename convention the web app's upload route reads.
+            "status": MixStatus.forUpload(filename: audioFilename),
             "allow_download": false
         ]
         if let label = label { fields["label"] = label }
@@ -352,7 +354,7 @@ class SupabaseService {
         return version
     }
 
-    /// Update just the status of a version (e.g. "WIP" -> "Final")
+    /// Update just the status of a version (e.g. "Mix" -> "Master")
     func updateVersionStatus(id: UUID, status: String) async throws {
         let fields: [String: Any] = ["status": status]
         let body = try JSONSerialization.data(withJSONObject: fields)

@@ -247,7 +247,7 @@ struct ProjectsView: View {
                 }
             }
 
-            StatusBadge(status: "WIP")
+            StatusBadge(status: "Mix")
         }
         .padding(10)
         .background(Color(hex: "#111111"))

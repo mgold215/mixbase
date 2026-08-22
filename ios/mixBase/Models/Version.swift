@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - MixStatus
+// The version workflow: Mix → Master → Finished → Released. There is no
+// hand-picked "WIP" step — a fresh upload's status is detected from its
+// filename, matching the web app's parser (src/lib/mix-status.ts): the word
+// "master" standing alone (so "MASTER 2.wav", "master.wav", "Master_3.aiff",
+// but not "remaster" or "mastering") means the artist is mastering; anything
+// else is a work-in-progress Mix.
+enum MixStatus {
+
+    static let all = ["Mix", "Master", "Finished", "Released"]
+
+    /// Status a fresh upload should carry, from its filename alone.
+    static func forUpload(filename: String?) -> String {
+        guard let filename else { return "Mix" }
+        let isMaster = filename.range(
+            of: "(?<![a-zA-Z])master(?![a-zA-Z])",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return isMaster ? "Master" : "Mix"
+    }
+}
+
 // MARK: - Version
 // Represents one version (iteration) of a music project.
 // Every time you bounce a new mix, it becomes a new Version.
@@ -31,7 +53,8 @@ struct Version: Codable, Identifiable {
     // File size in bytes (Int64 because audio files can be large)
     var fileSizeBytes: Int64?
 
-    // Current status of this version — defaults to "WIP" (Work In Progress)
+    // Current status of this version — "Mix", "Master", "Finished" or
+    // "Released" (see MixStatus above; detected from the filename on upload)
     var status: String
 
     // Notes only you can see

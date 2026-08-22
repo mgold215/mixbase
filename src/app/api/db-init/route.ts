@@ -45,7 +45,7 @@ create table if not exists mb_versions (
   audio_filename text,
   duration_seconds integer,
   file_size_bytes bigint,
-  status text not null default 'WIP',
+  status text not null default 'Mix',
   private_notes text,
   public_notes text,
   change_log text,

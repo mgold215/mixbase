@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isJsonObject } from '@/lib/validators'
 import { checkUserLimit, loudnessLimiter, rateLimitHeaders } from '@/lib/rate-limit'
+import { normalizeStatus } from '@/lib/mix-status'
 
 // GET /api/versions/[id] — get one version with its feedback (owner only)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -100,6 +101,10 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
   }
+  // The status set is Mix / Master / Finished / Released. Fold anything else —
+  // including the retired 'WIP' and 'Mix/Master' a stale client can still send —
+  // onto it, so retired values can't re-enter the catalog through this door.
+  if (typeof patch.status === 'string') patch.status = normalizeStatus(patch.status)
 
   // Handled outside `allowed` — see the write-once notes above parseBackfillSeconds.
   const wantsBackfill = Object.prototype.hasOwnProperty.call(body, 'duration_seconds')

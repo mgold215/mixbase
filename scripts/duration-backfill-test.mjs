@@ -166,11 +166,25 @@ export const SUPABASE_URL = 'https://example.supabase.co'
 export const supabase = supabaseAdmin
 `
 
+// Same stub write-route-guards-test.mjs uses: checkUserLimit() dynamically
+// imports ./tier, which imports schema-heal, whose FIRST line statically
+// imports @sentry/nextjs — and loading real Sentry's CJS graph under
+// registerHooks crashes outright on some Node 22.x builds (verified: this
+// suite died with "Cannot read properties of undefined (reading 'exports')"
+// inside the ESM translator on 22.22.2 while CI's 22.x was fine). A unit
+// suite has no business loading the real SDK anyway.
+const SENTRY_STUB = `
+export function captureMessage() {}
+export function captureException() {}
+export function init() {}
+`
+
 const STUB_URL = 'mbstub:supabase'
 registerHooks({
   resolve(spec, ctx, next) {
     // next/server has no bare-subpath export map entry Node can resolve.
     if (spec === 'next/server') return next('next/server.js', ctx)
+    if (spec === '@sentry/nextjs') return { url: 'mbstub:sentry', shortCircuit: true, format: 'module' }
     // Both spellings of the same module. The alias is what the ROUTE writes;
     // the relative form is what src/lib/* modules use to reach their siblings,
     // and src/lib/tier.ts (pulled in by the rate limiter) takes that path. Both
@@ -200,6 +214,7 @@ registerHooks({
   },
   load(url, ctx, next) {
     if (url === STUB_URL) return { format: 'module', shortCircuit: true, source: SUPABASE_STUB }
+    if (url === 'mbstub:sentry') return { format: 'module', shortCircuit: true, source: SENTRY_STUB }
     return next(url, ctx)
   },
 })

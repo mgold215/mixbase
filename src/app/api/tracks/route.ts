@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
       // "not measured" rather than undefined — the engine tests this with
       // `== null` and must never mistake either for a real length.
       duration_seconds: v.duration_seconds ?? null,
-      status: v.status ?? 'WIP',
+      status: v.status ?? 'Mix',
       version: v.label || `v${v.version_number}`,
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
       key_signature: p?.key_signature ?? null,

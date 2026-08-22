@@ -9,6 +9,7 @@ import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import MasterCheck, { writeLoudnessCache } from '@/components/MasterCheck'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
+import { normalizeStatus, versionDisplayLabel, versionKind, type MixStatus } from '@/lib/mix-status'
 import { loudnessFromRow, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
 import { measureLoudness, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
 import {
@@ -323,11 +324,10 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     }
   }
 
-  const projectStatus = versions.reduce((best, v) => {
-    const current = STATUS_CONFIG[best as keyof typeof STATUS_CONFIG]?.step ?? 0
-    const candidate = STATUS_CONFIG[v.status as keyof typeof STATUS_CONFIG]?.step ?? 0
-    return candidate > current ? v.status : best
-  }, 'WIP' as string)
+  const projectStatus = versions.reduce<MixStatus>((best, v) => {
+    const candidate = normalizeStatus(v.status)
+    return STATUS_CONFIG[candidate].step > STATUS_CONFIG[best].step ? candidate : best
+  }, 'Mix')
 
   async function copyShareLink() {
     if (!project.share_token) return
@@ -432,12 +432,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       revert()
       flashError('Could not change the download setting — check your connection.')
     }
-  }
-
-  function parseMixLabel(filename: string): string | null {
-    const nameWithoutExt = filename.replace(/\.[^.]+$/, '')
-    const match = nameWithoutExt.match(/mix\s+[\d]+(?:\.[\d]+)*/i)
-    return match ? match[0].toUpperCase().replace(/\s+/, ' ') : null
   }
 
   async function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
@@ -628,6 +622,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setUploadPct(92)
     setUploadStatus('Saving mix...')
 
+    // No label or status here on purpose: the server reads both off the
+    // filename ("MIX 3" → a Mix, "MASTER 2" → a Master) and numbers bare
+    // tokens itself — see src/lib/mix-status.ts.
     const versionRes = await fetch('/api/versions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -637,7 +634,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         audio_filename: file.name,
         duration_seconds: audioDuration,
         file_size_bytes: file.size,
-        label: parseMixLabel(file.name),
       }),
     })
 
@@ -678,6 +674,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           duration_seconds: archivedVersion.duration_seconds,
           file_size_bytes: archivedVersion.file_size_bytes,
           label: archivedVersion.label,
+          // Restoring re-inserts the row, so carry its status — bringing back
+          // "MASTER 2" must not demote it to a fresh Mix.
+          status: archivedVersion.status,
         }),
       })
       if (res.ok) {
@@ -812,22 +811,32 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // show what CHANGED between two mixes — the thing a DAW can't tell you,
   // because it only ever has one bounce open.
 
-  function mixLabelFor(v: Version): string {
-    return v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`
-  }
-
   // The comparison partner for a mix is the nearest OLDER mix that actually has
   // a stored measurement — NOT simply the one before it. Skipping unmeasured
   // mixes is what makes the delta appear as soon as any two points in the
   // history have numbers, instead of only when two consecutive uploads happen to
   // have been measured.
   function previousMeasuredFor(index: number): { loudness: LoudnessInput; label: string } | null {
+    // A -1 from a findIndex miss must not alias to "compare against the newest
+    // mix" (the loop below would start at 0). No match → no comparison partner.
+    if (index < 0) return null
     for (let i = index + 1; i < versions.length; i++) {
       const loudness = loudnessFromRow(versions[i])
-      if (loudness) return { loudness, label: mixLabelFor(versions[i]) }
+      if (loudness) return { loudness, label: versionDisplayLabel(versions[i]) }
     }
     return null
   }
+
+  // ── Smart version history ──────────────────────────────────────────────────
+  // Masters and mixes are different animals: the mixes are the working history,
+  // the masters are the candidates for release. The archive shows them as two
+  // sections (masters first) instead of one undifferentiated pile. Kind comes
+  // from the artist's own filenames/labels ("MASTER 2" stays a master even
+  // once Released), falling back to status for unnamed rows.
+  const archivedMasters = archivedVersions.filter(v => versionKind(v) === 'Master')
+  const archivedMixes = archivedVersions.filter(v => versionKind(v) === 'Mix')
+  const masterCount = versions.filter(v => versionKind(v) === 'Master').length
+  const mixCount = versions.length - masterCount
 
   // Fold the saved columns straight back into the version row so the readout and
   // every later comparison update without a refetch.
@@ -912,7 +921,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   {(projectForm.genre || project.genre) && <span>{projectForm.genre || project.genre}</span>}
                   {(projectForm.bpm || project.bpm) && <span>{projectForm.bpm || project.bpm} BPM</span>}
                   {(projectForm.key_signature || project.key_signature) && <span>{projectForm.key_signature || project.key_signature}</span>}
-                  <span>{versions.length} mix{versions.length !== 1 ? 'es' : ''}</span>
+                  <span>{mixCount} mix{mixCount !== 1 ? 'es' : ''}</span>
+                  {masterCount > 0 && <span>{masterCount} master{masterCount !== 1 ? 's' : ''}</span>}
                 </div>
 
                 {/* Project actions row */}
@@ -1033,7 +1043,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onSummarizeFeedback={summarizeFeedback}
                 onToggleAllowDownload={updateAllowDownload}
                 shareEnabled={Boolean(project.share_token)}
-                parseMixLabel={parseMixLabel}
                 loudness={loudnessFromRow(currentMix)}
                 previousMeasured={previousMeasuredFor(0)}
                 onMeasured={handleMeasured}
@@ -1048,7 +1057,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
                 >
                   <History size={13} />
-                  Restore older mix ({archivedVersions.length} archived)
+                  Version history ({archivedVersions.length} earlier version{archivedVersions.length !== 1 ? 's' : ''})
                 </button>
               </div>
             )}
@@ -1062,7 +1071,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               key={highlightVersionId ?? 'none'}
               versions={archivedVersions}
               feedCommentsByVersion={initialFeedComments}
-              parseMixLabel={parseMixLabel}
               highlightVersionId={highlightVersionId}
             />
 
@@ -1191,16 +1199,29 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         >
           <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-              <h3 className="text-sm font-semibold text-[var(--text)]">Archived Mixes</h3>
+              <h3 className="text-sm font-semibold text-[var(--text)]">Version History</h3>
               <button onClick={() => closeArchived()} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
                 <X size={16} />
               </button>
             </div>
-            <div className="overflow-y-auto max-h-96 divide-y" style={{ borderColor: 'var(--border)' }}>
-              {archivedVersions.map((av, i) => {
-                // `i + 1` because archivedVersions is versions.slice(1).
-                const previous = previousMeasuredFor(i + 1)
-                const avLabel = mixLabelFor(av)
+            <div className="overflow-y-auto max-h-96">
+              {([['Masters', archivedMasters], ['Mixes', archivedMixes]] as [string, VersionWithFeedback[]][])
+                .filter(([, list]) => list.length > 0)
+                .map(([heading, list]) => (
+              <div key={heading}>
+                {/* Section headers only earn their space once both kinds exist. */}
+                {archivedMasters.length > 0 && archivedMixes.length > 0 && (
+                  <div className="px-5 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]" style={{ backgroundColor: 'var(--surface-2)' }}>
+                    {heading} ({list.length})
+                  </div>
+                )}
+                <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+              {list.map(av => {
+                // Deltas compare against the full chronological history, so the
+                // index is looked up in `versions` — the grouped sections above
+                // reorder the display, never the comparison.
+                const previous = previousMeasuredFor(versions.findIndex(x => x.id === av.id))
+                const avLabel = versionDisplayLabel(av)
                 // Same proxied URL the download link and MasterCheck use. It has
                 // to be the proxy: Supabase's public URLs don't reliably send
                 // Accept-Ranges, so a raw URL plays but cannot seek or report a
@@ -1293,9 +1314,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 </div>
                 )
               })}
+                </div>
+              </div>
+              ))}
             </div>
             <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)' }}>
-              <p className="text-[11px] text-[var(--text-muted)]">Restoring a mix makes it the current version. The old one stays in this archive.</p>
+              <p className="text-[11px] text-[var(--text-muted)]">Restoring a version makes it current again. The old one stays in this history.</p>
             </div>
           </div>
         </div>
@@ -1329,7 +1353,6 @@ type CurrentMixCardProps = {
   onToggleAllowDownload: (id: string, allow: boolean) => void
   /** Project has a share link, so the download toggle actually reaches someone. */
   shareEnabled: boolean
-  parseMixLabel: (filename: string) => string | null
   /** Stored BS.1770-4 measurement for this mix (migration 032), or null. */
   loudness: LoudnessInput | null
   /** Nearest older mix that has one, for the delta. */
@@ -1342,7 +1365,7 @@ function CurrentMixCard({
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
   onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
-  shareEnabled, parseMixLabel, loudness, previousMeasured, onMeasured,
+  shareEnabled, loudness, previousMeasured, onMeasured,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1353,7 +1376,7 @@ function CurrentMixCard({
   const avgRating = ratedFeedback.length > 0
     ? (ratedFeedback.reduce((s, f) => s + f.rating!, 0) / ratedFeedback.length).toFixed(1)
     : null
-  const label = version.label || parseMixLabel(version.audio_filename ?? '') || `Mix ${version.version_number}`
+  const label = versionDisplayLabel(version)
 
   // Jump the shared player to a timestamped piece of feedback. If this mix is
   // already playing, seek in place; otherwise start it at that position.
@@ -1552,7 +1575,7 @@ function CurrentMixCard({
         <div className="flex gap-1.5 flex-wrap">
           {STATUSES.map(s => {
             const conf = STATUS_CONFIG[s]
-            const active = version.status === s
+            const active = normalizeStatus(version.status) === s
             return (
               <button key={s} onClick={() => onUpdateStatus(version.id, s)}
                 className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
@@ -1718,11 +1741,10 @@ function CurrentMixCard({
 type EarlierMixNotesProps = {
   versions: VersionWithFeedback[]
   feedCommentsByVersion: Record<string, FeedComment[]>
-  parseMixLabel: (filename: string) => string | null
   highlightVersionId: string | null
 }
 
-function EarlierMixNotes({ versions, feedCommentsByVersion, parseMixLabel, highlightVersionId }: EarlierMixNotesProps) {
+function EarlierMixNotes({ versions, feedCommentsByVersion, highlightVersionId }: EarlierMixNotesProps) {
   const withNotes = versions
     .map(v => ({
       version: v,
@@ -1768,7 +1790,7 @@ function EarlierMixNotes({ versions, feedCommentsByVersion, parseMixLabel, highl
               }}
             >
               <p className="text-[11px] text-[var(--text-muted)] mb-2">
-                {v.label || parseMixLabel(v.audio_filename ?? '') || `Mix ${v.version_number}`}
+                {versionDisplayLabel(v)}
                 {' · '}
                 {new Date(v.created_at).toLocaleDateString()}
               </p>
