@@ -7,12 +7,12 @@ import CassetteIcon from '@/components/CassetteIcon'
 import DashPlayButton from '@/components/DashPlayButton'
 import AddToPipelineButton from '@/components/AddToPipelineButton'
 
-type WorkflowStage = 'start' | 'wip' | 'mix_master' | 'finished' | 'in_pipeline' | 'released'
+type WorkflowStage = 'start' | 'mix' | 'master' | 'finished' | 'in_pipeline' | 'released'
 
 const STAGE_LABEL: Record<WorkflowStage, string> = {
   start:       'No audio',
-  wip:         'WIP',
-  mix_master:  'Mix/Master',
+  mix:         'Mix',
+  master:      'Master',
   finished:    'Finished',
   in_pipeline: 'In pipeline',
   released:    'Released',
@@ -20,8 +20,8 @@ const STAGE_LABEL: Record<WorkflowStage, string> = {
 
 const STAGE_COLOR: Record<WorkflowStage, string> = {
   start:       '#6b6050',
-  wip:         '#2dd4bf',
-  mix_master:  '#60a5fa',
+  mix:         '#60a5fa',
+  master:      '#a78bfa',
   finished:    '#4ade80',
   in_pipeline: '#2dd4bf',
   released:    '#4ade80',
@@ -29,14 +29,14 @@ const STAGE_COLOR: Record<WorkflowStage, string> = {
 
 const STAGE_BG: Record<WorkflowStage, string> = {
   start:       'transparent',
-  wip:         'rgba(45, 212, 191, 0.1)',
-  mix_master:  'rgba(96, 165, 250, 0.1)',
+  mix:         'rgba(96, 165, 250, 0.1)',
+  master:      'rgba(167, 139, 250, 0.1)',
   finished:    'rgba(74, 222, 128, 0.1)',
   in_pipeline: 'rgba(45, 212, 191, 0.1)',
   released:    'rgba(74, 222, 128, 0.1)',
 }
 
-const FILTER_ORDER: WorkflowStage[] = ['wip', 'mix_master', 'finished', 'in_pipeline', 'released', 'start']
+const FILTER_ORDER: WorkflowStage[] = ['mix', 'master', 'finished', 'in_pipeline', 'released', 'start']
 
 export type ProjectRow = {
   id: string

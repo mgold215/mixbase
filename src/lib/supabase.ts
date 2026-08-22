@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { decodeJwt } from 'jose'
+import { MIX_STATUSES, type MixStatus } from './mix-status'
 
 // Hardcoded as fallbacks — these are public keys, safe to expose in client code
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
@@ -135,7 +136,7 @@ export type Version = {
   audio_filename: string | null
   duration_seconds: number | null
   file_size_bytes: number | null
-  status: 'WIP' | 'Mix/Master' | 'Finished' | 'Released'
+  status: MixStatus
   private_notes: string | null
   public_notes: string | null
   change_log: string | null
@@ -209,14 +210,18 @@ export type Activity = {
   created_at: string
 }
 
-export const STATUS_CONFIG = {
-  'WIP':        { label: 'WIP',          color: 'text-yellow-400',  bg: 'bg-yellow-400/10',  border: 'border-yellow-400/30',  step: 1 },
-  'Mix/Master': { label: 'Mix / Master', color: 'text-blue-400',    bg: 'bg-blue-400/10',    border: 'border-blue-400/30',    step: 2 },
-  'Finished':   { label: 'Finished',     color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30', step: 3 },
-  'Released':   { label: 'Released',     color: 'text-teal-400',  bg: 'bg-teal-400/10',  border: 'border-teal-400/30',  step: 4 },
+// StatusPipeline derives ring-*/bg-* classes from `color` at runtime, which
+// Tailwind's scanner can't see — these literals keep them in the build:
+// ring-blue-400 bg-blue-400 ring-violet-400 bg-violet-400
+// ring-emerald-400 bg-emerald-400 ring-teal-400 bg-teal-400
+export const STATUS_CONFIG: Record<MixStatus, { label: string; color: string; bg: string; border: string; step: number }> = {
+  'Mix':      { label: 'Mix',      color: 'text-blue-400',    bg: 'bg-blue-400/10',    border: 'border-blue-400/30',    step: 1 },
+  'Master':   { label: 'Master',   color: 'text-violet-400',  bg: 'bg-violet-400/10',  border: 'border-violet-400/30',  step: 2 },
+  'Finished': { label: 'Finished', color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30', step: 3 },
+  'Released': { label: 'Released', color: 'text-teal-400',    bg: 'bg-teal-400/10',    border: 'border-teal-400/30',    step: 4 },
 }
 
-export const STATUSES = ['WIP', 'Mix/Master', 'Finished', 'Released'] as const
+export const STATUSES = MIX_STATUSES
 
 export function audioProxyUrl(supabaseUrl: string): string {
   const marker = '/storage/v1/object/public/mf-audio/'

@@ -25,7 +25,7 @@ Track every version of every track — from first rough to final master. Share w
 mixBase is version control for music producers. Every time you bounce a mix, upload it. mixBase keeps every version — so you can hear how far a track has come, compare mixes side by side, and never lose a good take again.
 
 TRACK YOUR MUSIC EVOLUTION
-Upload WAV, MP3, FLAC, and M4A files. Each upload creates a new version under the project, numbered automatically. Add private notes, change logs, and status tags (WIP → Mix/Master → Finished → Released). Jump back to any version, anytime.
+Upload WAV, MP3, FLAC, and M4A files. Each upload creates a new version under the project, numbered automatically — name a file "MIX 3" or "MASTER 2" and mixBASE labels and stages it for you (Mix → Master → Finished → Released). Add private notes and change logs, and jump back to any version, anytime.
 
 SHARE & GET REAL FEEDBACK
 Generate a secure share link for any version. Your collaborator, mix engineer, or A&R contact opens it in a browser — no account required. They hear your track and can leave timestamped comments pinned to the exact moment they're referencing. You see every note in your dashboard.

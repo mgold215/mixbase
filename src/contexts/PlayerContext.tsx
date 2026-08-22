@@ -509,7 +509,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // A playUrl source has no mb_versions row of its own here, so there is
       // nothing to report and nothing to heal from this shape.
       duration_seconds: null,
-      status: 'WIP',
+      status: 'Mix',
       version: customMeta.versionLabel,
       uploaded_at: 0,
       key_signature: null,

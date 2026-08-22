@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureVersionUniqueIndex } from '@/lib/schema-heal'
 import { resolveAllowDownload } from '@/lib/version-defaults'
+import { normalizeStatus, nextKindLabel, parseVersionName, type MixStatus } from '@/lib/mix-status'
 
 // POST /api/versions — create a new version under a project (user must own the project)
 export async function POST(request: NextRequest) {
@@ -38,6 +39,33 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+
+  // ── Smart status + label ────────────────────────────────────────────────────
+  // The filename carries the state: "MIX 3.wav" is a work-in-progress mix,
+  // "MASTER 2.wav" means mastering. The server is the one authority for this —
+  // web and iOS both benefit, and no client gets to invent a fifth status.
+  // An explicit body status is honored but normalized (a stale client sending
+  // the retired 'WIP' / 'Mix/Master' lands on the current set).
+  const parsedName = parseVersionName(typeof audio_filename === 'string' ? audio_filename : null)
+  const resolvedStatus: MixStatus =
+    typeof status === 'string' && status ? normalizeStatus(status) : (parsedName?.kind ?? 'Mix')
+
+  // Label: caller's explicit label → number parsed from the filename → for a
+  // bare "master.wav"/"mix.wav", the next free number in that kind's sequence,
+  // read from the project's existing labels and filenames.
+  let resolvedLabel: string | null = typeof label === 'string' && label.trim() ? label : null
+  if (!resolvedLabel && parsedName) {
+    if (parsedName.label) {
+      resolvedLabel = parsedName.label
+    } else {
+      const { data: siblings } = await supabaseAdmin
+        .from('mb_versions')
+        .select('label, audio_filename')
+        .eq('project_id', project_id)
+        .limit(500)
+      resolvedLabel = nextKindLabel(parsedName.kind, siblings ?? [])
+    }
+  }
 
   // The index that makes the retry loop below mean anything must EXIST before
   // the insert races, so it is ensured up front rather than from inside the
@@ -83,8 +111,8 @@ export async function POST(request: NextRequest) {
       .from('mb_versions')
       .insert({
         project_id, version_number: nextVersion, audio_url, audio_filename,
-        duration_seconds, file_size_bytes, label,
-        status: status ?? 'WIP', private_notes, public_notes, change_log,
+        duration_seconds, file_size_bytes, label: resolvedLabel,
+        status: resolvedStatus, private_notes, public_notes, change_log,
         allow_download: resolveAllowDownload(allow_download, previousAllowDownload),
       })
       .select()
@@ -110,7 +138,7 @@ export async function POST(request: NextRequest) {
     project_id,
     version_id: data.id,
     user_id: userId,
-    description: `Version ${nextVersion} uploaded${label ? ` — "${label}"` : ''}`,
+    description: `Version ${nextVersion} uploaded${resolvedLabel ? ` — "${resolvedLabel}"` : ''}`,
   })
 
   return NextResponse.json(data, { status: 201 })

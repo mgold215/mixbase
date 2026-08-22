@@ -1,13 +1,15 @@
 import { STATUS_CONFIG, STATUSES } from '@/lib/supabase'
+import { normalizeStatus } from '@/lib/mix-status'
 
 type Props = {
   status: string
   size?: 'sm' | 'md'
 }
 
-// Color badge for WIP / Mix/Master / Finished / Released
+// Color badge for Mix / Master / Finished / Released. normalizeStatus folds
+// retired values ('WIP', 'Mix/Master') from unmigrated rows onto the set.
 export function StatusBadge({ status, size = 'md' }: Props) {
-  const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG['WIP']
+  const config = STATUS_CONFIG[normalizeStatus(status)]
   const sizeClass = size === 'sm' ? 'text-xs px-2 py-0.5' : 'text-xs px-2.5 py-1'
   return (
     <span className={`inline-flex items-center rounded-full border font-medium ${config.color} ${config.bg} ${config.border} ${sizeClass}`}>
@@ -21,9 +23,10 @@ type PipelineProps = {
   className?: string
 }
 
-// Visual progress bar: WIP → Mix/Master → Finished → Released
+// Visual progress bar: Mix → Master → Finished → Released
 export function StatusPipeline({ currentStatus, className = '' }: PipelineProps) {
-  const currentStep = STATUS_CONFIG[currentStatus as keyof typeof STATUS_CONFIG]?.step ?? 1
+  const normalized = normalizeStatus(currentStatus)
+  const currentStep = STATUS_CONFIG[normalized].step
 
   return (
     <div className={`flex items-center gap-0 ${className}`}>
@@ -31,7 +34,7 @@ export function StatusPipeline({ currentStatus, className = '' }: PipelineProps)
         const config = STATUS_CONFIG[status]
         const step = config.step
         const isActive = step <= currentStep
-        const isCurrent = status === currentStatus
+        const isCurrent = status === normalized
 
         return (
           <div key={status} className="flex items-center">
@@ -50,7 +53,7 @@ export function StatusPipeline({ currentStatus, className = '' }: PipelineProps)
               <span className={`text-[10px] whitespace-nowrap ${
                 isCurrent ? config.color : isActive ? 'text-[#555]' : 'text-[#333]'
               }`}>
-                {status === 'Mix/Master' ? 'Mix' : status}
+                {status}
               </span>
             </div>
 

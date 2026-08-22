@@ -40,13 +40,16 @@ function generateWaveform(seed: string, count: number): number[] {
   })
 }
 
-// Map version status → short tag + color
+// Map version status → short tag + color. 'WIP' / 'Mix/Master' are the retired
+// pre-034 spellings, folded onto the current set for unmigrated rows.
 function statusTag(status: string): { label: string; color: string } {
   switch (status) {
-    case 'WIP':        return { label: 'WIP',       color: '#facc15' }
-    case 'Mix/Master': return { label: 'MIX/MSTR',  color: '#60a5fa' }
+    case 'Mix':
+    case 'WIP':        return { label: 'MIX',       color: '#60a5fa' }
+    case 'Master':
+    case 'Mix/Master': return { label: 'MASTER',    color: '#a78bfa' }
     case 'Finished':   return { label: 'FINISHED',  color: '#34d399' }
-    case 'Released':   return { label: 'RELEASED',  color: '#c084fc' }
+    case 'Released':   return { label: 'RELEASED',  color: '#2dd4bf' }
     default:           return { label: status.toUpperCase(), color: '#ffffff' }
   }
 }

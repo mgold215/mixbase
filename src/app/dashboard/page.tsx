@@ -8,7 +8,7 @@ import ProjectGrid from './ProjectGrid'
 
 export const dynamic = 'force-dynamic'
 
-type WorkflowStage = 'start' | 'wip' | 'mix_master' | 'finished' | 'in_pipeline' | 'released'
+type WorkflowStage = 'start' | 'mix' | 'master' | 'finished' | 'in_pipeline' | 'released'
 
 function getWorkflowStage(
   versions: { status: string }[],
@@ -17,8 +17,10 @@ function getWorkflowStage(
   if (versions.some(v => v.status === 'Released')) return 'released'
   if (releases.length > 0) return 'in_pipeline'
   if (versions.some(v => v.status === 'Finished')) return 'finished'
-  if (versions.some(v => v.status === 'Mix/Master')) return 'mix_master'
-  if (versions.length > 0) return 'wip'
+  // 'Mix/Master' is the retired pre-034 spelling — read it as mastering so an
+  // unmigrated row can't demote a project to the mix stage.
+  if (versions.some(v => v.status === 'Master' || v.status === 'Mix/Master')) return 'master'
+  if (versions.length > 0) return 'mix'
   return 'start'
 }
 

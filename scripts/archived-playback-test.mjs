@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Contract test: inline playback for ARCHIVED mixes in the "Archived Mixes"
-// modal of src/app/projects/[id]/ProjectClient.tsx.
+// Contract test: inline playback for ARCHIVED versions in the "Version History"
+// modal of src/app/projects/[id]/ProjectClient.tsx (grouped into Masters and
+// Mixes sections since the smart-mix-status change; the per-row contract is
+// identical for both sections because they share one render callback).
 //
 // The whole feature is JSX plus a four-line handler — there is no pure module to
 // unit-test, so every check here reads the REAL component source. That is
@@ -65,7 +67,7 @@ const src = stripComments(read(SRC_PATH))
 // The JSX expression container for the whole modal, the arrow body that renders
 // one archived row, and the two handlers that own the close path.
 const modal = bracketedBlock(src, '{archivedOpen && (')
-const row = bracketedBlock(src, 'archivedVersions.map((av, i)')
+const row = bracketedBlock(src, 'list.map(av')
 const closeFn = functionBody(src, 'function closeArchived()')
 const restoreFn = functionBody(src, 'async function restoreVersion(')
 // The single usePlayer() destructure — everything this page is allowed to take
@@ -79,8 +81,8 @@ const playerHook = src.split('\n').find(l => l.includes('= usePlayer()')) ?? ''
 console.log('regions located\n')
 
 check(
-  'the archived-mixes modal block was located',
-  modal.length > 0 && modal.includes('Archived Mixes'),
+  'the version-history modal block was located',
+  modal.length > 0 && modal.includes('Version History'),
   `${modal.length} chars`,
 )
 check(
