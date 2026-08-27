@@ -79,8 +79,17 @@ class AudioService: ObservableObject {
     /// song animating over the wrong track would be actively misleading.
     @Published var currentVisualizerUrl: String?
 
-    /// The user's artist name — fetched once from profiles table
-    var artistName: String = "mixBase"
+    /// The user's artist name for the Now Playing artist slot — empty until the
+    /// profile fetch lands. The fetch usually finishes AFTER play() has pushed
+    /// metadata, so a change must repaint the lock screen / car display, which
+    /// otherwise keeps the "mixBase" fallback until the next track change.
+    @Published var artistName: String = "" {
+        didSet {
+            if oldValue != artistName, currentVersion != nil {
+                updateNowPlayingInfo()
+            }
+        }
+    }
 
     /// Whether the user intends playback right now (drives the play/pause icon).
     @Published var isPlaying: Bool = false
@@ -254,6 +263,14 @@ class AudioService: ObservableObject {
         updateNowPlayingInfo()
         addTimeObserver()
         observePlayer(player, item: playerItem)
+
+        // The Bluetooth/AVRCP artist slot shows whatever name we hold at play
+        // time. If the launch-time profile fetch never ran (session restored
+        // with a healthy token) or failed (no network yet in the car), request
+        // it again — artistName's didSet repaints the display when it lands.
+        if artistName.isEmpty {
+            Task { @MainActor in AuthService.shared.loadArtistName() }
+        }
 
         // If playback started from a surface that never set a queue (Home, project detail),
         // load one in the background so skip + auto-advance work from any tab right away.
