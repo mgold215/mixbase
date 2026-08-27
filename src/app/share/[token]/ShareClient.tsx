@@ -29,6 +29,9 @@ type Props = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mb_projects: any
   }
+  // Public artist name (already shown in the page header) — feeds the Media
+  // Session artist slot so lock screens / car displays don't say "mixBase".
+  artistName: string
 }
 
 // The share page never receives mb_versions.audio_filename (the artist's own
@@ -42,7 +45,7 @@ function downloadFileName(audioUrl: string, title: string): string {
   return `${safeTitle}.${safeExt}`
 }
 
-export default function ShareClient({ version }: Props) {
+export default function ShareClient({ version, artistName }: Props) {
   // The share token this page was addressed by. Read from the route rather than
   // taken as a prop: page.tsx deliberately hands this component the MINIMISED
   // public projection of the row (see the Props note above), and the token is
@@ -179,10 +182,10 @@ export default function ShareClient({ version }: Props) {
       audio.pause()
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     } else {
-      applyMediaSession(title, artworkUrl, true)
+      applyMediaSession(title, artworkUrl, true, artistName)
       audio.play().catch(() => {})
     }
-  }, [isPlaying, title, artworkUrl])
+  }, [isPlaying, title, artworkUrl, artistName])
 
   const seek = (e: ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current

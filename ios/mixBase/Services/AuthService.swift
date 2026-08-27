@@ -56,7 +56,29 @@ class AuthService: ObservableObject {
         SupabaseService.shared.setAccessToken(token)
         SupabaseService.shared.setUserId(uid)
 
+        // This path skips applySession entirely when the stored access token is
+        // still healthy — without its own fetch here, the Now Playing artist
+        // stayed on the "mixBase" fallback for the whole session.
+        loadArtistName()
+
         Task { await ensureFreshToken() }
+    }
+
+    // MARK: - Artist name (Now Playing / Control Center / Bluetooth AVRCP)
+    // The profile's artist_name feeds the MPNowPlayingInfoCenter artist slot.
+    // Called from every path that establishes a session (sign-in, token refresh,
+    // Keychain restore) and re-tried by AudioService.play() if it hasn't landed.
+    private var artistNameTask: Task<Void, Never>?
+
+    func loadArtistName() {
+        guard artistNameTask == nil, let uid = userId else { return }
+        artistNameTask = Task { [weak self] in
+            let name = await SupabaseService.shared.fetchArtistName(userId: uid)
+            // Keep the last known name when the fetch fails or the profile has
+            // none — a transient error must not blank an already-correct display.
+            if !name.isEmpty { AudioService.shared.artistName = name }
+            self?.artistNameTask = nil
+        }
     }
 
     // MARK: - Keep the session warm
@@ -218,6 +240,9 @@ class AuthService: ObservableObject {
     func signOut() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        artistNameTask?.cancel()
+        artistNameTask = nil
+        AudioService.shared.artistName = ""
         KeychainService.clearAll()
         SupabaseService.shared.setAccessToken(nil)
         isAuthenticated = false
@@ -332,9 +357,6 @@ class AuthService: ObservableObject {
         scheduleProactiveRefresh()
 
         // Load artist name for Now Playing / Control Center / Bluetooth AVRCP
-        Task {
-            let name = await SupabaseService.shared.fetchArtistName(userId: uid)
-            await MainActor.run { AudioService.shared.artistName = name }
-        }
+        loadArtistName()
     }
 }
