@@ -6,6 +6,15 @@ import SwiftUI
 struct SettingsView: View {
 
     @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var audioService: AudioService
+
+    // Artist name editing (profiles.artist_name — feeds Now Playing / Bluetooth
+    // AVRCP, the Home header, and the public share pages)
+    @State private var artistName = ""
+    @State private var savedArtistName = ""
+    @State private var isSavingArtist = false
+    @State private var artistSaved = false
+    @State private var artistSaveError: String? = nil
 
     // Account deletion flow
     @State private var showDeleteConfirm = false
@@ -32,6 +41,48 @@ struct SettingsView: View {
                 } header: {
                     Text("Account")
                         .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+
+                // MARK: - Artist Section
+                Section {
+                    TextField("Your artist name", text: $artistName)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.words)
+                        .onChange(of: artistName) { _, newValue in
+                            // Keep the "Saved" state while the text still matches
+                            // what's stored (the save itself re-normalizes the
+                            // field, which lands here too).
+                            if newValue.trimmingCharacters(in: .whitespaces) != savedArtistName {
+                                artistSaved = false
+                            }
+                            artistSaveError = nil
+                        }
+
+                    if let error = artistSaveError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+
+                    Button(action: { Task { await saveArtistName() } }) {
+                        HStack {
+                            Text(artistSaved ? "Saved" : "Save")
+                            if isSavingArtist {
+                                Spacer()
+                                ProgressView()
+                                    .tint(Color(hex: "#2dd4bf"))
+                            }
+                        }
+                    }
+                    .foregroundColor(canSaveArtistName ? Color(hex: "#2dd4bf") : .gray)
+                    .disabled(!canSaveArtistName || isSavingArtist)
+                } header: {
+                    Text("Artist")
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                } footer: {
+                    Text("Shown as the artist on the lock screen, car displays, and your share pages.")
+                        .foregroundColor(.gray)
                 }
 
                 // MARK: - Legal Section
@@ -165,6 +216,42 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .task { await loadArtistName() }
+    }
+
+    // MARK: - Artist name
+
+    // Saveable when the trimmed value differs from what's stored — including
+    // clearing it (an artist can remove the name; displays fall back to defaults).
+    private var canSaveArtistName: Bool {
+        artistName.trimmingCharacters(in: .whitespaces) != savedArtistName
+    }
+
+    private func loadArtistName() async {
+        guard let uid = authService.userId else { return }
+        let name = await SupabaseService.shared.fetchArtistName(userId: uid)
+        savedArtistName = name
+        // Don't clobber anything the user already started typing.
+        if artistName.isEmpty { artistName = name }
+    }
+
+    private func saveArtistName() async {
+        guard let uid = authService.userId else { return }
+        let trimmed = artistName.trimmingCharacters(in: .whitespaces)
+        isSavingArtist = true
+        artistSaveError = nil
+        defer { isSavingArtist = false }
+
+        do {
+            try await SupabaseService.shared.updateArtistName(userId: uid, name: trimmed)
+            savedArtistName = trimmed
+            artistName = trimmed
+            artistSaved = true
+            // Repaint Now Playing / Bluetooth and the Home header immediately.
+            audioService.artistName = trimmed
+        } catch {
+            artistSaveError = error.localizedDescription
+        }
     }
 
     // MARK: - Delete account
