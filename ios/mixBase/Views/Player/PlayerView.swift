@@ -191,32 +191,25 @@ struct PlayerView: View {
 
             Spacer(minLength: 30)
 
-            // Track title — tap for the song dropdown (mirrors the web player's
-            // track selector: one entry per song, latest version, no clutter)
+            // Track title — tap to open the song's project page (playback keeps
+            // going; AudioService is global). The full-queue Menu that used to
+            // live here scrolled unusably with a long catalogue — song picking
+            // stays in the Up Next sheet and the track list instead.
             VStack(spacing: 8) {
-                Menu {
-                    ForEach(audioService.queue) { item in
-                        Button(action: { audioService.play(item: item) }) {
-                            if item.projectId == version.projectId {
-                                Label(item.trackName, systemImage: "waveform")
-                            } else {
-                                Text(item.trackName)
-                            }
-                        }
-                    }
-                } label: {
+                NavigationLink(destination: ProjectDetailView(projectId: version.projectId)) {
                     HStack(spacing: 6) {
                         Text(audioService.currentTrackName ?? "Unknown Track")
                             .font(.title2)
                             .fontWeight(.bold)
                             .foregroundColor(Color(hex: "#f0f0f0"))
                             .lineLimit(1)
-                        Image(systemName: "chevron.down")
+                        Image(systemName: "chevron.right")
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundColor(Color(hex: "#2dd4bf"))
                     }
                 }
+                .buttonStyle(.plain)
 
                 // Version + status. Switching versions is tucked into a small
                 // menu instead of a row of pills for every version.

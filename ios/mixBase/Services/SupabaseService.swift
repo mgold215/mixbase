@@ -229,6 +229,21 @@ class SupabaseService {
         return name
     }
 
+    /// Update the profile's artist name (RLS `users_update_own_profile` limits
+    /// the write to the caller's own row).
+    func updateArtistName(userId: String, name: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["artist_name": name])
+        let request = makeRequest(path: "/rest/v1/profiles?id=eq.\(userId)", method: "PATCH", body: body)
+        let (data, response) = try await authenticatedData(for: request)
+        try validateResponse(response, body: data)
+        // A PATCH whose filter matches no rows still returns 200 with an empty
+        // array — surface that instead of pretending the save landed.
+        let rows = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+        guard !rows.isEmpty else {
+            throw SupabaseError.notFound("No profile found for this account")
+        }
+    }
+
     // MARK: - Projects
 
     /// Fetch all projects, newest-updated first
