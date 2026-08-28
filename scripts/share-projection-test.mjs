@@ -77,7 +77,7 @@ const projCols = cols(PROJ)
 for (const c of ['title', 'artwork_url', 'finalized_artwork_url', 'visualizer_url']) {
   check(`project select includes rendered column "${c}"`, projCols.includes(c))
 }
-for (const c of ['share_token', 'bpm', 'key_signature', 'private_notes', '*']) {
+for (const c of ['share_token', 'bpm', 'key_signature', 'private_notes', 'acapella_url', '*']) {
   check(`project select excludes owner-private "${c}"`, !projCols.includes(c))
 }
 

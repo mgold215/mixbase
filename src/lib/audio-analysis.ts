@@ -2,31 +2,73 @@
 // All browser-side, no external dependencies. Uses Web Audio API.
 
 // ─── BPM Detection ─────────────────────────────────────────────────────────────
-// Onset-flux autocorrelation over up to 30 seconds of audio.
+// Drum-focused onset-flux autocorrelation. The onset envelope is built from the
+// two bands drums live in — kick (≲150 Hz, one-pole low-pass) and snare/hats
+// (first-difference high-pass) — so sustained mid-band content (vocals, pads,
+// chords), the main source of false onsets, barely registers. Up to 90 s of
+// audio is scanned and the densest 30 s of drum flux is what gets analyzed:
+// autocorrelating the first 30 s blindly meant beatless intros produced junk.
 export function detectBPM(audioBuffer: AudioBuffer): number {
   const data = audioBuffer.getChannelData(0)
   const sr = audioBuffer.sampleRate
   const windowSize = Math.floor(sr * 0.01) // 10ms windows
-  const maxFrames = Math.min(Math.floor(data.length / windowSize), 3000)
+  const maxFrames = Math.min(Math.floor(data.length / windowSize), 9000)
 
-  const energy = new Float32Array(maxFrames)
+  // Per-window energy in each drum band, in one O(N) pass. Both filters are
+  // 12 dB/oct — a single pole/difference leaks enough 300–600 Hz (vocals,
+  // pads) into the "kick" band to out-shout the actual drums.
+  const lowE = new Float32Array(maxFrames)
+  const highE = new Float32Array(maxFrames)
+  const lpCoeff = Math.exp((-2 * Math.PI * 150) / sr) // per-pole cutoff ~150 Hz
+  let lp1 = 0, lp2 = 0, prev1 = 0, prev2 = 0
   for (let i = 0; i < maxFrames; i++) {
     const s = i * windowSize
-    let sum = 0
-    for (let j = 0; j < windowSize; j++) { const v = data[s + j] ?? 0; sum += v * v }
-    energy[i] = sum / windowSize
+    let lo = 0, hi = 0
+    for (let j = 0; j < windowSize; j++) {
+      const v = data[s + j] ?? 0
+      lp1 = lpCoeff * lp1 + (1 - lpCoeff) * v   // two cascaded one-poles
+      lp2 = lpCoeff * lp2 + (1 - lpCoeff) * lp1
+      lo += lp2 * lp2
+      const d = v - 2 * prev1 + prev2           // second difference
+      prev2 = prev1
+      prev1 = v
+      hi += d * d
+    }
+    lowE[i] = lo / windowSize
+    highE[i] = hi / windowSize
   }
 
+  // Rectified flux per band, each normalized to its own mean so a quiet hat
+  // pattern counts as much as a loud kick — then summed into one envelope.
   const flux = new Float32Array(maxFrames)
-  for (let i = 1; i < maxFrames; i++) flux[i] = Math.max(0, energy[i] - energy[i - 1])
+  for (const band of [lowE, highE]) {
+    let mean = 0
+    for (let i = 1; i < maxFrames; i++) mean += Math.max(0, band[i] - band[i - 1])
+    mean /= Math.max(1, maxFrames - 1)
+    if (mean <= 0) continue
+    for (let i = 1; i < maxFrames; i++) flux[i] += Math.max(0, band[i] - band[i - 1]) / mean
+  }
+
+  // Analyze the 30 s stretch with the most drum activity (all of it if shorter).
+  const span = Math.min(maxFrames, 3000)
+  let start = 0
+  if (maxFrames > span) {
+    let winSum = 0
+    for (let i = 0; i < span; i++) winSum += flux[i]
+    let bestSum = winSum
+    for (let s = 1; s + span <= maxFrames; s++) {
+      winSum += flux[s + span - 1] - flux[s - 1]
+      if (winSum > bestSum) { bestSum = winSum; start = s }
+    }
+  }
 
   // Autocorrelation — at 100fps, lag 30=200BPM, lag 100=60BPM
   const corr = new Float32Array(101)
   let bestLag = 50, bestCorr = -1
   for (let lag = 30; lag <= 100; lag++) {
     let c = 0
-    for (let i = 0; i < maxFrames - lag; i++) c += flux[i] * flux[i + lag]
-    c /= maxFrames - lag // normalize: long lags sum fewer terms
+    for (let i = start; i < start + span - lag; i++) c += flux[i] * flux[i + lag]
+    c /= span - lag // normalize: long lags sum fewer terms
     corr[lag] = c
     if (c > bestCorr) { bestCorr = c; bestLag = lag }
   }
@@ -140,8 +182,12 @@ export function extractDominantColor(imgUrl: string): Promise<[number, number, n
   })
 }
 
-// ─── Analyze audio URL (fetch first 4 MB and decode) ───────────────────────────
-// Accepts an AbortSignal so skipping tracks actually cancels the in-flight 4 MB fetch
+// ─── Analyze audio URL (fetch first 8 MB and decode) ───────────────────────────
+// 8 MB, not 4: a 44.1k/16-bit stereo WAV runs ~176 KB/s, so 4 MB exposed only the
+// first ~22 s — usually the intro, exactly where the drums aren't. 8 MB reaches
+// ~45 s of WAV (and most of an MP3), giving detectBPM's drum-window selection a
+// real chance to land on the first drop.
+// Accepts an AbortSignal so skipping tracks actually cancels the in-flight fetch
 // instead of leaving it (and a fresh AudioContext) competing with playback.
 // Successful results are cached per URL — revisiting a track must not re-fetch
 // and re-decode 4 MB while the element is trying to buffer the same file.
@@ -152,7 +198,7 @@ export async function analyzeAudioUrl(url: string, signal?: AbortSignal): Promis
   if (cached) return cached
   let ctx: AudioContext | null = null
   try {
-    const resp = await fetch(url, { headers: { Range: 'bytes=0-4000000' }, signal })
+    const resp = await fetch(url, { headers: { Range: 'bytes=0-8000000' }, signal })
     const buf = await resp.arrayBuffer()
     if (signal?.aborted) return null
     ctx = new AudioContext()
@@ -167,7 +213,7 @@ export async function analyzeAudioUrl(url: string, signal?: AbortSignal): Promis
 // ─── Analyze a local File (before upload) ──────────────────────────────────────
 export async function analyzeFile(file: File): Promise<{ bpm: number; key: string } | null> {
   try {
-    const buf = await file.slice(0, 4_000_000).arrayBuffer()
+    const buf = await file.slice(0, 8_000_000).arrayBuffer()
     const ctx = new AudioContext()
     const ab = await ctx.decodeAudioData(buf)
     await ctx.close()

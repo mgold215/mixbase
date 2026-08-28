@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
-import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
+import { ensureProjectVisualizerColumn, isMissingVisualizerColumn, ensureProjectAcapellaColumn, isMissingAcapellaColumn } from '@/lib/schema-heal'
 import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 import {
   AUDIO_BUCKET,
@@ -70,7 +70,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
-  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url', 'visualizer_wide_url'] as const
+  const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url', 'visualizer_wide_url', 'acapella_url'] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {
     if (key in body) patch[key] = body[key]
@@ -85,6 +85,15 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
       return NextResponse.json({ error: 'artwork_url must be a Supabase storage URL' }, { status: 400 })
     }
     patch.finalized_artwork_url = null
+  }
+
+  // The acapella slot is played back through /api/audio and deleted with the
+  // project's other assets, so only accept a Supabase Storage URL (the sole
+  // shape our uploads produce) or null to clear the slot.
+  if ('acapella_url' in body) {
+    if (body.acapella_url !== null && !isSupabaseStorageUrl(body.acapella_url)) {
+      return NextResponse.json({ error: 'acapella_url must be a Supabase storage URL' }, { status: 400 })
+    }
   }
 
   // The project visualizers (vertical + horizontal pins) are rendered as
@@ -139,6 +148,12 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   // Deploys can beat the 015/020 migrations to production — heal the columns and retry.
   if (error && ('visualizer_url' in patch || 'visualizer_wide_url' in patch)
     && isMissingVisualizerColumn(error) && await ensureProjectVisualizerColumn()) {
+    ({ data, error } = await runUpdate())
+  }
+
+  // Same for the 035 acapella column.
+  if (error && 'acapella_url' in patch
+    && isMissingAcapellaColumn(error) && await ensureProjectAcapellaColumn()) {
     ({ data, error } = await runUpdate())
   }
 

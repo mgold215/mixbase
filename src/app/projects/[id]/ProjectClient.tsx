@@ -23,7 +23,7 @@ import { copyToClipboard } from '@/lib/clipboard'
 import type { FeedComment } from '@/lib/feed'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
-  Sparkles, History, X, ClipboardList, Copy, FileText,
+  Sparkles, History, X, ClipboardList, Copy, FileText, Mic,
 } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
@@ -200,6 +200,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // ?? null: prod rows can predate the 015/020 migrations (columns self-heal on first write)
   const [visualizer, setVisualizer] = useState(project.visualizer_url ?? null)
   const [visualizerWide, setVisualizerWide] = useState(project.visualizer_wide_url ?? null)
+  // Acapella slot (migration 035) — same optional shape as the pins.
+  const [acapella, setAcapella] = useState(project.acapella_url ?? null)
+  const [acapellaUploading, setAcapellaUploading] = useState(false)
+  const [acapellaPct, setAcapellaPct] = useState(0)
+  const [acapellaStatus, setAcapellaStatus] = useState('')
+  const acapellaInputRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -453,7 +459,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   }
 
   // TUS chunked upload for large files (bypasses Supabase's non-resumable size limit)
-  async function tusUpload(file: File, filename: string, contentType: string): Promise<{ ok: boolean; error?: string }> {
+  async function tusUpload(file: File, filename: string, contentType: string, onPct: (pct: number) => void): Promise<{ ok: boolean; error?: string }> {
     const { Upload } = await import('tus-js-client')
     const bucketName = 'mf-audio'
     return new Promise((resolve) => {
@@ -473,7 +479,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         },
         headers: { 'x-upsert': 'true' },
         onProgress: (bytesUploaded, bytesTotal) => {
-          setUploadPct(Math.round((bytesUploaded / bytesTotal) * 80))
+          onPct(Math.round((bytesUploaded / bytesTotal) * 80))
         },
         onSuccess: () => resolve({ ok: true }),
         onError: (err) => resolve({ ok: false, error: err.message }),
@@ -490,6 +496,144 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         .catch(() => {})
         .then(() => upload.start())
     })
+  }
+
+  // Bytes → mf-audio under `filename`: signed URL ≤ 50 MB (direct to Supabase,
+  // no Railway in the byte path), TUS chunked above, 413 auto-fallback to TUS.
+  // Shared by the mix upload and the acapella slot so the byte-path rules live
+  // in exactly one place.
+  async function uploadAudioToStorage(
+    file: File,
+    filename: string,
+    contentType: string,
+    onPct: (pct: number) => void,
+    onStatus: (status: string) => void,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    const publicUrl = () => {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
+      return `${supabaseUrl}/storage/v1/object/public/mf-audio/${filename}`
+    }
+
+    // Files > 50MB use TUS chunked upload (bypasses Supabase non-resumable size limit)
+    if (file.size > 50 * 1024 * 1024) {
+      onStatus('Uploading (chunked)...')
+      const tusResult = await tusUpload(file, filename, contentType, onPct)
+      if (!tusResult.ok) return { ok: false, error: tusResult.error ?? 'Upload failed' }
+      return { ok: true, url: publicUrl() }
+    }
+
+    // Small files: signed URL direct to Supabase (fast, no Railway in the path)
+    const urlRes = await fetch('/api/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, contentType }),
+    })
+    const urlData = await urlRes.json()
+    if (!urlRes.ok) return { ok: false, error: urlData.error ?? 'Could not get upload URL' }
+
+    const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) onPct(Math.round((ev.loaded / ev.total) * 80))
+      })
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
+        else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
+      })
+      xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
+      xhr.open('PUT', urlData.signedUrl)
+      xhr.setRequestHeader('Content-Type', contentType)
+      xhr.setRequestHeader('x-upsert', 'true')
+      xhr.send(file)
+    })
+
+    if (putResult.ok) return { ok: true, url: urlData.publicUrl as string }
+
+    // If signed URL fails with 413, retry with TUS
+    if (putResult.error?.includes('413') || putResult.error?.includes('exceeded the maximum')) {
+      onStatus('Retrying with chunked upload...')
+      onPct(0)
+      const tusResult = await tusUpload(file, filename, contentType, onPct)
+      if (!tusResult.ok) return { ok: false, error: tusResult.error ?? 'Upload failed' }
+      return { ok: true, url: publicUrl() }
+    }
+    return { ok: false, error: putResult.error ?? 'Upload failed' }
+  }
+
+  // ── Acapella slot ──────────────────────────────────────────────────────────
+  // One pinned vocals-only file per project: uploaded beside the mixes in
+  // mf-audio under an acapella- prefixed key, then PATCHed onto the row.
+  async function handleAcapellaSelect(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (acapellaInputRef.current) acapellaInputRef.current.value = ''
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      setAcapellaStatus('Error: File too large (max 2GB)')
+      return
+    }
+
+    setAcapellaUploading(true)
+    setAcapellaPct(0)
+    setAcapellaStatus('Uploading...')
+
+    const ext = (file.name.split('.').pop() ?? 'wav').toLowerCase()
+    const filename = `${project.id}/acapella-${Date.now()}.${ext}`
+    const mimeByExt: Record<string, string> = {
+      wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
+      mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
+    }
+    const contentType = file.type || mimeByExt[ext] || 'application/octet-stream'
+
+    const up = await uploadAudioToStorage(file, filename, contentType, setAcapellaPct, setAcapellaStatus)
+    if (!up.ok) {
+      setAcapellaStatus(`Error: ${up.error}`)
+      setAcapellaPct(0)
+      setAcapellaUploading(false)
+      return
+    }
+
+    setAcapellaPct(90)
+    setAcapellaStatus('Saving...')
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acapella_url: up.url }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => null)
+      setAcapellaStatus(`Error: ${err?.error ?? 'Could not save the acapella'}`)
+      setAcapellaPct(0)
+      setAcapellaUploading(false)
+      return
+    }
+    setAcapella(up.url)
+    setAcapellaStatus('')
+    setAcapellaPct(0)
+    setAcapellaUploading(false)
+    syncAfterMutation()
+  }
+
+  // Clears the slot (the bytes stay under the project prefix and are removed
+  // with the project, same as replaced artwork).
+  async function removeAcapella() {
+    const prev = acapella
+    setAcapella(null)
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acapella_url: null }),
+    })
+    if (!res.ok) {
+      setAcapella(prev)
+      flashError('Could not remove the acapella. Try again.')
+    }
+  }
+
+  // Saved file name for the acapella download (title-acapella.<real ext>).
+  function acapellaDownloadName(): string {
+    const base = (projectForm.title || project.title).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'song'
+    const ext = acapella?.split('?')[0].split('.').pop() ?? 'wav'
+    return `${base}-acapella.${ext}`
   }
 
   async function handleUpload(file: File) {
@@ -511,78 +655,14 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     const fileExt = (file.name.split('.').pop() ?? '').toLowerCase()
     const contentType = file.type || mimeByExt[fileExt] || 'application/octet-stream'
 
-    // Files > 50MB use TUS chunked upload (bypasses Supabase non-resumable size limit)
-    const useTus = file.size > 50 * 1024 * 1024
-
-    let audioUrl: string
-
-    if (useTus) {
-      setUploadStatus('Uploading (chunked)...')
-      const tusResult = await tusUpload(file, filename, contentType)
-      if (!tusResult.ok) {
-        setUploadStatus(`Error: ${tusResult.error ?? 'Upload failed'}`)
-        setUploadPct(0)
-        setUploading(false)
-        return
-      }
-      // Build the public URL from the bucket and filename
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
-      audioUrl = `${supabaseUrl}/storage/v1/object/public/mf-audio/${filename}`
-    } else {
-      // Small files: signed URL direct to Supabase (fast, no Railway in the path)
-      const urlRes = await fetch('/api/upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, contentType }),
-      })
-      const urlData = await urlRes.json()
-      if (!urlRes.ok) {
-        setUploadStatus(`Error: ${urlData.error ?? 'Could not get upload URL'}`)
-        setUploadPct(0)
-        setUploading(false)
-        return
-      }
-
-      const putResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        const xhr = new XMLHttpRequest()
-        xhr.upload.addEventListener('progress', (ev) => {
-          if (ev.lengthComputable) setUploadPct(Math.round((ev.loaded / ev.total) * 80))
-        })
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true })
-          else resolve({ ok: false, error: xhr.responseText || `HTTP ${xhr.status}` })
-        })
-        xhr.addEventListener('error', () => resolve({ ok: false, error: 'Network error' }))
-        xhr.open('PUT', urlData.signedUrl)
-        xhr.setRequestHeader('Content-Type', contentType)
-        xhr.setRequestHeader('x-upsert', 'true')
-        xhr.send(file)
-      })
-
-      if (!putResult.ok) {
-        // If signed URL fails with 413, retry with TUS
-        if (putResult.error?.includes('413') || putResult.error?.includes('exceeded the maximum')) {
-          setUploadStatus('Retrying with chunked upload...')
-          setUploadPct(0)
-          const tusResult = await tusUpload(file, filename, contentType)
-          if (!tusResult.ok) {
-            setUploadStatus(`Error: ${tusResult.error ?? 'Upload failed'}`)
-            setUploadPct(0)
-            setUploading(false)
-            return
-          }
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
-          audioUrl = `${supabaseUrl}/storage/v1/object/public/mf-audio/${filename}`
-        } else {
-          setUploadStatus(`Error: ${putResult.error ?? 'Upload failed'}`)
-          setUploadPct(0)
-          setUploading(false)
-          return
-        }
-      } else {
-        audioUrl = urlData.publicUrl as string
-      }
+    const up = await uploadAudioToStorage(file, filename, contentType, setUploadPct, setUploadStatus)
+    if (!up.ok) {
+      setUploadStatus(`Error: ${up.error}`)
+      setUploadPct(0)
+      setUploading(false)
+      return
     }
+    const audioUrl = up.url
 
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
@@ -1012,6 +1092,69 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 className="sr-only"
                 aria-label="Upload a new mix audio file"
                 onChange={handleFileSelect}
+              />
+            </div>
+
+            {/* Acapella slot — one pinned vocals-only file per project */}
+            <div className="mb-6 rounded-xl px-4 py-3" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Mic size={15} className="text-[#2dd4bf] flex-shrink-0" />
+                  <span className="text-sm font-medium text-[var(--text)]">Acapella</span>
+                  {!acapella && !acapellaUploading && (
+                    <span className="text-xs text-[var(--text-muted)] truncate">— vocals-only version of this song</span>
+                  )}
+                </div>
+                {acapellaUploading ? (
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-[var(--text-secondary)]">{acapellaStatus}</span>
+                    <div className="w-24 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ backgroundColor: acapellaPct === 100 ? '#34d399' : '#2dd4bf', width: `${acapellaPct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    {acapella && (
+                      <a
+                        href={`${audioProxyUrl(acapella)}?download=1&filename=${encodeURIComponent(acapellaDownloadName())}`}
+                        className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text)] transition-colors"
+                      >
+                        Download
+                      </a>
+                    )}
+                    <button
+                      onClick={() => acapellaInputRef.current?.click()}
+                      className="text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
+                    >
+                      {acapella ? 'Replace' : 'Upload acapella'}
+                    </button>
+                    {acapella && (
+                      <button
+                        onClick={removeAcapella}
+                        className="text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {acapellaStatus.startsWith('Error') && !acapellaUploading && (
+                <p className="text-xs text-red-400 mt-2">{acapellaStatus}</p>
+              )}
+              {acapella && !acapellaUploading && (
+                <audio controls preload="none" src={audioProxyUrl(acapella)} className="w-full mt-3 h-9" />
+              )}
+              <input
+                ref={acapellaInputRef}
+                type="file"
+                accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                className="sr-only"
+                aria-label="Upload an acapella audio file"
+                onChange={handleAcapellaSelect}
               />
             </div>
 

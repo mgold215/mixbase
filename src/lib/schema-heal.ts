@@ -55,6 +55,33 @@ export function isMissingVisualizerColumn(error: { message?: string } | null): b
   return !!error?.message && /visualizer(_wide)?_url/.test(error.message)
 }
 
+// ── mb_projects.acapella_url (migration 035) ────────────────────────────────
+// The per-project acapella slot. Same deploy-beats-migration story as the
+// pins: PATCH /api/projects/[id] catches the missing-column error, heals, and
+// retries.
+
+const ACAPELLA_SQL =
+  "alter table mb_projects add column if not exists acapella_url text; notify pgrst, 'reload schema';"
+
+let acapellaEnsured: Promise<boolean> | null = null
+
+export function ensureProjectAcapellaColumn(): Promise<boolean> {
+  if (!acapellaEnsured) {
+    acapellaEnsured = runQuery(ACAPELLA_SQL, 'mb_projects.acapella_url column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) acapellaEnsured = null
+        return ok
+      })
+  }
+  return acapellaEnsured
+}
+
+/** True when a PostgREST error is the missing-acapella-column failure. */
+export function isMissingAcapellaColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /acapella_url/.test(error.message)
+}
+
 // ── mb_visualizers.settings (migration 031) ─────────────────────────────────
 // The FX-engine recipe persisted with each saved clip. A deploy that beats the
 // migration would fail every insert that includes `settings`; the write paths
