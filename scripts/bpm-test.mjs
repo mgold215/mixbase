@@ -158,6 +158,62 @@ check('witness: current code recovers it to 126', Math.abs(newMild - 126) <= TOL
 check('witness: pre-fix halves a clean 174 track (fractional-bin bias)', oldDnb < 100, `old=${oldDnb}`)
 check('witness: current code interpolates 174 exactly', Math.abs(newDnb - 174) <= 2, `new=${newDnb}`)
 
+// ── Synth helper for the drum-focus cases ───────────────────────────────────
+// Adds decaying tone bursts at `freq` every 60/bpm s over [fromSec, toSec) —
+// clickTrack's put() generalized so interference can be layered onto drums.
+function addBursts(data, sr, { bpm, freq, amp, fromSec = 0, toSec, decaySec = 0.004, burstSec = 0.012 }) {
+  const beatSamp = (60 / bpm) * sr
+  const burst = Math.floor(burstSec * sr)
+  for (let start = fromSec * sr; start < toSec * sr; start += beatSamp) {
+    for (let k = 0; k < burst; k++) {
+      const idx = Math.floor(start) + k
+      if (idx < data.length) data[idx] += amp * Math.sin(2 * Math.PI * freq * k / sr) * Math.exp(-k / (decaySec * sr))
+    }
+  }
+}
+
+// Realistic drums for the drum-focus cases: a kick (55 Hz, where real kicks
+// live) plus hats (5 kHz). The 1.2 kHz clicks of the earlier sections are fine
+// for pure-tempo assertions but carry no low-band content, so they can't
+// exercise the kick band the drum-focused detector relies on.
+function addDrums(data, sr, { bpm, fromSec = 0, toSec }) {
+  addBursts(data, sr, { bpm, freq: 55, amp: 1.0, fromSec, toSec, decaySec: 0.02, burstSec: 0.06 })
+  addBursts(data, sr, { bpm, freq: 5000, amp: 0.5, fromSec, toSec, decaySec: 0.004, burstSec: 0.012 })
+}
+
+// ── 7. Drum focus: loud mid-band rhythm must not steal the tempo ────────────
+// A 450 Hz "vocal/pad" pulse at 97 BPM layered louder than the 120 BPM drums.
+// The full-band detector follows the louder mid-band rhythm; the band-split
+// detector attenuates mid content in both drum bands and stays on the drums.
+console.log('\nbpm: drum focus — mid-band interference does not steal the tempo')
+{
+  const sr = 44100
+  const mixed = new Float32Array(20 * sr)
+  addDrums(mixed, sr, { bpm: 120, toSec: 20 })
+  addBursts(mixed, sr, { bpm: 97, freq: 450, amp: 1.6, toSec: 20, decaySec: 0.03, burstSec: 0.15 })
+  const buf = { sampleRate: sr, getChannelData: () => mixed }
+  const oldGot = detectBPM_prefix(buf)
+  const newGot = detectBPM(buf)
+  check('witness: full-band detector is pulled off the drums', Math.abs(oldGot - 120) > TOL, `old=${oldGot}`)
+  check(`drum-focused detector stays on 120±${TOL}`, Math.abs(newGot - 120) <= TOL, newGot)
+}
+
+// ── 8. Beatless intro: analyze where the drums are, not the first 30 s ──────
+// 24 s of pad swells, then drums from 24–54 s. The old detector only ever saw
+// the first 30 s (mostly swells); the new one selects the densest drum window.
+console.log('\nbpm: beatless intro — the drum section is what gets analyzed')
+{
+  const sr = 44100
+  const track = new Float32Array(60 * sr)
+  addBursts(track, sr, { bpm: 67, freq: 450, amp: 1.2, toSec: 24, decaySec: 0.05, burstSec: 0.3 })
+  addDrums(track, sr, { bpm: 120, fromSec: 24, toSec: 54 })
+  const buf = { sampleRate: sr, getChannelData: () => track }
+  const oldGot = detectBPM_prefix(buf)
+  const newGot = detectBPM(buf)
+  check('witness: first-30s-only detector reads the intro swells', Math.abs(oldGot - 120) > TOL, `old=${oldGot}`)
+  check(`window-selecting detector finds the drums → 120±${TOL}`, Math.abs(newGot - 120) <= TOL, newGot)
+}
+
 // ── Diagnostic (non-asserting): known strong-accent half-tempo limitation ────
 // Surfaced, not asserted. A dominant-kick pattern (alternate beats ≤ ~40% of the
 // downbeat) still reads at half tempo because the shipped octave gate is a
