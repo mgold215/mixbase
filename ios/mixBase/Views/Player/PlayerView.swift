@@ -19,12 +19,12 @@ struct AirPlayRoutePicker: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 #else
-// macOS AVRoutePickerView is an NSView with no tint properties; output
-// routing there is system-level (the picker still lists AirPlay devices).
+// macOS AVRoutePickerView is an NSView with no tint properties (and no
+// prioritizesVideoDevices — that's iOS/tvOS-only); output routing there is
+// system-level (the picker still lists AirPlay devices).
 struct AirPlayRoutePicker: NSViewRepresentable {
     func makeNSView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
-        view.prioritizesVideoDevices = false
         view.isRoutePickerButtonBordered = false
         return view
     }
