@@ -1,6 +1,9 @@
 import SwiftUI
 import AuthenticationServices
 import CryptoKit
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - SignUpView
 // Presented as a sheet from LoginView. Creates a new account and signs in immediately.
@@ -177,15 +180,17 @@ struct SignUpView: View {
     }
 }
 
-// MARK: - Apple Sign Up Button (UIViewRepresentable)
+// MARK: - Apple Sign Up Button (UIViewRepresentable / NSViewRepresentable)
 // Uses ASAuthorizationAppleIDButton with .signUp type for the signup screen.
-struct AppleSignUpButton: UIViewRepresentable {
+// PlatformViewRepresentable is declared in LoginView.swift.
+struct AppleSignUpButton: PlatformViewRepresentable {
     let authService: AuthService
 
     func makeCoordinator() -> Coordinator {
         Coordinator(authService: authService)
     }
 
+    #if os(iOS)
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(type: .signUp, style: .white)
         button.addTarget(context.coordinator, action: #selector(Coordinator.handleAppleSignIn), for: .touchUpInside)
@@ -193,6 +198,16 @@ struct AppleSignUpButton: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+    #else
+    func makeNSView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .signUp, style: .white)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.handleAppleSignIn)
+        return button
+    }
+
+    func updateNSView(_ nsView: ASAuthorizationAppleIDButton, context: Context) {}
+    #endif
 
     class Coordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
         let authService: AuthService
@@ -241,11 +256,17 @@ struct AppleSignUpButton: UIViewRepresentable {
         }
 
         func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+            #if os(iOS)
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = scene.windows.first else {
                 return UIWindow()
             }
             return window
+            #else
+            return NSApplication.shared.keyWindow
+                ?? NSApplication.shared.windows.first
+                ?? ASPresentationAnchor()
+            #endif
         }
 
         private func randomNonceString(length: Int = 32) -> String {

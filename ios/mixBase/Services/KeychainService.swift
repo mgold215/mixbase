@@ -23,10 +23,15 @@ struct KeychainService {
 
         // Try to update an existing item first. We also push the accessibility
         // attribute on update so older items get upgraded to AfterFirstUnlock.
-        let attributes: [CFString: Any] = [
+        // (iOS only: kSecAttrAccessible governs data-protection keychains; the
+        // Mac app uses the file-based login keychain, where passing it can
+        // make SecItem calls fail outright.)
+        var attributes: [CFString: Any] = [
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
         ]
+        #if os(iOS)
+        attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        #endif
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
 
         if status == errSecItemNotFound {
@@ -37,7 +42,9 @@ struct KeychainService {
             // kSecAttrAccessibleWhenUnlocked (the default) would block.
             var addQuery = query
             addQuery[kSecValueData] = data
+            #if os(iOS)
             addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+            #endif
             SecItemAdd(addQuery as CFDictionary, nil)
         }
     }

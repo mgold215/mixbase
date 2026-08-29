@@ -1,14 +1,21 @@
-# XcodeGen spec for the mixBase Infra control panel (macOS).
+# XcodeGen spec for the mixBASE macOS apps:
+#
+#   mixBase       — the consumer app (projects, player, artwork, pipeline,
+#                   feed). Shares its entire Swift source tree with the native
+#                   iOS app (../ios/mixBase); macOS-only shims and resources
+#                   live in MixbaseApp/.
+#   MixbaseInfra  — the admin infra control panel.
 #
 # Why XcodeGen: this project is authored in a Linux environment that cannot open
 # or validate Xcode. A hand-written .pbxproj risks shipping an un-openable
 # project; instead we commit this small, human-readable YAML and generate a
 # guaranteed-valid .xcodeproj on the Mac at build time (see build.sh).
 #
-#   brew install xcodegen   # one-time
-#   cd macos && ./build.sh  # generate + build
+#   brew install xcodegen             # one-time
+#   cd macos && ./build.sh            # generate + build the infra panel
+#   cd macos && ./build.sh run mixBase  # generate + build + launch the mixBase app
 
-name: MixbaseInfra
+name: Mixbase
 options:
   bundleIdPrefix: com.moodmixformat.mixbase
   createIntermediateGroups: true
@@ -24,6 +31,43 @@ settings:
     CODE_SIGN_STYLE: Automatic
 
 targets:
+  # The consumer mixBASE app, sharing the iOS app's sources. Anything
+  # platform-specific in that tree is already behind #if os(iOS)/#if os(macOS)
+  # guards; the SwiftUI-modifier gaps (keyboardType, navigation bar modifiers,
+  # UIPasteboard, …) are bridged by MixbaseApp/PlatformCompat.swift, which is
+  # compiled ONLY into this target.
+  mixBase:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      # The iOS asset catalog, Info.plist, entitlements and privacy manifest
+      # are iOS-shaped — this target carries its own under MixbaseApp/.
+      - path: ../ios/mixBase
+        excludes:
+          - "Info.plist"
+          - "mixBase.entitlements"
+          - "PrivacyInfo.xcprivacy"
+          - "Assets.xcassets"
+      - path: MixbaseApp
+    settings:
+      base:
+        PRODUCT_NAME: mixBase
+        # NOT the iOS bundle id: same App ID on two platforms confuses
+        # automatic provisioning. Note for Sign in with Apple: this id must be
+        # added to the Supabase Apple provider's authorized client IDs before
+        # Apple sign-in works from the Mac app (email/password needs nothing).
+        PRODUCT_BUNDLE_IDENTIFIER: com.moodmixformat.mixbase.mac
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: MixbaseApp/mixBase.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_CFBundleDisplayName: mixBase
+        # macOS app, not a document-based app:
+        INFOPLIST_KEY_NSMainStoryboardFile: ""
+
   MixbaseInfra:
     type: application
     platform: macOS

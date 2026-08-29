@@ -155,7 +155,10 @@ class AudioService: ObservableObject {
     /// speaker, which is what kicked AirPlay (HomePod/Sonos) playback back to the phone.
     /// The session is NOT activated here: activation happens lazily on first play, so
     /// merely opening the app doesn't cut off whatever the user is listening to.
+    /// On macOS there is no AVAudioSession — CoreAudio routes output and the
+    /// system handles device changes, so this whole method is a no-op there.
     func configureAudioSession() {
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
             // AirPlay 2 long-form audio: the buffered, route-persistent pathway that
@@ -185,6 +188,7 @@ class AudioService: ObservableObject {
                 self?.handleRouteChange(notification)
             }
             .store(in: &cancellables)
+        #endif
     }
 
     /// (Re)activate the audio session right before we play. iOS deactivates the session
@@ -194,11 +198,13 @@ class AudioService: ObservableObject {
     /// interruptions, and re-setting it here is what used to reset the output route and
     /// kick AirPlay playback back to the phone.
     private func activateSession() {
+        #if os(iOS)
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("AudioService: Failed to (re)activate audio session: \(error)")
         }
+        #endif
     }
 
     // MARK: - Queue
@@ -636,6 +642,7 @@ class AudioService: ObservableObject {
 
     // MARK: - Interruption Handling
 
+    #if os(iOS)
     private func handleInterruption(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -699,6 +706,7 @@ class AudioService: ObservableObject {
             break
         }
     }
+    #endif
 
     // MARK: - Cleanup
 

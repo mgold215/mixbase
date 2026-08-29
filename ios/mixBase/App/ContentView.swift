@@ -24,6 +24,10 @@ struct ContentView: View {
         // (nav bars, the floating tab bar, menus, sheets) in the device's
         // current appearance — which is why bars flipped black/white per tab.
         .preferredColorScheme(.dark)
+        #if os(macOS)
+        // Keep the five-tab layout from collapsing below a usable size.
+        .frame(minWidth: 960, minHeight: 640)
+        #endif
     }
 
     // MARK: - Main Tab View
@@ -51,6 +55,7 @@ struct ContentView: View {
                     .tag(4)
             }
             .tint(Color(hex: "#2dd4bf"))
+            #if os(iOS)
             .onAppear {
                 let appearance = UITabBarAppearance()
                 appearance.configureWithOpaqueBackground()
@@ -58,6 +63,7 @@ struct ContentView: View {
                 UITabBar.appearance().standardAppearance = appearance
                 UITabBar.appearance().scrollEdgeAppearance = appearance
             }
+            #endif
 
             // Mini player — floats above the tab bar on every tab except the
             // full Player, so leaving the Player "minimizes" playback the same
@@ -65,12 +71,22 @@ struct ContentView: View {
             if audioService.currentVersion != nil && selectedTab != 2 {
                 MiniPlayerBar(onTap: { selectedTab = 2 })
                     .padding(.horizontal, 8)
-                    .padding(.bottom, 54)
+                    .padding(.bottom, miniPlayerBottomPadding)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.easeOut(duration: 0.2), value: selectedTab)
         .animation(.easeOut(duration: 0.2), value: audioService.currentVersion?.id)
+    }
+
+    /// iOS floats the mini player above the bottom tab bar; macOS puts tabs at
+    /// the top of the window, so the bar just needs a small inset from the edge.
+    private var miniPlayerBottomPadding: CGFloat {
+        #if os(iOS)
+        54
+        #else
+        12
+        #endif
     }
 }
 
