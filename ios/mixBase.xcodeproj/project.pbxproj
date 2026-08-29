@@ -107,7 +107,7 @@
 		B100000023 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		B100000024 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		B100000025 /* MixbaseAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixbaseAPI.swift; sourceTree = "<group>"; };
-		B100000091 /* LoudnessAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessAnalyzer.swift; sourceTree = \"<group>\"; };
+		B100000091 /* LoudnessAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessAnalyzer.swift; sourceTree = "<group>"; };
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
