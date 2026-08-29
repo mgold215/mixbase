@@ -152,9 +152,9 @@ alter table mb_projects
 alter table mb_projects
   add column if not exists visualizer_wide_url text;
 
--- Migration 035: per-project acapella (vocals-only) audio slot
+-- Migration 035: per-project instrumental (no-vocals) audio slot
 alter table mb_projects
-  add column if not exists acapella_url text;
+  add column if not exists instrumental_url text;
 
 -- Collections tables (idempotent)
 create table if not exists mb_collections (

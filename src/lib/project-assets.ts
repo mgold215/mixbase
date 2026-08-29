@@ -96,7 +96,7 @@ export type ProjectAssetRow = {
   finalized_artwork_url?: string | null
   visualizer_url?: string | null
   visualizer_wide_url?: string | null
-  acapella_url?: string | null
+  instrumental_url?: string | null
 }
 export type VersionAssetRow = { audio_url?: string | null }
 export type VisualizerAssetRow = { video_url?: string | null; source_image_url?: string | null }
@@ -173,11 +173,11 @@ export function collectAssetKeys(rows: AssetRows): AssetKeys {
     // pin stayed, so derive from both rather than assuming they agree.
     addVideo(p.visualizer_url)
     addVideo(p.visualizer_wide_url)
-    // The acapella slot is the only mf-audio object a PROJECT row names
+    // The instrumental slot is the only mf-audio object a PROJECT row names
     // directly (mixes hang off mb_versions.audio_url) — without this line the
     // bytes would be invisible to account delete, which has no prefix sweep.
-    const acapellaKey = storagePathFromUrl(p.acapella_url, AUDIO_BUCKET)
-    if (acapellaKey) audio.add(acapellaKey)
+    const instrumentalKey = storagePathFromUrl(p.instrumental_url, AUDIO_BUCKET)
+    if (instrumentalKey) audio.add(instrumentalKey)
   }
 
   for (const v of rows.visualizers ?? []) {
@@ -228,7 +228,7 @@ export function collectAssetUrls(rows: AssetRows): string[] {
   for (const p of rows.projects ?? []) {
     add(p.artwork_url); add(p.finalized_artwork_url)
     add(p.visualizer_url); add(p.visualizer_wide_url)
-    add(p.acapella_url)
+    add(p.instrumental_url)
   }
   for (const v of rows.visualizers ?? []) { add(v.video_url); add(v.source_image_url) }
   for (const c of rows.collections ?? []) { add(c.cover_url); add(c.artwork_url) }
@@ -373,7 +373,7 @@ export const ASSET_URL_COLUMNS = [
   ['mb_projects', 'finalized_artwork_url'],
   ['mb_projects', 'visualizer_url'],
   ['mb_projects', 'visualizer_wide_url'],
-  ['mb_projects', 'acapella_url'],
+  ['mb_projects', 'instrumental_url'],
   ['mb_visualizers', 'video_url'],
   ['mb_visualizers', 'source_image_url'],
   // Added 2026-08-21 after a live case was found: a collection cover pointing
@@ -404,7 +404,7 @@ export const ASSET_URL_COLUMNS = [
 export const OPTIONAL_ASSET_URL_COLUMNS: ReadonlySet<string> = new Set([
   'mb_projects.visualizer_url',
   'mb_projects.visualizer_wide_url',
-  'mb_projects.acapella_url',
+  'mb_projects.instrumental_url',
   'mb_collections.cover_url',
   'mb_collections.artwork_url',
 ])

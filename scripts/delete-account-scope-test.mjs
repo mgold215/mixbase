@@ -401,7 +401,7 @@ for (const pair of [
   'mb_projects.finalized_artwork_url',
   'mb_projects.visualizer_url',
   'mb_projects.visualizer_wide_url',
-  'mb_projects.acapella_url',
+  'mb_projects.instrumental_url',
   'mb_visualizers.video_url',
   'mb_visualizers.source_image_url',
 ]) {

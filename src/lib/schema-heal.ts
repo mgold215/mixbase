@@ -55,31 +55,31 @@ export function isMissingVisualizerColumn(error: { message?: string } | null): b
   return !!error?.message && /visualizer(_wide)?_url/.test(error.message)
 }
 
-// ── mb_projects.acapella_url (migration 035) ────────────────────────────────
-// The per-project acapella slot. Same deploy-beats-migration story as the
+// ── mb_projects.instrumental_url (migration 035) ────────────────────────────────
+// The per-project instrumental slot. Same deploy-beats-migration story as the
 // pins: PATCH /api/projects/[id] catches the missing-column error, heals, and
 // retries.
 
-const ACAPELLA_SQL =
-  "alter table mb_projects add column if not exists acapella_url text; notify pgrst, 'reload schema';"
+const INSTRUMENTAL_SQL =
+  "alter table mb_projects add column if not exists instrumental_url text; notify pgrst, 'reload schema';"
 
-let acapellaEnsured: Promise<boolean> | null = null
+let instrumentalEnsured: Promise<boolean> | null = null
 
-export function ensureProjectAcapellaColumn(): Promise<boolean> {
-  if (!acapellaEnsured) {
-    acapellaEnsured = runQuery(ACAPELLA_SQL, 'mb_projects.acapella_url column')
+export function ensureProjectInstrumentalColumn(): Promise<boolean> {
+  if (!instrumentalEnsured) {
+    instrumentalEnsured = runQuery(INSTRUMENTAL_SQL, 'mb_projects.instrumental_url column')
       .catch(() => false)
       .then(ok => {
-        if (!ok) acapellaEnsured = null
+        if (!ok) instrumentalEnsured = null
         return ok
       })
   }
-  return acapellaEnsured
+  return instrumentalEnsured
 }
 
-/** True when a PostgREST error is the missing-acapella-column failure. */
-export function isMissingAcapellaColumn(error: { message?: string } | null): boolean {
-  return !!error?.message && /acapella_url/.test(error.message)
+/** True when a PostgREST error is the missing-instrumental-column failure. */
+export function isMissingInstrumentalColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /instrumental_url/.test(error.message)
 }
 
 // ── mb_visualizers.settings (migration 031) ─────────────────────────────────
