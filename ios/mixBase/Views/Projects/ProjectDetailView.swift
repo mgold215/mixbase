@@ -139,6 +139,13 @@ struct ProjectDetailView: View {
                             }
                         }
 
+                        // MARK: - Master Check (latest mix)
+                        if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
+                            MasterCheckCard(version: latest)
+                                .id(latest.id) // reset measurement state when a new mix lands
+                                .padding(.horizontal)
+                        }
+
                         // MARK: - Upload Version Button
                         if isUploadingAudio {
                             VStack(spacing: 8) {
@@ -742,5 +749,231 @@ struct ProjectDetailView: View {
             print("ProjectDetailView: Failed to load project — \(error.localizedDescription)")
         }
         isLoading = false
+    }
+}
+
+// MARK: - MasterCheckCard
+// Native Master Check for the latest mix — measured BS.1770-4 loudness,
+// per-DSP normalization deltas, the mastering verdict, and the limiter/chain
+// recommendations, mirroring the web card. Measuring streams the audio file
+// through LoudnessAnalyzer on a background task (a few MB of memory whatever
+// the mix length) and persists through the same API route the web writes, so
+// both platforms share one measurement history.
+struct MasterCheckCard: View {
+
+    let version: Version
+
+    @State private var measured: LoudnessMeasurement?
+    @State private var measuring = false
+    @State private var statusText = ""
+    @State private var errorText: String?
+    @State private var showRecommendations = false
+
+    // The stored row, when this mix was measured before (on either platform).
+    private var stored: LoudnessMeasurement? {
+        guard version.loudnessLufs != nil || version.loudnessShortTermLufs != nil
+            || version.samplePeakDb != nil else { return nil }
+        return LoudnessMeasurement(
+            integratedLufs: version.loudnessLufs ?? -.infinity,
+            shortTermMaxLufs: version.loudnessShortTermLufs ?? -.infinity,
+            samplePeakDb: version.samplePeakDb ?? -.infinity,
+            gatedBlockCount: 0
+        )
+    }
+
+    // This session's measurement wins over the stored row.
+    private var display: LoudnessMeasurement? { measured ?? stored }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "gauge")
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                Text("MASTER CHECK")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .tracking(1)
+                    .foregroundColor(.gray)
+                Text("v\(version.versionNumber)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+                if measuring {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .tint(Color(hex: "#2dd4bf"))
+                            .scaleEffect(0.7)
+                        Text(statusText)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                } else {
+                    Button(display == nil ? "Measure loudness" : "Re-measure") {
+                        Task { await runMeasure() }
+                    }
+                    .font(.caption)
+                    .fontWeight(display == nil ? .semibold : .regular)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+            }
+
+            if let errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            if let m = display {
+                // Readout
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(LoudnessAnalyzer.formatLufs(m.integratedLufs))
+                        .font(.headline)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                    Text("integrated")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+                Text("peak \(LoudnessAnalyzer.formatDb(m.samplePeakDb)) dBFS (sample)  ·  loudest 3s \(LoudnessAnalyzer.formatLufs(m.shortTermMaxLufs))")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+
+                // What each platform's normalizer will do with this master.
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                    ForEach(LoudnessAnalyzer.dspDeltas(m)) { d in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.name)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                            Text(deltaText(d.deltaDb))
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color(hex: "#161616"))
+                        .cornerRadius(8)
+                    }
+                }
+
+                // Verdict
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(LoudnessAnalyzer.verdict(m)) { issue in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: issueIcon(issue.level))
+                                .font(.caption2)
+                                .padding(.top, 1)
+                            Text(issue.message)
+                                .font(.caption)
+                        }
+                        .foregroundColor(issueColor(issue.level))
+                    }
+                }
+
+                // Limiter & chain recommendations — collapsed by default, the
+                // full text is a lot for a phone card.
+                let recs = LoudnessAnalyzer.recommendations(m)
+                if !recs.isEmpty {
+                    Button(action: { withAnimation(.easeOut(duration: 0.15)) { showRecommendations.toggle() } }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.caption2)
+                            Text("Limiter & chain recommendations")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Image(systemName: showRecommendations ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9))
+                        }
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                    if showRecommendations {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(recs) { r in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(r.area). ")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(Color(hex: "#2dd4bf"))
+                                    + Text(r.advice)
+                                        .font(.caption)
+                                        .fontWeight(.regular)
+                                        .foregroundColor(Color(hex: "#d0d0d0"))
+                                    if let plugins = r.plugins {
+                                        Text(plugins)
+                                            .font(.caption2)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(Color(hex: "#161616"))
+                        .cornerRadius(8)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(hex: "#111111"))
+        .cornerRadius(10)
+    }
+
+    private func deltaText(_ delta: Double?) -> String {
+        guard let delta else { return "—" }
+        if delta > 0.2 { return String(format: "−%.1f dB by normalization", delta) }
+        if delta < -0.2 { return String(format: "%.1f dB under target", abs(delta)) }
+        return "at target"
+    }
+
+    private func issueIcon(_ level: LoudnessIssueLevel) -> String {
+        switch level {
+        case .error: return "exclamationmark.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .info: return "checkmark"
+        }
+    }
+
+    private func issueColor(_ level: LoudnessIssueLevel) -> Color {
+        switch level {
+        case .error: return Color(red: 0.97, green: 0.44, blue: 0.44)
+        case .warning: return Color(red: 0.98, green: 0.75, blue: 0.14)
+        case .info: return Color(red: 0.20, green: 0.83, blue: 0.60)
+        }
+    }
+
+    // Download → decode/measure off the main actor → show → persist. A failed
+    // save keeps the on-screen number; re-measuring later retries the write.
+    private func runMeasure() async {
+        measuring = true
+        errorText = nil
+        statusText = "Downloading…"
+        defer {
+            measuring = false
+            statusText = ""
+        }
+        do {
+            guard let url = URL(string: version.audioUrl) else {
+                throw LoudnessAnalyzerError.unreadable("This mix has no readable audio URL")
+            }
+            let (tempURL, _) = try await URLSession.shared.download(from: url)
+            // AVAudioFile sniffs the container partly by extension — give the
+            // temp file the real one instead of URLSession's ".tmp".
+            let ext = url.pathExtension.isEmpty ? "wav" : url.pathExtension
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + "." + ext)
+            try FileManager.default.moveItem(at: tempURL, to: dest)
+            defer { try? FileManager.default.removeItem(at: dest) }
+
+            statusText = "Measuring…"
+            let m = try await Task.detached(priority: .userInitiated) {
+                try LoudnessAnalyzer.measure(fileURL: dest)
+            }.value
+            measured = m
+
+            statusText = "Saving…"
+            try? await MixbaseAPI.shared.saveLoudness(versionId: version.id, measurement: m)
+        } catch {
+            errorText = error.localizedDescription
+        }
     }
 }

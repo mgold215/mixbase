@@ -75,6 +75,13 @@ struct Version: Codable, Identifiable {
     // When this version was created
     let createdAt: Date
 
+    // BS.1770-4 loudness columns (migration 032) — written by Master Check on
+    // either platform. Optional: rows can predate the migration or simply be
+    // unmeasured, and PostgREST returns null for both.
+    var loudnessLufs: Double?
+    var loudnessShortTermLufs: Double?
+    var samplePeakDb: Double?
+
     // MARK: - CodingKeys
     // Maps camelCase Swift names to snake_case Supabase column names.
     enum CodingKeys: String, CodingKey {
@@ -93,5 +100,8 @@ struct Version: Codable, Identifiable {
         case shareToken = "share_token"
         case allowDownload = "allow_download"
         case createdAt = "created_at"
+        case loudnessLufs = "loudness_lufs"
+        case loudnessShortTermLufs = "loudness_short_term_lufs"
+        case samplePeakDb = "sample_peak_db"
     }
 }
