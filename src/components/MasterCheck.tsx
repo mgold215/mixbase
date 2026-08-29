@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Gauge, AlertCircle, AlertTriangle, Check, GitCompareArrows } from 'lucide-react'
+import { Gauge, AlertCircle, AlertTriangle, Check, GitCompareArrows, SlidersHorizontal } from 'lucide-react'
 import { measureLoudness, masterVerdict, dspDeltas, formatLufs, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
 import { compareLoudness, sanitizeLoudness, toMeasurement, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
+import { masterRecommendations } from '@/lib/master-recommendations'
 
 // ─── Master check — measured loudness on one mix ─────────────────────────────
 // Turns "mastering done?" from a self-reported checkbox into a fact: BS.1770-4
@@ -270,6 +271,31 @@ export default function MasterCheck({
               </div>
             ))}
           </div>
+
+          {/* Limiter & chain settings the numbers imply — universal advice
+              first, the same move in Pro-L 2 / Ozone 11 terms underneath. */}
+          {(() => {
+            const recs = masterRecommendations(measurement)
+            if (recs.length === 0) return null
+            return (
+              <div className="rounded-lg px-2.5 py-2 space-y-2" style={{ border: '1px solid var(--border)' }}>
+                <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+                  <SlidersHorizontal size={11} />
+                  Limiter &amp; chain recommendations
+                </p>
+                {recs.map((r, i) => (
+                  <div key={i} className="text-xs space-y-0.5">
+                    <p className="text-[var(--text-secondary)]">
+                      <span className="font-semibold text-[#2dd4bf]">{r.area}.</span> {r.advice}
+                    </p>
+                    {r.plugins && (
+                      <p className="text-[11px] text-[var(--text-muted)]">{r.plugins}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </>
       )}
     </div>
