@@ -1,5 +1,8 @@
 import SwiftUI
 import AVKit
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - VisualizerView
 // Spotify-Canvas-style visualizers for a project: a pinned looping video up
@@ -311,7 +314,7 @@ struct VisualizerView: View {
             Button(action: { Task { await saveToPhotos(url) } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "square.and.arrow.down")
-                    if labeled { Text("Save to Photos") }
+                    if labeled { Text(saveButtonLabel) }
                 }
                 .font(.caption)
                 .fontWeight(.medium)
@@ -319,6 +322,15 @@ struct VisualizerView: View {
             }
             .disabled(savingToPhotosUrl != nil)
         }
+    }
+
+    /// iOS saves into the Photos library; macOS downloads into ~/Downloads.
+    private var saveButtonLabel: String {
+        #if os(iOS)
+        "Save to Photos"
+        #else
+        "Save to Downloads"
+        #endif
     }
 
     private func saveToPhotos(_ url: String) async {
@@ -420,6 +432,7 @@ struct VisualizerView: View {
 // A muted, seamlessly looping, fill-cropped video view — how visualizers render
 // everywhere in the product. AVPlayerLooper handles gapless restarts.
 
+#if os(iOS)
 struct LoopingVideoPlayer: UIViewRepresentable {
 
     let url: URL
@@ -436,7 +449,68 @@ struct LoopingVideoPlayer: UIViewRepresentable {
         uiView.stop()
     }
 }
+#else
+struct LoopingVideoPlayer: NSViewRepresentable {
 
+    let url: URL
+
+    func makeNSView(context: Context) -> LoopingPlayerNSView {
+        LoopingPlayerNSView(url: url)
+    }
+
+    func updateNSView(_ nsView: LoopingPlayerNSView, context: Context) {
+        nsView.update(url: url)
+    }
+
+    static func dismantleNSView(_ nsView: LoopingPlayerNSView, coordinator: ()) {
+        nsView.stop()
+    }
+}
+
+// macOS twin of LoopingPlayerUIView below: NSView backed by an AVPlayerLayer,
+// always-on gapless loop for library previews.
+final class LoopingPlayerNSView: NSView {
+
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+    private var currentUrl: URL?
+
+    private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override func makeBackingLayer() -> CALayer { AVPlayerLayer() }
+
+    init(url: URL) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        playerLayer.videoGravity = .resizeAspectFill
+        update(url: url)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(url: URL) {
+        guard url != currentUrl else { return }
+        currentUrl = url
+
+        let item = AVPlayerItem(url: url)
+        let queuePlayer = AVQueuePlayer()
+        queuePlayer.isMuted = true  // visualizers are silent; the mix plays via AudioService
+        looper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+        playerLayer.player = queuePlayer
+        player = queuePlayer
+        queuePlayer.play()
+    }
+
+    func stop() {
+        player?.pause()
+        looper = nil
+        player = nil
+        playerLayer.player = nil
+    }
+}
+#endif
+
+#if os(iOS)
 final class LoopingPlayerUIView: UIView {
 
     private var player: AVQueuePlayer?
@@ -475,3 +549,4 @@ final class LoopingPlayerUIView: UIView {
         playerLayer.player = nil
     }
 }
+#endif

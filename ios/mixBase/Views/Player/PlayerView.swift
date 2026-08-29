@@ -5,6 +5,7 @@ import AVKit
 // The native output-device picker (HomePod, Sonos, AirPods, car…). Wrapping
 // AVRoutePickerView is the supported way to offer AirPlay from inside the app —
 // routing itself is handled by the audio session (see AudioService).
+#if os(iOS)
 struct AirPlayRoutePicker: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
@@ -17,6 +18,20 @@ struct AirPlayRoutePicker: UIViewRepresentable {
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
+#else
+// macOS AVRoutePickerView is an NSView with no tint properties; output
+// routing there is system-level (the picker still lists AirPlay devices).
+struct AirPlayRoutePicker: NSViewRepresentable {
+    func makeNSView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.prioritizesVideoDevices = false
+        view.isRoutePickerButtonBordered = false
+        return view
+    }
+
+    func updateNSView(_ nsView: AVRoutePickerView, context: Context) {}
+}
+#endif
 
 // MARK: - WaveformScrubber
 // A stylized waveform-style progress bar. Each track gets its own stable set of

@@ -1,6 +1,18 @@
 import SwiftUI
 import AuthenticationServices
 import CryptoKit
+#if os(macOS)
+import AppKit
+#endif
+
+// Shared representable alias so the Apple-button wrappers (below and in
+// SignUpView) keep a single struct body — with the nested Coordinator — on
+// both platforms; only the make/update methods differ.
+#if os(iOS)
+typealias PlatformViewRepresentable = UIViewRepresentable
+#else
+typealias PlatformViewRepresentable = NSViewRepresentable
+#endif
 
 // MARK: - LoginView
 // Email + password sign-in screen with Sign in with Apple / Google.
@@ -152,9 +164,9 @@ struct LoginView: View {
     }
 }
 
-// MARK: - Apple Sign In Button (UIViewRepresentable)
+// MARK: - Apple Sign In Button (UIViewRepresentable / NSViewRepresentable)
 // Uses ASAuthorizationAppleIDButton for the native look Apple requires.
-struct AppleSignInButton: UIViewRepresentable {
+struct AppleSignInButton: PlatformViewRepresentable {
     let authService: AuthService
 
     // Store the nonce so we can send it to Supabase for verification
@@ -164,6 +176,7 @@ struct AppleSignInButton: UIViewRepresentable {
         Coordinator(authService: authService)
     }
 
+    #if os(iOS)
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
         let button = ASAuthorizationAppleIDButton(type: .signIn, style: .white)
         button.addTarget(context.coordinator, action: #selector(Coordinator.handleAppleSignIn), for: .touchUpInside)
@@ -171,6 +184,16 @@ struct AppleSignInButton: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {}
+    #else
+    func makeNSView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .white)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.handleAppleSignIn)
+        return button
+    }
+
+    func updateNSView(_ nsView: ASAuthorizationAppleIDButton, context: Context) {}
+    #endif
 
     class Coordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
         let authService: AuthService
@@ -221,11 +244,17 @@ struct AppleSignInButton: UIViewRepresentable {
 
         func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
             // Get the key window for presentation
+            #if os(iOS)
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = scene.windows.first else {
                 return UIWindow()
             }
             return window
+            #else
+            return NSApplication.shared.keyWindow
+                ?? NSApplication.shared.windows.first
+                ?? ASPresentationAnchor()
+            #endif
         }
 
         // Generate a random nonce string

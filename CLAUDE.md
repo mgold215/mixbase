@@ -50,9 +50,14 @@
 - **Apple Developer Program is ACTIVE (paid; team `AP8UC39D4D`) and the app has shipped via App Store Connect** — an ASC API key exists. Never suggest joining the program or forming anything.
 - **Primary ship path (no Mac needed): merging an `ios/` change to `main` triggers `.github/workflows/ios-testflight.yml`** — cloud-signed archive on a GitHub macOS runner, uploaded to TestFlight (secrets `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_API_KEY_P8_BASE64`). Matt's phone auto-updates via TestFlight. Backup: launchd auto-deploy on the Mac (`scripts/ios-autodeploy-install.sh`); manual cable build only for tight iteration.
 
+## macOS App
+- The consumer mixBASE app also ships native on macOS: target `mixBase` in `macos/project.yml` (XcodeGen → `Mixbase.xcodeproj`, generated, not committed), **sharing the full iOS source tree `ios/mixBase/`**. Platform gaps are bridged by `#if os()` guards in shared files plus `macos/MixbaseApp/PlatformCompat.swift` (macOS-target-only shims: UIPasteboard→NSPasteboard, UIImage=NSImage, no-op keyboard/nav-bar modifiers, iOS toolbar placements). Keep shared code platform-neutral — a UIKit-only API in `ios/mixBase/` breaks the Mac build unless guarded or shimmed.
+- Build on the Mac: `cd macos && ./build.sh run mixBase`. CI: `.github/workflows/macos-app.yml` compiles BOTH platforms on PRs/pushes to `main` touching `macos/` or `ios/mixBase/` and uploads an ad-hoc-signed `mixBase-macOS.zip` artifact.
+- Mac bundle id is `com.moodmixformat.mixbase.mac` — for Sign in with Apple it must be added to the Supabase Apple provider's Authorized Client IDs (email/password needs nothing).
+
 ## Infra Control Panel
 - Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,stripe,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.
-- SwiftUI macOS client in `macos/` — XcodeGen project (`macos/project.yml`), build with `cd macos && ./build.sh`; `.xcodeproj` is generated, not committed.
+- SwiftUI macOS client: scheme `MixbaseInfra` in the same `macos/project.yml`, build with `cd macos && ./build.sh`.
 
 ## Business & Legal
 - Entity: moodmixformat, LLC (already formed — don't suggest forming one). EIN 39-2854188. Domain mixbase.app.

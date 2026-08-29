@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sandboxed like every modern Mac app. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- Supabase PostgREST/Storage + the mixbase.app API routes. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- fileImporter: reading the audio files the user picks for upload. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+
+	<!-- PhotoLibrarySaver's macOS path: visualizer/render videos land in
+	     ~/Downloads (Photos on the Mac isn't where anyone expects them). -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+
+	<!-- Sign in with Apple (same capability as the iOS app). If automatic
+	     provisioning ever refuses this for local builds, this block can be
+	     removed — email/password sign-in works without it. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>

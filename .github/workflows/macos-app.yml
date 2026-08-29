@@ -1,0 +1,122 @@
+# Apple-platform build validation — the only compile gate the Swift code has.
+#
+# The macOS mixBase app shares its entire source tree with the iOS app
+# (ios/mixBase, included by macos/project.yml), so a change to either side can
+# break the other platform's build. This workflow compiles BOTH apps:
+#
+#   build-macos — XcodeGen + xcodebuild of the mixBase macOS target, then an
+#                 ad-hoc-signed .app zipped as a downloadable artifact.
+#                 (Proper signing happens on the Mac via macos/build.sh with
+#                 the team's automatic signing; the artifact is for quick
+#                 inspection — right-click → Open past Gatekeeper.)
+#   build-ios   — simulator compile check of the iOS app, so shared-source
+#                 edits can't reach main compiling on macOS but broken on iOS
+#                 (the TestFlight upload workflow only runs AFTER merge).
+#
+# Runs on PRs into main and pushes to main, but only when Swift-side paths
+# change — macOS runners bill 10x on private repos, and web-only work should
+# never spend those minutes.
+
+name: Apple Apps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'macos/**'
+      - 'ios/mixBase/**'
+      - 'ios/mixBase.xcodeproj/**'
+      - '.github/workflows/macos-app.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'macos/**'
+      - 'ios/mixBase/**'
+      - 'ios/mixBase.xcodeproj/**'
+      - '.github/workflows/macos-app.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-macos:
+    name: Build macOS app
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match the TestFlight workflow: the runner default Xcode can lag the
+      # SDK the sources expect, so pick the newest installed one.
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No versioned Xcode found"; exit 1; fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: cd macos && xcodegen generate
+
+      - name: Build mixBase (macOS, unsigned)
+        run: |
+          xcodebuild \
+            -project macos/Mixbase.xcodeproj \
+            -scheme mixBase \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      # Ad-hoc signature so the artifact at least launches on a Mac after
+      # right-click → Open (an unsigned binary won't start at all).
+      - name: Ad-hoc sign and zip
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release/mixBase.app"
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/mixBase-macOS.zip"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixBase-macOS
+          path: ${{ runner.temp }}/mixBase-macOS.zip
+          retention-days: 14
+
+  build-ios:
+    name: iOS compile check
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No versioned Xcode found"; exit 1; fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Build mixBase (iOS Simulator, unsigned)
+        run: |
+          xcodebuild \
+            -project ios/mixBase.xcodeproj \
+            -scheme mixBase \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

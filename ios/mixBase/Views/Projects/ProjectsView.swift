@@ -1,5 +1,8 @@
 import SwiftUI
 import PhotosUI
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - ProjectsView
 // Two sections: Tracks (project grid) and Collections (playlists/EPs/albums).
@@ -1249,6 +1252,7 @@ struct CoverFromTracksSheet: View {
 }
 
 // MARK: - Cover image processing
+#if canImport(UIKit)
 private extension UIImage {
     /// Downscale to a sensible cover size and re-encode as JPEG, so a 20 MB
     /// camera HEIC never ships as a collection cover. Renders at scale 1 —
@@ -1266,6 +1270,52 @@ private extension UIImage {
             ?? Data()
     }
 }
+#else
+private extension NSImage {
+    /// macOS twin of the UIImage version above: downscale via a bitmap rep at
+    /// 1x (NSImage.size is in points; drawing into an explicit pixel-sized rep
+    /// sidesteps Retina scale doubling), then re-encode as JPEG.
+    func collectionCoverJPEG(maxDimension: CGFloat) -> Data {
+        let largest = max(size.width, size.height)
+        let ratio = min(1, maxDimension / max(largest, 1))
+        let target = CGSize(width: (size.width * ratio).rounded(), height: (size.height * ratio).rounded())
+
+        let fallback = { () -> Data in
+            guard let tiff = self.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+            else { return Data() }
+            return jpeg
+        }
+
+        guard target.width >= 1, target.height >= 1,
+              let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(target.width),
+                pixelsHigh: Int(target.height),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .calibratedRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+              )
+        else { return fallback() }
+
+        rep.size = target
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        draw(in: CGRect(origin: .zero, size: target),
+             from: .zero,
+             operation: .copy,
+             fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) ?? fallback()
+    }
+}
+#endif
 
 // MARK: - Add Track Sheet
 // Pick a project to add to a collection
