@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { canonicalUuid } from '@/lib/validators'
-import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook } from '@/lib/artwork-models'
+import { MODEL_ENDPOINTS, MODEL_INPUTS, resolveModelKey, composeLook, composeConstraints } from '@/lib/artwork-models'
 
 // Allow up to 2 minutes — Flux 2 Pro can take 30-60s
 export const maxDuration = 120
@@ -71,8 +71,10 @@ export async function POST(request: NextRequest) {
   // Vary layer: append a randomized photographic treatment so repeat runs of
   // the same subject produce visibly different shots. Composed before the paid
   // call; echoed back in the response so the UI can show what was applied.
+  // Constraints always ride last: no baked-in text ever (finalize renders the
+  // lockup), and no people unless the artist's own prompt asks for them.
   const look = vary ? composeLook() : null
-  const finalPrompt = look ? `${prompt.trim()}, ${look}` : prompt.trim()
+  const finalPrompt = [prompt.trim(), look, composeConstraints(prompt)].filter(Boolean).join(', ')
 
   // Two targets: a project's artwork, or a collection's cover. Exactly one id.
   const isCollection = !!collection_id

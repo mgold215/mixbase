@@ -25,6 +25,7 @@ import {
   IMAGE_MODELS,
   resolveModelKey,
   composeLook,
+  composeConstraints,
   DEFAULT_MODEL,
   LOOK_VANTAGE,
   LOOK_LIGHT,
@@ -147,6 +148,40 @@ check(
   '200 runs all produce valid combinations',
   Array.from({ length: 200 }, composeLook).every(l => VALID_LOOKS.has(l)),
 )
+
+console.log('\nartwork-models: dead-model guard')
+
+// Google retired every Imagen 4 API endpoint on 2026-08-17, which made
+// Replicate's google/imagen-4[-ultra] wrappers hard-404 for every caller —
+// half the lineup erroring in production. The registry must never point at
+// them again, and the stale client ids must degrade to the default, not crash.
+check('no endpoint routes to retired google/imagen models',
+  KEYS.every(k => !/\/google\/imagen/.test(MODEL_ENDPOINTS[k])),
+  KEYS.map(k => MODEL_ENDPOINTS[k]).join('\n'))
+for (const stale of ['imagen', 'imagen-ultra']) {
+  check(`stale client id "${stale}" degrades to ${DEFAULT_MODEL}`, resolveModelKey(stale) === DEFAULT_MODEL)
+}
+
+console.log('\nartwork-models: composeConstraints — no baked-in text, no uninvited people')
+
+const constraintsPlain = composeConstraints('a giant retro cassette tape structure')
+check('text ban is unconditional', /no text/.test(constraintsPlain) && /no lettering/.test(constraintsPlain))
+check('people ban applies when the prompt asks for none', /no people/.test(constraintsPlain), constraintsPlain)
+for (const asked of ['portrait of a dancer', 'a woman on a rooftop', 'crowd at a festival', 'the artist silhouette']) {
+  const c = composeConstraints(asked)
+  check(`prompt "${asked}" keeps its people (no contradictory rider)`, !/no people/.test(c), c)
+  check(`…but still bans text for "${asked}"`, /no text/.test(c))
+}
+
+// The vary pools must not smuggle back what the constraints ban: no humans,
+// no signage/text cues. "figures" and "signage" were both live regressions.
+const ALL_LOOKS = [...LOOK_VANTAGE, ...LOOK_LIGHT, ...LOOK_WEATHER, ...LOOK_MOOD]
+check('no look phrase mentions people or figures',
+  ALL_LOOKS.every(s => !/\b(human|people|person|figure|figures|crowd)\b/i.test(s)),
+  ALL_LOOKS.filter(s => /\b(human|people|person|figure|figures|crowd)\b/i.test(s)).join(' | '))
+check('no look phrase mentions signage, text, or lettering',
+  ALL_LOOKS.every(s => !/\b(signage|sign|text|lettering|billboard|typography)\b/i.test(s)),
+  ALL_LOOKS.filter(s => /\b(signage|sign|text|lettering|billboard|typography)\b/i.test(s)).join(' | '))
 
 console.log(failures === 0 ? '\nAll artwork-models tests passed' : `\n${failures} artwork-models test(s) FAILED`)
 process.exit(failures === 0 ? 0 : 1)
