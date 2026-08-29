@@ -561,9 +561,9 @@ for (const pair of [
   'mb_projects.finalized_artwork_url',
   'mb_projects.visualizer_url',
   'mb_projects.visualizer_wide_url',
-  // The acapella slot (migration 035) — the one mf-audio object a project row
+  // The instrumental slot (migration 035) — the one mf-audio object a project row
   // names directly; without this pair account delete can't see the bytes.
-  'mb_projects.acapella_url',
+  'mb_projects.instrumental_url',
   'mb_visualizers.video_url',
   'mb_visualizers.source_image_url',
   // Added 2026-08-21. A collection cover is not confined to a collection-shaped

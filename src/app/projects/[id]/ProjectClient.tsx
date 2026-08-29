@@ -23,7 +23,7 @@ import { copyToClipboard } from '@/lib/clipboard'
 import type { FeedComment } from '@/lib/feed'
 import {
   ArrowLeft, Plus, Share2, Check, MessageSquare, Star, Trash2, Upload, Pencil, CalendarRange, ExternalLink, Play, Pause, Download,
-  Sparkles, History, X, ClipboardList, Copy, FileText, Mic,
+  Sparkles, History, X, ClipboardList, Copy, FileText, Music2,
 } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
@@ -200,12 +200,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // ?? null: prod rows can predate the 015/020 migrations (columns self-heal on first write)
   const [visualizer, setVisualizer] = useState(project.visualizer_url ?? null)
   const [visualizerWide, setVisualizerWide] = useState(project.visualizer_wide_url ?? null)
-  // Acapella slot (migration 035) — same optional shape as the pins.
-  const [acapella, setAcapella] = useState(project.acapella_url ?? null)
-  const [acapellaUploading, setAcapellaUploading] = useState(false)
-  const [acapellaPct, setAcapellaPct] = useState(0)
-  const [acapellaStatus, setAcapellaStatus] = useState('')
-  const acapellaInputRef = useRef<HTMLInputElement>(null)
+  // Instrumental slot (migration 035) — same optional shape as the pins.
+  const [instrumental, setInstrumental] = useState(project.instrumental_url ?? null)
+  const [instrumentalUploading, setInstrumentalUploading] = useState(false)
+  const [instrumentalPct, setInstrumentalPct] = useState(0)
+  const [instrumentalStatus, setInstrumentalStatus] = useState('')
+  const instrumentalInputRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
@@ -500,7 +500,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   // Bytes → mf-audio under `filename`: signed URL ≤ 50 MB (direct to Supabase,
   // no Railway in the byte path), TUS chunked above, 413 auto-fallback to TUS.
-  // Shared by the mix upload and the acapella slot so the byte-path rules live
+  // Shared by the mix upload and the instrumental slot so the byte-path rules live
   // in exactly one place.
   async function uploadAudioToStorage(
     file: File,
@@ -560,80 +560,80 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     return { ok: false, error: putResult.error ?? 'Upload failed' }
   }
 
-  // ── Acapella slot ──────────────────────────────────────────────────────────
-  // One pinned vocals-only file per project: uploaded beside the mixes in
-  // mf-audio under an acapella- prefixed key, then PATCHed onto the row.
-  async function handleAcapellaSelect(e: ChangeEvent<HTMLInputElement>) {
+  // ── Instrumental slot ──────────────────────────────────────────────────────────
+  // One pinned no-vocals file per project: uploaded beside the mixes in
+  // mf-audio under an instrumental- prefixed key, then PATCHed onto the row.
+  async function handleInstrumentalSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (acapellaInputRef.current) acapellaInputRef.current.value = ''
+    if (instrumentalInputRef.current) instrumentalInputRef.current.value = ''
     if (file.size > 2 * 1024 * 1024 * 1024) {
-      setAcapellaStatus('Error: File too large (max 2GB)')
+      setInstrumentalStatus('Error: File too large (max 2GB)')
       return
     }
 
-    setAcapellaUploading(true)
-    setAcapellaPct(0)
-    setAcapellaStatus('Uploading...')
+    setInstrumentalUploading(true)
+    setInstrumentalPct(0)
+    setInstrumentalStatus('Uploading...')
 
     const ext = (file.name.split('.').pop() ?? 'wav').toLowerCase()
-    const filename = `${project.id}/acapella-${Date.now()}.${ext}`
+    const filename = `${project.id}/instrumental-${Date.now()}.${ext}`
     const mimeByExt: Record<string, string> = {
       wav: 'audio/wav', wave: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff',
       mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg',
     }
     const contentType = file.type || mimeByExt[ext] || 'application/octet-stream'
 
-    const up = await uploadAudioToStorage(file, filename, contentType, setAcapellaPct, setAcapellaStatus)
+    const up = await uploadAudioToStorage(file, filename, contentType, setInstrumentalPct, setInstrumentalStatus)
     if (!up.ok) {
-      setAcapellaStatus(`Error: ${up.error}`)
-      setAcapellaPct(0)
-      setAcapellaUploading(false)
+      setInstrumentalStatus(`Error: ${up.error}`)
+      setInstrumentalPct(0)
+      setInstrumentalUploading(false)
       return
     }
 
-    setAcapellaPct(90)
-    setAcapellaStatus('Saving...')
+    setInstrumentalPct(90)
+    setInstrumentalStatus('Saving...')
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ acapella_url: up.url }),
+      body: JSON.stringify({ instrumental_url: up.url }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => null)
-      setAcapellaStatus(`Error: ${err?.error ?? 'Could not save the acapella'}`)
-      setAcapellaPct(0)
-      setAcapellaUploading(false)
+      setInstrumentalStatus(`Error: ${err?.error ?? 'Could not save the instrumental'}`)
+      setInstrumentalPct(0)
+      setInstrumentalUploading(false)
       return
     }
-    setAcapella(up.url)
-    setAcapellaStatus('')
-    setAcapellaPct(0)
-    setAcapellaUploading(false)
+    setInstrumental(up.url)
+    setInstrumentalStatus('')
+    setInstrumentalPct(0)
+    setInstrumentalUploading(false)
     syncAfterMutation()
   }
 
   // Clears the slot (the bytes stay under the project prefix and are removed
   // with the project, same as replaced artwork).
-  async function removeAcapella() {
-    const prev = acapella
-    setAcapella(null)
+  async function removeInstrumental() {
+    const prev = instrumental
+    setInstrumental(null)
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ acapella_url: null }),
+      body: JSON.stringify({ instrumental_url: null }),
     })
     if (!res.ok) {
-      setAcapella(prev)
-      flashError('Could not remove the acapella. Try again.')
+      setInstrumental(prev)
+      flashError('Could not remove the instrumental. Try again.')
     }
   }
 
-  // Saved file name for the acapella download (title-acapella.<real ext>).
-  function acapellaDownloadName(): string {
+  // Saved file name for the instrumental download (title-instrumental.<real ext>).
+  function instrumentalDownloadName(): string {
     const base = (projectForm.title || project.title).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'song'
-    const ext = acapella?.split('?')[0].split('.').pop() ?? 'wav'
-    return `${base}-acapella.${ext}`
+    const ext = instrumental?.split('?')[0].split('.').pop() ?? 'wav'
+    return `${base}-instrumental.${ext}`
   }
 
   async function handleUpload(file: File) {
@@ -1095,45 +1095,45 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               />
             </div>
 
-            {/* Acapella slot — one pinned vocals-only file per project */}
+            {/* Instrumental slot — one pinned no-vocals file per project */}
             <div className="mb-6 rounded-xl px-4 py-3" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2 min-w-0">
-                  <Mic size={15} className="text-[#2dd4bf] flex-shrink-0" />
-                  <span className="text-sm font-medium text-[var(--text)]">Acapella</span>
-                  {!acapella && !acapellaUploading && (
-                    <span className="text-xs text-[var(--text-muted)] truncate">— vocals-only version of this song</span>
+                  <Music2 size={15} className="text-[#2dd4bf] flex-shrink-0" />
+                  <span className="text-sm font-medium text-[var(--text)]">Instrumental</span>
+                  {!instrumental && !instrumentalUploading && (
+                    <span className="text-xs text-[var(--text-muted)] truncate">— no-vocals version of this song</span>
                   )}
                 </div>
-                {acapellaUploading ? (
+                {instrumentalUploading ? (
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-[var(--text-secondary)]">{acapellaStatus}</span>
+                    <span className="text-xs text-[var(--text-secondary)]">{instrumentalStatus}</span>
                     <div className="w-24 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-300"
-                        style={{ backgroundColor: acapellaPct === 100 ? '#34d399' : '#2dd4bf', width: `${acapellaPct}%` }}
+                        style={{ backgroundColor: instrumentalPct === 100 ? '#34d399' : '#2dd4bf', width: `${instrumentalPct}%` }}
                       />
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3">
-                    {acapella && (
+                    {instrumental && (
                       <a
-                        href={`${audioProxyUrl(acapella)}?download=1&filename=${encodeURIComponent(acapellaDownloadName())}`}
+                        href={`${audioProxyUrl(instrumental)}?download=1&filename=${encodeURIComponent(instrumentalDownloadName())}`}
                         className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text)] transition-colors"
                       >
                         Download
                       </a>
                     )}
                     <button
-                      onClick={() => acapellaInputRef.current?.click()}
+                      onClick={() => instrumentalInputRef.current?.click()}
                       className="text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
                     >
-                      {acapella ? 'Replace' : 'Upload acapella'}
+                      {instrumental ? 'Replace' : 'Upload instrumental'}
                     </button>
-                    {acapella && (
+                    {instrumental && (
                       <button
-                        onClick={removeAcapella}
+                        onClick={removeInstrumental}
                         className="text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
                       >
                         Remove
@@ -1142,19 +1142,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                   </div>
                 )}
               </div>
-              {acapellaStatus.startsWith('Error') && !acapellaUploading && (
-                <p className="text-xs text-red-400 mt-2">{acapellaStatus}</p>
+              {instrumentalStatus.startsWith('Error') && !instrumentalUploading && (
+                <p className="text-xs text-red-400 mt-2">{instrumentalStatus}</p>
               )}
-              {acapella && !acapellaUploading && (
-                <audio controls preload="none" src={audioProxyUrl(acapella)} className="w-full mt-3 h-9" />
+              {instrumental && !instrumentalUploading && (
+                <audio controls preload="none" src={audioProxyUrl(instrumental)} className="w-full mt-3 h-9" />
               )}
               <input
-                ref={acapellaInputRef}
+                ref={instrumentalInputRef}
                 type="file"
                 accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
                 className="sr-only"
-                aria-label="Upload an acapella audio file"
-                onChange={handleAcapellaSelect}
+                aria-label="Upload an instrumental audio file"
+                onChange={handleInstrumentalSelect}
               />
             </div>
 

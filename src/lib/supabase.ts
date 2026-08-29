@@ -108,9 +108,9 @@ export type Project = {
   // Horizontal 16:9 pin (migration 020) — feeds the Full-Length finalize.
   // Optional-shaped (?? null at read sites) since prod rows can predate it.
   visualizer_wide_url?: string | null
-  // Pinned acapella upload (migration 035) — owner-private, same optional
+  // Pinned instrumental upload (migration 035) — owner-private, same optional
   // shape as the pins for rows that predate the migration.
-  acapella_url?: string | null
+  instrumental_url?: string | null
   genre: string | null
   bpm: number | null
   key_signature: string | null
