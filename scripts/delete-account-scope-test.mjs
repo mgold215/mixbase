@@ -430,8 +430,16 @@ check('the deleting user comes from the X-User-Id header, never the body',
 // scoped by user_id. Deriving it from anything the user can influence
 // (mb_visualizers.project_id, say) would let a crafted row widen the set and
 // re-open the hole this filter closes.
+//
+// ASSERTS THE SCOPING, NOT THE COLUMN LIST. This used to pin the literal
+// 'id, artwork_url, finalized_artwork_url', which made a correct widening of the
+// projection look like a security regression while the actual defect — that the
+// list was too NARROW — was invisible to it. A test that breaks when the code is
+// fixed and stays green when it is broken is worse than no test; the property
+// worth guarding is `.eq('user_id', userId)`, and the projection's completeness
+// is checked separately against ProjectAssetRow below.
 check('the owned project ids come from mb_projects scoped by user_id',
-  /from\('mb_projects'\)\s*\.select\('id, artwork_url, finalized_artwork_url'\)\s*\.eq\('user_id', userId\)/.test(postBody)
+  /from\('mb_projects'\)\s*\.select\(projection\)\s*\.eq\('user_id', userId\)/.test(postBody)
   && /const projectIds = \(projects \?\? \[\]\)\.map\(p => p\.id\)/.test(postBody))
 
 check('the candidate keys are passed through the owned-prefix filter',
@@ -557,6 +565,56 @@ check('an unconfirmed removal is reported per bucket rather than assumed to have
 
 check('the client-visible success shape is unchanged ({ ok: true })',
   /NextResponse\.json\(\{ ok: true \}\)/.test(postBody))
+
+// ── The enumeration projection must cover every column the consumer reads ────
+//
+// This route has NO prefix sweep. filterToOwnedPrefixes BOUNDS keys that were
+// already nominated; it never discovers one. So a storage column missing from
+// the mb_projects projection is a byte that survives a GDPR erasure with no
+// later pass able to name it — and mf-audio and mf-artwork have no sweeper.
+//
+// It shipped that way: migration 035 added acapella_url, registered it in
+// ASSET_URL_COLUMNS, taught collectAssetKeys to read it, and asserted in its own
+// header that "both delete paths see the reference." The survivor scan did. This
+// enumeration selected only `id, artwork_url, finalized_artwork_url`, so the read
+// saw undefined on every row. Both visualizer pins had the same hole.
+//
+// Asserting the two ends against each other is the only check that catches it:
+// the consumer looks correct in isolation, and so does the producer.
+const projectRowType = assetsSrc.match(/export type ProjectAssetRow = \{([\s\S]*?)\}/)
+check('ProjectAssetRow type was located in project-assets.ts', !!projectRowType)
+const consumedColumns = projectRowType
+  ? [...projectRowType[1].matchAll(/(\w+)\??\s*:/g)].map(m => m[1])
+  : []
+check('ProjectAssetRow declares the asset columns it reads', consumedColumns.length >= 5,
+  `parsed: ${consumedColumns.join(', ')}`)
+
+const projectionList = routeSrc.match(/const PROJECT_ASSET_COLUMNS = \[([\s\S]*?)\]/)
+check('the route declares PROJECT_ASSET_COLUMNS', !!projectionList)
+const selectedColumns = projectionList
+  ? [...projectionList[1].matchAll(/'([^']+)'/g)].map(m => m[1])
+  : []
+
+for (const column of consumedColumns) {
+  check(`projection selects mb_projects.${column} (collectAssetKeys reads it)`,
+    selectedColumns.includes(column),
+    'a column read off the row but never selected is silently undefined — the bytes leak forever')
+}
+
+check('the paged enumeration uses the resolved projection, not a literal',
+  /\.from\('mb_projects'\)\.select\(projection\)/.test(routeSrc)
+  && !/\.from\('mb_projects'\)\.select\('id, artwork_url, finalized_artwork_url'\)/.test(routeSrc))
+
+// Degrading is only ever allowed for columns the codebase has DECLARED optional.
+// Excusing a missing required column would convert a broken enumeration into a
+// confident, empty delete list — the same "confidently wrong beats admittedly
+// ignorant" failure the survivor scan is built to refuse.
+const resolverFn = functionBody(routeSrc, 'async function resolveProjectProjection')
+check('the projection resolver was located', resolverFn.length > 0)
+check('only OPTIONAL_ASSET_URL_COLUMNS may be dropped from the projection',
+  /OPTIONAL_ASSET_URL_COLUMNS\.has\(/.test(resolverFn))
+check('a non-column failure is handed back rather than swallowed by the probe',
+  /if \(!missing\) return projection/.test(resolverFn))
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`)
 process.exit(failures === 0 ? 0 : 1)

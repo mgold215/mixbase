@@ -74,6 +74,8 @@ const EXCLUDED = {
     'REFUTED, not merely unapplied. These exact three DROP POLICY statements ran in production on 2026-07-11 as restrict_public_bucket_listing and were rolled back on 2026-07-12: dropping the SELECT policies broke UPLOADS, because Supabase\'s upload does INSERT ... RETURNING and the RETURNING read needs SELECT. Its statements are commented out at the source and the file is kept only as the record of a refuted approach, so there is no DDL left to carry.',
   '029_storage_authenticated_uploads.sql':
     'same posture as 028: unapplied, awaiting sign-off, needs a four-writer smoke test, and rewrites storage.objects RLS — which this blob has never owned.',
+  '036_profiles_column_privileges.sql':
+    'REVOKE/GRANT only, on public.profiles — the same two grounds 018 (privilege-only) and 021/023/024 (profiles is a migration-006 table this blob never creates) already rest on. A bare REVOKE against a missing relation would abort the whole bootstrap run. Note the consequence honestly: db-init alone does not close this privilege hole on a fresh project, but db-init alone cannot stand up profiles either — a fresh environment needs the numbered migrations regardless, and 006 and 036 are both in that set.',
   '034_mix_master_status.sql':
     'a data fix (UPDATE of retired WIP/Mix-Master statuses) plus an ALTER COLUMN SET DEFAULT — no object this parser accounts for. The new default IS carried: the blob\'s mb_versions create table says default \'Mix\', so a fresh bootstrap never mints a retired status, and there is no old data in a fresh database to retrofit.',
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
+import { normalizeStatus } from '@/lib/mix-status'
 
 export type Track = {
   id: string
@@ -118,7 +119,11 @@ export async function GET(request: NextRequest) {
       // "not measured" rather than undefined — the engine tests this with
       // `== null` and must never mistake either for a real length.
       duration_seconds: v.duration_seconds ?? null,
-      status: v.status ?? 'Mix',
+      // Folded, not defaulted. `?? 'Mix'` only covers NULL; already-shipped iOS
+      // builds still POST the retired 'WIP' straight to PostgREST, so a retired
+      // value can re-enter the catalog after migration 034 and reach the engine
+      // unfolded. normalizeStatus is the same fold the write paths apply.
+      status: normalizeStatus(v.status),
       version: v.label || `v${v.version_number}`,
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
       key_signature: p?.key_signature ?? null,

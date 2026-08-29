@@ -3,6 +3,10 @@ import { SUPABASE_URL } from '@/lib/supabase'
 // Relative + extension-full on purpose: an extensionless relative import blocks
 // Node type-stripping, which is what lets the test suite load the pure module.
 import { isRetryableHealFailure, type HealFailure } from './heal-retry.ts'
+// Relative + extension-full for the same reason: heal-errors.ts is import-free
+// so the matcher suite can load the REAL predicate rather than a copy of it.
+import { isMissingRelationError } from './heal-errors.ts'
+
 
 // Runtime self-heal for the additive mb_projects visualizer pin columns
 // (visualizer_url from migration 015, visualizer_wide_url from 020 — one heal
@@ -610,7 +614,8 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "feed_comments_delete_own" on mb_feed_comments for delete using (user_id = auth.uid());
-exception when duplicate_object then null; end $$;`
+exception when duplicate_object then null; end $$;
+notify pgrst, 'reload schema';`
 
 let feedCommentsEnsured: Promise<boolean> | null = null
 
@@ -628,9 +633,7 @@ export function ensureFeedCommentsTable(): Promise<boolean> {
 
 /** True when a PostgREST error is the missing-relation failure this heals. */
 export function isMissingFeedCommentsTable(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false
-  if (error.code === '42P01' && !!error.message?.includes('mb_feed_comments')) return true
-  return !!error.message && error.message.includes('mb_feed_comments') && /does not exist|relation/.test(error.message)
+  return isMissingRelationError(error, /mb_feed_comments/)
 }
 
 // ── Migration 030: UGC moderation (content reports + user blocks) ────────────
@@ -660,7 +663,12 @@ create table if not exists mb_user_blocks (
   unique (blocker_id, blocked_id)
 );
 alter table mb_user_blocks enable row level security;
-create index if not exists idx_user_blocks_blocker on mb_user_blocks(blocker_id);`
+create index if not exists idx_user_blocks_blocker on mb_user_blocks(blocker_id);
+-- PostgREST caches the schema. Without this nudge the retry that immediately
+-- follows a SUCCESSFUL create still reads a stale cache and fails with the very
+-- PGRST205 that triggered the heal, so the first report/block after the fix
+-- would error anyway. Same reason LIBRARY_TRACKS_SQL carries it.
+notify pgrst, 'reload schema';`
 
 let ugcModerationEnsured: Promise<boolean> | null = null
 
@@ -678,8 +686,7 @@ export function ensureUgcModerationTables(): Promise<boolean> {
 
 /** True when a PostgREST error is the missing-relation failure the UGC heal fixes. */
 export function isMissingUgcModerationTable(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false
-  return !!error.message && /mb_content_reports|mb_user_blocks/.test(error.message) && /does not exist|relation/.test(error.message)
+  return isMissingRelationError(error, /mb_content_reports|mb_user_blocks/)
 }
 
 // ── Migration 026: DistroKid metadata + waterfall sequencing ─────────────────
@@ -790,9 +797,7 @@ export function ensureLibraryTracksTable(): Promise<boolean> {
 
 /** True when a PostgREST error is the missing-relation failure this heals. */
 export function isMissingLibraryTracksTable(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false
-  if (error.code === '42P01' && !!error.message?.includes('mb_library_tracks')) return true
-  return !!error.message && error.message.includes('mb_library_tracks') && /does not exist|relation|schema cache/.test(error.message)
+  return isMissingRelationError(error, /mb_library_tracks/)
 }
 
 // ── Profile save fallback (RLS-degraded admin client) ────────────────────────

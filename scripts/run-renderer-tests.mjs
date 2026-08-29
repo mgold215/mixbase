@@ -57,6 +57,7 @@ const SUITES = [
   'db-init-migration-parity-test.mjs',
   'profiles-rls-test.mjs',
   'schema-heal-parity-test.mjs',
+  'schema-heal-matcher-test.mjs',
   'usage-rpc-grants-test.mjs',
   'usage-table-rls-test.mjs',
   'security-heal-trigger-test.mjs',
