@@ -27,6 +27,7 @@
 		A100000023 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000023; };
 		A100000024 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000024; };
 		A100000025 /* MixbaseAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000025; };
+		A100000091 /* LoudnessAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000091; };
 
 		/* Utilities */
 		A100000030 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000030; };
@@ -106,6 +107,7 @@
 		B100000023 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		B100000024 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		B100000025 /* MixbaseAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixbaseAPI.swift; sourceTree = "<group>"; };
+		B100000091 /* LoudnessAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessAnalyzer.swift; sourceTree = \"<group>\"; };
 
 		/* Utilities */
 		B100000030 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
@@ -355,6 +357,7 @@
 				B100000023 /* AuthService.swift */,
 				B100000024 /* KeychainService.swift */,
 				B100000025 /* MixbaseAPI.swift */,
+				B100000091 /* LoudnessAnalyzer.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -467,6 +470,7 @@
 				A1000000A3 /* VisualizerVideoView.swift in Sources */,
 				A100000023 /* AuthService.swift in Sources */,
 				A100000024 /* KeychainService.swift in Sources */,
+				A100000091 /* LoudnessAnalyzer.swift in Sources */,
 				A1000000B1 /* LoginView.swift in Sources */,
 				A1000000B2 /* SignUpView.swift in Sources */,
 				A100000016 /* Curator.swift in Sources */,

@@ -278,6 +278,24 @@ final class MixbaseAPI {
         return url
     }
 
+    // MARK: - Loudness (Master Check)
+
+    /// Persist a measured BS.1770-4 reading for one mix — the same endpoint and
+    /// body shape the web Master Check writes, so both platforms share one
+    /// measurement history. Non-finite values (silence measures as −∞) are
+    /// omitted; the server treats absent and null identically.
+    func saveLoudness(versionId: UUID, measurement: LoudnessMeasurement) async throws {
+        var body: [String: Any] = ["gatedBlockCount": measurement.gatedBlockCount]
+        if measurement.integratedLufs.isFinite { body["integratedLufs"] = measurement.integratedLufs }
+        if measurement.shortTermMaxLufs.isFinite { body["shortTermMaxLufs"] = measurement.shortTermMaxLufs }
+        if measurement.samplePeakDb.isFinite { body["samplePeakDb"] = measurement.samplePeakDb }
+        _ = try await requestJSON(
+            path: "/api/versions/\(versionId.uuidString.lowercased())/loudness",
+            method: "POST",
+            body: body
+        )
+    }
+
     private func requestJSON(path: String, method: String, body: [String: Any]? = nil) async throws -> [String: Any] {
         let data = try await requestData(path: path, method: method, body: body)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
