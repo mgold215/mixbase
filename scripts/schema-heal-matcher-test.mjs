@@ -56,7 +56,7 @@ const PGRST205_REPORTS = {
 }
 const PGRST204_COLUMN = {
   code: 'PGRST204',
-  message: "Could not find the 'acapella_url' column of 'mb_projects' in the schema cache",
+  message: "Could not find the 'instrumental_url' column of 'mb_projects' in the schema cache",
 }
 const PG_42P01 = {
   code: '42P01',
@@ -66,7 +66,7 @@ const PG_42P01 = {
 console.log('\nA. real PostgREST/Postgres payloads are recognised')
 check('PGRST205 (missing table) matches', isMissingRelationError(PGRST205_TABLE, /mb_content_reports|mb_user_blocks/))
 check('PGRST205 for the sibling table matches', isMissingRelationError(PGRST205_REPORTS, /mb_content_reports|mb_user_blocks/))
-check('PGRST204 (missing column) matches', isMissingRelationError(PGRST204_COLUMN, /acapella_url/))
+check('PGRST204 (missing column) matches', isMissingRelationError(PGRST204_COLUMN, /instrumental_url/))
 check('42P01 raw Postgres matches', isMissingRelationError(PG_42P01, /mb_content_reports/))
 check('feed-comments payload matches', isMissingRelationError(
   { code: 'PGRST205', message: "Could not find the table 'public.mb_feed_comments' in the schema cache" }, /mb_feed_comments/))

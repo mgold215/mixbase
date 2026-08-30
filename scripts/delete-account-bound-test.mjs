@@ -211,7 +211,7 @@ check('no hand-rolled slice/count chunking was added alongside it',
 // PROJECTION-AGNOSTIC ON PURPOSE. This used to pin the literal column list
 // 'id, artwork_url, finalized_artwork_url', which coupled a PAGING assertion to
 // a completely unrelated decision — so widening the projection to stop leaking
-// acapella and visualizer bytes read as a paging regression, while the actual
+// instrumental and visualizer bytes read as a paging regression, while the actual
 // defect (a projection too narrow to name those bytes) was invisible here. The
 // property this check owns is that the read is paged; delete-account-scope-test
 // owns whether the projection is complete.

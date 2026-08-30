@@ -123,7 +123,7 @@ async function countForeignBlockers(
  * Every mb_projects column that names a storage object, in the order the
  * projection asks for them. Kept adjacent to ProjectAssetRow on purpose: that
  * type is what collectAssetKeys reads, and the two drifting apart is precisely
- * how acapella_url became a byte nobody could delete.
+ * how instrumental_url became a byte nobody could delete.
  */
 const PROJECT_ASSET_COLUMNS = [
   'id',
@@ -131,7 +131,7 @@ const PROJECT_ASSET_COLUMNS = [
   'finalized_artwork_url',
   'visualizer_url',
   'visualizer_wide_url',
-  'acapella_url',
+  'instrumental_url',
 ] as const
 
 /**
@@ -293,7 +293,7 @@ export async function POST(request: NextRequest) {
   // that survives a GDPR erasure, in a public-read bucket, with no later pass that
   // can ever name it again (only mf-video has a sweeper).
   //
-  // This shipped broken. Migration 035 added mb_projects.acapella_url, registered
+  // This shipped broken. Migration 035 added mb_projects.instrumental_url, registered
   // it in ASSET_URL_COLUMNS, and taught collectAssetKeys to read it — whose own
   // comment says "without this line the bytes would be invisible to account
   // delete, which has no prefix sweep" — while this select still asked only for

@@ -573,7 +573,7 @@ check('the client-visible success shape is unchanged ({ ok: true })',
 // the mb_projects projection is a byte that survives a GDPR erasure with no
 // later pass able to name it — and mf-audio and mf-artwork have no sweeper.
 //
-// It shipped that way: migration 035 added acapella_url, registered it in
+// It shipped that way: migration 035 added instrumental_url, registered it in
 // ASSET_URL_COLUMNS, taught collectAssetKeys to read it, and asserted in its own
 // header that "both delete paths see the reference." The survivor scan did. This
 // enumeration selected only `id, artwork_url, finalized_artwork_url`, so the read
