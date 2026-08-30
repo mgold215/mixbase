@@ -8,8 +8,15 @@
 //   {"action": "none"}          → no-op (parked)
 //   {"action": "public-link",
 //    "groupName": null,
-//    "linkLimit": 50}           → ensure an external beta group with a build,
-//                                  enable its public TestFlight link, print it
+//    "linkLimit": 50,
+//    "betaDescription": "..."}  → ensure an external beta group whose newest
+//                                  build is attached + submitted for Beta App
+//                                  Review, enable its public link, print it
+//
+// The same workflow also re-runs this after every "iOS TestFlight" upload
+// (workflow_run trigger), which is what keeps external testers on the newest
+// build: TestFlight groups do not pick up new builds by themselves, and each
+// new build needs its own beta-review submission (instant after the first).
 //
 // groupName null picks the first external (non-internal) beta group, creating
 // "mixBASE Beta" if the app has none — internal groups are ASC team members
@@ -21,16 +28,22 @@
 // using the public link this prints. The link is made for sharing and safe
 // to appear in logs; linkLimit caps how many people can join through it.
 //
-// Idempotent: re-runs re-print the existing link and change nothing else.
+// Idempotent: everything already in place is skipped, so re-runs just
+// re-print the link.
 
 import { createSign, createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const API = "https://api.appstoreconnect.apple.com";
 const BUNDLE_ID = "com.moodmixformat.mixbase";
 const DEFAULT_GROUP_NAME = "mixBASE Beta";
+// A build uploaded moments ago sits in PROCESSING for a few minutes before it
+// can be attached anywhere; the workflow_run trigger fires right after upload,
+// so wait it out (bounded — ubuntu minutes are cheap, hanging forever isn't).
+const PROCESSING_WAIT_MINUTES = 30;
 
 const keyId = process.env.ASC_KEY_ID;
 const issuerId = process.env.ASC_ISSUER_ID;
@@ -80,6 +93,12 @@ async function asc(method, path, json) {
 function die(msg) {
   console.error(msg);
   process.exit(1);
+}
+
+let warned = false;
+function warn(msg) {
+  console.warn(`WARN: ${msg}`);
+  warned = true;
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -141,62 +160,110 @@ if (!group) {
 }
 console.log(`\nTarget group: ${JSON.stringify(group.attributes.name)} (id=${group.id})`);
 
-// ── Make sure the group has a build ─────────────────────────────────────────
-// A public link with no reviewed build joins the tester to an empty app, so
-// attach the newest valid build and make sure it has a beta-review
-// submission. Failures here are warnings: the link is the deliverable and
-// the build appears for testers as soon as review clears.
-let warned = false;
+// ── Keep the newest build in the group, reviewed ────────────────────────────
+// Failures in this phase are warnings: the link is the deliverable, and the
+// build appears for testers as soon as the pieces are in place.
 try {
-  const groupBuilds = await asc("GET", `/v1/betaGroups/${group.id}/builds?limit=10`);
-  const haveBuilds = groupBuilds.status === 200 && (groupBuilds.body.data ?? []).length > 0;
-  console.log(`Group has ${haveBuilds ? (groupBuilds.body.data ?? []).length : 0} build(s).`);
-
-  if (!haveBuilds) {
+  // Newest non-expired build, waiting out PROCESSING if the upload just
+  // happened (the workflow_run trigger lands here minutes after upload).
+  let build = null;
+  const deadline = Date.now() + PROCESSING_WAIT_MINUTES * 60 * 1000;
+  for (;;) {
     const buildsRes = await asc(
       "GET",
       `/v1/builds?filter[app]=${appId}&sort=-uploadedDate&limit=5&fields[builds]=version,uploadedDate,processingState,expired`
     );
-    const builds = (buildsRes.body?.data ?? []).filter(
-      (b) => b.attributes.processingState === "VALID" && !b.attributes.expired
-    );
-    if (buildsRes.status !== 200 || builds.length === 0) {
-      console.warn("WARN: no valid, unexpired build found to attach — link works, build must be added in ASC.");
-      warned = true;
+    if (buildsRes.status !== 200) {
+      warn(`could not list builds: HTTP ${buildsRes.status}: ${buildsRes.text.slice(0, 300)}`);
+      break;
+    }
+    const fresh = (buildsRes.body.data ?? []).filter((b) => !b.attributes.expired);
+    build = fresh.find((b) => b.attributes.processingState === "VALID") ?? null;
+    const processing = fresh.some((b) => b.attributes.processingState === "PROCESSING");
+    // A build still PROCESSING that is newer than the newest VALID one is the
+    // build this run is here for — wait for it.
+    const newestIsProcessing = fresh[0]?.attributes.processingState === "PROCESSING";
+    if (!newestIsProcessing || Date.now() > deadline) {
+      if (newestIsProcessing) warn("newest build still PROCESSING after the wait — using newest VALID build.");
+      if (!build && processing) warn("no VALID build yet (still processing) — build must be attached on a later run.");
+      break;
+    }
+    console.log("Newest build is PROCESSING — waiting 60s…");
+    await sleep(60_000);
+  }
+
+  if (build) {
+    console.log(`Newest valid build: ${build.attributes.version} (uploaded ${build.attributes.uploadedDate}).`);
+
+    const groupBuilds = await asc("GET", `/v1/betaGroups/${group.id}/builds?limit=50`);
+    const inGroup =
+      groupBuilds.status === 200 && (groupBuilds.body.data ?? []).some((b) => b.id === build.id);
+    if (inGroup) {
+      console.log("Build already in the group.");
     } else {
-      const build = builds[0];
-      console.log(`Attaching newest valid build ${build.attributes.version} (uploaded ${build.attributes.uploadedDate}).`);
       const attach = await asc("POST", `/v1/betaGroups/${group.id}/relationships/builds`, {
         data: [{ type: "builds", id: build.id }],
       });
-      if (attach.status !== 204) {
-        console.warn(`WARN: could not attach build: HTTP ${attach.status}: ${attach.text.slice(0, 500)}`);
-        warned = true;
-      }
-      // External distribution needs Beta App Review at least once per version.
-      const sub = await asc("GET", `/v1/builds/${build.id}/betaAppReviewSubmission`);
-      if (sub.status === 200 && sub.body?.data) {
-        console.log(`Beta review state: ${sub.body.data.attributes.betaReviewState}`);
-      } else {
-        console.log("No beta-review submission — submitting the build for Beta App Review.");
-        const submit = await asc("POST", "/v1/betaAppReviewSubmissions", {
+      if (attach.status === 204) console.log("Attached build to the group.");
+      else warn(`could not attach build: HTTP ${attach.status}: ${attach.text.slice(0, 300)}`);
+    }
+
+    // Beta App Review requires a beta description on the app's TestFlight
+    // "Test Information" — fill any empty localization from the request
+    // (first hit 2026-08-30: MISSING_BETA_APP_DESCRIPTION).
+    if (request.betaDescription) {
+      const locs = await asc("GET", `/v1/apps/${appId}/betaAppLocalizations?limit=50`);
+      const rows = locs.status === 200 ? (locs.body.data ?? []) : [];
+      if (rows.length === 0) {
+        const created = await asc("POST", "/v1/betaAppLocalizations", {
           data: {
-            type: "betaAppReviewSubmissions",
-            relationships: { build: { data: { type: "builds", id: build.id } } },
+            type: "betaAppLocalizations",
+            attributes: { locale: "en-US", description: request.betaDescription },
+            relationships: { app: { data: { type: "apps", id: appId } } },
           },
         });
-        if (submit.status === 201) {
-          console.log(`Submitted: state ${submit.body.data.attributes.betaReviewState}`);
-        } else {
-          console.warn(`WARN: beta-review submission failed: HTTP ${submit.status}: ${submit.text.slice(0, 500)}`);
-          warned = true;
+        if (created.status === 201) console.log("Created en-US beta localization with description.");
+        else warn(`could not create beta localization: HTTP ${created.status}: ${created.text.slice(0, 300)}`);
+      } else {
+        for (const row of rows) {
+          const hasDescription = Boolean(row.attributes.description);
+          console.log(`Beta localization ${row.attributes.locale}: description ${hasDescription ? "set" : "EMPTY"}`);
+          if (hasDescription) continue;
+          const patched = await asc("PATCH", `/v1/betaAppLocalizations/${row.id}`, {
+            data: {
+              type: "betaAppLocalizations",
+              id: row.id,
+              attributes: { description: request.betaDescription },
+            },
+          });
+          if (patched.status === 200) console.log(`Filled ${row.attributes.locale} description.`);
+          else warn(`could not set ${row.attributes.locale} description: HTTP ${patched.status}: ${patched.text.slice(0, 300)}`);
         }
+      }
+    }
+
+    // External distribution needs Beta App Review, once per build (the first
+    // one is a human review; later builds usually clear in minutes).
+    const sub = await asc("GET", `/v1/builds/${build.id}/betaAppReviewSubmission`);
+    if (sub.status === 200 && sub.body?.data) {
+      console.log(`Beta review state: ${sub.body.data.attributes.betaReviewState}`);
+    } else {
+      console.log("No beta-review submission — submitting the build for Beta App Review.");
+      const submit = await asc("POST", "/v1/betaAppReviewSubmissions", {
+        data: {
+          type: "betaAppReviewSubmissions",
+          relationships: { build: { data: { type: "builds", id: build.id } } },
+        },
+      });
+      if (submit.status === 201) {
+        console.log(`Submitted: state ${submit.body.data.attributes.betaReviewState}`);
+      } else {
+        warn(`beta-review submission failed: HTTP ${submit.status}: ${submit.text.slice(0, 500)}`);
       }
     }
   }
 } catch (err) {
-  console.warn(`WARN: build-attachment phase threw: ${err.message}`);
-  warned = true;
+  warn(`build phase threw: ${err.message}`);
 }
 
 // ── Enable the public link ──────────────────────────────────────────────────
@@ -221,5 +288,5 @@ if (group.attributes.publicLinkEnabled && group.attributes.publicLink) {
   console.log(`\nPUBLIC LINK (limit ${limit}): ${patch.body.data.attributes.publicLink}`);
 }
 
-if (warned) console.log("\nFinished with warnings — check the build/beta-review lines above.");
+if (warned) console.log("\nFinished with warnings — check the lines above.");
 process.exit(0);

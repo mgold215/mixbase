@@ -1,9 +1,11 @@
-# TestFlight tester invites, driven by a file instead of a button — same
-# pattern as asc-cert-audit.yml: remote maintenance sessions cannot dispatch
-# workflows (403) or log into App Store Connect, but they can push, so editing
-# .github/asc-maintenance/testflight-request.json and pushing runs this.
-# The script is idempotent (testers already in the group are skipped), so a
-# stray push re-sends nothing.
+# TestFlight external-testing upkeep, driven by a file instead of a button —
+# same pattern as asc-cert-audit.yml: remote maintenance sessions cannot
+# dispatch workflows (403) or log into App Store Connect, but they can push,
+# so editing .github/asc-maintenance/testflight-request.json and pushing runs
+# this. It also re-runs after every "iOS TestFlight" upload, because external
+# beta groups do not pick up new builds by themselves — without this, public-
+# link testers would be stranded on the first build forever. The script is
+# idempotent, so extra runs change nothing.
 
 name: ASC TestFlight Invites
 
@@ -14,6 +16,9 @@ on:
       - '.github/asc-maintenance/testflight-request.json'
       - '.github/asc-maintenance/asc-testflight.mjs'
       - '.github/workflows/asc-testflight.yml'
+  workflow_run:
+    workflows: ["iOS TestFlight"]
+    types: [completed]
   workflow_dispatch: {}
 
 permissions:
@@ -28,9 +33,11 @@ env:
 
 jobs:
   invite:
-    name: TestFlight tester invites
+    name: TestFlight external-testing upkeep
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The script can wait up to 30 min for a just-uploaded build to finish
+    # TestFlight processing (workflow_run fires right after upload).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
