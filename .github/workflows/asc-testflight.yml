@@ -19,6 +19,12 @@ on:
   workflow_run:
     workflows: ["iOS TestFlight"]
     types: [completed]
+  # Retry pass: a build attached while another was in beta review
+  # (ANOTHER_BUILD_IN_REVIEW) gets its submission on the next run, which
+  # otherwise only happens on a push or upload. Everything is idempotent,
+  # so the scheduled run is 4 read calls when there is nothing to do.
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch: {}
 
 permissions:
