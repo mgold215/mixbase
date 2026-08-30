@@ -242,6 +242,105 @@ try {
       }
     }
 
+    // Beta App Review also needs review contact info and (for a sign-in app)
+    // a demo account — second 422, MISSING_REQUIRED_DATA. The App Store
+    // release already carries all of it, so copy it SERVER-SIDE from the
+    // released version's review detail: the values never appear in these
+    // public logs and never touch the repo. Only presence is printed.
+    try {
+      // Presence is reported for all fields; only the non-secret ones are
+      // ever copied. The demo account's secret is deliberately excluded from
+      // COPY_FIELDS — if ASC reports it missing, it has to be set once by
+      // hand in App Store Connect (TestFlight → Test Information), and the
+      // run log will say so.
+      const REVIEW_FIELDS = [
+        "contactFirstName",
+        "contactLastName",
+        "contactEmail",
+        "contactPhone",
+        "demoAccountName",
+        "demoAccountPassword",
+        "demoAccountRequired",
+      ];
+      const COPY_FIELDS = REVIEW_FIELDS.filter((f) => f !== "demoAccountPassword");
+      const detail = await asc("GET", `/v1/apps/${appId}/betaAppReviewDetail`);
+      if (detail.status !== 200 || !detail.body?.data) {
+        warn(`could not read betaAppReviewDetail: HTTP ${detail.status}`);
+      } else {
+        const attrs = detail.body.data.attributes ?? {};
+        const missing = REVIEW_FIELDS.filter(
+          (f) => attrs[f] === null || attrs[f] === undefined || attrs[f] === ""
+        );
+        console.log(
+          `Beta review detail: ${REVIEW_FIELDS.map((f) => `${f}=${missing.includes(f) ? "EMPTY" : "set"}`).join("  ")}`
+        );
+        if (missing.length > 0) {
+          const versions = await asc(
+            "GET",
+            `/v1/apps/${appId}/appStoreVersions?limit=5&fields[appStoreVersions]=versionString,appStoreState`
+          );
+          let source = null;
+          for (const v of versions.body?.data ?? []) {
+            const rd = await asc("GET", `/v1/appStoreVersions/${v.id}/appStoreReviewDetail`);
+            if (rd.status === 200 && rd.body?.data?.attributes) {
+              source = rd.body.data.attributes;
+              console.log(`Copying review detail from App Store version ${v.attributes.versionString}.`);
+              break;
+            }
+          }
+          if (!source) {
+            warn("no App Store review detail found to copy from — beta review contact must be set in ASC by hand.");
+          } else {
+            const patchAttrs = {};
+            for (const f of missing) {
+              if (!COPY_FIELDS.includes(f)) continue;
+              if (source[f] !== null && source[f] !== undefined && source[f] !== "") {
+                patchAttrs[f] = source[f];
+              }
+            }
+            if (missing.includes("demoAccountPassword")) {
+              warn("demo account secret is EMPTY and is never copied by this script — set it once in App Store Connect → TestFlight → Test Information.");
+            }
+            if (Object.keys(patchAttrs).length === 0) {
+              warn("App Store review detail has none of the missing fields either — set them in ASC by hand.");
+            } else {
+              const patched = await asc("PATCH", `/v1/betaAppReviewDetails/${detail.body.data.id}`, {
+                data: {
+                  type: "betaAppReviewDetails",
+                  id: detail.body.data.id,
+                  attributes: patchAttrs,
+                },
+              });
+              if (patched.status === 200) {
+                console.log(`Copied ${Object.keys(patchAttrs).join(", ")} into the beta review detail.`);
+              } else {
+                warn(`could not patch betaAppReviewDetail: HTTP ${patched.status}: ${patched.text.slice(0, 300)}`);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      warn(`beta review detail phase threw: ${err.message}`);
+    }
+
+    // A build uploaded without an export-compliance answer strands as
+    // "Missing Compliance" — the Info.plist carries the answer for new
+    // builds, but heal older ones here (standard HTTPS only → exempt).
+    const buildCompliance = await asc(
+      "GET",
+      `/v1/builds/${build.id}?fields[builds]=usesNonExemptEncryption,version`
+    );
+    const usesNonExempt = buildCompliance.body?.data?.attributes?.usesNonExemptEncryption;
+    console.log(`Build usesNonExemptEncryption: ${usesNonExempt === null ? "UNANSWERED" : usesNonExempt}`);
+    if (usesNonExempt === null) {
+      const patched = await asc("PATCH", `/v1/builds/${build.id}`, {
+        data: { type: "builds", id: build.id, attributes: { usesNonExemptEncryption: false } },
+      });
+      if (patched.status === 200) console.log("Marked build exempt (standard HTTPS/TLS only).");
+      else warn(`could not set export compliance: HTTP ${patched.status}: ${patched.text.slice(0, 300)}`);
+    }
+
     // External distribution needs Beta App Review, once per build (the first
     // one is a human review; later builds usually clear in minutes).
     const sub = await asc("GET", `/v1/builds/${build.id}/betaAppReviewSubmission`);
