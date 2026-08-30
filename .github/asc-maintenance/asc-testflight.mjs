@@ -165,7 +165,14 @@ console.log(`\nTarget group: ${JSON.stringify(group.attributes.name)} (id=${grou
 // build appears for testers as soon as the pieces are in place.
 try {
   // Newest non-expired build, waiting out PROCESSING if the upload just
-  // happened (the workflow_run trigger lands here minutes after upload).
+  // happened. The workflow_run trigger lands here SECONDS after upload —
+  // before the build is visible in the API at all (first hit 2026-08-30:
+  // the sync run finished in 11s and left the group one build behind) — so
+  // in that mode also wait for a recently-uploaded build to appear, not
+  // just for a visible one to finish PROCESSING.
+  const expectFreshUpload = process.env.GITHUB_EVENT_NAME === "workflow_run";
+  const RECENT_MS = 90 * 60 * 1000;
+  const isRecent = (b) => Date.now() - Date.parse(b.attributes.uploadedDate) < RECENT_MS;
   let build = null;
   const deadline = Date.now() + PROCESSING_WAIT_MINUTES * 60 * 1000;
   for (;;) {
@@ -181,14 +188,20 @@ try {
     build = fresh.find((b) => b.attributes.processingState === "VALID") ?? null;
     const processing = fresh.some((b) => b.attributes.processingState === "PROCESSING");
     // A build still PROCESSING that is newer than the newest VALID one is the
-    // build this run is here for — wait for it.
+    // build this run is here for — wait for it. In workflow_run mode, so is a
+    // just-uploaded build that hasn't surfaced in the API yet.
     const newestIsProcessing = fresh[0]?.attributes.processingState === "PROCESSING";
-    if (!newestIsProcessing || Date.now() > deadline) {
+    const waitingForUpload = expectFreshUpload && !fresh.some(isRecent);
+    if ((!newestIsProcessing && !waitingForUpload) || Date.now() > deadline) {
       if (newestIsProcessing) warn("newest build still PROCESSING after the wait — using newest VALID build.");
+      else if (waitingForUpload) warn("the just-uploaded build never appeared in the API — using newest VALID build.");
       if (!build && processing) warn("no VALID build yet (still processing) — build must be attached on a later run.");
+      if (expectFreshUpload && build && !isRecent(build)) {
+        warn("newest VALID build predates this upload — the fresh build syncs on the next run.");
+      }
       break;
     }
-    console.log("Newest build is PROCESSING — waiting 60s…");
+    console.log(waitingForUpload ? "Waiting 60s for the new upload to appear…" : "Newest build is PROCESSING — waiting 60s…");
     await sleep(60_000);
   }
 
