@@ -104,7 +104,18 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   // The status set is Mix / Master / Finished / Released. Fold anything else —
   // including the retired 'WIP' and 'Mix/Master' a stale client can still send —
   // onto it, so retired values can't re-enter the catalog through this door.
-  if (typeof patch.status === 'string') patch.status = normalizeStatus(patch.status)
+  // TYPE-CHECKED, NOT TYPE-GUARDED. This was `if (typeof patch.status === 'string')`,
+  // which silently SKIPPED the fold for any non-string: `{"status": 42}` or
+  // `{"status": true}` sailed past untouched and PostgREST coerced it to text on
+  // the way in. A guard whose failure mode is "do nothing" defeats the very
+  // guarantee stated above, so an unusable status is now rejected outright, the
+  // same way an unusable duration_seconds is below.
+  if ('status' in patch) {
+    if (typeof patch.status !== 'string') {
+      return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    }
+    patch.status = normalizeStatus(patch.status)
+  }
 
   // Handled outside `allowed` — see the write-once notes above parseBackfillSeconds.
   const wantsBackfill = Object.prototype.hasOwnProperty.call(body, 'duration_seconds')

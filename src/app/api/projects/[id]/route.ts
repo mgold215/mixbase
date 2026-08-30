@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
-import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { isUuid, isJsonObject, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn, ensureProjectInstrumentalColumn, isMissingInstrumentalColumn } from '@/lib/schema-heal'
 import { removeStorageObjectsLogged } from '@/lib/storage-remove'
 import {
@@ -68,7 +68,10 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const { id } = await ctx.params
   if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   const body = await request.json().catch(() => null)
-  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  // isJsonObject, not a truthiness check: a body of `5` or `"x"` or `[]` parses
+  // fine and is truthy, then `'title' in 5` throws a TypeError the caller sees as
+  // an opaque 500. One honest 400 instead.
+  if (!isJsonObject(body)) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
   const allowed = ['title', 'genre', 'bpm', 'key_signature', 'artwork_url', 'visualizer_url', 'visualizer_wide_url', 'instrumental_url'] as const
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }

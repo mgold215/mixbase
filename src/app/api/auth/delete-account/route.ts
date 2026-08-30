@@ -119,6 +119,56 @@ async function countForeignBlockers(
 
 // POST /api/auth/delete-account — permanently delete user and all their data
 // Deletes storage files first (GDPR), then DB rows, then the auth user.
+/**
+ * Every mb_projects column that names a storage object, in the order the
+ * projection asks for them. Kept adjacent to ProjectAssetRow on purpose: that
+ * type is what collectAssetKeys reads, and the two drifting apart is precisely
+ * how instrumental_url became a byte nobody could delete.
+ */
+const PROJECT_ASSET_COLUMNS = [
+  'id',
+  'artwork_url',
+  'finalized_artwork_url',
+  'visualizer_url',
+  'visualizer_wide_url',
+  'instrumental_url',
+] as const
+
+/**
+ * The widest projection this deployment's schema actually supports.
+ *
+ * Railway deploys code the moment a PR merges while migrations are applied by
+ * hand, so an optional column can be absent for a while — and PostgREST rejects
+ * the WHOLE select when one referenced column is unknown. Asking for everything
+ * unconditionally would turn a pending migration into a total enumeration
+ * failure, which this route reports as "no projects" and treats as a clean
+ * erasure. Degrading one column at a time is strictly better than that: we lose
+ * the bytes that column names, and keep every other byte.
+ *
+ * Only columns declared in OPTIONAL_ASSET_URL_COLUMNS may be dropped. A missing
+ * artwork_url is a real failure and must surface, not be quietly excused —
+ * excusing it is what turns a broken scan into a licence to delete.
+ */
+async function resolveProjectProjection(): Promise<string> {
+  const columns: string[] = [...PROJECT_ASSET_COLUMNS]
+  // PostgREST names only the FIRST unknown column, so drop at most one per round.
+  for (let attempt = 0; attempt < PROJECT_ASSET_COLUMNS.length; attempt++) {
+    const projection = columns.join(', ')
+    const { error } = await supabaseAdmin.from('mb_projects').select(projection).limit(1)
+    if (!error) return projection
+    const missing = columns.find(
+      c => OPTIONAL_ASSET_URL_COLUMNS.has(`mb_projects.${c}`) && errorNamesColumn(error, c),
+    )
+    // Not a missing-optional-column failure (network, RLS, a required column):
+    // hand it back unchanged so the real paged read reports it properly rather
+    // than this probe swallowing it.
+    if (!missing) return projection
+    console.warn(`[delete-account] mb_projects.${missing} absent — its storage objects cannot be reaped`)
+    columns.splice(columns.indexOf(missing), 1)
+  }
+  return columns.join(', ')
+}
+
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) {
@@ -235,9 +285,27 @@ export async function POST(request: NextRequest) {
   // storage leak would trap the user in an undeletable account, which this route
   // must never do. A failed row DELETE is the opposite case and still aborts —
   // see the dbErrors gate below.
+  //
+  // THE PROJECTION IS THE WHOLE REACH OF THIS ROUTE. Unlike
+  // DELETE /api/projects/[id], the account path has NO prefix sweep to catch what
+  // this select misses — filterToOwnedPrefixes only BOUNDS keys that were already
+  // nominated, it never discovers one. So any asset column omitted here is a byte
+  // that survives a GDPR erasure, in a public-read bucket, with no later pass that
+  // can ever name it again (only mf-video has a sweeper).
+  //
+  // This shipped broken. Migration 035 added mb_projects.instrumental_url, registered
+  // it in ASSET_URL_COLUMNS, and taught collectAssetKeys to read it — whose own
+  // comment says "without this line the bytes would be invisible to account
+  // delete, which has no prefix sweep" — while this select still asked only for
+  // artwork. The read therefore saw `undefined` on every row. Both visualizer pins
+  // had the same hole. It is the collections bug inverted: there a column was
+  // asked for and its answer ignored; here a consumer read a field the producer
+  // never fetched. Neither is visible from the consumer alone, which is why the
+  // projection is now derived from one list next to the type it must satisfy.
+  const projection = await resolveProjectProjection()
   const projects = await collectAllRows<ProjectAssetRow & { id: string }>(
     (offset, limit) => fetchRowPage(
-      supabaseAdmin.from('mb_projects').select('id, artwork_url, finalized_artwork_url').eq('user_id', userId)
+      supabaseAdmin.from('mb_projects').select(projection).eq('user_id', userId)
         .order('id', { ascending: true }).range(offset, offset + limit - 1),
       `projects for ${userId}`,
     ))

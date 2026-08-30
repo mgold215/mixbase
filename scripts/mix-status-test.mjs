@@ -140,13 +140,27 @@ const patchRoute = read('src/app/api/versions/[id]/route.ts')
 check('PATCH /api/versions/[id] normalizes incoming statuses',
   /patch\.status\s*=\s*normalizeStatus\(/.test(patchRoute))
 
-// The iOS app writes to PostgREST directly, so it must speak the same
-// convention — a hardcoded "WIP" there would quietly re-mint the retired
-// status on every phone upload.
+// iOS used to insert into PostgREST directly, so this suite required it to
+// re-implement the filename convention client-side (MixStatus.forUpload). That
+// requirement is GONE as of the switch to POST /api/versions: iOS now sends
+// audio_filename and the SERVER parses it, so there is exactly one parser
+// instead of two that have to be kept in step.
+//
+// Assert the property we actually care about — no phone upload can mint a
+// status the server did not choose — rather than the old mechanism, which was
+// only ever a means to it. Pinning the mechanism is what made this check go RED
+// on a change that strictly improved the thing it was protecting.
 const iosService = read('ios/mixBase/Services/SupabaseService.swift')
-check('iOS createVersion detects status from the filename',
-  /MixStatus\.forUpload\(filename:\s*audioFilename\)/.test(iosService))
-check('iOS createVersion no longer hardcodes "WIP"', !iosService.includes('"WIP"'))
+const iosApi = read('ios/mixBase/Services/MixbaseAPI.swift')
+check('iOS creates versions through POST /api/versions, not a direct insert',
+  /path:\s*"\/api\/versions"/.test(iosApi))
+check('iOS no longer inserts into mb_versions directly',
+  !/\/rest\/v1\/mb_versions[^?]/.test(iosService.replace(/\/rest\/v1\/mb_versions\?/g, '')),
+  'a direct insert would put status, label, version_number and allow_download back in the client')
+check('iOS sends no status of its own — the server parses the filename',
+  !/"status":/.test(iosApi))
+check('iOS no longer references the retired "WIP" status',
+  !iosService.includes('"WIP"') && !iosApi.includes('"WIP"'))
 
 // The bootstrap schema and the migration must agree on the new default.
 const dbInit = read('src/app/api/db-init/route.ts')

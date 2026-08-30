@@ -278,6 +278,59 @@ final class MixbaseAPI {
         return url
     }
 
+    // MARK: - Versions (new mixes)
+
+    /// Create the mb_versions row for a mix that has just finished uploading.
+    ///
+    /// Goes through the web route rather than writing to PostgREST directly,
+    /// because three of this row's columns are the SERVER's decision, not the
+    /// client's — and a direct insert has to invent all three:
+    ///
+    ///  • `allow_download` — a CONSENT signal, not an access control (see the
+    ///    long note in src/lib/version-defaults.ts). It is deliberately NOT in
+    ///    the body below, and must not be added: the route only INHERITS the
+    ///    artist's previous choice when the field is ABSENT, and treats any
+    ///    real boolean — `false` included — as an explicit decision that wins.
+    ///    Sending a hardcoded `false` "to be safe" is exactly the bug this
+    ///    replaced: an artist who ticked "let people with the share link
+    ///    download this" on the web had it silently switched back off by their
+    ///    next upload from the phone, with nothing in the UI to say so.
+    ///  • `status` and `label` — parsed from the filename server-side
+    ///    ("MASTER 2.wav" → Master, labelled 2), so both platforms land on the
+    ///    same four statuses and the same per-kind numbering.
+    ///  • `version_number` — computed server-side as max+1 and retried on the
+    ///    unique-index violation, so two uploads racing the same project can't
+    ///    both become "v2".
+    ///
+    /// There is no fallback to a direct insert if this fails: quietly writing
+    /// the row ourselves would put every one of the above back in the client's
+    /// hands. A failure surfaces to the artist instead.
+    func createVersion(
+        projectId: UUID,
+        audioUrl: String,
+        label: String?,
+        audioFilename: String? = nil,
+        durationSeconds: Int? = nil,
+        fileSizeBytes: Int? = nil
+    ) async throws -> Version {
+        var body: [String: Any] = [
+            "project_id": projectId.uuidString.lowercased(),
+            "audio_url": audioUrl,
+        ]
+        // Omit rather than send NSNull: the route forwards these straight into
+        // the insert, so a null would clobber a value a later heal or the web
+        // app had already filled in.
+        if let label { body["label"] = label }
+        if let audioFilename { body["audio_filename"] = audioFilename }
+        if let durationSeconds { body["duration_seconds"] = durationSeconds }
+        if let fileSizeBytes { body["file_size_bytes"] = fileSizeBytes }
+
+        // 201 with the inserted row — same column shape PostgREST returns, so
+        // Version decodes unchanged.
+        let data = try await requestData(path: "/api/versions", method: "POST", body: body)
+        return try decoder.decode(Version.self, from: data)
+    }
+
     // MARK: - Loudness (Master Check)
 
     /// Persist a measured BS.1770-4 reading for one mix — the same endpoint and

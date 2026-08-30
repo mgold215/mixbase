@@ -1,9 +1,17 @@
 -- 029: require a signed-in user to write objects into the three app buckets.
 --
--- ⚠️ WRITTEN BUT NOT APPLIED. Staging and production share ONE Supabase project,
--- so there is no isolated rehearsal. Apply/verify/rollback steps are at the
--- bottom. Companion to 028 (which closes anonymous *listing* and is also
--- unapplied).
+-- ✅ APPLIED TO PRODUCTION 2026-08-21 (ledger: 20260821004123). Re-verified
+-- 2026-08-30 — pg_policies shows all three policies live with roles={authenticated}.
+--
+-- ⚠️ THE ROLLBACK BLOCK AT THE BOTTOM IS NOT A SAFE "RESTORE BASELINE" STEP.
+-- It recreates these policies with NO role restriction, which hands anonymous
+-- upload rights back to the public anon key. This header used to read "WRITTEN
+-- BUT NOT APPLIED" long after the migration had in fact been applied; anyone
+-- trusting that and running the rollback as a no-op would have re-opened the
+-- exact hole this file closes. Run it only as a deliberate, announced revert.
+--
+-- Companion to 028 (anonymous *listing*), which is genuinely NOT applied and
+-- carries its own DO-NOT-APPLY banner — a previous attempt caused an outage.
 --
 -- THE HOLE
 -- Migrations 009 and 014 created the INSERT policies with no auth predicate:
