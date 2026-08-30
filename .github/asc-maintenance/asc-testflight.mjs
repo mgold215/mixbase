@@ -247,6 +247,7 @@ try {
     // release already carries all of it, so copy it SERVER-SIDE from the
     // released version's review detail: the values never appear in these
     // public logs and never touch the repo. Only presence is printed.
+    let reviewContactEmail = null;
     try {
       // Presence is reported for all fields; only the non-secret ones are
       // ever copied. The demo account's secret is deliberately excluded from
@@ -291,6 +292,7 @@ try {
           if (!source) {
             warn("no App Store review detail found to copy from — beta review contact must be set in ASC by hand.");
           } else {
+            reviewContactEmail = source.contactEmail ?? null;
             const patchAttrs = {};
             for (const f of missing) {
               if (!COPY_FIELDS.includes(f)) continue;
@@ -322,6 +324,32 @@ try {
       }
     } catch (err) {
       warn(`beta review detail phase threw: ${err.message}`);
+    }
+
+    // TestFlight "Test Information" additionally requires a feedback email
+    // for external testing, and a privacy policy URL keeps the listing
+    // complete. The feedback address comes from the request, falling back to
+    // the App Store review contact copied above (server-side, never logged).
+    try {
+      const feedbackEmail = request.feedbackEmail ?? reviewContactEmail;
+      const privacyPolicyUrl = request.privacyPolicyUrl ?? null;
+      const locs = await asc("GET", `/v1/apps/${appId}/betaAppLocalizations?limit=50`);
+      for (const row of locs.status === 200 ? (locs.body.data ?? []) : []) {
+        const fill = {};
+        if (!row.attributes.feedbackEmail && feedbackEmail) fill.feedbackEmail = feedbackEmail;
+        if (!row.attributes.privacyPolicyUrl && privacyPolicyUrl) fill.privacyPolicyUrl = privacyPolicyUrl;
+        console.log(
+          `Beta localization ${row.attributes.locale}: feedbackEmail ${row.attributes.feedbackEmail ? "set" : "EMPTY"}, privacyPolicyUrl ${row.attributes.privacyPolicyUrl ? "set" : "EMPTY"}`
+        );
+        if (Object.keys(fill).length === 0) continue;
+        const patched = await asc("PATCH", `/v1/betaAppLocalizations/${row.id}`, {
+          data: { type: "betaAppLocalizations", id: row.id, attributes: fill },
+        });
+        if (patched.status === 200) console.log(`Filled ${Object.keys(fill).join(", ")} for ${row.attributes.locale}.`);
+        else warn(`could not fill ${Object.keys(fill).join(", ")}: HTTP ${patched.status}: ${patched.text.slice(0, 300)}`);
+      }
+    } catch (err) {
+      warn(`feedback-email phase threw: ${err.message}`);
     }
 
     // A build uploaded without an export-compliance answer strands as

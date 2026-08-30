@@ -2,6 +2,7 @@
   "action": "public-link",
   "groupName": null,
   "linkLimit": 50,
+  "privacyPolicyUrl": "https://mixbase.app/privacy",
   "betaDescription": "mixBASE is a workspace for artists finishing music: upload mixes and masters, track versions, run a master check (loudness, peaks, and what each streaming platform's normalization will do), generate artwork and looping visualizers, plan releases, and share tracks for feedback. Please test whatever matches your workflow — uploading a mix, playing versions, the master check, artwork — and report anything that looks wrong via TestFlight feedback.",
   "note": "2026-08-30: keep the external group ('mixBASE Beta', created if missing) holding the newest reviewed build with its public TestFlight link on, so the owner can invite artists by email without tester PII passing through this public repo. Re-runs (including the workflow_run trigger after each iOS TestFlight upload) are idempotent."
 }
