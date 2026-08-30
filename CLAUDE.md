@@ -53,7 +53,9 @@
 ## macOS App
 - The consumer mixBASE app also ships native on macOS: target `mixBase` in `macos/project.yml` (XcodeGen → `Mixbase.xcodeproj`, generated, not committed), **sharing the full iOS source tree `ios/mixBase/`**. Platform gaps are bridged by `#if os()` guards in shared files plus `macos/MixbaseApp/PlatformCompat.swift` (macOS-target-only shims: UIPasteboard→NSPasteboard, UIImage=NSImage, no-op keyboard/nav-bar modifiers, iOS toolbar placements). Keep shared code platform-neutral — a UIKit-only API in `ios/mixBase/` breaks the Mac build unless guarded or shimmed.
 - Build on the Mac: `cd macos && ./build.sh run mixBase`. CI: `.github/workflows/macos-app.yml` compiles BOTH platforms on PRs/pushes to `main` touching `macos/` or `ios/mixBase/` and uploads an ad-hoc-signed `mixBase-macOS.zip` artifact.
-- Mac bundle id is `com.moodmixformat.mixbase.mac` — for Sign in with Apple it must be added to the Supabase Apple provider's Authorized Client IDs (email/password needs nothing).
+- **Ships to TestFlight in parallel with iOS**: `.github/workflows/macos-testflight.yml` (same cloud-signed pattern as the iOS lane) uploads every merged `macos/`/`ios/mixBase/` change; Matt's Mac auto-updates via the TestFlight app.
+- Mac bundle id is `com.moodmixformat.mixbase` — SAME as iOS (universal app record; macOS platform of the existing mixBASE ASC app). Sign in with Apple therefore uses the already-authorized audience; nothing to add in Supabase. Don't "fix" the shared id — it's what makes one TestFlight app serve both platforms.
+- Both TestFlight lanes mint runner dev certificates; `asc-cert-audit.yml` prunes them monthly (keeps newest 4 'Created via API') so the 2026-08-29 certificate-cap outage can't recur.
 
 ## Infra Control Panel
 - Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,stripe,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.

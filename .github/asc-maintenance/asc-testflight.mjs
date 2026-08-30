@@ -178,7 +178,10 @@ try {
   for (;;) {
     const buildsRes = await asc(
       "GET",
-      `/v1/builds?filter[app]=${appId}&sort=-uploadedDate&limit=5&fields[builds]=version,uploadedDate,processingState,expired`
+      // Platform filter matters: macOS builds share this app record (universal
+      // bundle id), and without it "newest build" could pick a Mac build for
+      // the iOS external group / beta-review submission.
+      `/v1/builds?filter[app]=${appId}&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=5&fields[builds]=version,uploadedDate,processingState,expired`
     );
     if (buildsRes.status !== 200) {
       warn(`could not list builds: HTTP ${buildsRes.status}: ${buildsRes.text.slice(0, 300)}`);

@@ -53,14 +53,26 @@ Same as iOS (`ios/mixBase/Utilities/Config.swift`): Supabase URL + anon key,
 network-client, user-selected-files (audio upload picker), and Downloads
 read-write (video saves) entitlements.
 
-**Sign in with Apple caveat:** the Mac app's bundle id is
-`com.moodmixformat.mixbase.mac` (deliberately not the iOS id). Apple issues its
-identity tokens with that id as audience, so it must be added to the Supabase
-Apple provider's **Authorized Client IDs** before Apple sign-in works from this
-app. Email/password sign-in works with no extra setup. If local automatic
+**Bundle id — same as iOS, deliberately.** The Mac app is
+`com.moodmixformat.mixbase`, Apple's universal-app pattern: its builds attach
+to the existing **mixBASE** App Store Connect record as the macOS platform,
+TestFlight shows them under the same app, and Sign in with Apple issues tokens
+with the audience Supabase already authorizes for iOS — no provider config
+needed. Email/password also works with no setup. If local automatic
 provisioning ever balks at the `applesignin` entitlement, remove that block
 from `MixbaseApp/mixBase.entitlements` and build on — Apple sign-in is the only
 thing it gates.
+
+## TestFlight (ships in parallel with iOS)
+
+`.github/workflows/macos-testflight.yml` mirrors the iOS lane: every merge to
+`main` touching `macos/` or `ios/mixBase/` archives the Mac app with
+cloud-managed signing (same ASC API key) and uploads it to TestFlight. On the
+Mac: install **TestFlight** from the Mac App Store, sign in, accept the
+mixBASE build, turn on automatic updates — the Mac then installs each merge by
+itself, exactly like the iPhone. (Both TestFlight lanes mint runner
+development certificates; the `asc-cert-audit` workflow prunes them monthly so
+Apple's certificate cap can't fill up again.)
 
 # MixbaseInfra (admin control panel)
 
