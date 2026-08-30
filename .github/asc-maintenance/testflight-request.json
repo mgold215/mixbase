@@ -1,0 +1,6 @@
+{
+  "action": "public-link",
+  "groupName": null,
+  "linkLimit": 50,
+  "note": "2026-08-30: enable the external beta group's public TestFlight link (creating 'mixBASE Beta' if no external group exists) so the owner can invite artists by email without any tester PII passing through this public repo. Safe to leave un-parked: re-runs just re-print the existing link."
+}
