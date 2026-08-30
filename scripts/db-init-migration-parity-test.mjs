@@ -78,6 +78,8 @@ const EXCLUDED = {
     'REVOKE/GRANT only, on public.profiles — the same two grounds 018 (privilege-only) and 021/023/024 (profiles is a migration-006 table this blob never creates) already rest on. A bare REVOKE against a missing relation would abort the whole bootstrap run. Note the consequence honestly: db-init alone does not close this privilege hole on a fresh project, but db-init alone cannot stand up profiles either — a fresh environment needs the numbered migrations regardless, and 006 and 036 are both in that set.',
   '037_feedback_drop_anon_insert.sql':
     'DROP POLICY only, on public.mb_feedback — no object is declared, so there is nothing for SCHEMA_SQL to carry. Same privilege-only ground as 018 and 036. The policy it drops (017 public_feedback_insert) is not in SCHEMA_SQL either, so a fresh bootstrap never creates the hole this removes and the two stay consistent: nothing to create, nothing to drop.',
+  '038_storage_scope_uploads_to_owner.sql':
+    'Documentation only — every statement is commented out, and it targets storage.objects, which lives in the storage schema this blob does not own (same ground as the 028/029 exclusions). Marked DO NOT APPLY YET: the scoping predicate it describes would break every iOS upload until the iOS storage key is folded, since a flat root key has a NULL first path segment.',
   '034_mix_master_status.sql':
     'a data fix (UPDATE of retired WIP/Mix-Master statuses) plus an ALTER COLUMN SET DEFAULT — no object this parser accounts for. The new default IS carried: the blob\'s mb_versions create table says default \'Mix\', so a fresh bootstrap never mints a retired status, and there is no old data in a fresh database to retrofit.',
 }

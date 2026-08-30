@@ -1,0 +1,103 @@
+-- 038: scope storage INSERTs to objects under a project the uploader owns.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 🛑 DO NOT APPLY YET. THIS WILL BREAK EVERY iOS UPLOAD IN ITS CURRENT FORM.
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Not a caution — measured. See "THE ORDERING HAZARD" below. This file exists so
+-- the finding is not lost, and so nobody applies the obvious version of it.
+--
+-- THE HOLE (real, verified in prod 2026-08-30)
+-- Migration 029 requires a signed-in user to write objects, and stops there:
+--
+--     for insert to authenticated with check (bucket_id = 'mf-audio')
+--
+-- There is no predicate on the object PATH. The app enforces ownership in two
+-- places, both of which are bypassed by writing straight to Supabase Storage
+-- with the public anon key plus the attacker's own JWT:
+--   • src/app/api/upload-url/route.ts:70 — ownsProject(projectId, userId) → 403
+--   • src/app/api/tus/route.ts:117       — the same gate
+-- That direct path is live: the iOS app uploads exactly that way.
+--
+-- Attack: GET /api/feed hands any signed-in user the project_id and audio_url of
+-- every other artist's uploads (src/lib/feed.ts:206). Object keys are
+-- `<projectId>/<file>`. Mallory POSTs to mf-audio/<victimProjectId>/anything.wav
+-- — 2 GB per file, unlimited count. uploadLimiter (30/hr) never runs and no tier
+-- quota applies: unmetered storage billing, plus attacker-controlled bytes under
+-- another artist's prefix, served publicly from mixbase.app/api/audio/...
+--
+-- Bounded: UPDATE and DELETE remain service-role only, so existing files cannot
+-- be overwritten or destroyed. `nosniff` (next.config.ts:28) plus the per-bucket
+-- MIME allowlists block the XSS escalation. This is billing + planting, not
+-- defacement.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- THE ORDERING HAZARD — why the obvious policy must not ship first
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The natural fix scopes on the first path segment:
+--
+--     (storage.foldername(name))[1] = <an owned project id>
+--
+-- The web uploader satisfies that (ProjectClient.tsx:649 builds
+-- `${project.id}/${Date.now()}.${ext}`). iOS DOES NOT. It writes a FLAT key at
+-- the bucket root — `<projectId>-v<n>-<ts>.<ext>` (ProjectDetailView.swift:684,
+-- NewProjectView.swift:220) — and for a flat name `storage.foldername()` returns
+-- an empty array, so `[1]` is NULL and the WITH CHECK can never be satisfied.
+--
+-- Measured in prod 2026-08-30, not assumed:
+--   select (storage.foldername('abc-v2-123.wav'))[1] is null;   -- t
+--   -- 118 flat root objects in mf-audio, 7 written in the last 30 days,
+--   -- most recent 2026-08-29. The phone is actively writing this shape today.
+--
+-- So applying the scoping policy before iOS folds its keys silently breaks every
+-- upload from the phone, with a 403 from Storage that the app surfaces only as a
+-- generic failure. Do the two in this order:
+--
+--   1. Fold the iOS storage key onto `<projectId>/<file>` (already the standing
+--      queue item), keeping SupabaseService:513 — the collection cover — at the
+--      root, since it is not a project-scoped object.
+--   2. Backfill or accept the 118 legacy root objects. The policy governs new
+--      INSERTs only, so they keep working; they simply can never be re-uploaded
+--      under the same key.
+--   3. THEN apply this migration and re-verify a phone upload end to end.
+--
+-- Also note mf-artwork takes `covers/<collectionId>/…` keys as well as
+-- `<projectId>/…` (src/app/api/generate-artwork/route.ts), so its predicate
+-- needs the collection branch — a project-only predicate would break collection
+-- cover generation the same way.
+--
+-- APPLY (only after step 1 above, and only on Matt's go-ahead)
+--
+--   drop policy if exists "allow_uploads_mf_audio" on storage.objects;
+--   create policy "allow_uploads_mf_audio" on storage.objects
+--     for insert to authenticated
+--     with check (
+--       bucket_id = 'mf-audio' and exists (
+--         select 1 from mb_projects p
+--          where p.id::text = (storage.foldername(name))[1]
+--            and p.user_id = auth.uid()));
+--
+--   drop policy if exists "allow_uploads_mf_artwork" on storage.objects;
+--   create policy "allow_uploads_mf_artwork" on storage.objects
+--     for insert to authenticated
+--     with check (
+--       bucket_id = 'mf-artwork' and (
+--         exists (select 1 from mb_projects p
+--                  where p.id::text = (storage.foldername(name))[1]
+--                    and p.user_id = auth.uid())
+--         or exists (select 1 from mb_collections c
+--                     where (storage.foldername(name))[1] = 'covers'
+--                       and c.id::text = (storage.foldername(name))[2]
+--                       and c.user_id = auth.uid())));
+--
+--   -- mf-video is written only by the server (service_role, which bypasses RLS
+--   -- entirely), so its authenticated INSERT grant can simply be revoked rather
+--   -- than scoped. Confirm no client writes it before doing so.
+--
+-- VERIFY
+--   select policyname, cmd, roles, with_check from pg_policies
+--    where tablename = 'objects' and policyname like 'allow_uploads_%';
+--   -- then, as a real signed-in user: upload from the WEB, upload from the
+--   -- PHONE, and generate a COLLECTION cover. All three must still succeed.
+--
+-- ROLLBACK — re-create 029's unscoped policies (restores the hole; deliberate
+-- revert only). Take the exact text from 029, which is applied and current.
