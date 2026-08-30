@@ -234,9 +234,8 @@ struct NewProjectView: View {
                     // name comes from the picked file, size and duration from the
                     // scratch copy we still hold. Omitting them left every mix
                     // created from this screen with no name, size or duration.
-                    _ = try await SupabaseService.shared.createVersion(
+                    _ = try await MixbaseAPI.shared.createVersion(
                         projectId: project.id,
-                        versionNumber: 1,
                         audioUrl: audioPublicUrl,
                         label: label.isEmpty ? nil : label,
                         audioFilename: fileURL.lastPathComponent,

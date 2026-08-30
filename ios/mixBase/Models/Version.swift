@@ -3,23 +3,19 @@ import Foundation
 // MARK: - MixStatus
 // The version workflow: Mix → Master → Finished → Released. There is no
 // hand-picked "WIP" step — a fresh upload's status is detected from its
-// filename, matching the web app's parser (src/lib/mix-status.ts): the word
-// "master" standing alone (so "MASTER 2.wav", "master.wav", "Master_3.aiff",
-// but not "remaster" or "mastering") means the artist is mastering; anything
-// else is a work-in-progress Mix.
+// filename by the SERVER (src/lib/mix-status.ts, applied in POST
+// /api/versions): the word "master" standing alone (so "MASTER 2.wav",
+// "master.wav", "Master_3.aiff", but not "remaster" or "mastering") means the
+// artist is mastering; anything else is a work-in-progress Mix.
+//
+// That parser deliberately does NOT have a copy here. It used to, and the
+// upload path called it — which is how the phone ended up deciding a row's
+// status, label and download consent for itself. One authority, server-side:
+// no client gets to invent a fifth status, and a rule change ships without
+// waiting on an App Store review.
 enum MixStatus {
 
     static let all = ["Mix", "Master", "Finished", "Released"]
-
-    /// Status a fresh upload should carry, from its filename alone.
-    static func forUpload(filename: String?) -> String {
-        guard let filename else { return "Mix" }
-        let isMaster = filename.range(
-            of: "(?<![a-zA-Z])master(?![a-zA-Z])",
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil
-        return isMaster ? "Master" : "Mix"
-    }
 }
 
 // MARK: - Version

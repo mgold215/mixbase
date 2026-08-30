@@ -1,0 +1,4 @@
+{
+  "action": "list",
+  "note": "Parked in list mode so a stray push can never repeat a revocation. Last cleanup: 2026-08-30, removed the 10 runner-minted 'Created via API' DEVELOPMENT certs that had hit Apple's cap (TestFlight run #15); kept U6Z3X946GG (Matt Goldman, the Mac's own cert)."
+}

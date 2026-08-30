@@ -321,53 +321,11 @@ class SupabaseService {
         return try decoder.decode([Version].self, from: data)
     }
 
-    /// Create a new version for a project
-    /// Create a version row.
-    ///
-    /// `audioFilename`, `durationSeconds` and `fileSizeBytes` are REQUIRED to be
-    /// supplied wherever they're knowable, and every caller has them: the picked
-    /// file's `lastPathComponent`, the on-disk size, and an AVAsset probe. They
-    /// were omitted here originally, so every mix uploaded from this app landed
-    /// with all three NULL — the row exists and the audio plays, but the version
-    /// shows no name, no duration and no size, which reads to the user as "the
-    /// upload didn't work". It also left `duration_seconds` null on 141 of 357
-    /// rows in production, and the web app's loudness gate reads a null size as
-    /// "unknown", not "small".
-    func createVersion(
-        projectId: UUID,
-        versionNumber: Int,
-        audioUrl: String,
-        label: String?,
-        audioFilename: String? = nil,
-        durationSeconds: Int? = nil,
-        fileSizeBytes: Int? = nil
-    ) async throws -> Version {
-        var fields: [String: Any] = [
-            "project_id": projectId.postgresString,
-            "version_number": versionNumber,
-            "audio_url": audioUrl,
-            // Smart status: "MASTER 2.wav" is a Master, everything else a Mix —
-            // same filename convention the web app's upload route reads.
-            "status": MixStatus.forUpload(filename: audioFilename),
-            "allow_download": false
-        ]
-        if let label = label { fields["label"] = label }
-        // Omit rather than send NSNull: a null write would clobber a value a
-        // later heal or the web app had already filled in.
-        if let audioFilename = audioFilename { fields["audio_filename"] = audioFilename }
-        if let durationSeconds = durationSeconds { fields["duration_seconds"] = durationSeconds }
-        if let fileSizeBytes = fileSizeBytes { fields["file_size_bytes"] = fileSizeBytes }
-
-        let body = try JSONSerialization.data(withJSONObject: fields)
-        let request = makeRequest(path: "/rest/v1/mb_versions", method: "POST", body: body)
-        let (data, response) = try await authenticatedData(for: request)
-        try validateResponse(response)
-        let versions = try decoder.decode([Version].self, from: data)
-        guard let version = versions.first else {
-            throw SupabaseError.decodingFailed("Failed to decode created version")
-        }
-        return version
-    }
+    // Version ROWS are created by MixbaseAPI.createVersion, not here. A direct
+    // PostgREST insert has to invent `allow_download`, `status`, `label` and
+    // `version_number` client-side; POST /api/versions decides all four
+    // server-side — most importantly inheriting the artist's download consent
+    // instead of resetting it to false on every upload from the phone.
 
     /// Update just the status of a version (e.g. "Mix" -> "Master")
     func updateVersionStatus(id: UUID, status: String) async throws {

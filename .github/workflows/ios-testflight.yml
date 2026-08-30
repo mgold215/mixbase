@@ -12,6 +12,15 @@
 #
 # Note: macOS runners bill minutes at 10x on private repos — the ios/** paths
 # filter keeps web-only merges from spending them.
+#
+# Known failure mode (first hit: run #15, 2026-08-29): the archive dies in
+# seconds at GatherProvisioningInputs with "Your account has reached the
+# maximum number of certificates" + "No profiles for 'com.moodmixformat.
+# mixbase' were found". Each run signs on a fresh runner and the minted
+# 'Created via API' development certs pile up until Apple's cap. Fix: the
+# "ASC Certificate Audit" workflow (.github/workflows/asc-cert-audit.yml) —
+# edit .github/asc-maintenance/request.json to list, then revoke the stale
+# runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution).
 
 name: iOS TestFlight
 
