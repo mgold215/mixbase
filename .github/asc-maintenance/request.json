@@ -1,3 +1,16 @@
 {
-  "action": "list"
+  "action": "revoke",
+  "note": "2026-08-30: TestFlight signing hit Apple's cert cap (run #15). Revoking the 10 runner-minted 'Created via API' DEVELOPMENT certs; keeping U6Z3X946GG (Matt Goldman, the Mac's own cert). Creation dates (expiry - 1y) match TestFlight CI run timestamps exactly. Approved by Matt in-session.",
+  "certificateIds": [
+    "324SC589F6",
+    "7852SJ56QF",
+    "55RMHRMU48",
+    "93ZFXWC5L4",
+    "X2TMPR7YT6",
+    "V8Y63U2RH2",
+    "62SH6PSSYK",
+    "54522Q7RYD",
+    "4K7456RHHX",
+    "F572GC6P76"
+  ]
 }
