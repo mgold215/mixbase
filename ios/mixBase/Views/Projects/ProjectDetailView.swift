@@ -38,6 +38,10 @@ struct ProjectDetailView: View {
     @State private var feedbackByVersion: [UUID: [Feedback]] = [:]
     @State private var expandedFeedback: Set<UUID> = []
 
+    // Version history is collapsed by default, matching the web app's
+    // "Version history (N)" toggle.
+    @State private var showVersionHistory = false
+
     var body: some View {
         ZStack {
             Color(hex: "#080808")
@@ -114,38 +118,6 @@ struct ProjectDetailView: View {
                         }
                         .padding(.horizontal)
 
-                        // MARK: - Versions Section
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Versions")
-                                    .font(.headline)
-                                    .foregroundColor(Color(hex: "#f0f0f0"))
-                                Text("(\(versions.count))")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-
-                            if versions.isEmpty {
-                                Text("No versions yet — upload your first mix")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                    .padding(.horizontal)
-                            } else {
-                                ForEach(versions.sorted(by: { $0.versionNumber > $1.versionNumber })) { version in
-                                    versionRow(version: version, project: project)
-                                }
-                            }
-                        }
-
-                        // MARK: - Master Check (latest mix)
-                        if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
-                            MasterCheckCard(version: latest)
-                                .id(latest.id) // reset measurement state when a new mix lands
-                                .padding(.horizontal)
-                        }
-
                         // MARK: - Upload Version Button
                         if isUploadingAudio {
                             VStack(spacing: 8) {
@@ -184,6 +156,59 @@ struct ProjectDetailView: View {
                                     .cornerRadius(10)
                                 }
                                 .padding(.horizontal)
+                            }
+                        }
+
+                        // MARK: - Master Check (latest mix)
+                        if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
+                            MasterCheckCard(version: latest)
+                                .id(latest.id) // reset measurement state when a new mix lands
+                                .padding(.horizontal)
+                        }
+
+                        // MARK: - Version History (collapsible, like the web app)
+                        VStack(alignment: .leading, spacing: 12) {
+                            if versions.isEmpty {
+                                HStack {
+                                    Text("Version History")
+                                        .font(.headline)
+                                        .foregroundColor(Color(hex: "#f0f0f0"))
+                                    Spacer()
+                                }
+                                .padding(.horizontal)
+
+                                Text("No versions yet — upload your first mix")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                                    .padding(.horizontal)
+                            } else {
+                                Button(action: {
+                                    withAnimation(.easeOut(duration: 0.15)) { showVersionHistory.toggle() }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "clock.arrow.circlepath")
+                                            .font(.subheadline)
+                                            .foregroundColor(.gray)
+                                        Text("Version History")
+                                            .font(.headline)
+                                            .foregroundColor(Color(hex: "#f0f0f0"))
+                                        Text("(\(versions.count))")
+                                            .font(.subheadline)
+                                            .foregroundColor(.gray)
+                                        Spacer()
+                                        Image(systemName: showVersionHistory ? "chevron.up" : "chevron.down")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                    .padding(.horizontal)
+                                }
+                                .buttonStyle(.plain)
+
+                                if showVersionHistory {
+                                    ForEach(versions.sorted(by: { $0.versionNumber > $1.versionNumber })) { version in
+                                        versionRow(version: version, project: project)
+                                    }
+                                }
                             }
                         }
 
