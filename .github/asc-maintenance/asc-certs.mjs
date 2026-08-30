@@ -111,6 +111,39 @@ for (const c of certs) {
   );
 }
 
+// Scheduled monthly prune (ASC_PRUNE=1, set by asc-cert-audit.yml's cron):
+// with BOTH TestFlight lanes (iOS + macOS) minting runner certs, the account
+// would age back into Apple's cap roughly twice as fast as the 2026-08-29
+// incident. Triple rails: DEVELOPMENT type only, the exact API-minted display
+// name only, and the newest KEEP always survive. The Mac's own cert has a
+// human name, so it can never match.
+if (process.env.ASC_PRUNE === "1") {
+  const KEEP = 4;
+  // `certs` is sorted oldest-expiration (≈ oldest-created) first.
+  const minted = certs.filter(
+    (c) =>
+      c.attributes.certificateType === "DEVELOPMENT" &&
+      (c.attributes.displayName ?? c.attributes.name) === "Created via API"
+  );
+  const stale = minted.slice(0, Math.max(0, minted.length - KEEP));
+  if (stale.length === 0) {
+    console.log(`\nprune: ${minted.length} runner-minted dev cert(s) (≤ ${KEEP} kept) — nothing to do.`);
+    process.exit(0);
+  }
+  console.log(`\nprune: revoking ${stale.length} of ${minted.length} runner-minted dev certs (keeping newest ${KEEP})…`);
+  let pruneFailed = false;
+  for (const cert of stale) {
+    const { status, text } = await asc("DELETE", `/v1/certificates/${cert.id}`);
+    if (status === 204) {
+      console.log(`REVOKED ${cert.id} (serial ${cert.attributes.serialNumber}, expires ${cert.attributes.expirationDate})`);
+    } else {
+      console.error(`FAILED to revoke ${cert.id}: HTTP ${status}: ${text.slice(0, 300)}`);
+      pruneFailed = true;
+    }
+  }
+  process.exit(pruneFailed ? 1 : 0);
+}
+
 if (request.action === "list") {
   console.log("\naction=list — no changes made.");
   process.exit(0);

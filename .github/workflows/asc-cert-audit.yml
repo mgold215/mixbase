@@ -15,8 +15,15 @@ on:
   push:
     branches: [main, tst]
     paths:
-      - '.github/asc-maintenance/**'
+      - '.github/asc-maintenance/request.json'
+      - '.github/asc-maintenance/asc-certs.mjs'
       - '.github/workflows/asc-cert-audit.yml'
+  # Monthly prune: both TestFlight lanes (iOS + macOS) mint runner dev certs,
+  # so without this the account ages back into Apple's certificate cap (the
+  # 2026-08-29 incident) roughly twice as fast. The script keeps the newest 4
+  # 'Created via API' DEVELOPMENT certs and never touches anything else.
+  schedule:
+    - cron: '23 6 1 * *'
   workflow_dispatch: {}
 
 permissions:
@@ -46,4 +53,6 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          # Cron firings prune instead of reading request.json (see script).
+          ASC_PRUNE: ${{ github.event_name == 'schedule' && '1' || '' }}
         run: node .github/asc-maintenance/asc-certs.mjs

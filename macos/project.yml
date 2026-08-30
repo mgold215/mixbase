@@ -50,23 +50,32 @@ targets:
           - "PrivacyInfo.xcprivacy"
           - "Assets.xcassets"
       - path: MixbaseApp
+    # Generated (not committed — see .gitignore) so the plist can carry keys
+    # the INFOPLIST_KEY_ mechanism doesn't cover; ITSAppUsesNonExemptEncryption
+    # keeps TestFlight builds out of "Missing Compliance" limbo, same as iOS.
+    info:
+      path: MixbaseApp/Info.plist
+      properties:
+        CFBundleDisplayName: mixBase
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.music
+        ITSAppUsesNonExemptEncryption: false
+        NSPrincipalClass: NSApplication
     settings:
       base:
         PRODUCT_NAME: mixBase
-        # NOT the iOS bundle id: same App ID on two platforms confuses
-        # automatic provisioning. Note for Sign in with Apple: this id must be
-        # added to the Supabase Apple provider's authorized client IDs before
-        # Apple sign-in works from the Mac app (email/password needs nothing).
-        PRODUCT_BUNDLE_IDENTIFIER: com.moodmixformat.mixbase.mac
-        GENERATE_INFOPLIST_FILE: YES
+        # SAME bundle id as the iOS app — deliberately. Apple's universal-app
+        # pattern: the Mac build attaches to the existing "mixBASE" App Store
+        # Connect record, shows up as a macOS tab in the same TestFlight app,
+        # and Sign in with Apple issues tokens with the audience Supabase
+        # already authorizes for iOS. Automatic cloud signing provisions the
+        # one App ID for both platforms.
+        PRODUCT_BUNDLE_IDENTIFIER: com.moodmixformat.mixbase
         CODE_SIGN_ENTITLEMENTS: MixbaseApp/mixBase.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
-        INFOPLIST_KEY_CFBundleDisplayName: mixBase
-        # macOS app, not a document-based app:
-        INFOPLIST_KEY_NSMainStoryboardFile: ""
 
   MixbaseInfra:
     type: application

@@ -1,0 +1,116 @@
+# macOS → TestFlight, no Mac required — the Mac twin of ios-testflight.yml.
+#
+# Every merged macos/ or shared-source change is archived on a GitHub-hosted
+# macOS runner with cloud-managed signing (the same App Store Connect API key,
+# no certs or profiles stored in the repo) and uploaded to TestFlight. The Mac
+# app shares the iOS bundle id (com.moodmixformat.mixbase), so builds land as
+# the macOS platform of the SAME "mixBASE" app record — install TestFlight
+# from the Mac App Store, and with automatic updates on, the Mac installs each
+# build by itself, in parallel with the iPhone.
+#
+# Shares the ios-testflight.yml conventions: newest Xcode (ASC upload SDK
+# floor), UTC-timestamp build numbers, app-store-connect/upload export.
+# Known failure mode and its fix are documented in ios-testflight.yml
+# (certificate cap → asc-cert-audit workflow).
+
+name: macOS TestFlight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'macos/**'
+      - 'ios/mixBase/**'
+      - '.github/workflows/macos-testflight.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-testflight
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  testflight:
+    name: Build & upload to TestFlight (macOS)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No versioned Xcode found"; exit 1; fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install App Store Connect API key
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+        run: |
+          mkdir -p "$HOME/private_keys"
+          echo "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: cd macos && xcodegen generate
+
+      - name: Archive
+        run: |
+          # UTC-timestamp build number: always increasing, never collides with
+          # iOS builds (per-platform namespaces) or hand-shipped ones.
+          BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
+          echo "Build number: $BUILD_NUMBER"
+          xcodebuild \
+            -project macos/Mixbase.xcodeproj \
+            -scheme mixBase \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/mixBase-macOS.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive
+
+      - name: Upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>destination</key>
+              <string>upload</string>
+              <key>teamID</key>
+              <string>AP8UC39D4D</string>
+              <key>uploadSymbols</key>
+              <true/>
+              <key>manageAppVersionAndBuildNumber</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/mixBase-macOS.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
