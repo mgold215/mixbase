@@ -5,6 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, ChevronDown, ChevronUp, Trash2, CalendarRange, ClipboardList, Check, Copy, Droplets, ExternalLink, Download, AlertTriangle, AlertCircle, ArrowUp, ArrowDown, X, ListMusic } from 'lucide-react'
 import { displayArtworkUrl, audioProxyUrl, type Release } from '@/lib/supabase'
+import { versionDisplayLabel } from '@/lib/mix-status'
 import { PRE_LAUNCH_ITEMS, LAUNCH_CAMPAIGN_ITEMS, releaseCompletionPercent, buildReleasePlan, getReleaseStatus, releaseDatePresets, formatReleaseDate, daysUntilDate, isUpcomingRelease, compareReleaseDates, type ReleaseStatusKey } from '@/lib/release-plan'
 import { distroKidTracklist, validateForDistroKid, distroKidFields, buildDistroKidSheet, waterfallDates } from '@/lib/distrokid'
 import CassetteIcon from '@/components/CassetteIcon'
@@ -1020,7 +1021,7 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
                         <option value="" style={{ backgroundColor: 'var(--surface)' }}>Latest / none</option>
                         {trackVersions.map(v => (
                           <option key={v.id} value={v.id} style={{ backgroundColor: 'var(--surface)' }}>
-                            {v.label ? v.label : `Version ${v.version_number}`} — {v.status}
+                            {versionDisplayLabel(v)} — {v.status}
                           </option>
                         ))}
                       </select>
@@ -1137,7 +1138,7 @@ export default function PipelineClient({ initialReleases, projects, versions, pr
                   </option>
                   {projectVersions.map(v => (
                     <option key={v.id} value={v.id} style={{ backgroundColor: 'var(--surface)' }}>
-                      {v.label ? v.label : `Version ${v.version_number}`} — {v.status}
+                      {versionDisplayLabel(v)} — {v.status}
                     </option>
                   ))}
                 </select>

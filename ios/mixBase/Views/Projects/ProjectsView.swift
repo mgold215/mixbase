@@ -854,7 +854,7 @@ struct CollectionDetailView: View {
                         .lineLimit(1)
                     HStack(spacing: 4) {
                         if let version = latestVersions[project.id] {
-                            Text("v\(version.versionNumber)")
+                            Text(version.displayName)
                         }
                         if let genre = project.genre {
                             Text(genre)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
+import { versionDisplayLabel } from '@/lib/mix-status'
 
 // Caps for the two free-text fields on this PUBLIC, unauthenticated route.
 // Both are stored in unbounded `text` columns, and `reviewer_name` is also
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
   // Fetch the version + project owner for the activity log
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
-    .select('project_id, version_number, mb_projects!inner(user_id)')
+    .select('project_id, version_number, label, audio_filename, status, mb_projects!inner(user_id)')
     .eq('id', version_id)
     .single()
 
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
       project_id: version.project_id,
       version_id,
       user_id: projectUserId,
-      description: `Feedback from ${safeName} on v${version.version_number}`,
+      description: `Feedback from ${safeName} on ${versionDisplayLabel(version)}`,
     })
   }
 

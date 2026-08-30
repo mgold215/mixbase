@@ -78,6 +78,58 @@ struct Version: Codable, Identifiable {
     var loudnessShortTermLufs: Double?
     var samplePeakDb: Double?
 
+    // MARK: - Display naming (mirror of src/lib/mix-status.ts — DISPLAY ONLY)
+    // Nothing in the UI is called "v3" or "Version 3": the artist's stored
+    // label wins, then the mix/master identity parsed from their own filename
+    // ("MASTER 2.wav" → "MASTER 2"), then "Mix N"/"Master N" in upload order —
+    // the same chain the web's versionDisplayLabel applies. This mirrors the
+    // server parser for PRESENTATION only; the upload path still sends no
+    // label or status, and the server remains the one authority for what a
+    // row IS (see the MixStatus note above).
+
+    // Standalone-word tokens: "remaster"/"mixdown" must not match, "MASTER2",
+    // "mix_3" and "Mix 3.1" must. Master is tested first so a name carrying
+    // both ("mix master 2") reads as the master it is.
+    private static let kindTokens: [(kind: String, regex: NSRegularExpression)] = [
+        ("Master", try! NSRegularExpression(pattern: "(?:^|[^a-z])master(?:[\\s._#-]*(\\d+(?:\\.\\d+)*))?(?![a-z])", options: [.caseInsensitive])),
+        ("Mix", try! NSRegularExpression(pattern: "(?:^|[^a-z])mix(?:[\\s._#-]*(\\d+(?:\\.\\d+)*))?(?![a-z])", options: [.caseInsensitive])),
+    ]
+
+    // "MASTER 2.wav" → (kind: "Master", label: "MASTER 2"); a bare
+    // "master.wav" → (kind: "Master", label: nil); unparseable → nil.
+    private static func parseName(_ name: String?) -> (kind: String, label: String?)? {
+        guard let name, !name.isEmpty else { return nil }
+        let base = name.replacingOccurrences(of: "\\.[^.]+$", with: "", options: .regularExpression)
+        for (kind, regex) in kindTokens {
+            let range = NSRange(base.startIndex..., in: base)
+            guard let match = regex.firstMatch(in: base, options: [], range: range) else { continue }
+            if match.numberOfRanges > 1, let numberRange = Range(match.range(at: 1), in: base) {
+                return (kind, "\(kind.uppercased()) \(base[numberRange])")
+            }
+            return (kind, nil)
+        }
+        return nil
+    }
+
+    // "Mix" or "Master" — the artist's naming wins; rows with no parseable
+    // name fall back to status, where anything past Mix is master-stage work.
+    var kindName: String {
+        if let parsed = Version.parseName(label) ?? Version.parseName(audioFilename) {
+            return parsed.kind
+        }
+        switch status {
+        case "Master", "Mix/Master", "Finished", "Released": return "Master"
+        default: return "Mix"
+        }
+    }
+
+    // What this row is called everywhere in the app.
+    var displayName: String {
+        if let label, !label.isEmpty { return label }
+        if let parsedLabel = Version.parseName(audioFilename)?.label { return parsedLabel }
+        return "\(kindName) \(versionNumber)"
+    }
+
     // MARK: - CodingKeys
     // Maps camelCase Swift names to snake_case Supabase column names.
     enum CodingKeys: String, CodingKey {

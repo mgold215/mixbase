@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
     project_id,
     version_id: data.id,
     user_id: userId,
-    description: `Version ${nextVersion} uploaded${resolvedLabel ? ` — "${resolvedLabel}"` : ''}`,
+    description: `${resolvedLabel ?? `${parsedName?.kind ?? 'Mix'} ${nextVersion}`} uploaded`,
   })
 
   return NextResponse.json(data, { status: 201 })

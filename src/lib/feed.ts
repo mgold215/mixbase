@@ -5,6 +5,7 @@
 import { supabaseAdmin } from './supabase'
 import { ensureFeedCommentsTable, isMissingFeedCommentsTable, ensureUgcModerationTables, isMissingUgcModerationTable } from './schema-heal'
 import { publicArtistName } from './display-name'
+import { versionDisplayLabel } from './mix-status'
 
 export type FeedComment = {
   id: string
@@ -203,7 +204,7 @@ async function getModerationState(viewerId: string | undefined, versionIds: stri
 export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
   const { data: versions, error } = await supabaseAdmin
     .from('mb_versions')
-    .select('id, project_id, label, version_number, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
+    .select('id, project_id, label, version_number, audio_filename, status, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
     .not('audio_url', 'is', null)
     // Ownerless projects (residue of the fixed iOS null-owner insert bug) must
     // not reach a cross-user feed: their user_id serializes as "", which strict
@@ -321,14 +322,14 @@ export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
     user_id: v.project?.user_id ?? '',
     title: v.project?.title ?? 'Untitled',
     artist: nameById.get(v.project?.user_id ?? '') ?? 'Artist',
-    version_label: v.label || `v${v.version_number}`,
+    version_label: versionDisplayLabel(v),
     artwork_url: v.project?.finalized_artwork_url ?? v.project?.artwork_url ?? null,
     audio_url: v.audio_url,
     created_at: v.created_at,
     comments: commentsByVersion.get(v.id) ?? [],
     older: older.map(o => ({
       version_id: o.id,
-      version_label: o.label || `v${o.version_number}`,
+      version_label: versionDisplayLabel(o),
       audio_url: o.audio_url,
       created_at: o.created_at,
     })),

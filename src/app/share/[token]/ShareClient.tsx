@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Image from 'next/image'
 import { Play, Pause, MessageSquare, ChevronDown, Download } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
+import { versionDisplayLabel } from '@/lib/mix-status'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
@@ -262,7 +263,7 @@ export default function ShareClient({ version, artistName }: Props) {
         <div className="text-center">
           <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight">{title}</h1>
           <p className="text-sm text-white/40 mt-1.5">
-            {version.label || `Version ${version.version_number}`}
+            {versionDisplayLabel(version)}
             {version.status && (
               <span className="ml-2 text-white/25">· {version.status}</span>
             )}
