@@ -1,0 +1,56 @@
+-- 037: drop the vestigial anonymous INSERT policy on mb_feedback.
+--
+-- ⚠️ WRITTEN BUT NOT APPLIED — needs Matt's go-ahead. Staging and production
+-- share ONE Supabase project, so there is no isolated rehearsal.
+--
+-- THE HOLE
+-- Migration 017 created `public_feedback_insert` on mb_feedback:
+--
+--     for insert to public          -- `public` includes the anon role
+--     with check (exists (select 1 from mb_versions v where v.id = version_id))
+--
+-- The only condition is that the version_id exists. That bypasses every control
+-- POST /api/feedback enforces in code:
+--
+--   • src/app/api/feedback/route.ts:17 — feedbackLimiter.check(ipKey(request)),
+--     20 submissions per hour per IP
+--   • :12 — MAX_REVIEWER_NAME_LENGTH = 80
+--   • :13 — MAX_COMMENT_LENGTH = 2000
+--
+-- Verified against production 2026-08-30: reviewer_name and comment are
+-- unbounded `text`, carry no CHECK constraints, and mb_feedback has no triggers.
+-- So the database enforces none of the three on its own.
+--
+-- Attack: the anonymous share page ships `version.id` in its payload
+-- (src/app/share/[token]/page.tsx:22 — VERSION_PUBLIC_COLS begins with `id`),
+-- and the anon key is in the JS bundle by design. Anyone holding a share link
+-- can POST straight to /rest/v1/mb_feedback: unlimited rows, megabyte-sized
+-- reviewer_name values, all rendered in the artist's feedback pane. The route's
+-- own comment explains why the name cap exists — an uncapped reviewer_name is
+-- "a persistent payload in the victim's UI that they cannot clear."
+--
+-- WHY DROPPING IT IS SAFE
+-- 017's premise — that the share-page form needs anonymous insert — is wrong.
+-- Verified 2026-08-30, every writer goes through the server:
+--   • src/components/FeedbackForm.tsx:38 posts to /api/feedback, which writes
+--     with supabaseAdmin (service_role BYPASSES RLS, so this policy is not what
+--     lets it through and dropping the policy cannot break it)
+--   • iOS only ever READS: SupabaseService.swift:546 is a GET
+--   • every other src/ reference is a nested read (`select('*, mb_feedback(*)')`)
+-- No client anywhere inserts into this table directly.
+--
+-- APPLY
+--   drop policy if exists "public_feedback_insert" on mb_feedback;
+--
+-- VERIFY (expect zero rows)
+--   select policyname, cmd, roles from pg_policies
+--    where tablename = 'mb_feedback' and cmd = 'INSERT';
+-- Then submit real feedback through a share link and confirm it still lands —
+-- that exercises the supabaseAdmin path this migration deliberately leaves alone.
+--
+-- ROLLBACK (restores the hole — deliberate revert only, never a "reset")
+--   create policy "public_feedback_insert" on mb_feedback
+--     for insert to public
+--     with check (exists (select 1 from mb_versions v where v.id = version_id));
+
+drop policy if exists "public_feedback_insert" on mb_feedback;

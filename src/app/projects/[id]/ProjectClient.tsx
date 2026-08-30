@@ -19,6 +19,7 @@ import { trackShareUrl } from '@/lib/share-url'
 import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
+import { readAudioDuration } from '@/lib/audio-duration'
 import { copyToClipboard } from '@/lib/clipboard'
 import type { FeedComment } from '@/lib/feed'
 import {
@@ -667,37 +668,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setUploadPct(85)
     setUploadStatus('Reading metadata...')
 
-    let audioDuration: number | null = null
-    try {
-      audioDuration = await new Promise((resolve) => {
-        const audio = new Audio(audioProxyUrl(audioUrl))
-        // Only need duration — don't buffer the whole file we just uploaded.
-        audio.preload = 'metadata'
-        audio.addEventListener('loadedmetadata', () => {
-          // This probe is where NEW nulls are minted, so it must resolve an
-          // honest null rather than a number-shaped non-number.
-          // `loadedmetadata` does not guarantee a usable duration: it is NaN if
-          // metadata parsed without a length, and Infinity for a stream whose
-          // length the browser cannot determine — and this reads back through
-          // /api/audio, which only forwards Content-Length when Supabase sends
-          // one. `Math.round` propagates both unchanged.
-          //
-          // Today JSON.stringify happens to hide that (`{"d":Infinity}` is not
-          // JSON, so both encode to null and the column ends up NULL either
-          // way) — which is exactly why it went unnoticed. The bug is that the
-          // value is only correct by accident: any change to how it travels (a
-          // query param, `String(d)`, a client-side display, a future heal that
-          // reads it back) turns a silent null into "NaN" or a stored Infinity
-          // that the write-once rule could never let anyone correct.
-          const d = audio.duration
-          resolve(Number.isFinite(d) && d > 0 ? Math.round(d) : null)
-        })
-        audio.addEventListener('error', () => resolve(null))
-        setTimeout(() => resolve(null), 8000)
-      })
-    } catch {
-      audioDuration = null
-    }
+    // Measured from the LOCAL file the user picked, not the object we just
+    // uploaded — see readAudioDuration for why the remote probe minted nulls.
+    const audioDuration = await readAudioDuration(file)
 
     setUploadPct(92)
     setUploadStatus('Saving mix...')
@@ -1409,7 +1382,12 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                         <span>{new Date(av.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                         {/* While it plays, the stored length gives way to the real
                             one — which is the only length there is for the many
-                            rows whose duration_seconds is null (iOS uploads). */}
+                            rows whose duration_seconds is null. Historically those were
+                            iOS uploads (97.4% of flat-key rows), but over the 30
+                            days to 2026-08-30 24 of 27 new nulls came from the
+                            WEB uploader — it probed the just-uploaded URL rather
+                            than the local file. Fixed in readAudioDuration; this
+                            fallback still covers the existing 157 rows. */}
                         {avActive ? (
                           <span className="tabular-nums">{formatDuration(currentTime)} / {formatDuration(duration || av.duration_seconds)}</span>
                         ) : av.duration_seconds ? (

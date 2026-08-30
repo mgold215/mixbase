@@ -541,18 +541,31 @@ check('AlbumPlayer only posts for tracks whose stored duration is null',
 check('AlbumPlayer names the PROJECT and lets the server resolve the version',
   /projectId: track\.id/.test(albumPlayerSrc) && !/versionId: track\.id/.test(albumPlayerSrc))
 
+// The guard used to be spelled inline in this component and was asserted here
+// as a literal. It now lives in normalizeDuration (src/lib/audio-duration.ts),
+// unit-tested directly by scripts/audio-duration-test.mjs against NaN, Infinity,
+// 0 and negatives — i.e. the rule is tested where it is DEFINED rather than
+// pattern-matched out of a component that merely calls it.
+//
+// What this suite still owns is the property: this upload path must not measure
+// duration itself. Asserting the old literal made this check go red on a change
+// that strictly strengthened the thing it protected.
 check('ProjectClient no longer rounds audio.duration unguarded (the null factory)',
   !/resolve\(Math\.round\(audio\.duration\)\)/.test(projectClientSrc))
-check('ProjectClient resolves null unless the reading is finite and positive',
-  /Number\.isFinite\(d\) && d > 0 \? Math\.round\(d\) : null/.test(projectClientSrc))
+check('ProjectClient delegates the upload probe instead of rolling its own',
+  /readAudioDuration\(/.test(projectClientSrc) && !/new Audio\(audioProxyUrl\(/.test(projectClientSrc),
+  'an inline probe here is how the finite/positive guard drifted out of step last time')
 check('no player sets duration state with the isNaN test that lets Infinity through',
   !/isNaN\(audio\.duration\)/.test(shareClientSrc) && !/isNaN\(audio\.duration\)/.test(albumPlayerSrc))
 
-// Reported, not enforced: NewProjectForm.tsx has the identical unguarded probe
-// and is owned elsewhere. Left as a visible signal rather than a silent gap.
-if (/resolve\(Math\.round\(audio\.duration\)\)/.test(newProjectSrc)) {
-  console.log('  · NOTE NewProjectForm.tsx still has the unguarded Math.round(audio.duration) probe (owned elsewhere)')
-}
+// This used to be a console NOTE rather than a check, because NewProjectForm
+// carried the identical unguarded probe and was "owned elsewhere". It was fixed
+// on 2026-08-30 — both upload paths now share readAudioDuration — so the signal
+// is promoted to an enforced check. A reported-but-unenforced gap is one nobody
+// is stopped from reopening.
+check('NewProjectForm uses the shared local-file probe too',
+  /readAudioDuration\(/.test(newProjectSrc) && !/new Audio\(audioProxyUrl\(/.test(newProjectSrc),
+  'both upload paths must agree, or the null rate just moves between them')
 
 // ── I. Rate limit ────────────────────────────────────────────────────────────
 console.log('\nrate limit\n')

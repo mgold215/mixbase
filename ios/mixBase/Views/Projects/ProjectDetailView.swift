@@ -679,6 +679,9 @@ struct ProjectDetailView: View {
 
         do {
             let ext = url.pathExtension.lowercased()
+            // Only names the STORAGE OBJECT (which is timestamped, so a stale
+            // guess just makes a slightly-misnamed file). The row's real
+            // version_number is assigned server-side by POST /api/versions.
             let nextVersion = (versions.map(\.versionNumber).max() ?? 0) + 1
             let filename = "\(project.id.storageKeyComponent)-v\(nextVersion)-\(Int(Date().timeIntervalSince1970)).\(ext)"
 
@@ -696,9 +699,8 @@ struct ProjectDetailView: View {
             // name at all, which is what "the upload didn't work" looked like.
             // Probe tempURL for size/duration: it's the copy we still own, and
             // the security-scoped original has already been released by here.
-            let version = try await SupabaseService.shared.createVersion(
+            let version = try await MixbaseAPI.shared.createVersion(
                 projectId: project.id,
-                versionNumber: nextVersion,
                 audioUrl: audioUrl,
                 label: label,
                 audioFilename: url.lastPathComponent,

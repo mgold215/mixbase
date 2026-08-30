@@ -76,6 +76,7 @@ const SUITES = [
   'delete-account-bound-test.mjs',
   'archived-playback-test.mjs',
   'duration-backfill-test.mjs',
+  'audio-duration-test.mjs',
   'mix-status-test.mjs',
   'tracks-duration-heal-test.mjs',
   'share-duration-heal-test.mjs',

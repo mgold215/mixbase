@@ -348,7 +348,13 @@ export function ensureUsageTableWriteLock(): Promise<boolean> {
 // weeks after the heals shipped, `pg_proc.proacl` for try_increment_usage was
 // still `{=X/postgres, postgres=X/postgres, service_role=X/postgres}` — the
 // leading `=X` is the PUBLIC grant, so the anon-key quota-griefing hole the
-// heal exists to close was still WIDE OPEN in production. (The two
+// heal exists to close was still open at that point.
+//
+// RESOLVED — re-verified 2026-08-30: all three functions now read
+// `postgres=X/postgres | service_role=X/postgres` with NO leading `=X`. The
+// hole is closed. This paragraph is kept as the reason the forcing below
+// exists, not as a live incident; do not remove the forcing on the strength of
+// the ACLs being clean today, because that is what the forcing achieved. (The two
 // increment_*_usage functions, revoked by an applied migration, correctly show
 // no PUBLIC entry — the contrast is the proof.) The heal was never broken; it
 // simply never ran, because no generation happened to land on a process that
