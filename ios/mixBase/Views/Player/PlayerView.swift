@@ -250,21 +250,15 @@ struct PlayerView: View {
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Text("v\(version.versionNumber)")
+                                Text(version.displayName)
                                     .fontWeight(.semibold)
-                                if let label = version.label, !label.isEmpty {
-                                    Text("· \(label)")
-                                }
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.system(size: 9))
                             }
                         }
                     } else {
-                        Text("v\(version.versionNumber)")
+                        Text(version.displayName)
                             .fontWeight(.semibold)
-                        if let label = version.label, !label.isEmpty {
-                            Text("· \(label)")
-                        }
                     }
                     StatusBadge(status: version.status)
                 }
@@ -375,7 +369,7 @@ struct PlayerView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(Color(hex: "#f0f0f0"))
                         .lineLimit(1)
-                    Text("v\(item.version.versionNumber)\(item.version.label.map { " · \($0)" } ?? "")")
+                    Text(item.version.displayName)
                         .font(.caption2)
                         .foregroundColor(.gray)
                         .lineLimit(1)
@@ -495,12 +489,9 @@ struct PlayerView: View {
 
     // MARK: - Helpers
 
-    // Menu row title for a version, e.g. "v4 · Club Mix"
+    // Menu row title for a mix, e.g. "MASTER 2" or "Mix 4"
     private func versionMenuTitle(_ version: Version) -> String {
-        if let label = version.label, !label.isEmpty {
-            return "v\(version.versionNumber) · \(label)"
-        }
-        return "v\(version.versionNumber)"
+        version.displayName
     }
 
     private var playbackProgress: CGFloat {
@@ -692,7 +683,7 @@ struct QueueSheet: View {
                         )
                         .lineLimit(1)
 
-                    Text("v\(item.version.versionNumber)\(item.version.label.map { " · \($0)" } ?? "")")
+                    Text(item.version.displayName)
                         .font(.caption2)
                         .foregroundColor(.gray)
                         .lineLimit(1)

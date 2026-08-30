@@ -507,11 +507,9 @@ class AudioService: ObservableObject {
         info[MPNowPlayingInfoPropertyIsLiveStream] = false
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
 
-        // Surface the mix version where the "album" line shows (lock screen, car display).
+        // Surface the mix name where the "album" line shows (lock screen, car display).
         if let version = currentVersion {
-            var album = "v\(version.versionNumber)"
-            if let label = version.label, !label.isEmpty { album += " · \(label)" }
-            info[MPMediaItemPropertyAlbumTitle] = album
+            info[MPMediaItemPropertyAlbumTitle] = version.displayName
         }
 
         if duration > 0 {

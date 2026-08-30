@@ -142,7 +142,7 @@ struct MiniPlayerBar: View {
                         .foregroundColor(Color(hex: "#f0f0f0"))
                         .lineLimit(1)
                     if let version = audioService.currentVersion {
-                        Text("v\(version.versionNumber)\(version.label.map { " · \($0)" } ?? "")")
+                        Text(version.displayName)
                             .font(.caption2)
                             .foregroundColor(.gray)
                             .lineLimit(1)

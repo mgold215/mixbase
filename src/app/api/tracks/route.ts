@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { ensureProjectVisualizerColumn, isMissingVisualizerColumn } from '@/lib/schema-heal'
-import { normalizeStatus } from '@/lib/mix-status'
+import { normalizeStatus, versionDisplayLabel } from '@/lib/mix-status'
 
 export type Track = {
   id: string
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
 
   const selectVersions = (withVisualizer: boolean) => supabaseAdmin
     .from('mb_versions')
-    .select(`id, project_id, label, version_number, audio_url, duration_seconds, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
+    .select(`id, project_id, label, version_number, audio_filename, audio_url, duration_seconds, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
     .eq('mb_projects.user_id', userId)
     .order('version_number', { ascending: false })
 
@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
       // value can re-enter the catalog after migration 034 and reach the engine
       // unfolded. normalizeStatus is the same fold the write paths apply.
       status: normalizeStatus(v.status),
-      version: v.label || `v${v.version_number}`,
+      version: versionDisplayLabel(v),
       uploaded_at: Math.floor(new Date(v.created_at).getTime() / 1000),
       key_signature: p?.key_signature ?? null,
       bpm: p?.bpm ?? null,

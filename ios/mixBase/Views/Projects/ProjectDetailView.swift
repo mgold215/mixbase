@@ -32,7 +32,6 @@ struct ProjectDetailView: View {
     @State private var showAudioPicker = false
     @State private var isUploadingAudio = false
     @State private var uploadProgress = ""
-    @State private var newVersionLabel = ""
 
     // Feedback
     @State private var feedbackByVersion: [UUID: [Feedback]] = [:]
@@ -71,7 +70,7 @@ struct ProjectDetailView: View {
                             }) {
                                 HStack {
                                     Image(systemName: "play.fill")
-                                    Text("Play Latest (v\(latest.versionNumber))")
+                                    Text("Play Latest (\(latest.displayName))")
                                 }
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
@@ -118,7 +117,7 @@ struct ProjectDetailView: View {
                         }
                         .padding(.horizontal)
 
-                        // MARK: - Upload Version Button
+                        // MARK: - Upload Mix Button
                         if isUploadingAudio {
                             VStack(spacing: 8) {
                                 ProgressView()
@@ -133,19 +132,15 @@ struct ProjectDetailView: View {
                             .cornerRadius(10)
                             .padding(.horizontal)
                         } else {
-                            VStack(spacing: 8) {
-                                TextField("Version label (optional)", text: $newVersionLabel)
-                                    .font(.caption)
-                                    .foregroundColor(Color(hex: "#f0f0f0"))
-                                    .padding(8)
-                                    .background(Color(hex: "#161616"))
-                                    .cornerRadius(6)
-                                    .padding(.horizontal)
-
+                            // No label field: the mix is named from the file
+                            // itself, server-side, same rule as the web —
+                            // "MASTER 2.wav" lands as MASTER 2, anything else
+                            // is the next Mix.
+                            VStack(spacing: 6) {
                                 Button(action: { showAudioPicker = true }) {
                                     HStack {
                                         Image(systemName: "arrow.up.doc")
-                                        Text("Upload Version")
+                                        Text("Upload Mix")
                                     }
                                     .font(.subheadline)
                                     .fontWeight(.medium)
@@ -156,6 +151,11 @@ struct ProjectDetailView: View {
                                     .cornerRadius(10)
                                 }
                                 .padding(.horizontal)
+
+                                Text("Named from your file — put \"master\" in the filename to upload a master")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                                    .padding(.horizontal)
                             }
                         }
 
@@ -177,7 +177,7 @@ struct ProjectDetailView: View {
                                 }
                                 .padding(.horizontal)
 
-                                Text("No versions yet — upload your first mix")
+                                Text("No mixes yet — upload your first mix")
                                     .font(.subheadline)
                                     .foregroundColor(.gray)
                                     .padding(.horizontal)
@@ -476,7 +476,7 @@ struct ProjectDetailView: View {
                             .font(.caption)
                             .foregroundColor(Color(hex: "#080808"))
                     } else {
-                        Text("v\(version.versionNumber)")
+                        Text("\(version.versionNumber)")
                             .font(.caption)
                             .fontWeight(.bold)
                             .foregroundColor(
@@ -488,7 +488,7 @@ struct ProjectDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(version.label ?? "Version \(version.versionNumber)")
+                    Text(version.displayName)
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(Color(hex: "#f0f0f0"))
@@ -613,7 +613,7 @@ struct ProjectDetailView: View {
                             }
                         }) {
                             HStack {
-                                Text("v\(version.versionNumber)")
+                                Text(version.displayName)
                                     .font(.caption)
                                     .fontWeight(.bold)
                                     .foregroundColor(Color(hex: "#2dd4bf"))
@@ -718,7 +718,9 @@ struct ProjectDetailView: View {
             }
 
             uploadProgress = "Creating version..."
-            let label = newVersionLabel.isEmpty ? nil : newVersionLabel
+            // No client label: the server names the row from the filename
+            // (mix-status.ts) — "MASTER 2.wav" → MASTER 2, bare "master.wav" →
+            // the next master number, anything else → the next Mix.
             // The user-facing name is the file they PICKED (url), not tempURL —
             // tempURL is a UUID scratch copy. Without this the version showed no
             // name at all, which is what "the upload didn't work" looked like.
@@ -727,14 +729,13 @@ struct ProjectDetailView: View {
             let version = try await MixbaseAPI.shared.createVersion(
                 projectId: project.id,
                 audioUrl: audioUrl,
-                label: label,
+                label: nil,
                 audioFilename: url.lastPathComponent,
                 durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
                 fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)
             )
 
             versions.append(version)
-            newVersionLabel = ""
             await showUploadResult("Done!", success: true)
         } catch {
             await showUploadResult("⚠️ Upload failed: \(error.localizedDescription)", success: false)
@@ -822,7 +823,7 @@ struct MasterCheckCard: View {
                     .fontWeight(.semibold)
                     .tracking(1)
                     .foregroundColor(.gray)
-                Text("v\(version.versionNumber)")
+                Text(version.displayName)
                     .font(.caption2)
                     .foregroundColor(.gray)
                 Spacer()

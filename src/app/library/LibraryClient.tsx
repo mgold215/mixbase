@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ListMusic, RefreshCw, Check, Copy, Download, ExternalLink, Trash2, Search, Droplets } from 'lucide-react'
 import { audioProxyUrl } from '@/lib/supabase'
+import { versionDisplayLabel } from '@/lib/mix-status'
 import { formatReleaseDate } from '@/lib/release-plan'
 
 // One released track (mb_library_tracks row + optional project join).
@@ -298,7 +299,7 @@ export default function LibraryClient({ initialTracks, profile, projects, versio
                         <a
                           href={audioProxyUrl(file.audio_url)}
                           download={file.audio_filename ?? true}
-                          title={`Download from “${track.mb_projects?.title ?? 'project'}” (v${file.version_number} · ${file.status})`}
+                          title={`Download from “${track.mb_projects?.title ?? 'project'}” (${versionDisplayLabel(file)} · ${file.status})`}
                           className="flex items-center gap-1.5 text-xs text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
                         >
                           <Download size={12} />

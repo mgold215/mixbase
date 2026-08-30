@@ -15,7 +15,6 @@ struct NewProjectView: View {
     @State private var title = ""
     @State private var genre = ""
     @State private var bpmText = ""
-    @State private var label = ""
 
     // Audio file selection
     @State private var showFilePicker = false
@@ -68,15 +67,6 @@ struct NewProjectView: View {
                     } footer: {
                         Text("MP3, WAV, M4A, FLAC, AAC")
                             .foregroundColor(.gray.opacity(0.5))
-                    }
-
-                    // MARK: - Version Label
-                    Section {
-                        TextField("e.g. Rough Mix, Demo, Final", text: $label)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                    } header: {
-                        Text("Version Label")
-                            .foregroundColor(.gray)
                     }
 
                     // MARK: - Genre
@@ -228,16 +218,17 @@ struct NewProjectView: View {
                         }
                     }
 
-                    // Step 3: Create version 1
+                    // Step 3: Create the first mix
                     uploadProgress = "Creating version..."
                     // Same three fields as ProjectDetailView's upload path — the
                     // name comes from the picked file, size and duration from the
                     // scratch copy we still hold. Omitting them left every mix
                     // created from this screen with no name, size or duration.
+                    // No client label: the server names the row from the filename.
                     _ = try await MixbaseAPI.shared.createVersion(
                         projectId: project.id,
                         audioUrl: audioPublicUrl,
-                        label: label.isEmpty ? nil : label,
+                        label: nil,
                         audioFilename: fileURL.lastPathComponent,
                         durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
                         fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)

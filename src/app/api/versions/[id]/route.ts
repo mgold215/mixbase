@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isJsonObject } from '@/lib/validators'
 import { checkUserLimit, loudnessLimiter, rateLimitHeaders } from '@/lib/rate-limit'
-import { normalizeStatus } from '@/lib/mix-status'
+import { normalizeStatus, versionDisplayLabel } from '@/lib/mix-status'
 
 // GET /api/versions/[id] — get one version with its feedback (owner only)
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -164,7 +164,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   // the STORED value — never from anything the request claims.
   const { data: versionCheck } = await supabaseAdmin
     .from('mb_versions')
-    .select('status, project_id, version_number, duration_seconds, mb_projects!inner(user_id)')
+    .select('status, project_id, version_number, label, audio_filename, duration_seconds, mb_projects!inner(user_id)')
     .eq('id', id)
     .eq('mb_projects.user_id', userId)
     .single()
@@ -224,7 +224,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
       project_id: versionCheck.project_id,
       version_id: id,
       user_id: userId,
-      description: `v${versionCheck.version_number} moved from ${versionCheck.status} to ${patch.status}`,
+      description: `${versionDisplayLabel(versionCheck)} moved from ${versionCheck.status} to ${patch.status}`,
     })
   }
 

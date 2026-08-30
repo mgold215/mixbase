@@ -5,6 +5,7 @@ import { isUuid } from '@/lib/validators'
 import { publicArtistName, unwrapJoin, type FeedComment } from '@/lib/feed'
 import { ensureFeedCommentsTable, isMissingFeedCommentsTable } from '@/lib/schema-heal'
 import { FEED_COMMENT_TYPE, FEED_COMMENT_PREFIX } from '@/lib/notifications'
+import { versionDisplayLabel } from '@/lib/mix-status'
 
 const MAX_COMMENT_LENGTH = 2000
 
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
   try {
     const { data: version } = await supabaseAdmin
       .from('mb_versions')
-      .select('project_id, version_number, mb_projects(user_id)')
+      .select('project_id, version_number, label, audio_filename, status, mb_projects(user_id)')
       .eq('id', version_id)
       .maybeSingle()
     const ownerId = (unwrapJoin(version?.mb_projects) as { user_id?: string } | null)?.user_id ?? null
@@ -121,7 +122,7 @@ export async function POST(request: NextRequest) {
         project_id: version.project_id,
         version_id,
         user_id: ownerId,
-        description: `${FEED_COMMENT_PREFIX}${artist} on v${version.version_number}`,
+        description: `${FEED_COMMENT_PREFIX}${artist} on ${versionDisplayLabel(version)}`,
       })
     }
   } catch (e) {
