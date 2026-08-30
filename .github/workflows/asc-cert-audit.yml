@@ -1,0 +1,49 @@
+# Apple Developer certificate audit/cleanup, driven by a file instead of a
+# button: remote maintenance sessions cannot dispatch workflows (403) or log
+# into developer.apple.com, but they can push — so editing
+# .github/asc-maintenance/request.json and pushing runs this. See
+# asc-maintenance/asc-certs.mjs for why (TestFlight run #15, 2026-08-29:
+# "account has reached the maximum number of certificates" broke every
+# iOS archive) and for the safety rails (only DEVELOPMENT certs, explicit
+# ids only).
+#
+# Cheap by design: ubuntu runner (the ASC API is plain REST), path-filtered.
+
+name: ASC Certificate Audit
+
+on:
+  push:
+    branches: [main, tst]
+    paths:
+      - '.github/asc-maintenance/**'
+      - '.github/workflows/asc-cert-audit.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asc-cert-audit
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  audit:
+    name: Certificate audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run request.json against the ASC API
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+        run: node .github/asc-maintenance/asc-certs.mjs
