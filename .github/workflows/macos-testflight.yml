@@ -73,23 +73,26 @@ jobs:
           # iOS builds (per-platform namespaces) or hand-shipped ones.
           BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
           echo "Build number: $BUILD_NUMBER"
-          # CODE_SIGN_IDENTITY="Apple Distribution": the team has no registered
-          # Mac devices, so a Mac App DEVELOPMENT profile can never be minted
-          # ("Your team has no devices…", run #1). Archiving straight with
-          # distribution signing uses a Mac App Store profile, which needs no
-          # device list — and mints no runner development certs at all.
+          # The archive signs AD-HOC (manual style, identity "-"): the team has
+          # no registered Mac devices, so automatic signing can never mint the
+          # Mac App Development profile it insists on (run #1), and automatic
+          # signing rejects a distribution-identity override outright (run #2).
+          # macOS needs no provisioning profile at build time, and an ad-hoc
+          # signature still embeds the sandbox + Sign in with Apple
+          # entitlements — which is what the export step below needs: it
+          # re-signs with a cloud-managed Apple Distribution cert + Mac App
+          # Store profile (no device list required), exactly like the iOS
+          # lane's export re-sign. Bonus: no runner development certs at all.
           xcodebuild \
             -project macos/Mixbase.xcodeproj \
             -scheme mixBase \
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -archivePath "$RUNNER_TEMP/mixBase-macOS.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            PROVISIONING_PROFILE_SPECIFIER= \
             archive
 
       - name: Upload to TestFlight
