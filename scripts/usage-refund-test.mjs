@@ -109,6 +109,42 @@ check("refund threads the reserved month: refundUsage(userId, 'video', gate.mont
 check('runway refund is NOT the old month-blind 2-arg form',
   !/refundUsage\(\s*userId\s*,\s*'video'\s*\)/.test(runwaySrc))
 
+// ── The SUCCEEDED-but-unsaved burn (found 2026-08-31) ────────────────────────
+// Runway could succeed while persistence to mf-video failed or was skipped, and
+// the route returned 200 {saved:false} having spent the slot. That is not a
+// partial win: the Runway URL expires within hours, AiGeneratorCard gates its
+// pin button on `saved`, and finalize-video requires a PINNED visualizer — so
+// an unsaved clip can never enter the pipeline. The quota bought nothing.
+//
+// The two halves are one fix and neither is safe alone: refunding on !saved
+// without requiring an owned project up front would let anyone farm unlimited
+// free generations by passing a bogus projectId.
+console.log('\n runway route — a generation that could not be persisted is refunded:')
+check('an unsaved (unpersisted) generation refunds the video slot',
+  /if \(!saved\)\s*\{[\s\S]{0,600}?await refund\(\)/.test(runwaySrc))
+check('projectId is REQUIRED, not optional-with-a-skip',
+  /if \(!isUuid\(projectId\)\)[\s\S]{0,160}?status: 400/.test(runwaySrc))
+check('project ownership is verified and rejected with a status, not silently skipped',
+  /if \(!\(await userOwnsProject\(userId, projectId\)\)\)[\s\S]{0,160}?status: 404/.test(runwaySrc))
+// Ordering is the whole loophole guard: validate BEFORE the slot is reserved.
+check('ownership is settled BEFORE the quota slot is reserved',
+  runwaySrc.indexOf('await userOwnsProject(userId, projectId)') <
+  runwaySrc.indexOf('await checkAndIncrementUsage(userId'))
+// The old shape gated persistence on ownership inline, which is what made the
+// skip silent. It must not come back.
+check('persistence is no longer gated on an inline ownership check',
+  !/if \(isUuid\(projectId\) && \(await userOwnsProject/.test(runwaySrc))
+// WITNESS, run not assumed: the shape that shipped before today returns the
+// response with saved:false and no refund anywhere between.
+const OLD_RUNWAY_UNSAVED = `
+        if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
+          try { /* persist */ } catch (e) {}
+        }
+        return NextResponse.json({ videoUrl, model: modelCfg.label, saved, visualizerId })`
+check('WITNESS: pre-fix unsaved path had no refund and skipped silently',
+  !/if \(!saved\)/.test(OLD_RUNWAY_UNSAVED)
+  && /if \(isUuid\(projectId\) && \(await userOwnsProject/.test(OLD_RUNWAY_UNSAVED))
+
 console.log('\n tier.ts — month reserved & threaded (not recomputed at refund):')
 check('checkAndIncrementUsage return type carries month',
   /Promise<\{[^}]*month:\s*string[^}]*\}>/.test(tierSrc))

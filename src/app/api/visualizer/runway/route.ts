@@ -111,6 +111,30 @@ export async function POST(req: NextRequest) {
   // create failure on long pastes.
   const promptText = (customPrompt?.trim() || 'Slow cinematic camera push-in with gentle parallax, subtle continuous motion throughout the scene, smooth seamless loop').slice(0, 1000)
 
+  // An owned project is REQUIRED, and it is validated here — before the quota
+  // gate — because it is exactly the "bad request that must never consume
+  // quota" the gate comment below describes.
+  //
+  // Why it is required at all: a generation that cannot be persisted is not a
+  // product. The Runway-hosted URL expires within hours, AiGeneratorCard gates
+  // its pin button on `saved`, and finalize-video needs a PINNED visualizer —
+  // so an unpersisted clip can never enter the pipeline. Letting the call
+  // proceed without an owned project spent a studio user's tightest quota
+  // (10/month) on something structurally unusable.
+  //
+  // It also has to come BEFORE the reservation for a second reason: the
+  // persistence failure below now refunds, and if an unowned projectId could
+  // still reach that path, anyone could farm unlimited free generations by
+  // passing a bogus id. Validating up front closes the burn and the loophole
+  // with the same check. Both real callers (Visualizer via ProjectClient and
+  // MediaClient) always send one; iOS does not call this route at all.
+  if (!isUuid(projectId)) {
+    return NextResponse.json({ error: 'A valid projectId is required' }, { status: 400 })
+  }
+  if (!(await userOwnsProject(userId, projectId))) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+
   // Monthly tier gate — enforces the per-plan video quota (free/pro: 0, studio: 10).
   // Placed after input validation but before the paid Runway call so a bad request
   // never consumes quota. Mirrors generate-artwork's gate.
@@ -262,30 +286,42 @@ export async function POST(req: NextRequest) {
         let videoUrl = runwayUrl
         let saved = false
         let visualizerId: string | null = null
-        if (isUuid(projectId) && (await userOwnsProject(userId, projectId))) {
-          try {
-            const vidRes = await fetch(runwayUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
-            if (vidRes.ok) {
-              const bytes = Buffer.from(await vidRes.arrayBuffer())
-              const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
-              const stored = await storeVisualizer({
-                userId,
-                projectId,
-                bytes,
-                contentType,
-                kind: 'ai',
-                title: `${modelCfg.label} · ${runwayDuration}s`,
-                sourceImageUrl: imageUrl,
-              })
-              if (stored) {
-                videoUrl = stored.video_url
-                visualizerId = stored.id || null
-                saved = true
-              }
+        // Ownership was settled before the slot was reserved, so this is purely
+        // the persistence attempt now.
+        try {
+          const vidRes = await fetch(runwayUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+          if (vidRes.ok) {
+            const bytes = Buffer.from(await vidRes.arrayBuffer())
+            const contentType = vidRes.headers.get('content-type') ?? 'video/mp4'
+            const stored = await storeVisualizer({
+              userId,
+              projectId,
+              bytes,
+              contentType,
+              kind: 'ai',
+              title: `${modelCfg.label} · ${runwayDuration}s`,
+              sourceImageUrl: imageUrl,
+            })
+            if (stored) {
+              videoUrl = stored.video_url
+              visualizerId = stored.id || null
+              saved = true
             }
-          } catch (e) {
-            console.error('[runway] persist to Media failed:', e)
           }
+        } catch (e) {
+          console.error('[runway] persist to Media failed:', e)
+        }
+
+        if (!saved) {
+          // Runway succeeded but the bytes never reached mf-video. The user is
+          // left holding a URL that expires within hours, and because the pin
+          // button is gated on `saved`, it can never reach finalize-video — so
+          // the quota bought nothing durable. That is our infrastructure's
+          // failure, not a user action, and it is not farmable now that an
+          // owned project is required up front. Hand the slot back and still
+          // return the transient URL so they can at least watch/download it.
+          await refund()
+          console.error(`[runway] generation succeeded but persistence failed for project ${projectId} — video slot refunded`)
         }
 
         return NextResponse.json({ videoUrl, model: modelCfg.label, saved, visualizerId })
