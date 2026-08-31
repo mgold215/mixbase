@@ -74,6 +74,7 @@ const SUITES = [
   'asset-url-write-guard-test.mjs',
   'delete-account-scope-test.mjs',
   'delete-account-bound-test.mjs',
+  'project-delete-scope-test.mjs',
   'archived-playback-test.mjs',
   'duration-backfill-test.mjs',
   'audio-duration-test.mjs',
