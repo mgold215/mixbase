@@ -131,6 +131,18 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    // MARK: - Instrumental slot
+
+    /// Set (or clear, with nil) the project's pinned instrumental — the one
+    /// no-vocals file that lives beside the mixes. Goes through the web route
+    /// rather than PostgREST so the server validates the URL is a Supabase
+    /// Storage URL and self-heals the 035 column if a deploy beat the
+    /// migration to production.
+    func setInstrumental(projectId: UUID, url: String?) async throws {
+        let body: [String: Any] = ["instrumental_url": url ?? NSNull()]
+        _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
     // MARK: - Artwork assignment (Media library)
 
     /// Set an existing artwork image as a project's cover (must be a Supabase
