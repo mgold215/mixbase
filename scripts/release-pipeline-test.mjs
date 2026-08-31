@@ -129,11 +129,71 @@ check('input is not mutated', (() => {
   return input.language === null
 })())
 
-// Guard the map against drift: every NOT NULL column in migration 026 must be
-// covered, or a cleared field 500s again.
-check('every NOT NULL column from migration 026 is covered',
-  ['release_type', 'explicit', 'instrumental', 'language'].every(c => c in RELEASE_COLUMN_DEFAULTS),
-  Object.keys(RELEASE_COLUMN_DEFAULTS).join(', '))
+// Guard the map against drift.
+//
+// THIS CHECK USED TO PIN A HAND-COPIED LIST — ['release_type','explicit',
+// 'instrumental','language'] — and was green the whole time `title` was
+// unprotected. `title` is NOT NULL with NO column default, so it is precisely
+// the column RELEASE_COLUMN_DEFAULTS cannot rescue (there is no default to fall
+// back to), and `{"title": null}` returned a hard 500. A list the test does not
+// own asserts nothing about the columns someone adds later.
+//
+// So derive the NOT NULL set from the MIGRATIONS, and require every one that
+// the PATCH allowlist can write to be protected one of the two possible ways:
+// coerced to a default, or rejected outright. Adding a NOT NULL column and
+// wiring it into the allowlist now fails here until it is handled.
+{
+  const { readFileSync, readdirSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+  const { dirname, join } = await import('node:path')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const migDir = join(root, 'supabase/migrations')
+
+  const notNull = new Set()
+  for (const f of readdirSync(migDir).filter(n => n.endsWith('.sql'))) {
+    const sql = readFileSync(join(migDir, f), 'utf8').replace(/--[^\n]*/g, '')
+    // ALTER ... ADD COLUMN <name> <type> NOT NULL
+    for (const m of sql.matchAll(/alter\s+table\s+mb_releases\s+add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)[^;,\n]*?\bnot\s+null/gi)) {
+      notNull.add(m[1])
+    }
+    // CREATE TABLE mb_releases ( ... <name> <type> NOT NULL ... )
+    const create = sql.match(/create\s+table\s+(?:if\s+not\s+exists\s+)?mb_releases\s*\(([\s\S]*?)\n\);/i)
+    if (create) {
+      for (const line of create[1].split('\n')) {
+        const m = line.match(/^\s*(\w+)\s+[\w()\[\] ]+?\bnot\s+null/i)
+        if (m) notNull.add(m[1])
+      }
+    }
+  }
+  check('NOT NULL columns were actually parsed out of the migrations',
+    notNull.size >= 4, [...notNull].join(', '))
+  check('title is seen as NOT NULL (the column this check used to miss)',
+    notNull.has('title'), [...notNull].join(', '))
+
+  const routeSrc = readFileSync(join(root, 'src/app/api/releases/[id]/route.ts'), 'utf8')
+  // The PATCH allowlist, read from the route rather than restated here.
+  const allowBlock = routeSrc.slice(routeSrc.indexOf('const allowed = ['), routeSrc.indexOf('] as const'))
+  const patchable = new Set([...allowBlock.matchAll(/'(\w+)'/g)].map(m => m[1]))
+  check('the PATCH allowlist was located', patchable.size > 10, `${patchable.size} columns`)
+
+  // Protected = coerced to a default, or explicitly rejected before the write.
+  const rejected = new Set(
+    [...routeSrc.matchAll(/if \('(\w+)' in body[\s\S]{0,220}?status: 400/g)].map(m => m[1])
+  )
+  const unprotected = [...notNull].filter(c =>
+    patchable.has(c) && !(c in RELEASE_COLUMN_DEFAULTS) && !rejected.has(c))
+  check('every NOT NULL column the PATCH allowlist can write is coerced or rejected',
+    unprotected.length === 0,
+    unprotected.length ? `UNPROTECTED: ${unprotected.join(', ')}` : 'all covered')
+
+  // Negative control: the property must be able to fail. Drop title's guard and
+  // it has to show up as unprotected — otherwise this check is decorative.
+  const withoutTitleGuard = new Set([...rejected].filter(c => c !== 'title'))
+  const wouldBreak = [...notNull].filter(c =>
+    patchable.has(c) && !(c in RELEASE_COLUMN_DEFAULTS) && !withoutTitleGuard.has(c))
+  check('NEGATIVE CONTROL: removing title\'s guard makes it report as unprotected',
+    wouldBreak.includes('title'), wouldBreak.join(', ') || 'nothing flagged')
+}
 
 // Witness: the pre-fix route copied body[key] straight through.
 const preCoerce = (patch) => ({ ...patch })
