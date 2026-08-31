@@ -29,6 +29,11 @@ struct Project: Codable, Identifiable {
     // Optional pinned visualizer video URL (Spotify-Canvas-style loop)
     var visualizerUrl: String?
 
+    // Optional pinned instrumental (no-vocals) audio URL — one per project,
+    // stored beside the mixes in mf-audio (migration 035). Owner-private:
+    // never part of share pages or the feed.
+    var instrumentalUrl: String?
+
     // When this project was first created
     let createdAt: Date
 
@@ -46,6 +51,7 @@ struct Project: Codable, Identifiable {
         case bpm
         case keySignature = "key_signature"
         case visualizerUrl = "visualizer_url"
+        case instrumentalUrl = "instrumental_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import CoreTransferable
 
 // MARK: - ProjectDetailView
 // Shows full details for a single project: artwork, editable metadata, versions list,
@@ -32,6 +33,14 @@ struct ProjectDetailView: View {
     @State private var showAudioPicker = false
     @State private var isUploadingAudio = false
     @State private var uploadProgress = ""
+
+    // Instrumental slot — one pinned no-vocals file per project (migration
+    // 035), mirroring the web project page's Instrumental card.
+    @State private var showInstrumentalPicker = false
+    @State private var isUploadingInstrumental = false
+    @State private var instrumentalProgress: Double = 0
+    @State private var instrumentalStatus = ""
+    @State private var instrumentalError: String?
 
     // Feedback
     @State private var feedbackByVersion: [UUID: [Feedback]] = [:]
@@ -158,6 +167,9 @@ struct ProjectDetailView: View {
                                     .padding(.horizontal)
                             }
                         }
+
+                        // MARK: - Instrumental slot (one no-vocals file per project)
+                        instrumentalSection(project: project)
 
                         // MARK: - Master Check (latest mix)
                         if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
@@ -676,6 +688,265 @@ struct ProjectDetailView: View {
         }
     }
 
+    // MARK: - Instrumental Section
+    // One pinned no-vocals file per project: upload/replace/remove, playback
+    // through the shared player, and share/save of the actual file — the same
+    // set of controls the web project page's Instrumental card offers.
+    @ViewBuilder
+    private func instrumentalSection(project: Project) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "music.quarternote.3")
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                Text("INSTRUMENTAL")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .tracking(1)
+                    .foregroundColor(.gray)
+                if project.instrumentalUrl == nil && !isUploadingInstrumental {
+                    Text("Optional")
+                        .font(.caption2)
+                        .foregroundColor(.gray.opacity(0.6))
+                }
+                Spacer()
+            }
+
+            if isUploadingInstrumental {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(instrumentalStatus)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    ProgressView(value: instrumentalProgress)
+                        .tint(Color(hex: "#2dd4bf"))
+                }
+            } else if let instrumentalUrl = project.instrumentalUrl {
+                HStack(spacing: 12) {
+                    Button(action: { toggleInstrumentalPlayback(project: project, url: instrumentalUrl) }) {
+                        ZStack {
+                            Circle()
+                                .fill(isInstrumentalCurrent
+                                    ? Color(hex: "#2dd4bf")
+                                    : Color(hex: "#2dd4bf").opacity(0.15))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: isInstrumentalCurrent && audioService.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.caption)
+                                .foregroundColor(isInstrumentalCurrent ? Color(hex: "#080808") : Color(hex: "#2dd4bf"))
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("Instrumental")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+
+                    Spacer()
+
+                    // Save/share the actual audio file — the share sheet's
+                    // counterpart of the web card's download link.
+                    if let remote = URL(string: instrumentalUrl) {
+                        ShareLink(
+                            item: InstrumentalExport(remoteURL: remote, filename: instrumentalDownloadName(project: project)),
+                            preview: SharePreview(instrumentalDownloadName(project: project))
+                        ) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button("Replace") { showInstrumentalPicker = true }
+                        .font(.caption)
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+
+                    Button("Remove") { Task { await removeInstrumental() } }
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            } else {
+                Button(action: { showInstrumentalPicker = true }) {
+                    HStack {
+                        Image(systemName: "arrow.up.doc")
+                        Text("Upload instrumental")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color(hex: "#2dd4bf").opacity(0.15))
+                    .cornerRadius(10)
+                }
+
+                Text("One no-vocals file, kept alongside your mixes — only you can see it")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+
+            if let instrumentalError {
+                Text(instrumentalError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+        .padding(12)
+        .background(Color(hex: "#111111"))
+        .cornerRadius(10)
+        .padding(.horizontal)
+        .fileImporter(
+            isPresented: $showInstrumentalPicker,
+            allowedContentTypes: [.audio, .mp3, .wav, .aiff, .mpeg4Audio],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { await uploadInstrumental(url: url) }
+            }
+        }
+    }
+
+    /// Whether the shared player is currently holding this project's
+    /// instrumental (playing or paused). Recognised by the synthetic
+    /// version's shape rather than a minted id, so the card still owns its
+    /// playback after navigating away and back: versionNumber 0 can never be
+    /// a real row (the server numbers from 1), and the label pins it down.
+    private var isInstrumentalCurrent: Bool {
+        guard let current = audioService.currentVersion else { return false }
+        return current.projectId == projectId && current.versionNumber == 0 && current.label == "Instrumental"
+    }
+
+    /// Play the instrumental through the shared AudioService so it behaves
+    /// like every other track (lock screen, AirPlay, transport). The Version
+    /// is synthetic — the instrumental has no mb_versions row — and nothing
+    /// ever persists from it.
+    private func toggleInstrumentalPlayback(project: Project, url: String) {
+        if isInstrumentalCurrent {
+            audioService.togglePlayPause()
+            return
+        }
+        let synthetic = Version(
+            id: UUID(),
+            projectId: project.id,
+            versionNumber: 0,
+            label: "Instrumental",
+            audioUrl: url,
+            audioFilename: nil,
+            durationSeconds: nil,
+            fileSizeBytes: nil,
+            status: "Mix",
+            privateNotes: nil,
+            publicNotes: nil,
+            changeLog: nil,
+            shareToken: nil,
+            allowDownload: false,
+            createdAt: Date(),
+            loudnessLufs: nil,
+            loudnessShortTermLufs: nil,
+            samplePeakDb: nil
+        )
+        audioService.play(
+            version: synthetic,
+            trackName: project.title,
+            artworkUrl: project.artworkUrl,
+            visualizerUrl: project.visualizerUrl
+        )
+    }
+
+    /// Saved file name for the instrumental share/download —
+    /// title-instrumental.<real ext>, matching the web's download name.
+    private func instrumentalDownloadName(project: Project) -> String {
+        let base = project.title
+            .replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let key = project.instrumentalUrl?.split(separator: "?").first.map(String.init) ?? ""
+        let ext = (key as NSString).pathExtension.lowercased()
+        return "\(base.isEmpty ? "song" : base)-instrumental.\(ext.isEmpty ? "wav" : ext)"
+    }
+
+    // MARK: - Upload Instrumental
+    private func uploadInstrumental(url: URL) async {
+        guard let project = project else { return }
+        isUploadingInstrumental = true
+        instrumentalError = nil
+        instrumentalProgress = 0
+        instrumentalStatus = "Preparing file..."
+
+        // Same security-scoped copy as the mix upload: the picker's grant can
+        // lapse mid-upload, and a local copy streams from disk.
+        guard url.startAccessingSecurityScopedResource() else {
+            finishInstrumentalUpload(error: "Cannot access that file — try picking it again")
+            return
+        }
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("instrumental-upload-\(UUID().uuidString)")
+            .appendingPathExtension(url.pathExtension)
+        do {
+            try FileManager.default.copyItem(at: url, to: tempURL)
+        } catch {
+            url.stopAccessingSecurityScopedResource()
+            finishInstrumentalUpload(error: "Couldn't read the file: \(error.localizedDescription)")
+            return
+        }
+        url.stopAccessingSecurityScopedResource()
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        // Same 2 GB ceiling the web enforces (the mf-audio bucket limit).
+        if let size = AudioFileMetadata.fileSize(of: tempURL), size > 2 * 1024 * 1024 * 1024 {
+            finishInstrumentalUpload(error: "File too large (max 2GB)")
+            return
+        }
+
+        do {
+            let ext = url.pathExtension.lowercased()
+            // Folder-shaped key under the project prefix, exactly the web's
+            // shape (<projectId>/instrumental-<epochMs>.<ext>): project
+            // delete's prefix sweep covers the bytes, and the planned 038
+            // owner-scoped storage policy needs the project id as the first
+            // path segment.
+            let filename = "\(project.id.storageKeyComponent)/instrumental-\(Int(Date().timeIntervalSince1970 * 1000)).\(ext.isEmpty ? "wav" : ext)"
+
+            instrumentalStatus = "Uploading… 0%"
+            let publicUrl = try await SupabaseService.shared.uploadAudio(fileURL: tempURL, filename: filename) { fraction in
+                Task { @MainActor in
+                    instrumentalProgress = fraction
+                    instrumentalStatus = "Uploading… \(Int(fraction * 100))%"
+                }
+            }
+
+            instrumentalStatus = "Saving..."
+            try await MixbaseAPI.shared.setInstrumental(projectId: project.id, url: publicUrl)
+            self.project?.instrumentalUrl = publicUrl
+            finishInstrumentalUpload(error: nil)
+        } catch {
+            finishInstrumentalUpload(error: error.localizedDescription)
+        }
+    }
+
+    private func finishInstrumentalUpload(error: String?) {
+        if let error { instrumentalError = "⚠️ \(error)" }
+        isUploadingInstrumental = false
+        instrumentalStatus = ""
+        instrumentalProgress = 0
+    }
+
+    /// Clears the slot. The bytes stay under the project prefix and are
+    /// removed with the project — same lifecycle as replaced artwork, and
+    /// same as the web's Remove.
+    private func removeInstrumental() async {
+        guard let project = project, let previous = project.instrumentalUrl else { return }
+        // Don't keep playing a file whose slot was just cleared.
+        if isInstrumentalCurrent { audioService.pause() }
+        instrumentalError = nil
+        self.project?.instrumentalUrl = nil
+        do {
+            try await MixbaseAPI.shared.setInstrumental(projectId: project.id, url: nil)
+        } catch {
+            self.project?.instrumentalUrl = previous
+            instrumentalError = "⚠️ Could not remove the instrumental. Try again."
+        }
+    }
+
     // MARK: - Upload Audio Version
     private func uploadAudioVersion(url: URL) async {
         guard let project = project else { return }
@@ -777,6 +1048,33 @@ struct ProjectDetailView: View {
             print("ProjectDetailView: Failed to load project — \(error.localizedDescription)")
         }
         isLoading = false
+    }
+}
+
+// MARK: - InstrumentalExport
+// ShareLink payload for the instrumental slot: the actual audio FILE, not a
+// link — the share sheet's counterpart of the web card's download button
+// ("Save to Files" on iOS lands it on-device under a real name instead of a
+// storage key). FileRepresentation's exporter runs only when the user commits
+// a share destination, so the potentially large download doesn't start until
+// it's actually wanted.
+struct InstrumentalExport: Transferable {
+    let remoteURL: URL
+    let filename: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .audio) { export in
+            let (downloaded, _) = try await URLSession.shared.download(from: export.remoteURL)
+            // Re-home the download under the user-facing filename — the share
+            // sheet and Files show the file's lastPathComponent. A per-share
+            // directory keeps repeat shares from colliding on one name.
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("instrumental-share-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent(export.filename)
+            try FileManager.default.moveItem(at: downloaded, to: file)
+            return SentTransferredFile(file)
+        }
     }
 }
 
