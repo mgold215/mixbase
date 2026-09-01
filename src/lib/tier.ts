@@ -5,6 +5,7 @@
 import { supabaseAdmin } from './supabase'
 import { ensureUsageRpc, isMissingUsageRpc, ensureUsageRpcGrants, ensureUsageTableWriteLock } from './schema-heal'
 import { planUsageRefund } from './usage-refund'
+import { isAdminIdentity } from './admin-identity'
 
 export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
 
@@ -31,11 +32,18 @@ export function currentMonth(): string {
 
 // ── Platform owner exemption ──────────────────────────────────────────────────
 // The owner's account is exempt from every monthly quota and per-user rate
-// limit. Identified by subscription_tier 'admin', or by the owner email as a
-// bootstrap: the email path self-heals the profile row to 'admin' so the
-// exemption (and the admin-gated infra panel) works without any manual DB step.
+// limit.
+//
+// Identity comes from isAdminIdentity() (auth.users email / ADMIN_USER_IDS), NOT
+// from subscription_tier. Trusting the tier here was the same self-grant hole the
+// admin gates had, with a bill attached: TIER_LIMITS.admin is 99999 artwork and
+// 99999 video generations, so one PATCH of your own profile bought unmetered
+// Replicate and Runway spend on our account. See src/lib/admin-identity.ts.
+//
+// The profile heal stays. It is now a CONSEQUENCE of having been recognised as
+// the owner rather than the thing that proves it, which keeps the tier column
+// (and everything that displays it) agreeing with reality.
 // Cached per process — one lookup per user per deploy.
-const OWNER_EMAILS = new Set(['moodmixformat@icloud.com'])
 const ownerCache = new Map<string, boolean>()
 
 export async function isPlatformOwner(userId: string): Promise<boolean> {
@@ -44,28 +52,19 @@ export async function isPlatformOwner(userId: string): Promise<boolean> {
 
   let owner = false
   try {
-    const { data } = await supabaseAdmin
-      .from('profiles')
-      .select('subscription_tier')
-      .eq('id', userId)
-      .single()
-    if (data?.subscription_tier === 'admin') {
-      owner = true
-    } else {
-      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId)
-      const email = userData?.user?.email?.toLowerCase()
-      if (email && OWNER_EMAILS.has(email)) {
-        owner = true
-        // Persist so every other admin gate (assertAdmin, /api/subscription)
-        // agrees from now on. Fire-and-forget: the exemption must not block.
-        void supabaseAdmin
-          .from('profiles')
-          .update({ subscription_tier: 'admin' })
-          .eq('id', userId)
-          .then(({ error }) => {
-            if (error) console.error('[tier] owner profile heal failed:', error.message)
-          })
-      }
+    owner = await isAdminIdentity(userId)
+    if (owner) {
+      // Persist so every tier read (/api/subscription, the admin UI's badge)
+      // agrees from now on. Fire-and-forget: the exemption must not block.
+      // Cheap and idempotent — a no-op update once the row already says 'admin'.
+      void supabaseAdmin
+        .from('profiles')
+        .update({ subscription_tier: 'admin' })
+        .eq('id', userId)
+        .neq('subscription_tier', 'admin')
+        .then(({ error }) => {
+          if (error) console.error('[tier] owner profile heal failed:', error.message)
+        })
     }
   } catch (err) {
     // Lookup failed — apply normal limits this request, don't cache the failure.

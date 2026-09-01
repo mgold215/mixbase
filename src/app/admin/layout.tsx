@@ -1,19 +1,15 @@
 import { redirect } from 'next/navigation'
 import { getUserId } from '@/lib/auth'
-import { supabaseAdmin } from '@/lib/supabase'
+import { isAdminIdentity } from '@/lib/admin-identity'
 import AdminNav from './AdminNav'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // getUserId() redirects to /login internally if no session — always returns a string
   const userId = await getUserId()
 
-  const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('subscription_tier')
-    .eq('id', userId)
-    .single()
-
-  if (profile?.subscription_tier !== 'admin') {
+  // Identity, not tier — subscription_tier is self-writable. See
+  // src/lib/admin-identity.ts.
+  if (!(await isAdminIdentity(userId))) {
     redirect('/dashboard')
   }
 

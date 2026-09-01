@@ -44,6 +44,7 @@ const SUITES = [
   'verify-token-test.mjs',
   'auth-errors-test.mjs',
   'admin-client-role-test.mjs',
+  'admin-identity-test.mjs',
   'artwork-models-test.mjs',
   'artwork-history-test.mjs',
   'upload-ownership-test.mjs',

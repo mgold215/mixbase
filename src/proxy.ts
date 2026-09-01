@@ -4,6 +4,7 @@ import { supabaseAdmin, serviceRoleKeyValid } from '@/lib/supabase'
 import { refreshSessionOnce } from '@/lib/refresh-session'
 import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
 import { isTransientAuthError } from '@/lib/auth-errors'
+import { isAdminIdentity } from '@/lib/admin-identity'
 
 // Shared HS256 key used to verify access-token signatures locally (no network
 // call). Built once at module load. If SUPABASE_JWT_SECRET is unset we fall
@@ -208,18 +209,14 @@ async function withAdminCheck(
 ): Promise<NextResponse> {
   const { pathname } = request.nextUrl
   if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin') || pathname.startsWith('/api/infra')) {
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .select('subscription_tier')
-      .eq('id', userId)
-      .single()
-    if (profileError) {
-      console.error('[withAdminCheck] profile query failed:', profileError.message)
-      return pathname.startsWith('/api/')
-        ? NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
-        : NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-    if (profile?.subscription_tier !== 'admin') {
+    // Identity, not tier. profiles.subscription_tier is writable by the user
+    // it describes (column-level UPDATE is granted to `authenticated` and RLS
+    // scopes the row, not the column), so gating on it let any signed-in
+    // account reach /api/infra/* — Railway restart/redeploy and CI re-run.
+    // isAdminIdentity() asks auth.users instead, which the client cannot write.
+    // It fails closed, so the previous explicit 503-on-query-error branch is
+    // folded into the single deny below.
+    if (!(await isAdminIdentity(userId))) {
       return pathname.startsWith('/api/')
         ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
         : NextResponse.redirect(new URL('/dashboard', request.url))
