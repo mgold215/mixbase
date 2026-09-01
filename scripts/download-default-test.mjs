@@ -183,6 +183,40 @@ check('...and awaited, so the constraint is in place for THIS insert',
 check('the 23505 retry loop it protects is still there',
   createRoute.includes("'23505'") && iLoop !== -1)
 
+// ── 4. iOS can express the consent choice at all ─────────────────────────────
+// Until 2026-09-01 the flag was write-only from the web: Version.swift decoded
+// allowDownload and nothing anywhere set it, so an artist on a phone could not
+// make the choice. These pin the write path, and — more importantly — pin the
+// thing that must NOT come back with it.
+const iosApi = readFileSync(join(root, 'ios/mixBase/Services/MixbaseAPI.swift'), 'utf8')
+const iosView = readFileSync(join(root, 'ios/mixBase/Views/Projects/ProjectDetailView.swift'), 'utf8')
+
+check('iOS has a setAllowDownload write path',
+  /func\s+setAllowDownload\s*\(\s*versionId:\s*UUID\s*,\s*allow:\s*Bool/.test(iosApi))
+check('...which PATCHes the versions route, not PostgREST directly',
+  /setAllowDownload[\s\S]{0,400}?\/api\/versions\/[\s\S]{0,120}?method:\s*"PATCH"/.test(iosApi))
+check('...sending allow_download and nothing else',
+  /setAllowDownload[\s\S]{0,300}?\[\s*String:\s*Any\s*\]\s*=\s*\[\s*"allow_download":\s*allow\s*\]/.test(iosApi))
+
+// The regression this half exists to prevent. A hardcoded false on the UPLOAD
+// path once silently reset artists' consent; the upload body must stay clear of
+// this field even now that a deliberate writer exists elsewhere in the file.
+const uploadBody = iosApi.slice(iosApi.indexOf('func createVersion'), iosApi.indexOf('func createVersion') + 1800)
+check('iOS version upload still does NOT send allow_download',
+  iosApi.indexOf('func createVersion') === -1 || !/"allow_download"/.test(uploadBody))
+
+check('the iOS row exposes a toggle', /toggleAllowDownload\s*\(/.test(iosView))
+check('...gated on the version being shareable, mirroring the web checkbox',
+  /shareToken\s*!=\s*nil[\s\S]{0,400}?toggleAllowDownload/.test(iosView))
+check('...and reverts the optimistic flip when the PATCH fails',
+  /catch[\s\S]{0,400}?allowDownload\s*=\s*previous/.test(iosView))
+
+// Cross-platform: the macOS target compiles this same file. A UIKit-only API
+// here breaks the Mac build, and this view already relies on the PlatformCompat
+// shim for UIPasteboard rather than importing UIKit itself.
+check('the iOS view does not import UIKit (macOS shares this source)',
+  !/^\s*import\s+UIKit\s*$/m.test(iosView))
+
 if (failures > 0) {
   console.error(`\ndownload-default: ${failures} check(s) failed`)
   process.exit(1)

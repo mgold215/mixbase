@@ -522,6 +522,24 @@ struct ProjectDetailView: View {
 
                 StatusBadge(status: version.status)
 
+                // Download-consent toggle. Sits inside the row's outer Button
+                // exactly like the Share button beside it — that nesting is
+                // already proven to take the tap rather than falling through to
+                // play, because the outer button uses .buttonStyle(.plain).
+                // Shown only once the version is shareable, mirroring the web
+                // checkbox, which renders only when sharing is enabled.
+                if version.shareToken != nil {
+                    Button(action: { toggleAllowDownload(version) }) {
+                        Image(systemName: version.allowDownload
+                              ? "arrow.down.circle.fill" : "arrow.down.circle")
+                            .font(.caption)
+                            .foregroundColor(version.allowDownload ? .accentColor : .gray)
+                    }
+                    .accessibilityLabel(version.allowDownload
+                        ? "Downloads allowed. Turn off downloads for this mix."
+                        : "Downloads off. Allow downloads for this mix.")
+                }
+
                 // Share button
                 Button(action: { shareVersion(version) }) {
                     Image(systemName: "square.and.arrow.up")
@@ -547,6 +565,36 @@ struct ProjectDetailView: View {
         if let token = version.shareToken {
             let shareUrl = "\(Config.apiBaseURL)/share/\(token)"
             UIPasteboard.general.string = shareUrl
+        }
+    }
+
+    /// Flip this version's download consent.
+    ///
+    /// Optimistic with an explicit revert, the same shape as removeInstrumental
+    /// above: the row reflects the tap immediately, and a failed PATCH puts the
+    /// old value back rather than leaving the UI asserting something the server
+    /// never accepted.
+    ///
+    /// Only this one field is sent. The upload path at MixbaseAPI.swift
+    /// deliberately omits allow_download because a hardcoded false there once
+    /// silently reset artists' consent — nothing here should start sending it
+    /// alongside other edits.
+    private func toggleAllowDownload(_ version: Version) {
+        guard let idx = versions.firstIndex(where: { $0.id == version.id }) else { return }
+        let previous = versions[idx].allowDownload
+        let next = !previous
+        versions[idx].allowDownload = next
+
+        Task {
+            do {
+                try await MixbaseAPI.shared.setAllowDownload(versionId: version.id, allow: next)
+            } catch {
+                await MainActor.run {
+                    if let i = versions.firstIndex(where: { $0.id == version.id }) {
+                        versions[i].allowDownload = previous
+                    }
+                }
+            }
         }
     }
 
