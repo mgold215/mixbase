@@ -160,6 +160,41 @@ if (!group) {
 }
 console.log(`\nTarget group: ${JSON.stringify(group.attributes.name)} (id=${group.id})`);
 
+// ── Diagnostics: per-build review history + link capacity ───────────────────
+// The public link showing "This beta isn't accepting any new testers right
+// now" usually means no build in the group has ever cleared Beta App Review.
+// The script only ever printed the NEWEST build's review state, so a rejected
+// earlier submission was invisible (2026-09-01: a tester was turned away and
+// the logs could not say why). Read-only; printed before the build phase so a
+// failure there cannot hide it.
+try {
+  const hist = await asc(
+    "GET",
+    `/v1/builds?filter[app]=${appId}&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=10&fields[builds]=version,uploadedDate,processingState,expired`
+  );
+  console.log(`\n=== iOS build review history (newest first) ===`);
+  for (const b of hist.body?.data ?? []) {
+    const sub = await asc("GET", `/v1/builds/${b.id}/betaAppReviewSubmission`);
+    const s = sub.status === 200 && sub.body?.data ? sub.body.data.attributes : null;
+    console.log(
+      `build ${b.attributes.version}  uploaded=${b.attributes.uploadedDate}  processing=${b.attributes.processingState}  expired=${b.attributes.expired}  betaReview=${s ? s.betaReviewState : "no submission"}${s?.submittedDate ? ` submitted=${s.submittedDate}` : ""}`
+    );
+  }
+  const a = group.attributes;
+  const testers = await asc("GET", `/v1/betaGroups/${group.id}/betaTesters?limit=200&fields[betaTesters]=state`);
+  const testerCount = (testers.body?.data ?? []).length;
+  console.log(
+    `Group link capacity: limitEnabled=${a.publicLinkLimitEnabled} limit=${a.publicLinkLimit} testers=${testerCount}${testers.body?.links?.next ? "+" : ""}`
+  );
+  const detail = await asc(
+    "GET",
+    `/v1/apps/${appId}/betaAppReviewDetail?fields[betaAppReviewDetails]=demoAccountRequired`
+  );
+  console.log(`demoAccountRequired=${detail.body?.data?.attributes?.demoAccountRequired}`);
+} catch (err) {
+  warn(`diagnostics phase threw: ${err.message}`);
+}
+
 // ── Keep the newest build in the group, reviewed ────────────────────────────
 // Failures in this phase are warnings: the link is the deliverable, and the
 // build appears for testers as soon as the pieces are in place.
