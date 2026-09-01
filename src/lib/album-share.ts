@@ -73,11 +73,13 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
   const projectIds = rows.map(r => r.project_id)
 
   // Newest version per project — a shared album always plays the current mixes.
-  const latestByProject = new Map<string, { audio_url: string; duration_seconds: number | null }>()
+  // allow_download rides along so the player can offer the original file for
+  // tracks whose artist ticked "Allow download" (same gate as /share/[token]).
+  const latestByProject = new Map<string, { audio_url: string; duration_seconds: number | null; allow_download: boolean | null }>()
   if (projectIds.length > 0) {
     const { data: versions } = await supabaseAdmin
       .from('mb_versions')
-      .select('project_id, audio_url, duration_seconds, version_number')
+      .select('project_id, audio_url, duration_seconds, version_number, allow_download')
       .in('project_id', projectIds)
       .order('version_number', { ascending: false })
     for (const v of versions ?? []) {
@@ -109,6 +111,7 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
       visualizerUrl: p.visualizer_url ?? null,
       audioUrl: version.audio_url,
       duration: version.duration_seconds ?? null,
+      allowDownload: version.allow_download === true,
     }]
   })
 

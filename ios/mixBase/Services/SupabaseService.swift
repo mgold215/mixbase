@@ -364,8 +364,16 @@ class SupabaseService {
 
     /// Create a new release
     func createRelease(title: String, projectId: UUID?, releaseDate: Date?) async throws -> Release {
+        // Owner must be sent explicitly — same trap as createProject above:
+        // `mb_releases.user_id` has no database default, and the
+        // `users_own_releases` RLS policy WITH CHECK rejects a null owner
+        // with a PostgREST 403.
+        guard let ownerId = currentUserId else {
+            throw SupabaseError.notFound("Not signed in — cannot create a release without an owner")
+        }
         var fields: [String: Any] = [
             "title": title,
+            "user_id": ownerId,
             // Default all checklist items to false
             "mixing_done": false,
             "mastering_done": false,
@@ -425,7 +433,14 @@ class SupabaseService {
 
     /// Create a new collection (playlist, EP, or album)
     func createCollection(title: String, type: String) async throws -> Collection {
-        let fields: [String: Any] = ["title": title, "type": type]
+        // Owner must be sent explicitly — same trap as createProject above:
+        // `mb_collections.user_id` has no database default, and the
+        // `users_own_collections` RLS policy WITH CHECK (auth.uid() = user_id)
+        // rejects a null owner, so PostgREST answers 403 without it.
+        guard let ownerId = currentUserId else {
+            throw SupabaseError.notFound("Not signed in — cannot create a collection without an owner")
+        }
+        let fields: [String: Any] = ["title": title, "type": type, "user_id": ownerId]
         let body = try JSONSerialization.data(withJSONObject: fields)
         let request = makeRequest(path: "/rest/v1/mb_collections", method: "POST", body: body)
         let (data, response) = try await authenticatedData(for: request)
