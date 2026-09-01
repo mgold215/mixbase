@@ -19,6 +19,18 @@
 //    blob:). That silently killed every free-visualizer download. Anchor it
 //    directly instead: no CSP surface, no second copy in memory, no revoke race.
 
+// Public share pages never receive the artist's original upload filename (it
+// can carry private context — "clientX-rough-DONTSEND.wav"), so downloads are
+// named after the public track title, taking the extension from the storage
+// path so the bytes land as the format that was actually uploaded. Used by
+// both the single-track share player and the album/collection share player.
+export function audioDownloadFileName(audioUrl: string, title: string): string {
+  const ext = audioUrl.split('?')[0].split('.').pop()
+  const safeExt = ext && /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'wav'
+  const safeTitle = title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'mix'
+  return `${safeTitle}.${safeExt}`
+}
+
 function safeFileName(baseName: string, ext: string): string {
   const safe = baseName.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'mixbase'
   return `${safe}.${ext}`

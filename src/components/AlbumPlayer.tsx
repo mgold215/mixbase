@@ -3,9 +3,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type ChangeEvent } from 'react'
 import { useParams } from 'next/navigation'
 import Image from 'next/image'
-import { Play, Pause, SkipBack, SkipForward } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Download } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
+import { audioDownloadFileName } from '@/lib/download'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
@@ -24,6 +25,10 @@ export type AlbumPlayerTrack = {
   visualizerUrl: string | null
   audioUrl: string | null
   duration: number | null
+  /** Artist ticked "Allow download" on this mix — row shows a download link
+   *  for the full-quality original. Optional: the signed-in collection view
+   *  doesn't pass it, and absent means no link (same gate as /share/[token]). */
+  allowDownload?: boolean
 }
 
 type Props = {
@@ -518,12 +523,23 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
               {tracks.map((track, i) => {
                 const active = i === index
                 const playable = !!track.audioUrl
+                // Full-quality original, gated per mix on the artist's "Allow
+                // download" toggle. Same-origin proxy + ?download=1 → streamed
+                // attachment, so even a 2 GB WAV never buffers (see /api/audio).
+                const downloadName = playable && track.allowDownload
+                  ? audioDownloadFileName(track.audioUrl!, track.title)
+                  : null
                 return (
-                  <button
+                  <div
                     key={track.id}
-                    onClick={() => playTrackAt(i)}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors group ${playable ? 'hover:bg-white/[0.06]' : 'cursor-default'}`}
+                    className={`w-full flex items-center transition-colors group ${playable ? 'hover:bg-white/[0.06]' : ''}`}
                     style={active ? { background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.12)` } : undefined}
+                  >
+                  {/* An <a> can't nest inside a <button>, so the row is a flex
+                      wrapper: play button fills it, download link sits beside. */}
+                  <button
+                    onClick={() => playTrackAt(i)}
+                    className={`flex-1 min-w-0 flex items-center gap-3 pl-4 py-2.5 text-left ${downloadName ? 'pr-1' : 'pr-4'} ${playable ? '' : 'cursor-default'}`}
                     title={playable ? undefined : 'No mix uploaded yet'}
                   >
                     {/* Index / equalizer / hover play */}
@@ -584,6 +600,19 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                       {playable && track.duration != null ? formatDuration(track.duration) : ''}
                     </span>
                   </button>
+
+                  {downloadName && (
+                    <a
+                      href={`${audioProxyUrl(track.audioUrl!)}?download=1&filename=${encodeURIComponent(downloadName)}`}
+                      download={downloadName}
+                      className="p-2.5 mr-1.5 flex-shrink-0 text-white/35 hover:text-white transition-colors"
+                      title={`Download the full-quality file (${downloadName})`}
+                      aria-label={`Download ${track.title}`}
+                    >
+                      <Download size={15} />
+                    </a>
+                  )}
+                  </div>
                 )
               })}
             </div>

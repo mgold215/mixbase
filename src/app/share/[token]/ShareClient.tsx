@@ -10,6 +10,7 @@ import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coordinator'
+import { audioDownloadFileName } from '@/lib/download'
 import FeedbackForm from '@/components/FeedbackForm'
 
 // The public share page renders ONLY these version fields. The loader
@@ -35,16 +36,8 @@ type Props = {
   artistName: string
 }
 
-// The share page never receives mb_versions.audio_filename (the artist's own
-// upload name can carry private context — "clientX-rough-DONTSEND.wav"), so the
-// saved file is named after the public track title, taking its extension from
-// the storage path so the bytes land as the format that was actually uploaded.
-function downloadFileName(audioUrl: string, title: string): string {
-  const ext = audioUrl.split('?')[0].split('.').pop()
-  const safeExt = ext && /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'wav'
-  const safeTitle = title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'mix'
-  return `${safeTitle}.${safeExt}`
-}
+// Download naming lives in src/lib/download.ts (audioDownloadFileName) — the
+// album share player names its per-track downloads the same way.
 
 export default function ShareClient({ version, artistName }: Props) {
   // The share token this page was addressed by. Read from the route rather than
@@ -73,7 +66,7 @@ export default function ShareClient({ version, artistName }: Props) {
   // Original-quality download, when the artist enabled it on this mix. The
   // audio proxy is same-origin, so the `download` attribute is honoured and
   // ?download=1 makes it a streamed attachment — a 2 GB WAV never buffers.
-  const downloadName = downloadFileName(version.audio_url, title)
+  const downloadName = audioDownloadFileName(version.audio_url, title)
   const downloadHref = `${audioUrl}?download=1&filename=${encodeURIComponent(downloadName)}`
   const downloadLabel = downloadName.split('.').pop()!.toUpperCase()
 
