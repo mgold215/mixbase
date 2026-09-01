@@ -28,6 +28,20 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (body.release_type != null && !['single', 'ep', 'album'].includes(body.release_type)) {
     return NextResponse.json({ error: 'Invalid release_type' }, { status: 400 })
   }
+  // `title` is the one NOT NULL release column with NO column default, so it is
+  // the one RELEASE_COLUMN_DEFAULTS structurally cannot rescue — there is no
+  // sensible title to fall back to. Without this it reached Postgres as a 23502
+  // and surfaced as a hard 500.
+  //
+  // It is reachable by an ordinary gesture, not just a crafted call:
+  // PipelineClient sends `v || null` for any inline-edited field, so emptying
+  // the Title box posts an explicit null — the exact interaction the Language
+  // comment in distrokid.ts already documents. Blank-but-present strings are
+  // rejected on the same rule: NOT NULL admits '', which would leave a release
+  // with no title at all and no way to spot it.
+  if ('title' in body && (typeof body.title !== 'string' || body.title.trim() === '')) {
+    return NextResponse.json({ error: 'Title cannot be empty' }, { status: 400 })
+  }
   // Re-pointing a release at a project_id/final_version_id the caller doesn't own
   // would leak that resource through the GET join — validate ownership when either
   // is being set (null clears the link and is allowed).

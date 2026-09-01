@@ -143,6 +143,22 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    /// Set whether someone holding this version's share link is offered a
+    /// download button.
+    ///
+    /// This is a CONSENT SIGNAL, not an access control — see
+    /// src/lib/version-defaults.ts. /api/audio is a public path and mf-audio is
+    /// public-read, so anyone with the share link can already fetch the bytes.
+    /// The flag says what the artist is comfortable with; do not build anything
+    /// here that implies it withholds the file.
+    ///
+    /// Goes through the web route rather than PostgREST so it picks up the
+    /// route's ownership check and rate limit.
+    func setAllowDownload(versionId: UUID, allow: Bool) async throws {
+        let body: [String: Any] = ["allow_download": allow]
+        _ = try await requestJSON(path: "/api/versions/\(versionId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
     // MARK: - Artwork assignment (Media library)
 
     /// Set an existing artwork image as a project's cover (must be a Supabase

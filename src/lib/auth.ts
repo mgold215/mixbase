@@ -26,10 +26,15 @@ export async function getUserId(): Promise<string> {
 }
 
 // Returns the userId string if the request comes from an admin, null otherwise.
+//
+// Identity comes from isAdminIdentity(), NOT from profiles.subscription_tier.
+// That column is UPDATE-grantable to the authenticated role and RLS scopes the
+// row rather than the column, so a user could promote themselves to 'admin' with
+// a PATCH of their own profile. See src/lib/admin-identity.ts for the full
+// write-up and the production evidence.
 export async function assertAdmin(request: import('next/server').NextRequest): Promise<string | null> {
-  const { supabaseAdmin } = await import('./supabase')
+  const { isAdminIdentity } = await import('./admin-identity')
   const userId = request.headers.get('X-User-Id')
   if (!userId) return null
-  const { data } = await supabaseAdmin.from('profiles').select('subscription_tier').eq('id', userId).single()
-  return data?.subscription_tier === 'admin' ? userId : null
+  return (await isAdminIdentity(userId)) ? userId : null
 }

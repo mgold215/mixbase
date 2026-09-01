@@ -15,6 +15,7 @@ import {
   collectAllRows,
   collectAssetKeys,
   collectAssetUrls,
+  filterToOwnedPrefixes,
   keysSafeToDelete,
   listProjectPrefix,
   totalKeyCount,
@@ -341,6 +342,29 @@ async function listProjectPrefixes(id: string): Promise<AssetKeys> {
  * we are cleaning up after.
  */
 async function removeProjectAssets(id: string, candidates: AssetKeys, candidateUrls: string[]) {
+  // Key-shape filter, run BEFORE the survivor scan and alongside it — not
+  // instead of it. filterToOwnedPrefixes' docstring says the two cover
+  // different halves and both run; delete-account has always run both, and
+  // this path ran only the scan, which is the half that cannot see this case.
+  //
+  // The gap it closes: PATCH accepts any `isSupabaseStorageUrl()` for
+  // artwork_url / instrumental_url (protocol + hostname only, no ownership
+  // check — unlike the visualizer pins just below it, which do verify
+  // mb_visualizers.user_id). So a user can point a throwaway project of their
+  // own at a stranger's object and delete the project to destroy it. The scan
+  // cannot stop that: pass 1 matches exact URLs, and an UNREFERENCED object —
+  // a superseded finalized-<ts>.jpg, an unpicked ai-<ts>.webp — has no
+  // surviving row to find; pass 2's prefix match is scoped to THIS project's
+  // id, so it never looks under the victim's prefix. Key shape settles it with
+  // no query.
+  //
+  // Deleting one project, so the owned set is exactly [id]. Keys with no
+  // project prefix (the mf-audio bucket-root uploads) are attributed to
+  // nothing and pass through untouched, to be judged by the scan alone —
+  // filtering them out here would strand a user's own root audio in a public
+  // bucket. This can only ever narrow what gets deleted, never widen it.
+  candidates = filterToOwnedPrefixes(candidates, [id])
+
   if (totalKeyCount(candidates) === 0) return
 
   const scan = await survivingAssetKeys(candidateUrls, id)

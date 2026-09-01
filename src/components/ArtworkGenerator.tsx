@@ -152,48 +152,65 @@ export default function ArtworkGenerator({
     if (!sourceUrl) return
     setFinalizing(true)
     setError('')
-    const res = await fetch('/api/finalize-artwork', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        position,
-        size,
-        showRule,
-        filter,
-        color,
-      }),
-    })
-    const data = await res.json()
-    if (res.ok && data.finalized_artwork_url) {
-      onFinalizedUpdated(data.finalized_artwork_url)
-    } else {
-      setError(data.error ?? 'Finalize failed. Try again.')
+    // Guard the JSON parse: a gateway error (e.g. a Railway 502 during a deploy)
+    // returns an HTML body, so res.json() would throw. Without the try/finally
+    // the spinner would stay stuck "Finalizing…" forever with no error shown.
+    // Same shape as generateCover() in collections/[id]/CollectionClient.tsx.
+    try {
+      const res = await fetch('/api/finalize-artwork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          position,
+          size,
+          showRule,
+          filter,
+          color,
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.finalized_artwork_url) {
+        onFinalizedUpdated(data.finalized_artwork_url)
+      } else {
+        setError(data?.error ?? 'Finalize failed. Try again.')
+      }
+    } catch {
+      setError('Network error. Try again.')
+    } finally {
+      setFinalizing(false)
     }
-    setFinalizing(false)
   }
 
   async function handleGenerate() {
     setGenerating(true)
     setError('')
 
-    const res = await fetch('/api/generate-artwork', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, prompt, model, vary, title: projectTitle }),
-    })
+    // Same gateway-HTML guard as handleFinalize above: generation is the
+    // longest-running call on this screen, so it is the most likely to be in
+    // flight across a deploy and the worst one to leave spinning.
+    try {
+      const res = await fetch('/api/generate-artwork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, prompt, model, vary, title: projectTitle }),
+      })
 
-    const data = await res.json()
-    if (res.ok && data.artwork_url) {
-      onArtworkUpdated(data.artwork_url)
-      // Server cleared finalized_artwork_url; mirror that in client state.
-      onFinalizedUpdated(null)
-      setLastLook(data.look ?? null)
-      setMode('idle')
-    } else {
-      setError(data.error ?? 'Generation failed. Try again.')
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.artwork_url) {
+        onArtworkUpdated(data.artwork_url)
+        // Server cleared finalized_artwork_url; mirror that in client state.
+        onFinalizedUpdated(null)
+        setLastLook(data.look ?? null)
+        setMode('idle')
+      } else {
+        setError(data?.error ?? 'Generation failed. Try again.')
+      }
+    } catch {
+      setError('Network error. Try again.')
+    } finally {
+      setGenerating(false)
     }
-    setGenerating(false)
   }
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
