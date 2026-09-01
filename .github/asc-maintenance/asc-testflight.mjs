@@ -28,10 +28,15 @@
 // using the public link this prints. The link is made for sharing and safe
 // to appear in logs; linkLimit caps how many people can join through it.
 //
+// Optional "demoAccount" {email, appBaseUrl, artistName} — Beta App Review
+// demands working sign-in credentials (demoAccountRequired is true for this
+// app). The password is DERIVED on the runner from the ASC signing key, so
+// only its email half appears here; see the demo-account phase below.
+//
 // Idempotent: everything already in place is skipped, so re-runs just
 // re-print the link.
 
-import { createSign, createPrivateKey } from "node:crypto";
+import { createSign, createPrivateKey, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -195,6 +200,77 @@ try {
   warn(`diagnostics phase threw: ${err.message}`);
 }
 
+// ── Beta-review demo account ────────────────────────────────────────────────
+// Beta App Review REJECTED the first build (2026-08-31): demoAccountRequired
+// is true but the demo credentials on the beta review detail were empty, and
+// this repo is public, so a password can never live in the request file or
+// appear in these logs. Instead the runner derives a stable secret from the
+// ASC signing key it already holds (HMAC — never printed, reproducible only
+// where the key lives), makes sure a real account with those credentials
+// exists via the app's own public signup API, and syncs them into ASC
+// entirely server-side. Idempotent: the derived value is identical on every
+// run. If the ASC key is ever rotated the derived password changes with it —
+// the sign-in probe below catches the mismatch and says what to do.
+if (request.demoAccount?.email && request.demoAccount?.appBaseUrl) {
+  try {
+    const { email, appBaseUrl } = request.demoAccount;
+    const password =
+      "Mb1!" +
+      b64url(
+        createHmac("sha256", Buffer.from(p8b64, "base64"))
+          .update("mixbase-testflight-demo-account-v1")
+          .digest()
+      ).slice(0, 20);
+    const call = (path, body) =>
+      fetch(`${appBaseUrl}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    let accountReady = false;
+    const signIn = await call("/api/auth", { email, password });
+    if (signIn.status === 200) {
+      console.log("\nDemo account: exists and the derived password signs in.");
+      accountReady = true;
+    } else {
+      const signup = await call("/api/auth/signup", {
+        email,
+        password,
+        artist_name: request.demoAccount.artistName ?? "App Review",
+      });
+      if (signup.status === 200) {
+        console.log("\nDemo account: created via the app's public signup.");
+        accountReady = true;
+      } else {
+        warn(
+          `demo account is not usable (sign-in ${signIn.status}, signup ${signup.status}: ${(await signup.text()).slice(0, 200)}) — likely the ASC key rotated after the account was created; reset the account's password by hand (or delete the account) and re-run. ASC credentials left untouched.`
+        );
+      }
+    }
+    if (accountReady) {
+      const detail = await asc("GET", `/v1/apps/${appId}/betaAppReviewDetail`);
+      if (detail.status !== 200 || !detail.body?.data) {
+        warn(`could not read betaAppReviewDetail for the demo sync: HTTP ${detail.status}`);
+      } else {
+        const patched = await asc("PATCH", `/v1/betaAppReviewDetails/${detail.body.data.id}`, {
+          data: {
+            type: "betaAppReviewDetails",
+            id: detail.body.data.id,
+            attributes: { demoAccountName: email, demoAccountPassword: password, demoAccountRequired: true },
+          },
+        });
+        if (patched.status === 200) {
+          console.log("Demo account: credentials synced to the ASC beta review detail (values not logged).");
+        } else {
+          warn(`could not sync demo credentials to ASC: HTTP ${patched.status}: ${patched.text.slice(0, 300)}`);
+        }
+      }
+    }
+  } catch (err) {
+    warn(`demo-account phase threw: ${err.message}`);
+  }
+}
+
 // ── Keep the newest build in the group, reviewed ────────────────────────────
 // Failures in this phase are warnings: the link is the deliverable, and the
 // build appears for testers as soon as the pieces are in place.
@@ -352,7 +428,7 @@ try {
               }
             }
             if (missing.includes("demoAccountPassword")) {
-              warn("demo account secret is EMPTY and is never copied by this script — set it once in App Store Connect → TestFlight → Test Information.");
+              warn("demo account secret reads EMPTY here — the demo-account phase above syncs it when request.demoAccount is configured; otherwise set it once in App Store Connect → TestFlight → Test Information.");
             }
             if (Object.keys(patchAttrs).length === 0) {
               warn("App Store review detail has none of the missing fields either — set them in ASC by hand.");

@@ -3,6 +3,11 @@
   "groupName": null,
   "linkLimit": 50,
   "privacyPolicyUrl": "https://mixbase.app/privacy",
+  "demoAccount": {
+    "email": "applereview@mixbase.app",
+    "appBaseUrl": "https://mixbase.app",
+    "artistName": "App Review"
+  },
   "betaDescription": "mixBASE is a workspace for artists finishing music: upload mixes and masters, track versions, run a master check (loudness, peaks, and what each streaming platform's normalization will do), generate artwork and looping visualizers, plan releases, and share tracks for feedback. Please test whatever matches your workflow — uploading a mix, playing versions, the master check, artwork — and report anything that looks wrong via TestFlight feedback.",
-  "note": "2026-08-30: keep the external group ('mixBASE Beta', created if missing) holding the newest reviewed build with its public TestFlight link on, so the owner can invite artists by email without tester PII passing through this public repo. Re-runs (including the workflow_run trigger after each iOS TestFlight upload) are idempotent."
+  "note": "2026-08-30: keep the external group ('mixBASE Beta', created if missing) holding the newest reviewed build with its public TestFlight link on, so the owner can invite artists by email without tester PII passing through this public repo. Re-runs (including the workflow_run trigger after each iOS TestFlight upload) are idempotent. 2026-09-01: added demoAccount after Beta App Review rejected the first build over empty demo credentials (demoAccountRequired=true) — the runner derives the password from the ASC key, creates the account through the app's public signup, and syncs it to ASC; no secret ever touches this repo or the logs."
 }
