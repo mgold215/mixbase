@@ -82,6 +82,8 @@ const EXCLUDED = {
     'Documentation only — every statement is commented out, and it targets storage.objects, which lives in the storage schema this blob does not own (same ground as the 028/029 exclusions). Marked DO NOT APPLY YET: the scoping predicate it describes would break every iOS upload until the iOS storage key is folded, since a flat root key has a NULL first path segment.',
   '034_mix_master_status.sql':
     'a data fix (UPDATE of retired WIP/Mix-Master statuses) plus an ALTER COLUMN SET DEFAULT — no object this parser accounts for. The new default IS carried: the blob\'s mb_versions create table says default \'Mix\', so a fresh bootstrap never mints a retired status, and there is no old data in a fresh database to retrofit.',
+  '039_drop_unused_tables.sql':
+    'DROP TABLE only — no object is declared, so there is nothing for SCHEMA_SQL to carry. Same ground as 037 (drop-only), and the two halves stay consistent for the same reason: none of the seven tables is created by any migration in this repo (they are untracked pre-ledger schema) and SCHEMA_SQL has never carried one of them, so a fresh bootstrap never creates what this drops. Note the consequence honestly, as the migration header does: migration 006 runs UNGUARDED enable-RLS/create-policy against five of the seven, so once this is applied 006 can no longer be replayed from scratch. That does not touch a fresh bootstrap (this blob does not run 006) but it does mean the numbered-migration replay path loses a step.',
 }
 
 // Pull the multi-line `const SCHEMA_SQL = \`...\`` template literal out of source.
