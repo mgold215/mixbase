@@ -100,6 +100,10 @@ struct PlayerView: View {
     @EnvironmentObject var audioService: AudioService
 
     @State private var allVersions: [Version] = []
+    // The playing project's row — fetched alongside the versions so the
+    // switcher menu knows whether a pinned instrumental exists
+    // (Project.instrumentalUrl, migration 035).
+    @State private var playingProject: Project?
     @State private var isLoading = true
 
     // Queue sheet
@@ -227,24 +231,36 @@ struct PlayerView: View {
                 .buttonStyle(.plain)
 
                 // Version + status. Switching versions is tucked into a small
-                // menu instead of a row of pills for every version.
+                // menu instead of a row of pills for every version: the
+                // current mix on top, the instrumental slot under it, and the
+                // full history one level down — the old flat list spilled
+                // every mix ever uploaded (duplicate names and all) into one
+                // unscannable column.
                 HStack(spacing: 6) {
-                    if allVersions.count > 1 {
+                    if let currentMix = sortedVersions.first {
                         Menu {
-                            ForEach(allVersions.sorted(by: { $0.versionNumber > $1.versionNumber })) { v in
-                                Button(action: {
-                                    // Same project, different mix — keep its visualizer looping.
-                                    audioService.play(
-                                        version: v,
-                                        trackName: audioService.currentTrackName ?? "Unknown",
-                                        artworkUrl: audioService.currentArtworkUrl,
-                                        visualizerUrl: audioService.currentVisualizerUrl
-                                    )
-                                }) {
-                                    if isCurrentVersion(v) {
-                                        Label(versionMenuTitle(v), systemImage: "checkmark")
+                            // The song's current mix — the latest upload.
+                            versionMenuButton(currentMix)
+
+                            // The pinned no-vocals file (one per project).
+                            // Grayed out rather than hidden when the project
+                            // has none, so the slot stays discoverable.
+                            if let instrumentalUrl = playingProject?.instrumentalUrl {
+                                Button(action: { playInstrumental(url: instrumentalUrl) }) {
+                                    if isInstrumentalCurrent {
+                                        Label("Instrumental", systemImage: "checkmark")
                                     } else {
-                                        Text(versionMenuTitle(v))
+                                        Text("Instrumental")
+                                    }
+                                }
+                            } else {
+                                Button("Instrumental") {}.disabled(true)
+                            }
+
+                            if sortedVersions.count > 1 {
+                                Menu("Previous Mixes") {
+                                    ForEach(sortedVersions.dropFirst()) { v in
+                                        versionMenuButton(v)
                                     }
                                 }
                             }
@@ -489,9 +505,90 @@ struct PlayerView: View {
 
     // MARK: - Helpers
 
-    // Menu row title for a mix, e.g. "MASTER 2" or "Mix 4"
+    // Newest first: the head is the song's current mix, the tail its history.
+    private var sortedVersions: [Version] {
+        allVersions.sorted { $0.versionNumber > $1.versionNumber }
+    }
+
+    // One tappable mix row — same project, different mix, so the visualizer
+    // keeps looping across the switch.
+    private func versionMenuButton(_ v: Version) -> some View {
+        Button(action: {
+            audioService.play(
+                version: v,
+                trackName: audioService.currentTrackName ?? "Unknown",
+                artworkUrl: audioService.currentArtworkUrl,
+                visualizerUrl: audioService.currentVisualizerUrl
+            )
+        }) {
+            if isCurrentVersion(v) {
+                Label(versionMenuTitle(v), systemImage: "checkmark")
+            } else {
+                Text(versionMenuTitle(v))
+            }
+        }
+    }
+
+    // Menu row title for a mix, e.g. "MASTER 2" or "Mix 4". Two uploads can
+    // share a display name (two files both named "MIX 3.wav" parse
+    // identically), which read as inexplicable duplicates in the old flat
+    // menu — suffix the upload date so twins stay tellable apart.
     private func versionMenuTitle(_ version: Version) -> String {
-        version.displayName
+        let name = version.displayName
+        guard allVersions.filter({ $0.displayName == name }).count > 1 else { return name }
+        return "\(name) · \(Self.menuDate.string(from: version.createdAt))"
+    }
+
+    private static let menuDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    // Same shape-based recognition as ProjectDetailView.isInstrumentalCurrent:
+    // the synthetic instrumental Version mints a fresh id on every play, so
+    // it is recognised by shape — versionNumber 0 can never be a real row
+    // (the server numbers from 1) and the label pins it down.
+    private var isInstrumentalCurrent: Bool {
+        guard let current = audioService.currentVersion else { return false }
+        return current.versionNumber == 0 && current.label == "Instrumental"
+    }
+
+    // Play the project's pinned instrumental through the shared AudioService,
+    // exactly as ProjectDetailView's card does: a synthetic Version (the
+    // instrumental has no mb_versions row) that nothing ever persists from.
+    private func playInstrumental(url: String) {
+        if isInstrumentalCurrent {
+            audioService.togglePlayPause()
+            return
+        }
+        guard let projectId = audioService.currentVersion?.projectId else { return }
+        let synthetic = Version(
+            id: UUID(),
+            projectId: projectId,
+            versionNumber: 0,
+            label: "Instrumental",
+            audioUrl: url,
+            audioFilename: nil,
+            durationSeconds: nil,
+            fileSizeBytes: nil,
+            status: "Mix",
+            privateNotes: nil,
+            publicNotes: nil,
+            changeLog: nil,
+            shareToken: nil,
+            allowDownload: false,
+            createdAt: Date(),
+            loudnessLufs: nil,
+            loudnessShortTermLufs: nil,
+            samplePeakDb: nil
+        )
+        audioService.play(
+            version: synthetic,
+            trackName: audioService.currentTrackName ?? "Unknown",
+            artworkUrl: audioService.currentArtworkUrl,
+            visualizerUrl: audioService.currentVisualizerUrl
+        )
     }
 
     private var playbackProgress: CGFloat {
@@ -549,12 +646,21 @@ struct PlayerView: View {
         }
     }
 
-    // Load versions for the currently playing project (for version switcher)
+    // Load versions + the project row for the currently playing project — the
+    // switcher needs both: the mixes, and whether an instrumental exists.
     private func loadVersionsForCurrentProject(projectId: UUID) async {
+        // Never let the previous project's instrumental show (or play!) under
+        // the next project while its fetch is still in flight.
+        if playingProject?.id != projectId { playingProject = nil }
         do {
             allVersions = try await SupabaseService.shared.fetchVersions(projectId: projectId)
         } catch {
             print("PlayerView: Failed to load versions — \(error.localizedDescription)")
+        }
+        do {
+            playingProject = try await SupabaseService.shared.fetchProject(id: projectId)
+        } catch {
+            print("PlayerView: Failed to load project — \(error.localizedDescription)")
         }
     }
 }
