@@ -607,6 +607,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
       setInstrumentalUploading(false)
       return
     }
+    // A replaced instrumental may be the track in the shared player right now —
+    // stop it rather than leaving the superseded file playing.
+    if (instrumental && currentUrl === audioProxyUrl(instrumental)) pause()
     setInstrumental(up.url)
     setInstrumentalStatus('')
     setInstrumentalPct(0)
@@ -618,6 +621,9 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   // with the project, same as replaced artwork).
   async function removeInstrumental() {
     const prev = instrumental
+    // If it's the track in the shared player right now, silence it — otherwise
+    // a file that no longer exists on the project keeps playing.
+    if (prev && currentUrl === audioProxyUrl(prev)) pause()
     setInstrumental(null)
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
@@ -897,6 +903,13 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setVersions(prev => prev.map(v => (v.id === versionId ? { ...v, ...row } : v)))
   }
 
+  // The instrumental plays through the app's ONE shared <audio> element (the
+  // same engine every mix uses), so it keeps playing in the mini player after
+  // this view closes — a page-local <audio> element died with the modal.
+  const instrumentalUrl = instrumental ? audioProxyUrl(instrumental) : null
+  const instrumentalActive = instrumentalUrl != null && currentUrl === instrumentalUrl
+  const instrumentalPctPlayed = instrumentalActive && duration > 0 ? (currentTime / duration) * 100 : 0
+
   return (
     <div className={inModal ? '' : 'pt-14'}>
       {actionError && (
@@ -1068,69 +1081,6 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               />
             </div>
 
-            {/* Instrumental slot — one pinned no-vocals file per project */}
-            <div className="mb-6 rounded-xl px-4 py-3" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Music2 size={15} className="text-[#2dd4bf] flex-shrink-0" />
-                  <span className="text-sm font-medium text-[var(--text)]">Instrumental</span>
-                  {!instrumental && !instrumentalUploading && (
-                    <span className="text-xs text-[var(--text-muted)] truncate">— no-vocals version of this song</span>
-                  )}
-                </div>
-                {instrumentalUploading ? (
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-[var(--text-secondary)]">{instrumentalStatus}</span>
-                    <div className="w-24 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-300"
-                        style={{ backgroundColor: instrumentalPct === 100 ? '#34d399' : '#2dd4bf', width: `${instrumentalPct}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3">
-                    {instrumental && (
-                      <a
-                        href={`${audioProxyUrl(instrumental)}?download=1&filename=${encodeURIComponent(instrumentalDownloadName())}`}
-                        className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text)] transition-colors"
-                      >
-                        Download
-                      </a>
-                    )}
-                    <button
-                      onClick={() => instrumentalInputRef.current?.click()}
-                      className="text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
-                    >
-                      {instrumental ? 'Replace' : 'Upload instrumental'}
-                    </button>
-                    {instrumental && (
-                      <button
-                        onClick={removeInstrumental}
-                        className="text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-              {instrumentalStatus.startsWith('Error') && !instrumentalUploading && (
-                <p className="text-xs text-red-400 mt-2">{instrumentalStatus}</p>
-              )}
-              {instrumental && !instrumentalUploading && (
-                <audio controls preload="none" src={audioProxyUrl(instrumental)} className="w-full mt-3 h-9" />
-              )}
-              <input
-                ref={instrumentalInputRef}
-                type="file"
-                accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
-                className="sr-only"
-                aria-label="Upload an instrumental audio file"
-                onChange={handleInstrumentalSelect}
-              />
-            </div>
-
             {/* Current mix */}
             {currentMix === null ? (
               <div className="text-center py-16 text-[var(--text-muted)]">
@@ -1164,6 +1114,113 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 onMeasured={handleMeasured}
               />
             )}
+
+            {/* Instrumental — the pinned no-vocals file. A sidecar of the song,
+                so it lives BELOW the current mix, and it plays through the
+                shared player (see instrumentalUrl above), so hitting play here
+                and closing this view hands it to the mini player like any mix. */}
+            <div className="mt-5 rounded-xl px-4 py-3" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div className="flex items-center gap-3">
+                {instrumentalUrl && !instrumentalUploading ? (
+                  <button
+                    onClick={() => {
+                      if (instrumentalActive) togglePlay()
+                      else playUrl(instrumentalUrl, projectForm.title || project.title, undefined, artwork ?? undefined, 'Instrumental')
+                    }}
+                    aria-label={instrumentalActive && isPlaying ? 'Pause instrumental' : 'Play instrumental'}
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+                    style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+                  >
+                    {instrumentalActive && isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-px" />}
+                  </button>
+                ) : (
+                  <Music2 size={15} className="text-[#2dd4bf] flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0 flex items-baseline gap-2">
+                  <span className="text-sm font-medium text-[var(--text)]">Instrumental</span>
+                  {!instrumental && !instrumentalUploading && (
+                    <span className="text-xs text-[var(--text-muted)] truncate">no-vocals version of this song</span>
+                  )}
+                  {instrumentalActive && (
+                    <span className="text-xs tabular-nums text-[var(--text-muted)]">
+                      {formatDuration(currentTime)} / {formatDuration(duration || null)}
+                    </span>
+                  )}
+                </div>
+                {instrumentalUploading ? (
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-xs text-[var(--text-secondary)]">{instrumentalStatus}</span>
+                    <div className="w-24 h-1 bg-[var(--surface-2)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ backgroundColor: instrumentalPct === 100 ? '#34d399' : '#2dd4bf', width: `${instrumentalPct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2.5 flex-shrink-0">
+                    {instrumental && (
+                      <a
+                        href={`${audioProxyUrl(instrumental)}?download=1&filename=${encodeURIComponent(instrumentalDownloadName())}`}
+                        className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border text-[var(--text-secondary)] hover:text-[var(--text)] transition-colors"
+                        style={{ borderColor: 'var(--border)' }}
+                        title={`Download ${instrumentalDownloadName()}`}
+                      >
+                        <Download size={12} />
+                        Download
+                      </a>
+                    )}
+                    <button
+                      onClick={() => instrumentalInputRef.current?.click()}
+                      className="text-xs font-semibold text-[#2dd4bf] hover:text-[#14b8a6] transition-colors"
+                    >
+                      {instrumental ? 'Replace' : 'Upload instrumental'}
+                    </button>
+                    {instrumental && (
+                      <button
+                        onClick={removeInstrumental}
+                        className="text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {instrumentalActive && (
+                <div
+                  className="relative w-full h-5 mt-2.5 rounded overflow-hidden"
+                  style={{ backgroundColor: 'var(--input-bg)' }}
+                >
+                  <div
+                    className="absolute inset-y-0 left-0 transition-all duration-100"
+                    style={{ backgroundColor: 'var(--accent)', opacity: 0.12, width: `${instrumentalPctPlayed}%` }}
+                  />
+                  <div
+                    className="absolute bottom-0 left-0 h-0.5 transition-all duration-100"
+                    style={{ backgroundColor: 'var(--accent)', width: `${instrumentalPctPlayed}%` }}
+                  />
+                  <input
+                    type="range" min={0} max={duration || 1} step={0.1}
+                    value={currentTime}
+                    onChange={e => seek(Number(e.target.value))}
+                    aria-label="Seek instrumental"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                </div>
+              )}
+              {instrumentalStatus.startsWith('Error') && !instrumentalUploading && (
+                <p className="text-xs text-red-400 mt-2">{instrumentalStatus}</p>
+              )}
+              <input
+                ref={instrumentalInputRef}
+                type="file"
+                accept="audio/*,.wav,.mp3,.aiff,.aif,.flac,.m4a,.ogg"
+                className="sr-only"
+                aria-label="Upload an instrumental audio file"
+                onChange={handleInstrumentalSelect}
+              />
+            </div>
 
             {/* Restore older mix */}
             {archivedVersions.length > 0 && (
@@ -1595,64 +1652,75 @@ function CurrentMixCard({
       {/* ── Body ── */}
       <div className="px-4 pb-4 pt-3 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
 
-        {/* Player */}
+        {/* Player — one classic transport row: a big unmissable play button on
+            the left, the scrubber beside it, time + download underneath. */}
         <div>
-          <div
-            className="relative w-full h-8 rounded-lg overflow-hidden mb-2"
-            style={{ backgroundColor: 'var(--input-bg)' }}
-          >
-            <div
-              className="absolute bottom-0 left-0 h-0.5 transition-all duration-100"
-              style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
-            />
-            <input
-              type="range" min={0} max={displayDuration || 1} step={0.1}
-              value={isActive ? currentTime : 0}
-              onChange={e => {
-                if (isActive) seek(Number(e.target.value))
-                else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label)
-              }}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            {markers.map(({ f, pct }) => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={e => { e.stopPropagation(); goToTimestamp(f.timestamp_seconds!) }}
-                aria-label={`${f.reviewer_name} at ${formatDuration(f.timestamp_seconds)}: ${f.comment}`}
-                title={`${f.reviewer_name}${f.rating ? ` · ${f.rating}★` : ''} @ ${formatDuration(f.timestamp_seconds)}\n${f.comment}`}
-                className="absolute bottom-0 z-10 w-2 h-2 -translate-x-1/2 rounded-full ring-1 ring-black/40 hover:scale-150 transition-transform cursor-pointer"
-                style={{ left: `${pct}%`, backgroundColor: markerColor(f.rating) }}
-              />
-            ))}
-          </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => {
                 if (isActive) togglePlay()
                 else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label)
               }}
-              className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full transition-colors"
-              style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--surface-3)', color: 'var(--text)' }}
+              aria-label={isActive && isPlaying ? 'Pause' : `Play ${label}`}
+              className="flex-shrink-0 w-11 h-11 flex items-center justify-center rounded-full transition-opacity hover:opacity-90"
+              style={{ backgroundColor: 'var(--accent)', color: '#0a0a0a' }}
             >
-              {isActive && isPlaying ? <Pause size={12} /> : <Play size={12} />}
+              {isActive && isPlaying ? <Pause size={17} /> : <Play size={17} className="ml-0.5" />}
             </button>
-            <span className="text-xs tabular-nums text-[var(--text-muted)]">
-              {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
-            </span>
-            <div className="flex-1" />
-            {/* Owner can always re-download the original upload (e.g. to submit
-                the WAV to a distributor) — ?download=1 makes the audio proxy
-                stream it as an attachment under its original filename. */}
-            <a
-              href={`${vUrl}?download=1&filename=${encodeURIComponent(version.audio_filename ?? 'mix.wav')}`}
-              download={version.audio_filename ?? 'mix.wav'}
-              className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-              title={`Download original file${version.audio_filename ? ` (${version.audio_filename})` : ''}`}
-            >
-              <Download size={13} />
-              Original
-            </a>
+            <div className="flex-1 min-w-0">
+              <div
+                className="relative w-full h-8 rounded-lg overflow-hidden"
+                style={{ backgroundColor: 'var(--input-bg)' }}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 transition-all duration-100"
+                  style={{ backgroundColor: 'var(--accent)', opacity: 0.12, width: `${vPct}%` }}
+                />
+                <div
+                  className="absolute bottom-0 left-0 h-0.5 transition-all duration-100"
+                  style={{ backgroundColor: 'var(--accent)', width: `${vPct}%` }}
+                />
+                <input
+                  type="range" min={0} max={displayDuration || 1} step={0.1}
+                  value={isActive ? currentTime : 0}
+                  onChange={e => {
+                    if (isActive) seek(Number(e.target.value))
+                    else playUrl(vUrl, projectTitle, undefined, artwork ?? undefined, label)
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                {markers.map(({ f, pct }) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={e => { e.stopPropagation(); goToTimestamp(f.timestamp_seconds!) }}
+                    aria-label={`${f.reviewer_name} at ${formatDuration(f.timestamp_seconds)}: ${f.comment}`}
+                    title={`${f.reviewer_name}${f.rating ? ` · ${f.rating}★` : ''} @ ${formatDuration(f.timestamp_seconds)}\n${f.comment}`}
+                    className="absolute bottom-0 z-10 w-2 h-2 -translate-x-1/2 rounded-full ring-1 ring-black/40 hover:scale-150 transition-transform cursor-pointer"
+                    style={{ left: `${pct}%`, backgroundColor: markerColor(f.rating) }}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center mt-1.5">
+                <span className="text-xs tabular-nums text-[var(--text-muted)]">
+                  {formatDuration(isActive ? currentTime : 0)} / {formatDuration(displayDuration || null)}
+                </span>
+                <div className="flex-1" />
+                {/* Owner can always re-download the original upload (e.g. to submit
+                    the WAV to a distributor) — ?download=1 makes the audio proxy
+                    stream it as an attachment under its original filename. */}
+                <a
+                  href={`${vUrl}?download=1&filename=${encodeURIComponent(version.audio_filename ?? 'mix.wav')}`}
+                  download={version.audio_filename ?? 'mix.wav'}
+                  className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border text-[var(--text-secondary)] hover:text-[var(--text)] transition-colors"
+                  style={{ borderColor: 'var(--border)' }}
+                  title={`Download the original file${version.audio_filename ? ` (${version.audio_filename})` : ''}`}
+                >
+                  <Download size={12} />
+                  Download
+                </a>
+              </div>
+            </div>
           </div>
 
           {/* Opt this mix's original into the public share page, so whoever you
