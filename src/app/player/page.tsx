@@ -94,10 +94,11 @@ function PlayerPage() {
   const [copied, setCopied] = useState(false)
 
   // ── Quick mix notes ────────────────────────────────────────────────────────
-  // Jot a timestamped note on the mix you're hearing without leaving the
-  // player (button or the N key). The stamp is "live" (tracks playback) until
-  // the first keystroke, then freezes — the note pins the moment you REACTED,
-  // not the moment you finished typing. Saved via POST /api/mix-notes into
+  // A menu in the player's top bar keeps the running list of notes for the mix
+  // that's playing, with quick entry (top-bar button or the N key; the badge is
+  // the mix's note count). The stamp is "live" (tracks playback) until the
+  // first keystroke, then freezes — the note pins the moment you REACTED, not
+  // the moment you finished typing. Saved via POST /api/mix-notes into
   // mb_feedback, so the project page's markers, punch list and AI summary all
   // pick it up with no extra plumbing.
   const [notesOpen, setNotesOpen] = useState(false)
@@ -108,6 +109,7 @@ function PlayerPage() {
   const [notes, setNotes] = useState<Feedback[]>([])
   // Version id the `notes` list belongs to — null until a fetch lands.
   const [notesVersion, setNotesVersion] = useState<string | null>(null)
+  const [notesLoadFailed, setNotesLoadFailed] = useState(false)
   const noteInputRef = useRef<HTMLInputElement | null>(null)
 
   // BPM / key analysis
@@ -244,24 +246,39 @@ function PlayerPage() {
     setNoteError(null)
     setNotes([])
     setNotesVersion(null)
+    setNotesLoadFailed(false)
   }, [current?.id])
 
-  // Load the current mix's existing notes/feedback once per version while the
-  // panel is open — the list doubles as "what have I already flagged?".
+  // Load the mix's running notes list on every track change — not just when the
+  // menu opens — so the count badge on the top-bar button is live and the list
+  // is already there the moment the menu drops down. On failure the version id
+  // is still recorded (with an honest flag) so the UI can say "couldn't load"
+  // rather than showing "Loading…" forever, and quick entry keeps working —
+  // saving is independent of listing.
   useEffect(() => {
     const versionId = current?.id
-    if (!notesOpen || !versionId || notesVersion === versionId) return
+    if (!versionId || notesVersion === versionId) return
     let stale = false
     fetch(`/api/versions/${versionId}`)
       .then(r => (r.ok ? r.json() : null))
       .then((v: { mb_feedback?: Feedback[] } | null) => {
-        if (stale || !v) return
+        if (stale) return
         setNotesVersion(versionId)
-        setNotes(v.mb_feedback ?? [])
+        if (v) {
+          setNotes(v.mb_feedback ?? [])
+        } else {
+          setNotes([])
+          setNotesLoadFailed(true)
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (stale) return
+        setNotesVersion(versionId)
+        setNotes([])
+        setNotesLoadFailed(true)
+      })
     return () => { stale = true }
-  }, [notesOpen, current?.id, notesVersion])
+  }, [current?.id, notesVersion])
 
   // Focus the input the moment the panel opens, so N → type → Enter is one flow.
   useEffect(() => {
@@ -522,6 +539,27 @@ function PlayerPage() {
         >
           <Menu size={18} />
         </button>
+        {/* Notes menu — running list of notes for the mix that's playing */}
+        {current && (
+          <button
+            onClick={() => setNotesOpen(o => !o)}
+            className="absolute top-3 right-14 z-20 p-2 rounded-lg border transition-colors"
+            style={notesOpen
+              ? { background: 'rgba(45,212,191,0.15)', borderColor: 'rgba(45,212,191,0.4)', color: PLAYER_ACCENT }
+              : { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}
+            title="Mix notes (N)"
+          >
+            <NotebookPen size={18} />
+            {notesVersion === current.id && notes.length > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
+                style={{ background: PLAYER_ACCENT, color: '#000' }}
+              >
+                {notes.length}
+              </span>
+            )}
+          </button>
+        )}
         {/* Minimize — go back */}
         <button
           onClick={() => router.back()}
@@ -530,6 +568,105 @@ function PlayerPage() {
         >
           <ChevronDown size={18} />
         </button>
+
+        {/* ── Mix-notes menu (drops from the top bar; stays open while you
+            listen — it's a running list, not a click-away popover) ── */}
+        {current && notesOpen && (
+          <div
+            className="absolute top-14 left-3 right-3 sm:left-auto sm:right-3 sm:w-[380px] z-20 rounded-2xl border border-white/10 overflow-hidden"
+            style={{ background: 'rgba(6,12,11,0.92)', backdropFilter: 'blur(24px)' }}
+          >
+            <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+              <p className="text-[10px] font-semibold tracking-[0.22em] text-[#777] uppercase flex-shrink-0">Mix notes</p>
+              <p className="text-[11px] text-white/45 truncate min-w-0 flex-1 text-right">{current.title}</p>
+              <button
+                onClick={() => setNotesOpen(false)}
+                className="p-1 rounded-md text-[#666] hover:text-white hover:bg-white/5 transition-colors flex-shrink-0"
+                title="Close notes (N)"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Quick entry — stamp chip is live (dim) until the first keystroke
+                freezes it (accent). ±5s corrects for reaction time. */}
+            <div className="px-4 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center flex-shrink-0 rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+                  <button
+                    onClick={() => nudgeNote(-5)}
+                    className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Pin 5s earlier"
+                  >−5s</button>
+                  <span
+                    className="px-1 font-mono tabular-nums text-xs"
+                    style={{ color: noteAt === null ? 'rgba(255,255,255,0.5)' : PLAYER_ACCENT }}
+                  >
+                    {noteClock(noteStamp)}
+                  </span>
+                  <button
+                    onClick={() => nudgeNote(5)}
+                    className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Pin 5s later"
+                  >+5s</button>
+                </div>
+                <input
+                  ref={noteInputRef}
+                  type="text"
+                  value={noteText}
+                  onChange={onNoteChange}
+                  onKeyDown={onNoteKeyDown}
+                  maxLength={2000}
+                  placeholder="Jot a note — Enter saves"
+                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-[#555] focus:outline-none focus:border-white/20"
+                />
+                <button
+                  onClick={saveNote}
+                  disabled={noteSaving || !noteText.trim()}
+                  className="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
+                  style={{ background: PLAYER_ACCENT, color: '#000' }}
+                >
+                  {noteSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              {noteError && <p className="text-xs text-red-400 mt-1.5">{noteError}</p>}
+            </div>
+
+            {/* Running list, in song order — tap a stamp to jump there */}
+            {notesVersion !== current.id ? (
+              <p className="text-xs text-white/40 px-4 pb-3">Loading notes…</p>
+            ) : notesLoadFailed ? (
+              <p className="text-xs text-white/40 px-4 pb-3">Couldn’t load existing notes — new ones still save.</p>
+            ) : notes.length === 0 ? (
+              <p className="text-xs text-white/40 px-4 pb-3">No notes on this mix yet — jot the first one.</p>
+            ) : (
+              <div className="max-h-56 overflow-y-auto px-4 pb-3 space-y-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+                {[...notes]
+                  .sort((a, b) => (a.timestamp_seconds ?? 0) - (b.timestamp_seconds ?? 0))
+                  .map(f => (
+                    <div key={f.id} className="flex items-start gap-2 text-xs">
+                      {f.timestamp_seconds != null ? (
+                        <button
+                          onClick={() => ctxSeek(f.timestamp_seconds!)}
+                          className="flex-shrink-0 font-mono tabular-nums text-[11px] px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/15 transition-colors"
+                          style={{ color: PLAYER_ACCENT }}
+                          title={`Jump to ${noteClock(f.timestamp_seconds)}`}
+                        >
+                          {noteClock(f.timestamp_seconds)}
+                        </button>
+                      ) : (
+                        <span className="flex-shrink-0 text-[11px] px-1.5 py-0.5 text-white/30">—</span>
+                      )}
+                      <p className="text-white/80 leading-snug pt-0.5 min-w-0 break-words">
+                        {f.reviewer_name !== MIX_NOTE_AUTHOR && <span className="text-white/40">{f.reviewer_name}: </span>}
+                        {f.comment}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
         {/* ── Full-bleed artwork area ── */}
         <div className="flex-1 relative min-h-0">
           {current && (
@@ -618,9 +755,8 @@ function PlayerPage() {
                           boxShadow: `0 0 6px ${accentCss}aa`,
                         }}
                       />
-                      {/* Note markers — dots above the bars where notes are
-                          pinned (loaded once the notes panel has been opened
-                          for this mix). Accent = your own notes, white =
+                      {/* Note markers — dots above the bars where this mix's
+                          notes are pinned. Accent = your own notes, white =
                           listener feedback. */}
                       {duration > 0 && notesVersion === current?.id && notes
                         .filter(f => f.timestamp_seconds != null)
@@ -651,94 +787,6 @@ function PlayerPage() {
             </>
           )}
         </div>
-
-        {/* ── Quick mix notes panel ────────────────────────────────────────── */}
-        {current && notesOpen && (
-          <div
-            className="flex-shrink-0 w-full border-t border-white/10 px-3 sm:px-6 py-3"
-            style={{ background: 'rgba(6,12,11,0.92)', backdropFilter: 'blur(24px)' }}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-semibold tracking-[0.22em] text-[#777] uppercase">Mix notes</p>
-              <button
-                onClick={() => setNotesOpen(false)}
-                className="p-1 rounded-md text-[#666] hover:text-white hover:bg-white/5 transition-colors"
-                title="Close notes (N)"
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            {notes.length > 0 && (
-              <div className="max-h-28 overflow-y-auto mb-2 space-y-1 pr-1">
-                {[...notes]
-                  .sort((a, b) => (a.timestamp_seconds ?? 0) - (b.timestamp_seconds ?? 0))
-                  .map(f => (
-                    <div key={f.id} className="flex items-start gap-2 text-xs">
-                      {f.timestamp_seconds != null ? (
-                        <button
-                          onClick={() => ctxSeek(f.timestamp_seconds!)}
-                          className="flex-shrink-0 font-mono tabular-nums text-[11px] px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/15 transition-colors"
-                          style={{ color: PLAYER_ACCENT }}
-                          title={`Jump to ${noteClock(f.timestamp_seconds)}`}
-                        >
-                          {noteClock(f.timestamp_seconds)}
-                        </button>
-                      ) : (
-                        <span className="flex-shrink-0 text-[11px] px-1.5 py-0.5 text-white/30">—</span>
-                      )}
-                      <p className="text-white/80 leading-snug pt-0.5 min-w-0 break-words">
-                        {f.reviewer_name !== MIX_NOTE_AUTHOR && <span className="text-white/40">{f.reviewer_name}: </span>}
-                        {f.comment}
-                      </p>
-                    </div>
-                  ))}
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              {/* Stamp chip: live (dim) until the first keystroke freezes it
-                  (accent). ±5s corrects for reaction time. */}
-              <div className="flex items-center flex-shrink-0 rounded-lg bg-white/5 border border-white/10 overflow-hidden">
-                <button
-                  onClick={() => nudgeNote(-5)}
-                  className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
-                  title="Pin 5s earlier"
-                >−5s</button>
-                <span
-                  className="px-1 font-mono tabular-nums text-xs"
-                  style={{ color: noteAt === null ? 'rgba(255,255,255,0.5)' : PLAYER_ACCENT }}
-                >
-                  {noteClock(noteStamp)}
-                </span>
-                <button
-                  onClick={() => nudgeNote(5)}
-                  className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
-                  title="Pin 5s later"
-                >+5s</button>
-              </div>
-              <input
-                ref={noteInputRef}
-                type="text"
-                value={noteText}
-                onChange={onNoteChange}
-                onKeyDown={onNoteKeyDown}
-                maxLength={2000}
-                placeholder="Jot a note — Enter saves, Esc closes"
-                className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-[#555] focus:outline-none focus:border-white/20"
-              />
-              <button
-                onClick={saveNote}
-                disabled={noteSaving || !noteText.trim()}
-                className="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
-                style={{ background: PLAYER_ACCENT, color: '#000' }}
-              >
-                {noteSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-            {noteError && <p className="text-xs text-red-400 mt-1.5">{noteError}</p>}
-          </div>
-        )}
 
         {/* ── Full-width native-size control bar ───────────────────────────── */}
         {current && (
@@ -780,14 +828,6 @@ function PlayerPage() {
                 </button>
               </div>
               <div className="flex items-center justify-end gap-1">
-                <button
-                  onClick={() => setNotesOpen(o => !o)}
-                  className="p-2 transition-colors"
-                  style={{ color: notesOpen ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
-                  title="Mix notes (N)"
-                >
-                  <NotebookPen size={20} />
-                </button>
                 {current?.share_token && (
                   <div className="relative">
                     <button onClick={handleShare}
@@ -838,14 +878,6 @@ function PlayerPage() {
                 </button>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
-                <button
-                  onClick={() => setNotesOpen(o => !o)}
-                  className="p-2 transition-colors"
-                  style={{ color: notesOpen ? PLAYER_ACCENT : 'rgba(255,255,255,0.55)' }}
-                  title="Mix notes (N)"
-                >
-                  <NotebookPen size={20} />
-                </button>
                 <div className="flex items-center gap-2">
                   <Volume2 size={16} className="text-white/50" />
                   <div className="relative w-24 h-1.5 rounded-full bg-white/10">
