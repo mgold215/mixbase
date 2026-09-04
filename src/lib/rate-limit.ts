@@ -120,6 +120,16 @@ export const feedbackLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 }
 // Chat (Claude): 20 per hour per user — caps Anthropic spend per account
 export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 
+// Quick mix notes (owner jotting on their own mix from the player): 60 per hour
+// per user. Deliberately NOT sharing feedbackLimiter — that one is IP-keyed spam
+// defence for the PUBLIC share-page route, and pooling an authenticated owner
+// flow into it would let an anonymous spammer's 20/hr burn the owner's note
+// budget (or vice versa). Not loudnessLimiter either: its written rationale is
+// player TELEMETRY the browser writes on its own, and these are keystrokes a
+// person chooses to make. A note a minute for a full hour of listening is above
+// any real session; the cap bounds a runaway client loop, not spend.
+export const mixNoteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
+
 // Feed comments: 30 per hour per user — every comment is visible to all
 // artists, so this stops a runaway client or spammy account from flooding the
 // community feed.

@@ -158,6 +158,12 @@ export type Feedback = {
   created_at: string
 }
 
+// The reviewer_name POST /api/mix-notes stamps on the owner's own quick notes.
+// Shared from here (not the route file — importing a route module into a client
+// component would drag supabaseAdmin into the browser bundle) so the player can
+// tell self-notes from listener feedback without string drift.
+export const MIX_NOTE_AUTHOR = 'My notes'
+
 export type Release = {
   id: string
   user_id: string
