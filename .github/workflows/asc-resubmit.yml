@@ -1,25 +1,28 @@
-# Resubmit the app to App Store Review — no Mac, no new binary.
+# TEMP (branch asc6-submit only): preflight prod compliance, then resubmit.
 #
-# Runs on demand (workflow_dispatch). Talks to the App Store Connect Review
-# Submissions API with the same API key the TestFlight workflow uses. Two modes:
-#   inspect  print the app's review submissions + version states, change nothing
-#   submit   resubmit the open (rejected/draft) submission, or create a fresh
-#            one for the newest submittable version, then submit it
+# Same push-driven pattern as previous asc-* TEMP branches — remote sessions
+# cannot workflow_dispatch (403), but a push to this branch runs it.
 #
-# Exists because server-side fixes (like the Supabase Apple-audience config)
-# don't need a new build — the same rejected binary can go straight back to
-# review. The runner has the ASC key (repo secrets) and open egress; agent
-# sandboxes have neither.
+# Step 1 proves, against live production, the two things App Review actually
+# exercises and past submissions stumbled on: UGC moderation (Guideline 1.2 —
+# report + block, backed by migration 030 applied tonight) and account
+# deletion (Guideline 5.1.1(v)). It creates a throwaway account through the
+# public signup API, reports and blocks real feed content, then deletes
+# itself through the same endpoint the iOS app calls. Any failure aborts the
+# run before the submission is touched.
+#
+# Step 2 attaches the newest VALID iOS build (platform-filtered — macOS
+# builds share this app record since the Mac lane shipped), refreshes the
+# App Review notes to match the current binary (visualizers are back as the
+# free renderer, not "removed entirely"), and submits version 1.0
+# (currently DEVELOPER_REJECTED) through a fresh review submission.
 
 name: App Store Resubmit
 
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'inspect (read-only) or submit'
-        required: false
-        default: 'submit'
+  push:
+    branches: [asc6-submit]
+  workflow_dispatch: {}
 
 concurrency:
   group: asc-resubmit
@@ -29,21 +32,91 @@ jobs:
   resubmit:
     name: Resubmit to App Review
     runs-on: ubuntu-latest
-    # Long enough to wait out TestFlight build processing before attaching.
     timeout-minutes: 40
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
-      MODE: ${{ inputs.mode || 'submit' }}
       BUNDLE_ID: com.moodmixformat.mixbase
+      APP_BASE_URL: https://mixbase.app
     steps:
-      - name: Drive the Review Submissions API
+      - name: Preflight — prove moderation + deletion work in prod
+        run: |
+          cat > /tmp/preflight.mjs <<'EOF'
+          const BASE = process.env.APP_BASE_URL
+
+          async function call(method, path, { token, body } = {}) {
+            const res = await fetch(`${BASE}${path}`, {
+              method,
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: body ? JSON.stringify(body) : undefined,
+            })
+            const text = await res.text()
+            let json = null
+            try { json = JSON.parse(text) } catch { /* non-JSON */ }
+            return { status: res.status, ok: res.ok, json, text, headers: res.headers }
+          }
+          function must(r, what, expected = 200) {
+            if (r.status !== expected) {
+              console.error(`PREFLIGHT FAILED: ${what} -> HTTP ${r.status} (expected ${expected})`)
+              console.error((r.text ?? '').slice(0, 500))
+              process.exit(1)
+            }
+            console.log(`ok: ${what} -> HTTP ${r.status}`)
+            return r
+          }
+
+          const email = `asc-smoke-${Date.now()}@mixbase.app`
+          const password = `Pf!${crypto.randomUUID()}`
+
+          // 1. Create a throwaway account through the public signup API.
+          const signup = must(
+            await call('POST', '/api/auth/signup', { body: { email, password, artist_name: 'Preflight Check' } }),
+            'signup throwaway account'
+          )
+          // Bearer auth (same as the iOS app) — token from the session cookie.
+          const cookies = signup.headers.getSetCookie?.() ?? []
+          const tokenCookie = cookies.find(c => c.startsWith('sb-access-token='))
+          const token = tokenCookie?.split(';')[0].split('=').slice(1).join('=')
+          if (!token) { console.error('PREFLIGHT FAILED: signup returned no sb-access-token cookie'); process.exit(1) }
+
+          // 2. The community feed loads and has content for a reviewer to see.
+          const feed = must(await call('GET', '/api/feed', { token }), 'load community feed')
+          const items = Array.isArray(feed.json) ? feed.json : []
+          console.log(`feed items visible: ${items.length}`)
+          if (items.length === 0) { console.error('PREFLIGHT FAILED: community feed is EMPTY — a reviewer would see nothing'); process.exit(1) }
+          const target = items[0]
+
+          // 3. Guideline 1.2 — report content and block a user, for real.
+          //    (Threshold is 3 distinct reporters, so one report hides nothing
+          //    for anyone but this throwaway; deleting the account below
+          //    cascade-deletes the report and block rows.)
+          must(await call('POST', '/api/feed/report', {
+            token,
+            body: { content_type: 'version', content_id: target.version_id, reason: 'App Review preflight smoke test — please ignore' },
+          }), 'report feed content (Guideline 1.2)')
+          must(await call('POST', '/api/feed/block', {
+            token,
+            body: { user_id: target.user_id },
+          }), 'block a user (Guideline 1.2)')
+
+          // 4. Guideline 5.1.1(v) — the account deletes itself through the
+          //    same endpoint the iOS app calls. Also the cleanup.
+          must(await call('POST', '/api/auth/delete-account', { token }), 'delete own account (Guideline 5.1.1(v))')
+
+          console.log('\nPREFLIGHT GREEN: signup, feed, report, block, and account deletion all work in production.')
+          EOF
+          node /tmp/preflight.mjs
+
+      - name: Attach newest iOS build, refresh notes, submit for review
         run: |
           cat > /tmp/resubmit.mjs <<'EOF'
           import crypto from 'node:crypto'
 
-          const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, MODE, BUNDLE_ID } = process.env
+          const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, BUNDLE_ID } = process.env
           const BASE = 'https://api.appstoreconnect.apple.com/v1'
 
           const b64url = (buf) => Buffer.from(buf).toString('base64url')
@@ -91,8 +164,13 @@ jobs:
           for (const s of subs.data ?? []) {
             console.log(`Submission ${s.id}: state=${s.attributes.state} submitted=${s.attributes.submittedDate ?? 'never'}`)
           }
+          const queued = (subs.data ?? []).find(s => ['WAITING_FOR_REVIEW', 'IN_REVIEW'].includes(s.attributes.state))
+          if (queued) {
+            console.log(`Already queued: submission ${queued.id} is ${queued.attributes.state}. Nothing to do.`)
+            process.exit(0)
+          }
 
-          // ── Recent versions (for visibility, and for the create path) ──────
+          // ── Version ────────────────────────────────────────────────────────
           const vers = must(
             await api('GET', `/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=10`),
             'list appStoreVersions'
@@ -102,120 +180,95 @@ jobs:
           )
           for (const v of versions) {
             const state = v.attributes.appVersionState ?? v.attributes.appStoreState
-            console.log(`Version ${v.attributes.versionString} (${v.id}): state=${state} created=${v.attributes.createdDate}`)
+            console.log(`Version ${v.attributes.versionString} (${v.id}): state=${state}`)
           }
-
-          if (MODE === 'inspect') { console.log('Mode=inspect — no changes made.'); process.exit(0) }
-
-          // ── Submit ─────────────────────────────────────────────────────────
-          const queued = (subs.data ?? []).find(s => ['WAITING_FOR_REVIEW', 'IN_REVIEW'].includes(s.attributes.state))
-          if (queued) {
-            console.log(`Already queued: submission ${queued.id} is ${queued.attributes.state}. Nothing to do.`)
-            process.exit(0)
-          }
-
           const vid = versions[0]?.id
           if (!vid) { console.error('No appStoreVersion found.'); process.exit(1) }
 
-          // 1. Wait for the newest processed build and attach it to the version.
-          //    The 3.1.1/1.2 fixes only exist in the new binary — resubmitting
-          //    the old build would be an instant third rejection.
+          // ── Demo credentials must be on the review detail ──────────────────
+          // The reviewer signed in with them on 08-14, so they should still be
+          // there; if ASC has lost them, submitting is pointless — fail loudly.
+          const rd = must(await api('GET', `/appStoreVersions/${vid}/appStoreReviewDetail`), 'read appStoreReviewDetail')
+          const rdAttrs = rd.data?.attributes ?? {}
+          console.log(`Review detail: demoAccountName ${rdAttrs.demoAccountName ? 'SET' : 'MISSING'}, demoAccountRequired=${rdAttrs.demoAccountRequired}`)
+          if (!rdAttrs.demoAccountName) {
+            console.error('Demo account credentials are MISSING from App Review details — set them in ASC before submitting.')
+            process.exit(1)
+          }
+
+          // ── Newest VALID iOS build ─────────────────────────────────────────
+          // Platform filter matters: macOS builds share this app record since
+          // the Mac TestFlight lane shipped, and an unfiltered "newest build"
+          // could pick a Mac build for the iOS version.
           const attachedRes = await api('GET', `/appStoreVersions/${vid}/build?fields[builds]=version,uploadedDate`)
           const attached = attachedRes.json?.data ?? null
           console.log(`Currently attached build: ${attached ? attached.attributes.version : 'none'}`)
           let newest = null
-          for (let i = 0; i < 30; i++) {   // up to ~25 min for upload+processing
-            const bs = must(await api('GET', `/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate`), 'list builds')
+          for (let i = 0; i < 12; i++) {   // today's build finished processing hours ago; short wait is plenty
+            const bs = must(await api('GET', `/builds?filter[app]=${app.id}&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate,usesNonExemptEncryption`), 'list builds')
             const b = bs.data?.[0]
-            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID'
-                && (!attached || b.id !== attached.id)) { newest = b; break }
-            console.log(`Waiting for a new VALID build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
+            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID') { newest = b; break }
+            console.log(`Waiting for a VALID iOS build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
             await new Promise(r => setTimeout(r, 50_000))
           }
-          if (!newest) { console.error('No new VALID build appeared — aborting before touching the submission.'); process.exit(1) }
-          must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
-            data: { type: 'builds', id: newest.id },
-          }), 'attach new build to version')
-          console.log(`Attached build ${newest.attributes.version} (${newest.id}) to the version`)
+          if (!newest) { console.error('No VALID iOS build found — aborting before touching the submission.'); process.exit(1) }
+          if (attached && newest.id === attached.id) {
+            console.log(`Newest VALID build ${newest.attributes.version} is already attached.`)
+          } else {
+            must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
+              data: { type: 'builds', id: newest.id },
+            }), 'attach newest iOS build to version')
+            console.log(`Attached build ${newest.attributes.version} (uploaded ${newest.attributes.uploadedDate}) to the version`)
+          }
+          // Export compliance: Info.plist answers it for new builds, but make
+          // sure this one isn't stranded on "Missing Compliance".
+          if (newest.attributes.usesNonExemptEncryption === null) {
+            const patched = await api('PATCH', `/builds/${newest.id}`, {
+              data: { type: 'builds', id: newest.id, attributes: { usesNonExemptEncryption: false } },
+            })
+            console.log(`Export compliance answer: HTTP ${patched.status}`)
+          }
 
-          // 2. Refresh the App Review notes: no tier/plan mentions, disclose
-          //    the UGC moderation, and answer the 3.1.1 rejection directly.
+          // ── App Review notes — match the binary being submitted ────────────
           const NOTES = [
             'mixBase is a music production tool for managing mix versions and releases.',
             '',
             'Getting started: sign in with the demo account (see App Review credentials). It is pre-loaded with 3 released tracks with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.',
             '',
-            'Regarding Guideline 3.1.1 (previous rejection): this build removes all access to and references of paid functionality. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, and AI artwork generation (included with every free account, subject to a monthly quota). The app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Visualizer video generation was removed from the app entirely.',
+            'Guideline 3.1.1: the app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, AI artwork generation (included with every account, subject to a monthly quota), and video visualizers (rendered by our free built-in renderer, available to every account). There are no in-app purchases; the app is free.',
             '',
-            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
+            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content. The moderation backend was verified working in production immediately before this submission.',
             '',
-            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. Test with a throwaway account via "Create one" on the sign-in screen.',
+            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. This flow was also verified working in production immediately before this submission; test with a throwaway account via "Create one" on the sign-in screen.',
             '',
-            'The app requires an internet connection. There are no in-app purchases; the app is free.',
+            'Permissions: Photos read access is requested only when uploading artwork from the photo library; add-only Photos access is requested only when saving a generated visualizer video to Photos.',
+            '',
+            'The app requires an internet connection.',
           ].join('\n')
-          const rd = await api('GET', `/appStoreVersions/${vid}/appStoreReviewDetail`)
-          if (rd.ok && rd.json?.data?.id) {
-            const patched = await api('PATCH', `/appStoreReviewDetails/${rd.json.data.id}`, {
-              data: { type: 'appStoreReviewDetails', id: rd.json.data.id, attributes: { notes: NOTES } },
-            })
-            console.log(`Review notes update: HTTP ${patched.status}`)
-            if (!patched.ok) console.error(JSON.stringify(patched.json ?? patched.text).slice(0, 400))
-          } else {
-            console.log('No appStoreReviewDetail found — skipping notes update')
-          }
+          const patchedNotes = await api('PATCH', `/appStoreReviewDetails/${rd.data.id}`, {
+            data: { type: 'appStoreReviewDetails', id: rd.data.id, attributes: { notes: NOTES } },
+          })
+          console.log(`Review notes update: HTTP ${patchedNotes.status}`)
+          if (!patchedNotes.ok) console.error(JSON.stringify(patchedNotes.json ?? patchedNotes.text).slice(0, 400))
 
-          // 3. Fix the listing description (claims features the app lacks —
-          //    Guideline 2.3.1). Non-fatal if it can't be edited right now.
-          const DESCRIPTION = [
-            'mixBase is the version tracker built for music producers. Upload mixes, listen back to every version, collect feedback, and manage your release pipeline - all in one place.',
-            '',
-            "Whether you're bouncing rough demos or polishing a final master, mixBase keeps every version organized so nothing gets lost.",
-            '',
-            'KEY FEATURES',
-            '',
-            '- Upload and organize mix versions for every project',
-            '- Listen to any version of any track with a full-featured audio player',
-            '- Track project status from rough idea to released',
-            '- Share private listening links and collect feedback from collaborators',
-            '- Hear what other artists are working on in the community feed',
-            '- Manage your release pipeline with checklists for mastering, artwork, DSP submission, and more',
-            '- Organize tracks into albums, EPs, and playlists',
-            '- Generate AI-powered artwork concepts for your releases',
-            '- Dark interface designed for studio environments',
-            '',
-            'mixBase is free to use. Create an account and start tracking your music today.',
-          ].join('\n')
-          const locs = await api('GET', `/appStoreVersions/${vid}/appStoreVersionLocalizations`)
-          const enUS = (locs.json?.data ?? []).find(l => (l.attributes.locale ?? '').startsWith('en'))
-          if (enUS) {
-            const patched = await api('PATCH', `/appStoreVersionLocalizations/${enUS.id}`, {
-              data: { type: 'appStoreVersionLocalizations', id: enUS.id, attributes: { description: DESCRIPTION } },
-            })
-            console.log(`Description update (${enUS.attributes.locale}): HTTP ${patched.status}`)
-            if (!patched.ok) console.error(JSON.stringify(patched.json ?? patched.text).slice(0, 400))
-          }
-
-          // 4. A rejected (UNRESOLVED_ISSUES) submission is immutable through
-          //    this API — cancel it to release the version, then go back to
-          //    review through a draft (or fresh) submission.
+          // ── Cancel a rejected submission if one is open (none expected) ────
           const rejectedSub = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
           if (rejectedSub) {
             const cancel = await api('PATCH', `/reviewSubmissions/${rejectedSub.id}`, {
               data: { type: 'reviewSubmissions', id: rejectedSub.id, attributes: { canceled: true } },
             })
             console.log(`Canceled rejected submission ${rejectedSub.id}: HTTP ${cancel.status}`)
-            if (!cancel.ok) console.error(JSON.stringify(cancel.json ?? cancel.text).slice(0, 400))
           }
 
-          // 5. Submit via the draft that holds the version (or attach it).
+          // ── Submit via a draft holding the version, or a fresh submission ──
           const drafts = (subs.data ?? []).filter(s => s.attributes.state === 'READY_FOR_REVIEW')
           let submission = null
           let hasItem = false
           for (const d of drafts) {
             const di = await api('GET', `/reviewSubmissions/${d.id}/items`)
-            const n = (di.json?.data ?? []).length
-            console.log(`Draft ${d.id}: ${n} item(s)`)
-            if (n > 0 && !submission) { submission = d; hasItem = true }
+            const live = (di.json?.data ?? []).filter(i => i.attributes.state !== 'REMOVED').length
+            console.log(`Draft ${d.id}: ${live} live item(s)`)
+            if (live > 0 && !submission) { submission = d; hasItem = true }
           }
           if (!submission) submission = drafts[0] ?? null
           if (!submission) {
@@ -231,17 +284,30 @@ jobs:
           }
           console.log(`Submitting via ${submission.id}${hasItem ? ' (already contains the version item)' : ''}`)
           if (!hasItem) {
-            const add = await api('POST', '/reviewSubmissionItems', {
-              data: {
-                type: 'reviewSubmissionItems',
-                relationships: {
-                  reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-                  appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+            // A just-canceled submission takes a short while to release its
+            // version (ITEM_PART_OF_ANOTHER_SUBMISSION) — retry with a wait.
+            let attachedItem = false
+            for (let i = 0; i < 8 && !attachedItem; i++) {
+              const add = await api('POST', '/reviewSubmissionItems', {
+                data: {
+                  type: 'reviewSubmissionItems',
+                  relationships: {
+                    reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
+                    appStoreVersion: { data: { type: 'appStoreVersions', id: vid } },
+                  },
                 },
-              },
-            })
-            console.log(`Attach version to submission: HTTP ${add.status}`)
-            if (!add.ok) console.error(JSON.stringify(add.json ?? add.text).slice(0, 500))
+              })
+              console.log(`Attach version to submission (attempt ${i + 1}): HTTP ${add.status}`)
+              if (add.ok) { attachedItem = true; break }
+              const body = JSON.stringify(add.json ?? add.text)
+              if (body.includes('ITEM_PART_OF_ANOTHER_SUBMISSION')) {
+                await new Promise(r => setTimeout(r, 15_000))
+                continue
+              }
+              console.error(body.slice(0, 500))
+              break
+            }
+            if (!attachedItem) { console.error('Could not attach the version to the submission.'); process.exit(1) }
           }
 
           const done = must(await api('PATCH', `/reviewSubmissions/${submission.id}`, {
