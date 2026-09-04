@@ -1,15 +1,15 @@
 'use client'
 
-import { Suspense, useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown,
+  Play, Pause, SkipBack, SkipForward, Shuffle, Volume2, Repeat, Repeat1, Search, ListMusic, Menu, X, Share2, Check, ChevronDown, NotebookPen,
 } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import type { Track } from '../api/tracks/route'
-import { formatDuration, audioProxyUrl } from '@/lib/supabase'
+import { formatDuration, audioProxyUrl, MIX_NOTE_AUTHOR, type Feedback } from '@/lib/supabase'
 import { trackShareUrl } from '@/lib/share-url'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -38,6 +38,15 @@ function generateWaveform(seed: string, count: number): number[] {
     const s = (p + v * 2 + n) / 4
     return 0.08 + s * 0.65  // clamp to 8–73%, no bar reaches full height
   })
+}
+
+// m:ss for the quick-note stamp and list. formatDuration() renders 0 as
+// "--:--", but a note pinned at the very start of a mix is legitimate — the
+// same rule punch-list.ts pins with its own clock().
+function noteClock(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 // Map version status → short tag + color. 'WIP' / 'Mix/Master' are the retired
@@ -83,6 +92,25 @@ function PlayerPage() {
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // ── Quick mix notes ────────────────────────────────────────────────────────
+  // A menu in the player's top bar keeps the running list of notes for the mix
+  // that's playing, with quick entry (top-bar button or the N key; the badge is
+  // the mix's note count). The stamp is "live" (tracks playback) until the
+  // first keystroke, then freezes — the note pins the moment you REACTED, not
+  // the moment you finished typing. Saved via POST /api/mix-notes into
+  // mb_feedback, so the project page's markers, punch list and AI summary all
+  // pick it up with no extra plumbing.
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [noteText, setNoteText] = useState('')
+  const [noteAt, setNoteAt] = useState<number | null>(null)   // null = stamp is live
+  const [noteSaving, setNoteSaving] = useState(false)
+  const [noteError, setNoteError] = useState<string | null>(null)
+  const [notes, setNotes] = useState<Feedback[]>([])
+  // Version id the `notes` list belongs to — null until a fetch lands.
+  const [notesVersion, setNotesVersion] = useState<string | null>(null)
+  const [notesLoadFailed, setNotesLoadFailed] = useState(false)
+  const noteInputRef = useRef<HTMLInputElement | null>(null)
 
   // BPM / key analysis
   const [trackBPM, setTrackBPM] = useState<number | null>(null)
@@ -195,10 +223,117 @@ function PlayerPage() {
       if (e.code === 'Space') { e.preventDefault(); togglePlay() }
       if (e.code === 'ArrowLeft') { e.preventDefault(); prev() }
       if (e.code === 'ArrowRight') { e.preventDefault(); next() }
+      // Bare N toggles the quick-note panel — modifiers stay the browser's (⌘N).
+      if (e.code === 'KeyN' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault(); setNotesOpen(o => !o)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [togglePlay, prev, next])
+
+  // ── Quick mix notes: lifecycle ─────────────────────────────────────────────
+  // Always the id of the mix playing RIGHT NOW — the save handler checks it
+  // after its await, because auto-advance can change tracks mid-request and a
+  // note for the old mix must not be appended to the new mix's list.
+  const currentVersionRef = useRef<string | null>(null)
+  useEffect(() => { currentVersionRef.current = current?.id ?? null }, [current?.id])
+
+  // A frozen stamp from the previous track must not pin a note on the next one;
+  // a fetched list from the previous track must not render under it either.
+  useEffect(() => {
+    setNoteAt(null)
+    setNoteError(null)
+    setNotes([])
+    setNotesVersion(null)
+    setNotesLoadFailed(false)
+  }, [current?.id])
+
+  // Load the mix's running notes list on every track change — not just when the
+  // menu opens — so the count badge on the top-bar button is live and the list
+  // is already there the moment the menu drops down. On failure the version id
+  // is still recorded (with an honest flag) so the UI can say "couldn't load"
+  // rather than showing "Loading…" forever, and quick entry keeps working —
+  // saving is independent of listing.
+  useEffect(() => {
+    const versionId = current?.id
+    if (!versionId || notesVersion === versionId) return
+    let stale = false
+    fetch(`/api/versions/${versionId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((v: { mb_feedback?: Feedback[] } | null) => {
+        if (stale) return
+        setNotesVersion(versionId)
+        if (v) {
+          setNotes(v.mb_feedback ?? [])
+        } else {
+          setNotes([])
+          setNotesLoadFailed(true)
+        }
+      })
+      .catch(() => {
+        if (stale) return
+        setNotesVersion(versionId)
+        setNotes([])
+        setNotesLoadFailed(true)
+      })
+    return () => { stale = true }
+  }, [current?.id, notesVersion])
+
+  // Focus the input the moment the panel opens, so N → type → Enter is one flow.
+  useEffect(() => {
+    if (notesOpen) noteInputRef.current?.focus()
+  }, [notesOpen])
+
+  const noteStamp = Math.max(0, Math.floor(noteAt ?? currentTime))
+
+  const onNoteChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (noteAt === null && e.target.value.trim()) setNoteAt(currentTime)
+    setNoteText(e.target.value)
+  }
+
+  // ±5s corrects for reaction time — by the time you hit N, the moment you
+  // heard is already behind the playhead.
+  const nudgeNote = (delta: number) => {
+    const base = noteAt ?? currentTime
+    const max = duration > 0 ? duration : base
+    setNoteAt(Math.min(max, Math.max(0, base + delta)))
+  }
+
+  const saveNote = async () => {
+    const versionId = current?.id
+    const text = noteText.trim()
+    if (!versionId || !text || noteSaving) return
+    const stamped = noteStamp
+    setNoteSaving(true)
+    setNoteError(null)
+    try {
+      const res = await fetch('/api/mix-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version_id: versionId, comment: text, timestamp_seconds: stamped }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        setNoteError((data as { error?: string } | null)?.error ?? 'Couldn’t save the note — try again.')
+        return
+      }
+      if (currentVersionRef.current === versionId) {
+        setNotes(prev => [...prev, data as Feedback])
+      }
+      setNoteText('')
+      setNoteAt(null)
+    } catch {
+      setNoteError('Couldn’t save the note — check your connection.')
+    } finally {
+      setNoteSaving(false)
+    }
+  }
+
+  const onNoteKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveNote() }
+    if (e.key === 'Escape') { e.preventDefault(); setNotesOpen(false) }
+  }
 
   // Media Session handlers + position state are owned entirely by PlayerContext.
   // (This page used to override them and null them on unmount, which killed
@@ -404,6 +539,27 @@ function PlayerPage() {
         >
           <Menu size={18} />
         </button>
+        {/* Notes menu — running list of notes for the mix that's playing */}
+        {current && (
+          <button
+            onClick={() => setNotesOpen(o => !o)}
+            className="absolute top-3 right-14 z-20 p-2 rounded-lg border transition-colors"
+            style={notesOpen
+              ? { background: 'rgba(45,212,191,0.15)', borderColor: 'rgba(45,212,191,0.4)', color: PLAYER_ACCENT }
+              : { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}
+            title="Mix notes (N)"
+          >
+            <NotebookPen size={18} />
+            {notesVersion === current.id && notes.length > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
+                style={{ background: PLAYER_ACCENT, color: '#000' }}
+              >
+                {notes.length}
+              </span>
+            )}
+          </button>
+        )}
         {/* Minimize — go back */}
         <button
           onClick={() => router.back()}
@@ -412,6 +568,105 @@ function PlayerPage() {
         >
           <ChevronDown size={18} />
         </button>
+
+        {/* ── Mix-notes menu (drops from the top bar; stays open while you
+            listen — it's a running list, not a click-away popover) ── */}
+        {current && notesOpen && (
+          <div
+            className="absolute top-14 left-3 right-3 sm:left-auto sm:right-3 sm:w-[380px] z-20 rounded-2xl border border-white/10 overflow-hidden"
+            style={{ background: 'rgba(6,12,11,0.92)', backdropFilter: 'blur(24px)' }}
+          >
+            <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+              <p className="text-[10px] font-semibold tracking-[0.22em] text-[#777] uppercase flex-shrink-0">Mix notes</p>
+              <p className="text-[11px] text-white/45 truncate min-w-0 flex-1 text-right">{current.title}</p>
+              <button
+                onClick={() => setNotesOpen(false)}
+                className="p-1 rounded-md text-[#666] hover:text-white hover:bg-white/5 transition-colors flex-shrink-0"
+                title="Close notes (N)"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Quick entry — stamp chip is live (dim) until the first keystroke
+                freezes it (accent). ±5s corrects for reaction time. */}
+            <div className="px-4 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center flex-shrink-0 rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+                  <button
+                    onClick={() => nudgeNote(-5)}
+                    className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Pin 5s earlier"
+                  >−5s</button>
+                  <span
+                    className="px-1 font-mono tabular-nums text-xs"
+                    style={{ color: noteAt === null ? 'rgba(255,255,255,0.5)' : PLAYER_ACCENT }}
+                  >
+                    {noteClock(noteStamp)}
+                  </span>
+                  <button
+                    onClick={() => nudgeNote(5)}
+                    className="px-1.5 py-2 text-[10px] text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Pin 5s later"
+                  >+5s</button>
+                </div>
+                <input
+                  ref={noteInputRef}
+                  type="text"
+                  value={noteText}
+                  onChange={onNoteChange}
+                  onKeyDown={onNoteKeyDown}
+                  maxLength={2000}
+                  placeholder="Jot a note — Enter saves"
+                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-[#555] focus:outline-none focus:border-white/20"
+                />
+                <button
+                  onClick={saveNote}
+                  disabled={noteSaving || !noteText.trim()}
+                  className="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
+                  style={{ background: PLAYER_ACCENT, color: '#000' }}
+                >
+                  {noteSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              {noteError && <p className="text-xs text-red-400 mt-1.5">{noteError}</p>}
+            </div>
+
+            {/* Running list, in song order — tap a stamp to jump there */}
+            {notesVersion !== current.id ? (
+              <p className="text-xs text-white/40 px-4 pb-3">Loading notes…</p>
+            ) : notesLoadFailed ? (
+              <p className="text-xs text-white/40 px-4 pb-3">Couldn’t load existing notes — new ones still save.</p>
+            ) : notes.length === 0 ? (
+              <p className="text-xs text-white/40 px-4 pb-3">No notes on this mix yet — jot the first one.</p>
+            ) : (
+              <div className="max-h-56 overflow-y-auto px-4 pb-3 space-y-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+                {[...notes]
+                  .sort((a, b) => (a.timestamp_seconds ?? 0) - (b.timestamp_seconds ?? 0))
+                  .map(f => (
+                    <div key={f.id} className="flex items-start gap-2 text-xs">
+                      {f.timestamp_seconds != null ? (
+                        <button
+                          onClick={() => ctxSeek(f.timestamp_seconds!)}
+                          className="flex-shrink-0 font-mono tabular-nums text-[11px] px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/15 transition-colors"
+                          style={{ color: PLAYER_ACCENT }}
+                          title={`Jump to ${noteClock(f.timestamp_seconds)}`}
+                        >
+                          {noteClock(f.timestamp_seconds)}
+                        </button>
+                      ) : (
+                        <span className="flex-shrink-0 text-[11px] px-1.5 py-0.5 text-white/30">—</span>
+                      )}
+                      <p className="text-white/80 leading-snug pt-0.5 min-w-0 break-words">
+                        {f.reviewer_name !== MIX_NOTE_AUTHOR && <span className="text-white/40">{f.reviewer_name}: </span>}
+                        {f.comment}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
         {/* ── Full-bleed artwork area ── */}
         <div className="flex-1 relative min-h-0">
           {current && (
@@ -500,6 +755,22 @@ function PlayerPage() {
                           boxShadow: `0 0 6px ${accentCss}aa`,
                         }}
                       />
+                      {/* Note markers — dots above the bars where this mix's
+                          notes are pinned. Accent = your own notes, white =
+                          listener feedback. */}
+                      {duration > 0 && notesVersion === current?.id && notes
+                        .filter(f => f.timestamp_seconds != null)
+                        .map(f => (
+                          <div
+                            key={f.id}
+                            className="absolute w-1.5 h-1.5 rounded-full pointer-events-none"
+                            style={{
+                              left: `calc(${Math.min(100, (f.timestamp_seconds! / duration) * 100)}% - 3px)`,
+                              top: -5,
+                              background: f.reviewer_name === MIX_NOTE_AUTHOR ? PLAYER_ACCENT : 'rgba(255,255,255,0.6)',
+                            }}
+                          />
+                        ))}
                       <input
                         type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
                         onChange={seek}

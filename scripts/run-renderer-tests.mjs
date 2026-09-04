@@ -53,6 +53,7 @@ const SUITES = [
   'share-projection-test.mjs',
   'download-default-test.mjs',
   'public-input-caps-test.mjs',
+  'mix-notes-test.mjs',
   'notification-loop-test.mjs',
   'db-init-rls-test.mjs',
   'db-init-migration-parity-test.mjs',
