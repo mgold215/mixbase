@@ -137,6 +137,10 @@ class AudioService: ObservableObject {
     private var currentArtwork: MPMediaItemArtwork?
     private var currentArtworkFetchUrl: String?
 
+    // Last snapshot published to the Home Screen widgets — used to skip
+    // reload requests when nothing widget-visible actually changed.
+    private var lastWidgetSnapshot: NowPlayingSnapshot?
+
     // Long-lived subscriptions (audio session interruptions)
     private var cancellables = Set<AnyCancellable>()
     // Per-track subscriptions — cleared and rebuilt on every play() so they don't leak.
@@ -536,6 +540,54 @@ class AudioService: ObservableObject {
             currentArtwork = nil
             currentArtworkFetchUrl = nil
         }
+
+        publishWidgetSnapshot()
+    }
+
+    // MARK: - Home Screen widgets
+
+    /// Mirror the now-playing state into the shared App Group so the widgets
+    /// can render it. Piggybacks on updateNowPlayingInfo() — the same choke
+    /// point the lock screen uses — but only touches disk / asks WidgetKit to
+    /// re-render when something the widget shows actually changed (seek and
+    /// duration ticks land here too, and reload budgets are limited).
+    private func publishWidgetSnapshot() {
+        guard let version = currentVersion else {
+            if lastWidgetSnapshot != nil || NowPlayingStore.loadNowPlaying() != nil {
+                lastWidgetSnapshot = nil
+                NowPlayingStore.saveNowPlaying(nil)
+                NowPlayingStore.reloadNowPlayingWidgets()
+            }
+            return
+        }
+
+        let snapshot = NowPlayingSnapshot(
+            trackName: currentTrackName ?? "mixBase",
+            versionName: version.displayName,
+            artistName: artistName.isEmpty ? nil : artistName,
+            artworkUrl: currentArtworkUrl,
+            projectId: version.projectId,
+            isPlaying: isPlaying,
+            updatedAt: Date()
+        )
+        guard !snapshot.isEquivalent(to: lastWidgetSnapshot) else { return }
+        lastWidgetSnapshot = snapshot
+        NowPlayingStore.saveNowPlaying(snapshot)
+        NowPlayingStore.reloadNowPlayingWidgets()
+    }
+
+    /// The widget's play/pause button (PlayPauseWidgetIntent) lands here, in
+    /// the app's process — possibly a fresh background launch where no track
+    /// is loaded. In that case there is nothing to resume, so republish the
+    /// truth (nothing playing) instead of leaving the widget stuck.
+    func handleWidgetPlayPause() {
+        if currentVersion != nil {
+            togglePlayPause()
+        } else {
+            lastWidgetSnapshot = nil
+            NowPlayingStore.saveNowPlaying(nil)
+            NowPlayingStore.reloadNowPlayingWidgets()
+        }
     }
 
     /// Lightweight update of just the playback rate (used by the status observer).
@@ -560,6 +612,10 @@ class AudioService: ObservableObject {
                 var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
                 nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+                // Share a widget-sized copy with the Home Screen widgets (we
+                // only reach this once per artwork URL, so one extra reload).
+                NowPlayingStore.saveArtwork(data: data, urlString: urlString)
+                NowPlayingStore.reloadNowPlayingWidgets()
             }
         }.resume()
     }

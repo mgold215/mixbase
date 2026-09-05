@@ -12,12 +12,32 @@ struct ContentView: View {
 
     @State private var selectedTab = 0
 
+    // Raised by the mixbase://new-project widget deep link; ProjectsView
+    // consumes it and opens the New Project sheet.
+    @State private var openNewProject = false
+
     var body: some View {
         Group {
             if authService.isAuthenticated {
                 mainTabView
             } else {
                 LoginView()
+            }
+        }
+        // Widget deep links (mixbase://player etc.) land on the right tab.
+        // Safe to set even while logged out — the tab shows after login.
+        .onOpenURL { url in
+            guard url.scheme?.lowercased() == "mixbase" else { return }
+            switch url.host?.lowercased() {
+            case "home": selectedTab = 0
+            case "projects": selectedTab = 1
+            case "player": selectedTab = 2
+            case "artwork": selectedTab = 3
+            case "pipeline": selectedTab = 4
+            case "new-project":
+                selectedTab = 1
+                openNewProject = true
+            default: break
             }
         }
         // The app is dark by design. Without this, iOS renders system chrome
@@ -38,7 +58,7 @@ struct ContentView: View {
                     .tabItem { Image(systemName: "house"); Text("Home") }
                     .tag(0)
 
-                ProjectsView()
+                ProjectsView(openNewProject: $openNewProject)
                     .tabItem { Image(systemName: "square.grid.2x2"); Text("Projects") }
                     .tag(1)
 

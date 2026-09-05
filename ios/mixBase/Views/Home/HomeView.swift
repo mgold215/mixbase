@@ -464,6 +464,18 @@ struct HomeView: View {
                 return result
             }
             loadFailed = false
+
+            // Feed the Studio Stats widget; only ask WidgetKit to re-render
+            // when the counters actually moved.
+            let stats = StudioStatsSnapshot(
+                projects: projects.count,
+                mixing: mixingCount,
+                pipeline: releases.count,
+                updatedAt: Date()
+            )
+            if NowPlayingStore.saveStats(stats) {
+                NowPlayingStore.reloadStatsWidgets()
+            }
         } catch {
             // Keep whatever data we already have; only flag the failure so the
             // banner shows when the screen would otherwise be empty.

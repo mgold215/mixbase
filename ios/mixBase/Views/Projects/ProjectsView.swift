@@ -12,6 +12,10 @@ struct ProjectsView: View {
 
     @EnvironmentObject var audioService: AudioService
 
+    // Set by ContentView when a widget deep link (mixbase://new-project) asks
+    // for the New Project sheet; consumed (reset to false) here.
+    @Binding var openNewProject: Bool
+
     // Segment selection: 0 = Tracks, 1 = Collections
     @State private var selectedSegment = 0
 
@@ -103,6 +107,21 @@ struct ProjectsView: View {
                 collections.insert(collection, at: 0)
             }
         }
+        // Widget deep link → New Project sheet. onChange covers the tab
+        // already being alive; onAppear covers a first-time tab build, where
+        // the flag was set before this view existed to observe it.
+        .onChange(of: openNewProject) { _, requested in
+            if requested { consumeNewProjectRequest() }
+        }
+        .onAppear {
+            if openNewProject { consumeNewProjectRequest() }
+        }
+    }
+
+    private func consumeNewProjectRequest() {
+        selectedSegment = 0
+        showNewProject = true
+        openNewProject = false
     }
 
     // MARK: - Tracks Grid
