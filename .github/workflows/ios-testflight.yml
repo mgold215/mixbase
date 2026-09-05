@@ -21,24 +21,24 @@
 # "ASC Certificate Audit" workflow (.github/workflows/asc-cert-audit.yml) —
 # edit .github/asc-maintenance/request.json to list, then revoke the stale
 # runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution);
-# {"action": "prune"} runs the cron's keep-newest-4 cleanup on demand. Note
-# a FAILED archive still mints its cert first (and the retry loop below can
-# mint up to 3 per failed run — 2026-09-05, runs #24-26), so a streak of red
-# runs ages into the cap far faster than successful ones do.
+# {"action": "prune"} runs the cron's keep-newest-4 cleanup on demand. Since
+# the ad-hoc-archive change below, this lane mints no development certs at
+# all — only local Mac builds still add to that pool.
 #
-# Second known failure mode (runs #24-25, 2026-09-05): GatherProvisioningInputs
-# dies in seconds with "Authentication failed: Make sure a bearer token was
-# provided..." + "No profiles ... were found" for EVERY target. Root cause
-# that day: the build needed Xcode to REGISTER something new with Apple (the
-# widget extension's bundle id + the App Groups capability), and Xcode's own
-# registration path fails auth on the runners even though the same key mints
-# certs/profiles for existing identifiers fine. Fix: register identifiers and
-# capabilities through the "ASC Provisioning" lane instead
-# (.github/asc-maintenance/asc-provisioning.mjs — push-driven, public ASC
-# API, which the key handles fine), then re-run this. The archive step below
-# also retries, which covers the genuinely transient flavor of the same
-# error; an auth failure that persists across attempts with no new
-# identifiers in play means checking the ASC key itself.
+# Second failure mode — RESOLVED by the current architecture (runs #24-28,
+# 2026-09-05): once the widget extension made GatherProvisioningInputs fetch
+# development profiles for TWO targets, it started dying with "Authentication
+# failed: Make sure a bearer token was provided..." on most runs (clock sync,
+# serial target builds and in-run retries did not cure it; export-time cloud
+# signing never failed once). New identifiers/capabilities also cannot be
+# registered from the runners — the "ASC Provisioning" lane
+# (.github/asc-maintenance/asc-provisioning.mjs, push-driven, public ASC API)
+# does that instead. So the archive below now signs AD-HOC with no App Store
+# Connect contact at all, and the export step performs the single
+# cloud-managed re-sign — the same pattern macos-testflight.yml has used from
+# its first shipped build. If "Authentication failed" ever reappears it can
+# only come from the EXPORT step; treat that as ASC-side trouble or a broken
+# key, not this workflow.
 
 name: iOS TestFlight
 
@@ -107,34 +107,28 @@ jobs:
           # the build numbers already shipped from Xcode by hand.
           BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
           echo "Build number: $BUILD_NUMBER"
-          # Retried because cloud signing can hit a transient ASC 401 at
-          # GatherProvisioningInputs (second failure mode in the header).
-          # Those die in ~20s, so a retry is cheap; a real failure (compile
-          # error, cert cap) just fails again and exhausts the attempts.
-          attempt=1
-          until xcodebuild \
+          # The archive signs AD-HOC (manual style, identity "-") and never
+          # contacts App Store Connect: the two-target development-profile
+          # gather failed intermittent Apple auth on most runs after the
+          # widget extension was added (header, second failure mode), while
+          # export-time cloud signing has never failed. The ad-hoc signature
+          # still embeds each target's entitlements — which is what the
+          # export step needs: it re-signs app + appex with a cloud-managed
+          # Apple Distribution cert and App Store profiles, exactly like the
+          # macOS lane. Bonus: no runner development certs at all, so the
+          # certificate-cap failure mode disappears for this lane.
+          xcodebuild \
             -project ios/mixBase.xcodeproj \
             -scheme mixBase \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/mixBase.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            archive; do
-            if [ "$attempt" -ge 3 ]; then
-              echo "Archive failed after $attempt attempts"
-              exit 1
-            fi
-            attempt=$((attempt + 1))
-            echo "Archive failed — retrying (attempt $attempt of 3) in 60s..."
-            sleep 60
-            # Re-sync the clock before retrying: if skew caused the auth
-            # failure, an unchanged clock just fails the same way again.
-            sudo sntp -sS time.apple.com || true
-          done
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            archive
 
       - name: Upload to TestFlight
         run: |
