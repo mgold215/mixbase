@@ -109,6 +109,9 @@ struct PlayerView: View {
     // Queue sheet
     @State private var showQueue = false
 
+    // Mix-notes sheet — quick notes on the playing mix (see MixNotesSheet below)
+    @State private var showNotes = false
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -144,6 +147,17 @@ struct PlayerView: View {
                         }
                     }
                 }
+                // Quick mix notes on the playing mix. Hidden while the
+                // synthetic instrumental is up (versionNumber 0 — it has no
+                // mb_versions row to pin a note to).
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if let v = audioService.currentVersion, v.versionNumber > 0 {
+                        Button(action: { showNotes = true }) {
+                            Image(systemName: "note.text")
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                    }
+                }
                 // Open the editable "Up Next" queue.
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showQueue = true }) {
@@ -157,6 +171,14 @@ struct PlayerView: View {
             }
             .sheet(isPresented: $showQueue) {
                 QueueSheet(isLoading: isLoading)
+            }
+            .sheet(isPresented: $showNotes) {
+                if let v = audioService.currentVersion, v.versionNumber > 0 {
+                    MixNotesSheet(
+                        version: v,
+                        trackName: audioService.currentTrackName ?? "Unknown Track"
+                    )
+                }
             }
         }
     }
@@ -807,5 +829,285 @@ struct QueueSheet: View {
     private func isCurrentlyPlaying(_ item: QueueItem) -> Bool {
         guard let current = audioService.currentVersion else { return false }
         return current.projectId == item.projectId
+    }
+}
+
+// MARK: - MixNotesSheet
+// Quick mix notes — the phone counterpart of the web player's notes menu.
+// Quick entry rides on top: the stamp freezes at the moment the sheet was
+// OPENED (that's when you reacted, not when you finish typing), with ±5s to
+// correct for reaction time. The mix's running list sits below in song order —
+// tap a stamp to jump the player there. Notes post through POST /api/mix-notes
+// (MixbaseAPI.postMixNote), the same owner-only route the web menu uses, so
+// both platforms write identical mb_feedback rows and the web project page's
+// markers, punch list and AI summary pick them up unchanged. Reads come
+// straight from PostgREST (fetchFeedback) like the rest of the app.
+struct MixNotesSheet: View {
+
+    @EnvironmentObject var audioService: AudioService
+    @Environment(\.dismiss) private var dismiss
+
+    // Captured at presentation: notes pin to the mix you were hearing when you
+    // tapped the button, even if the queue auto-advances under the open sheet.
+    let version: Version
+    let trackName: String
+
+    // The byline /api/mix-notes stamps on self-notes (MIX_NOTE_AUTHOR in
+    // src/lib/supabase.ts) — listener feedback keeps its reviewer name.
+    private static let selfAuthor = "My notes"
+
+    @State private var noteText = ""
+    @State private var noteAt: Double = 0
+    @State private var notes: [Feedback] = []
+    @State private var isLoadingNotes = true
+    @State private var loadFailed = false
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @FocusState private var inputFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(hex: "#080808").ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    entryBar
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 10)
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 6)
+                    }
+
+                    Divider()
+                        .background(Color(hex: "#f0f0f0").opacity(0.06))
+
+                    notesList
+                }
+            }
+            .navigationTitle("Mix Notes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+            }
+        }
+        .task {
+            noteAt = audioService.currentTime
+            inputFocused = true
+            await loadNotes()
+        }
+    }
+
+    // MARK: - Quick entry
+
+    private var entryBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(trackName) — \(version.displayName)")
+                .font(.caption)
+                .foregroundColor(.gray)
+                .lineLimit(1)
+
+            HStack(spacing: 8) {
+                // Stamp chip with the reaction-time nudge
+                HStack(spacing: 0) {
+                    Button(action: { nudge(-5) }) {
+                        Text("−5s")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 9)
+                    }
+                    .buttonStyle(.plain)
+                    Text(clock(Int(noteAt)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                    Button(action: { nudge(5) }) {
+                        Text("+5s")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 9)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .background(Color(hex: "#f0f0f0").opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                TextField("Jot a note…", text: $noteText)
+                    .textFieldStyle(.plain)
+                    .focused($inputFocused)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color(hex: "#f0f0f0").opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .onSubmit { saveNote() }
+
+                Button(action: { saveNote() }) {
+                    Group {
+                        if isSaving {
+                            ProgressView()
+                                .tint(Color(hex: "#080808"))
+                        } else {
+                            Text("Save")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(Color(hex: "#080808"))
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .background(Color(hex: "#2dd4bf"))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .disabled(isSaving || trimmedNote.isEmpty)
+                .opacity(trimmedNote.isEmpty ? 0.4 : 1)
+            }
+        }
+    }
+
+    // MARK: - Running list
+
+    @ViewBuilder
+    private var notesList: some View {
+        if isLoadingNotes {
+            VStack {
+                Spacer()
+                ProgressView().tint(Color(hex: "#2dd4bf"))
+                Spacer()
+            }
+        } else if loadFailed && notes.isEmpty {
+            VStack {
+                Spacer()
+                Text("Couldn’t load existing notes — new ones still save.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+        } else if notes.isEmpty {
+            VStack(spacing: 8) {
+                Spacer()
+                Image(systemName: "note.text")
+                    .font(.system(size: 36))
+                    .foregroundColor(.gray.opacity(0.3))
+                Text("No notes on this mix yet — jot the first one.")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+        } else {
+            List {
+                ForEach(sortedNotes) { note in
+                    noteRow(note)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowSeparatorTint(Color(hex: "#f0f0f0").opacity(0.06))
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    // Song order: pinned notes by their moment in the track, un-pinned last —
+    // the same ordering the web punch list exports.
+    private var sortedNotes: [Feedback] {
+        notes.sorted { ($0.timestampSeconds ?? Int.max) < ($1.timestampSeconds ?? Int.max) }
+    }
+
+    @ViewBuilder
+    private func noteRow(_ note: Feedback) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let ts = note.timestampSeconds {
+                Button(action: { audioService.seek(to: Double(ts)) }) {
+                    Text(clock(ts))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: "#2dd4bf").opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("—")
+                    .font(.caption)
+                    .foregroundColor(.gray.opacity(0.5))
+                    .padding(.vertical, 4)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                if note.reviewerName != Self.selfAuthor {
+                    Text(note.reviewerName)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+                Text(note.comment ?? "")
+                    .font(.subheadline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var trimmedNote: String {
+        noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // m:ss — a note pinned at 0:00 is legitimate, so no placeholder rendering.
+    private func clock(_ seconds: Int) -> String {
+        "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+    }
+
+    private func nudge(_ delta: Double) {
+        let upper = audioService.duration > 0 ? audioService.duration : max(noteAt, 0)
+        noteAt = min(upper, max(0, noteAt + delta))
+    }
+
+    private func loadNotes() async {
+        do {
+            notes = try await SupabaseService.shared.fetchFeedback(versionId: version.id)
+            loadFailed = false
+        } catch {
+            loadFailed = true
+        }
+        isLoadingNotes = false
+    }
+
+    private func saveNote() {
+        let text = trimmedNote
+        guard !text.isEmpty, !isSaving else { return }
+        isSaving = true
+        errorMessage = nil
+        let stamped = Int(noteAt)
+        Task {
+            do {
+                let saved = try await MixbaseAPI.shared.postMixNote(
+                    versionId: version.id,
+                    comment: text,
+                    timestampSeconds: stamped
+                )
+                notes.append(saved)
+                noteText = ""
+                // Re-arm for the next note — playback kept going under the sheet.
+                noteAt = audioService.currentTime
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
     }
 }
