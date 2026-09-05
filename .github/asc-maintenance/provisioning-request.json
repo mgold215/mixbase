@@ -1,4 +1,4 @@
 {
-  "action": "ensure-widgets",
-  "note": "2026-09-05: TestFlight runs #24/#25 fail at GatherProvisioningInputs with 'Authentication failed' since the widget extension was added — cloud signing cannot register the new com.moodmixformat.mixbase.widgets bundle id or enable App Groups on the App IDs. Register/enable them here via the public ASC API so cloud signing returns to its long-working existing-identifier path. Idempotent; park back to action=none after it succeeds."
+  "action": "none",
+  "note": "Parked. 2026-09-05 ensure-widgets run: registered bundle id com.moodmixformat.mixbase.widgets (H5ZAGZG4UL) and enabled APP_GROUPS on it and on com.moodmixformat.mixbase. The app group group.com.moodmixformat.mixbase itself is beyond any API's reach (public ASC API has no appGroups resource — GET /v1/appGroups → 404 — and API-key cloud signing 401s on it); Matt registered it by hand in the developer portal later that day. If a future entitlement needs a new app group / iCloud container, expect the same one-time portal step."
 }

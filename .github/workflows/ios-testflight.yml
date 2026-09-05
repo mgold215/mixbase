@@ -36,9 +36,13 @@
 # does that instead. So the archive below now signs AD-HOC with no App Store
 # Connect contact at all, and the export step performs the single
 # cloud-managed re-sign — the same pattern macos-testflight.yml has used from
-# its first shipped build. If "Authentication failed" ever reappears it can
-# only come from the EXPORT step; treat that as ASC-side trouble or a broken
-# key, not this workflow.
+# its first shipped build. The last piece was ACCOUNT-side: the app group
+# (group.com.moodmixformat.mixbase) demanded by the entitlements could not be
+# created by any API — no public ASC endpoint (404), and API-key cloud
+# signing 401s on it — so it was registered by hand in the developer portal
+# (2026-09-05). If "Authentication failed" ever reappears at EXPORT, check
+# first whether the entitlements demand something newly-registered-by-hand
+# (another app group, iCloud container, etc.), then the ASC key itself.
 
 name: iOS TestFlight
 

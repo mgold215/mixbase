@@ -1,4 +1,4 @@
 {
-  "action": "prune",
-  "note": "2026-09-05: TestFlight run #26 hit 'account has reached the maximum number of certificates' — the widget-suite runs #24-26 each minted runner dev certs on every failed archive attempt (cert minting succeeds before the identifier step that was failing) and aged the account into the cap between monthly crons. Prune keeps the newest 4 'Created via API' DEVELOPMENT certs, same rails as the cron. Park back to action=list after the widget TestFlight upload is green."
+  "action": "list",
+  "note": "Parked in list mode so a stray push can never repeat a revocation. Last cleanup: 2026-09-05, action=prune revoked the 6 oldest runner-minted 'Created via API' DEVELOPMENT certs after the widget-suite TestFlight failures (runs #24-26) aged the account into Apple's cap between monthly crons; kept the newest 4 plus U6Z3X946GG (Matt Goldman, the Mac's own cert). Earlier cleanup 2026-08-30 (10 certs, run #15 incident)."
 }
