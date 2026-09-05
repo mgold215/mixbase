@@ -2,8 +2,14 @@
 <Scheme
    LastUpgradeVersion = "1600"
    version = "1.3">
+   <!-- parallelizeBuildables NO since the widget extension target was added:
+        cloud signing gathers provisioning for both targets, and parallel
+        requests intermittently fail Apple auth on CI runners ("Authentication
+        failed: ... bearer token ..." — TestFlight runs #24/25/27, 2026-09-05,
+        while the auth succeeded on the runs where it serialized). Two small
+        targets — the serial build costs seconds. -->
    <BuildAction
-      parallelizeBuildables = "YES"
+      parallelizeBuildables = "NO"
       buildImplicitDependencies = "YES">
       <BuildActionEntries>
          <BuildActionEntry

@@ -92,6 +92,15 @@ jobs:
           mkdir -p "$HOME/private_keys"
           echo "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
+      # Runner clock skew makes the ES256 JWTs Xcode mints for App Store
+      # Connect invalid ("Authentication failed: ... bearer token ...", the
+      # second failure mode above) — force an NTP sync so the token's
+      # timestamps are honest before cloud signing starts.
+      - name: Sync system clock
+        run: |
+          sudo sntp -sS time.apple.com || sudo sntp -sS pool.ntp.org || true
+          date -u
+
       - name: Archive
         run: |
           # UTC-timestamp build number: always increasing, never collides with
@@ -122,6 +131,9 @@ jobs:
             attempt=$((attempt + 1))
             echo "Archive failed — retrying (attempt $attempt of 3) in 60s..."
             sleep 60
+            # Re-sync the clock before retrying: if skew caused the auth
+            # failure, an unchanged clock just fails the same way again.
+            sudo sntp -sS time.apple.com || true
           done
 
       - name: Upload to TestFlight
