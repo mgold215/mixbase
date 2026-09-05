@@ -22,14 +22,19 @@
 # edit .github/asc-maintenance/request.json to list, then revoke the stale
 # runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution).
 #
-# Second known failure mode (run #24, 2026-09-05): GatherProvisioningInputs
+# Second known failure mode (runs #24-25, 2026-09-05): GatherProvisioningInputs
 # dies in seconds with "Authentication failed: Make sure a bearer token was
-# provided..." + "No profiles ... were found" for EVERY target. That is a
-# transient App Store Connect 401 (or runner clock skew invalidating the
-# minted JWT), not a signing problem: the macOS lane authenticated fine with
-# the same key one minute later. The archive step below retries for exactly
-# this case — an auth failure that persists across all attempts is real
-# (check the ASC key's validity/role).
+# provided..." + "No profiles ... were found" for EVERY target. Root cause
+# that day: the build needed Xcode to REGISTER something new with Apple (the
+# widget extension's bundle id + the App Groups capability), and Xcode's own
+# registration path fails auth on the runners even though the same key mints
+# certs/profiles for existing identifiers fine. Fix: register identifiers and
+# capabilities through the "ASC Provisioning" lane instead
+# (.github/asc-maintenance/asc-provisioning.mjs — push-driven, public ASC
+# API, which the key handles fine), then re-run this. The archive step below
+# also retries, which covers the genuinely transient flavor of the same
+# error; an auth failure that persists across attempts with no new
+# identifiers in play means checking the ASC key itself.
 
 name: iOS TestFlight
 

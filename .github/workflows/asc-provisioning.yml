@@ -1,0 +1,50 @@
+# Apple App ID / capability provisioning, driven by a file instead of a
+# button — the identifier-management sibling of asc-cert-audit.yml. Remote
+# maintenance sessions cannot dispatch workflows (403) or log into
+# developer.apple.com, but they can push: editing
+# .github/asc-maintenance/provisioning-request.json and pushing runs this.
+# See asc-maintenance/asc-provisioning.mjs for why (TestFlight runs #24/#25,
+# 2026-09-05: cloud signing cannot register the widget extension's bundle id)
+# and for the safety rails (create/enable only, hardcoded identifiers).
+#
+# Cheap by design: ubuntu runner (the ASC API is plain REST), path-filtered.
+
+name: ASC Provisioning
+
+on:
+  push:
+    branches: [main, tst]
+    paths:
+      - '.github/asc-maintenance/provisioning-request.json'
+      - '.github/asc-maintenance/asc-provisioning.mjs'
+      - '.github/workflows/asc-provisioning.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asc-provisioning
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  provision:
+    name: App ID provisioning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run provisioning-request.json against the ASC API
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+        run: node .github/asc-maintenance/asc-provisioning.mjs
