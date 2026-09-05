@@ -21,6 +21,15 @@
 # "ASC Certificate Audit" workflow (.github/workflows/asc-cert-audit.yml) —
 # edit .github/asc-maintenance/request.json to list, then revoke the stale
 # runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution).
+#
+# Second known failure mode (run #24, 2026-09-05): GatherProvisioningInputs
+# dies in seconds with "Authentication failed: Make sure a bearer token was
+# provided..." + "No profiles ... were found" for EVERY target. That is a
+# transient App Store Connect 401 (or runner clock skew invalidating the
+# minted JWT), not a signing problem: the macOS lane authenticated fine with
+# the same key one minute later. The archive step below retries for exactly
+# this case — an auth failure that persists across all attempts is real
+# (check the ASC key's validity/role).
 
 name: iOS TestFlight
 
@@ -80,7 +89,12 @@ jobs:
           # the build numbers already shipped from Xcode by hand.
           BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
           echo "Build number: $BUILD_NUMBER"
-          xcodebuild \
+          # Retried because cloud signing can hit a transient ASC 401 at
+          # GatherProvisioningInputs (second failure mode in the header).
+          # Those die in ~20s, so a retry is cheap; a real failure (compile
+          # error, cert cap) just fails again and exhausts the attempts.
+          attempt=1
+          until xcodebuild \
             -project ios/mixBase.xcodeproj \
             -scheme mixBase \
             -configuration Release \
@@ -91,7 +105,15 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            archive
+            archive; do
+            if [ "$attempt" -ge 3 ]; then
+              echo "Archive failed after $attempt attempts"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            echo "Archive failed — retrying (attempt $attempt of 3) in 60s..."
+            sleep 60
+          done
 
       - name: Upload to TestFlight
         run: |
