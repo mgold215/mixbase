@@ -38,8 +38,8 @@ struct StudioStatsWidget: Widget {
             StudioStatsWidgetView(entry: entry)
         }
         .configurationDisplayName("Studio Stats")
-        .description("Your project, mixing and pipeline counts at a glance.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .description("Your project, mixing and pipeline counts, with quick actions.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -55,9 +55,12 @@ struct StudioStatsWidgetView: View {
 
     var body: some View {
         Group {
-            if family == .systemMedium {
+            switch family {
+            case .systemLarge:
+                largeView
+            case .systemMedium:
                 mediumView
-            } else {
+            default:
                 smallView
             }
         }
@@ -99,7 +102,11 @@ struct StudioStatsWidgetView: View {
 
     private var mediumView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            MBWordmark(size: 14)
+            HStack {
+                MBWordmark(size: 14)
+                Spacer()
+                newProjectPill
+            }
             if let stats = entry.stats {
                 HStack(spacing: 10) {
                     statCard(value: stats.projects, label: "Projects", color: MBTheme.text, link: "mixbase://projects")
@@ -123,6 +130,91 @@ struct StudioStatsWidgetView: View {
             Text(label)
                 .font(.system(size: 11))
                 .foregroundColor(MBTheme.text.opacity(0.55))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(MBTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+        return Group {
+            if let url = URL(string: link) {
+                Link(destination: url) { card }
+            } else {
+                card
+            }
+        }
+    }
+
+    // MARK: Large — stats plus a quick-actions row
+
+    private var largeView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                MBWordmark(size: 16)
+                Spacer()
+                newProjectPill
+            }
+
+            if let stats = entry.stats {
+                HStack(spacing: 10) {
+                    statCard(value: stats.projects, label: "Projects", color: MBTheme.text, link: "mixbase://projects")
+                    statCard(value: stats.mixing, label: "Mixing", color: Self.yellow, link: "mixbase://projects")
+                    statCard(value: stats.pipeline, label: "Pipeline", color: MBTheme.teal, link: "mixbase://pipeline")
+                }
+            } else {
+                openAppHint
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("QUICK ACTIONS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1)
+                    .foregroundColor(MBTheme.text.opacity(0.4))
+                HStack(spacing: 10) {
+                    actionCard(icon: "play.circle.fill", label: "Player", link: "mixbase://player")
+                    actionCard(icon: "photo.on.rectangle", label: "Artwork", link: "mixbase://artwork")
+                    actionCard(icon: "checklist", label: "Pipeline", link: "mixbase://pipeline")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .widgetURL(URL(string: "mixbase://home"))
+    }
+
+    /// Jumps straight into the New Project sheet (mixbase://new-project —
+    /// ContentView routes it, ProjectsView opens the sheet).
+    private var newProjectPill: some View {
+        Group {
+            if let url = URL(string: "mixbase://new-project") {
+                Link(destination: url) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("New Project")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(MBTheme.teal)
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private func actionCard(icon: String, label: String, link: String) -> some View {
+        let card = VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(MBTheme.teal)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(MBTheme.text.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)

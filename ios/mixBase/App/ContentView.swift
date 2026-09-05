@@ -12,6 +12,10 @@ struct ContentView: View {
 
     @State private var selectedTab = 0
 
+    // Raised by the mixbase://new-project widget deep link; ProjectsView
+    // consumes it and opens the New Project sheet.
+    @State private var openNewProject = false
+
     var body: some View {
         Group {
             if authService.isAuthenticated {
@@ -30,6 +34,9 @@ struct ContentView: View {
             case "player": selectedTab = 2
             case "artwork": selectedTab = 3
             case "pipeline": selectedTab = 4
+            case "new-project":
+                selectedTab = 1
+                openNewProject = true
             default: break
             }
         }
@@ -51,7 +58,7 @@ struct ContentView: View {
                     .tabItem { Image(systemName: "house"); Text("Home") }
                     .tag(0)
 
-                ProjectsView()
+                ProjectsView(openNewProject: $openNewProject)
                     .tabItem { Image(systemName: "square.grid.2x2"); Text("Projects") }
                     .tag(1)
 
