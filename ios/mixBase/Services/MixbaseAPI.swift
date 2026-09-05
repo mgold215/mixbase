@@ -288,6 +288,26 @@ final class MixbaseAPI {
         return try decoder.decode(FeedComment.self, from: data)
     }
 
+    // MARK: - Mix notes (quick notes on your own mix)
+
+    /// Jot a timestamped note on one of your own mixes — the same owner-only
+    /// route the web player's notes menu posts through. The server verifies
+    /// ownership, stamps the fixed "My notes" byline and writes no activity
+    /// row (your own note must not ring your own notification bell), so both
+    /// platforms produce identical mb_feedback rows and the web project
+    /// page's markers, punch list and AI summary pick them up unchanged.
+    /// Returns 201 with the inserted row in PostgREST column shape, so
+    /// Feedback decodes the same way it does from a direct fetch.
+    func postMixNote(versionId: UUID, comment: String, timestampSeconds: Int) async throws -> Feedback {
+        let body: [String: Any] = [
+            "version_id": versionId.uuidString.lowercased(),
+            "comment": comment,
+            "timestamp_seconds": timestampSeconds,
+        ]
+        let data = try await requestData(path: "/api/mix-notes", method: "POST", body: body)
+        return try decoder.decode(Feedback.self, from: data)
+    }
+
     // MARK: - Core request plumbing
 
     /// Perform a request and parse the response as a JSON object.
