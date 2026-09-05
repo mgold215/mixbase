@@ -111,13 +111,17 @@ for (const c of certs) {
   );
 }
 
-// Scheduled monthly prune (ASC_PRUNE=1, set by asc-cert-audit.yml's cron):
-// with BOTH TestFlight lanes (iOS + macOS) minting runner certs, the account
+// Scheduled monthly prune (ASC_PRUNE=1, set by asc-cert-audit.yml's cron),
+// also invokable on demand via {"action": "prune"} in request.json — needed
+// when the cap bites between crons (2026-09-05: failed TestFlight archive
+// attempts still mint a cert each before dying, and the archive step's retry
+// loop can mint up to 3 per failed run, so a bad day ages into the cap fast).
+// With BOTH TestFlight lanes (iOS + macOS) minting runner certs, the account
 // would age back into Apple's cap roughly twice as fast as the 2026-08-29
 // incident. Triple rails: DEVELOPMENT type only, the exact API-minted display
 // name only, and the newest KEEP always survive. The Mac's own cert has a
 // human name, so it can never match.
-if (process.env.ASC_PRUNE === "1") {
+if (process.env.ASC_PRUNE === "1" || request.action === "prune") {
   const KEEP = 4;
   // `certs` is sorted oldest-expiration (≈ oldest-created) first.
   const minted = certs.filter(
