@@ -100,9 +100,11 @@ async function listBundleIds() {
 }
 
 async function capabilitiesOf(bundleIdResourceId) {
+  // No ?limit here — this relationship rejects the parameter (HTTP 400
+  // PARAMETER_ERROR.ILLEGAL, seen on the first run).
   const { status, body, text } = await asc(
     "GET",
-    `/v1/bundleIds/${bundleIdResourceId}/bundleIdCapabilities?limit=200`
+    `/v1/bundleIds/${bundleIdResourceId}/bundleIdCapabilities`
   );
   if (status !== 200) {
     console.error(`  capabilities → HTTP ${status}: ${text.slice(0, 300)}`);
