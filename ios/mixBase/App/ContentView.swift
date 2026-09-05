@@ -20,6 +20,19 @@ struct ContentView: View {
                 LoginView()
             }
         }
+        // Widget deep links (mixbase://player etc.) land on the right tab.
+        // Safe to set even while logged out — the tab shows after login.
+        .onOpenURL { url in
+            guard url.scheme?.lowercased() == "mixbase" else { return }
+            switch url.host?.lowercased() {
+            case "home": selectedTab = 0
+            case "projects": selectedTab = 1
+            case "player": selectedTab = 2
+            case "artwork": selectedTab = 3
+            case "pipeline": selectedTab = 4
+            default: break
+            }
+        }
         // The app is dark by design. Without this, iOS renders system chrome
         // (nav bars, the floating tab bar, menus, sheets) in the device's
         // current appearance — which is why bars flipped black/white per tab.

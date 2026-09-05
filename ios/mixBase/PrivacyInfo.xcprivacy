@@ -4,13 +4,15 @@
 <dict>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
-		<!-- UserDefaults — used for app preferences and state persistence -->
+		<!-- UserDefaults — app preferences/state (CA92.1) plus the App Group
+		     suite shared with the widget extension (1C8F.1) -->
 		<dict>
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
+				<string>1C8F.1</string>
 			</array>
 		</dict>
 		<!-- File timestamp APIs — used by URLSession for cache management -->

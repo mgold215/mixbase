@@ -8,6 +8,16 @@ struct mixBaseApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        // The Now Playing widget's play/pause button executes in THIS process
+        // (AudioPlaybackIntent background-launches the app if needed); the
+        // intent itself can't see AudioService — it's not compiled into the
+        // widget target — so it calls through this hook.
+        PlayPauseWidgetIntent.performer = {
+            AudioService.shared.handleWidgetPlayPause()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

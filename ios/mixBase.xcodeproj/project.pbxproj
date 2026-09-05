@@ -80,6 +80,19 @@
 		/* Assets */
 		A1000000B0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000B0; };
 		A1000000FF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1000000FF; };
+
+		/* Widget plumbing shared with the app */
+		A100000092 /* NowPlayingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000092; };
+		A100000093 /* PlayPauseWidgetIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000093; };
+
+		/* mixBaseWidgets target */
+		A200000001 /* mixBaseWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000001; };
+		A200000002 /* NowPlayingWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000002; };
+		A200000003 /* StudioStatsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000003; };
+		A200000012 /* NowPlayingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000092; };
+		A200000013 /* PlayPauseWidgetIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000093; };
+		A200000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B200000012; };
+		A200000090 /* mixBaseWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C200000001; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -142,10 +155,44 @@
 
 		/* Privacy manifest */
 		B1000000FF /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+
+		/* Widget plumbing shared with the app (lives under mixBase/Services) */
+		B100000092 /* NowPlayingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingStore.swift; sourceTree = "<group>"; };
+		B100000093 /* PlayPauseWidgetIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayPauseWidgetIntent.swift; sourceTree = "<group>"; };
+
+		/* mixBaseWidgets extension */
+		C200000001 /* mixBaseWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = mixBaseWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B200000001 /* mixBaseWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = mixBaseWidgets.swift; sourceTree = "<group>"; };
+		B200000002 /* NowPlayingWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingWidget.swift; sourceTree = "<group>"; };
+		B200000003 /* StudioStatsWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioStatsWidget.swift; sourceTree = "<group>"; };
+		B200000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B200000011 /* mixBaseWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = mixBaseWidgets.entitlements; sourceTree = "<group>"; };
+		B200000012 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F100000004 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A200000090 /* mixBaseWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		D100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D200000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -160,6 +207,7 @@
 			isa = PBXGroup;
 			children = (
 				E100000002 /* mixBase */,
+				E200000001 /* mixBaseWidgets */,
 				E100000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -170,8 +218,24 @@
 			isa = PBXGroup;
 			children = (
 				C100000001 /* mixBase.app */,
+				C200000001 /* mixBaseWidgets.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+
+		/* mixBaseWidgets extension source */
+		E200000001 /* mixBaseWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				B200000001 /* mixBaseWidgets.swift */,
+				B200000002 /* NowPlayingWidget.swift */,
+				B200000003 /* StudioStatsWidget.swift */,
+				B200000010 /* Info.plist */,
+				B200000011 /* mixBaseWidgets.entitlements */,
+				B200000012 /* PrivacyInfo.xcprivacy */,
+			);
+			path = mixBaseWidgets;
 			sourceTree = "<group>";
 		};
 
@@ -358,6 +422,8 @@
 				B100000024 /* KeychainService.swift */,
 				B100000025 /* MixbaseAPI.swift */,
 				B100000091 /* LoudnessAnalyzer.swift */,
+				B100000092 /* NowPlayingStore.swift */,
+				B100000093 /* PlayPauseWidgetIntent.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -383,15 +449,34 @@
 				F100000002 /* Sources */,
 				D100000001 /* Frameworks */,
 				F100000003 /* Resources */,
+				F100000004 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F100000005 /* PBXTargetDependency */,
 			);
 			name = mixBase;
 			productName = mixBase;
 			productReference = C100000001 /* mixBase.app */;
 			productType = "com.apple.product-type.application";
+		};
+		F200000001 /* mixBaseWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F200000010 /* Build configuration list for PBXNativeTarget "mixBaseWidgets" */;
+			buildPhases = (
+				F200000002 /* Sources */,
+				D200000001 /* Frameworks */,
+				F200000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = mixBaseWidgets;
+			productName = mixBaseWidgets;
+			productReference = C200000001 /* mixBaseWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -404,6 +489,9 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					F100000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					F200000001 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 				};
@@ -422,6 +510,7 @@
 			projectRoot = "";
 			targets = (
 				F100000001 /* mixBase */,
+				F200000001 /* mixBaseWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -433,6 +522,14 @@
 			files = (
 				A1000000B0 /* Assets.xcassets in Resources */,
 				A1000000FF /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F200000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A200000020 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -481,10 +578,42 @@
 				A100000081 /* ArtworkLibraryView.swift in Sources */,
 				A100000072 /* ReleasedLibraryView.swift in Sources */,
 				A1000000F0 /* FeedView.swift in Sources */,
+				A100000092 /* NowPlayingStore.swift in Sources */,
+				A100000093 /* PlayPauseWidgetIntent.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F200000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A200000001 /* mixBaseWidgets.swift in Sources */,
+				A200000002 /* NowPlayingWidget.swift in Sources */,
+				A200000003 /* StudioStatsWidget.swift in Sources */,
+				A200000012 /* NowPlayingStore.swift in Sources */,
+				A200000013 /* PlayPauseWidgetIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F100000005 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F200000001 /* mixBaseWidgets */;
+			targetProxy = F100000006 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		F100000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F100000099 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F200000001;
+			remoteInfo = mixBaseWidgets;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin XCBuildConfiguration section */
 		/* Debug - Project */
@@ -610,6 +739,60 @@
 			};
 			name = Release;
 		};
+
+		/* Debug - mixBaseWidgets */
+		F200000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = mixBaseWidgets/mixBaseWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = AP8UC39D4D;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = mixBaseWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = mixBASE;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Debug;
+		};
+
+		/* Release - mixBaseWidgets */
+		F200000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = mixBaseWidgets/mixBaseWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = AP8UC39D4D;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = mixBaseWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = mixBASE;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -630,6 +813,17 @@
 			buildConfigurations = (
 				F100000011 /* Debug */,
 				F100000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+
+		/* Widget target config list */
+		F200000010 /* Build configuration list for PBXNativeTarget "mixBaseWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F200000011 /* Debug */,
+				F200000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
