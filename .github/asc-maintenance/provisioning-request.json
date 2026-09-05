@@ -1,4 +1,4 @@
 {
-  "action": "ensure-widgets",
-  "note": "2026-09-05: TestFlight runs #24/#25 fail at GatherProvisioningInputs with 'Authentication failed' since the widget extension was added — cloud signing cannot register the new com.moodmixformat.mixbase.widgets bundle id or enable App Groups on the App IDs. Register/enable them here via the public ASC API so cloud signing returns to its long-working existing-identifier path. Idempotent; park back to action=none after it succeeds."
+  "action": "none",
+  "note": "Parked. 2026-09-05 ensure-widgets run: registered bundle id com.moodmixformat.mixbase.widgets (H5ZAGZG4UL) and enabled APP_GROUPS on it and on com.moodmixformat.mixbase. REMAINING BLOCKER (outside any API's reach): the app group group.com.moodmixformat.mixbase itself must be registered and assigned to BOTH App IDs with an Apple ID session — the public ASC API has no appGroups resource (GET /v1/appGroups → 404) and Xcode's API-key cloud signing fails 'Authentication failed' on every profile request involving the group. One-time fix: developer.apple.com → Identifiers → App Groups → register the group, then edit both App IDs' App Groups capability to assign it; a local Xcode build of the iOS app on the Mac (logged-in Apple ID, automatic signing) does the same automatically. After that, TestFlight runs mint profiles normally again."
 }
