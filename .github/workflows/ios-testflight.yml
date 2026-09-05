@@ -20,7 +20,11 @@
 # 'Created via API' development certs pile up until Apple's cap. Fix: the
 # "ASC Certificate Audit" workflow (.github/workflows/asc-cert-audit.yml) —
 # edit .github/asc-maintenance/request.json to list, then revoke the stale
-# runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution).
+# runner-minted DEVELOPMENT certs (never the Mac's own, never Distribution);
+# {"action": "prune"} runs the cron's keep-newest-4 cleanup on demand. Note
+# a FAILED archive still mints its cert first (and the retry loop below can
+# mint up to 3 per failed run — 2026-09-05, runs #24-26), so a streak of red
+# runs ages into the cap far faster than successful ones do.
 #
 # Second known failure mode (runs #24-25, 2026-09-05): GatherProvisioningInputs
 # dies in seconds with "Authentication failed: Make sure a bearer token was
