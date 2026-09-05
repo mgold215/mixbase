@@ -258,8 +258,18 @@ struct HomeView: View {
         }
     }
 
+    // The whole card opens the project page; the play button overlay keeps its
+    // own tap area (inner buttons win over the enclosing NavigationLink).
     @ViewBuilder
     private func trackCard(project: Project) -> some View {
+        NavigationLink(destination: ProjectDetailView(projectId: project.id)) {
+            trackCardContent(project: project)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func trackCardContent(project: Project) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 Group {
@@ -333,8 +343,21 @@ struct HomeView: View {
     }
 
     // MARK: - Activity Row
+    // Rows tied to a project open its page; the play button keeps its own tap.
     @ViewBuilder
     private func activityRow(activity: Activity) -> some View {
+        if let pid = activity.projectId, projectMap[pid] != nil {
+            NavigationLink(destination: ProjectDetailView(projectId: pid)) {
+                activityRowContent(activity: activity)
+            }
+            .buttonStyle(.plain)
+        } else {
+            activityRowContent(activity: activity)
+        }
+    }
+
+    @ViewBuilder
+    private func activityRowContent(activity: Activity) -> some View {
         HStack(spacing: 12) {
             Image(systemName: iconForActivityType(activity.type))
                 .foregroundColor(Color(hex: "#2dd4bf"))
