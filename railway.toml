@@ -2,8 +2,5 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "next start -p ${PORT:-3000}"
-healthcheckPath = "/api/health"
-healthcheckTimeout = 60
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+startCommand = "node scripts/artwork-bench.mjs"
+restartPolicyType = "never"

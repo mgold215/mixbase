@@ -1,0 +1,3 @@
+# artwork-bench branch only: install deps, skip the Next build, run the bench once.
+[phases.build]
+cmds = ["echo skip build"]
