@@ -99,3 +99,5 @@ await Promise.all(Array.from({ length: 3 }, async () => {
   while (queue.length) await runCase(queue.shift())
 }))
 log('BENCH-DONE')
+
+// Trigger: redeploy the bench service from this branch (exits with BENCH-SKIP until a run token is set).
