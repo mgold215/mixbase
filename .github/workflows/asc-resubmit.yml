@@ -11,11 +11,10 @@
 # itself through the same endpoint the iOS app calls. Any failure aborts the
 # run before the submission is touched.
 #
-# Step 2 attaches the newest VALID iOS build (platform-filtered — macOS
-# builds share this app record since the Mac lane shipped), refreshes the
-# App Review notes to match the current binary (visualizers are back as the
-# free renderer, not "removed entirely"), and submits version 1.0
-# (currently DEVELOPER_REJECTED) through a fresh review submission.
+# Step 2 cancels the rejected submission (cc41d045, Guideline 3.1.1 —
+# Settings' web links reached the homepage's plan pricing), waits for the
+# NEW iOS build carrying the native-legal-screens fix, attaches it, writes
+# review notes that answer the rejection, and resubmits.
 
 name: App Store Resubmit
 
@@ -196,30 +195,42 @@ jobs:
             process.exit(1)
           }
 
-          // ── Newest VALID iOS build ─────────────────────────────────────────
+          // ── Cancel the rejected submission FIRST ───────────────────────────
+          // The version can't take a new build or go back to review while it
+          // sits inside the rejected (UNRESOLVED_ISSUES) submission.
+          const rejectedSub = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
+          if (rejectedSub) {
+            const cancel = await api('PATCH', `/reviewSubmissions/${rejectedSub.id}`, {
+              data: { type: 'reviewSubmissions', id: rejectedSub.id, attributes: { canceled: true } },
+            })
+            console.log(`Canceled rejected submission ${rejectedSub.id}: HTTP ${cancel.status}`)
+            if (!cancel.ok) { console.error(JSON.stringify(cancel.json ?? cancel.text).slice(0, 400)); process.exit(1) }
+          }
+
+          // ── Newest VALID iOS build ────────────────────────────────────────
           // Platform filter matters: macOS builds share this app record since
           // the Mac TestFlight lane shipped, and an unfiltered "newest build"
           // could pick a Mac build for the iOS version.
           const attachedRes = await api('GET', `/appStoreVersions/${vid}/build?fields[builds]=version,uploadedDate`)
           const attached = attachedRes.json?.data ?? null
           console.log(`Currently attached build: ${attached ? attached.attributes.version : 'none'}`)
+          // The 3.1.1 fix (native legal screens) only exists in the build the
+          // merge just uploaded — resubmitting the reviewed build would be an
+          // instant repeat rejection, so a different-id VALID build is REQUIRED.
           let newest = null
-          for (let i = 0; i < 12; i++) {   // today's build finished processing hours ago; short wait is plenty
+          for (let i = 0; i < 30; i++) {   // up to ~25 min for upload + TestFlight processing
             const bs = must(await api('GET', `/builds?filter[app]=${app.id}&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate,usesNonExemptEncryption`), 'list builds')
             const b = bs.data?.[0]
-            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID') { newest = b; break }
-            console.log(`Waiting for a VALID iOS build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
+            if (b && !b.attributes.expired && b.attributes.processingState === 'VALID'
+                && (!attached || b.id !== attached.id)) { newest = b; break }
+            console.log(`Waiting for a NEW VALID iOS build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
             await new Promise(r => setTimeout(r, 50_000))
           }
-          if (!newest) { console.error('No VALID iOS build found — aborting before touching the submission.'); process.exit(1) }
-          if (attached && newest.id === attached.id) {
-            console.log(`Newest VALID build ${newest.attributes.version} is already attached.`)
-          } else {
-            must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
-              data: { type: 'builds', id: newest.id },
-            }), 'attach newest iOS build to version')
-            console.log(`Attached build ${newest.attributes.version} (uploaded ${newest.attributes.uploadedDate}) to the version`)
-          }
+          if (!newest) { console.error('No NEW VALID iOS build appeared — aborting before touching the submission.'); process.exit(1) }
+          must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
+            data: { type: 'builds', id: newest.id },
+          }), 'attach new iOS build to version')
+          console.log(`Attached build ${newest.attributes.version} (uploaded ${newest.attributes.uploadedDate}) to the version`)
           // Export compliance: Info.plist answers it for new builds, but make
           // sure this one isn't stranded on "Missing Compliance".
           if (newest.attributes.usesNonExemptEncryption === null) {
@@ -233,13 +244,15 @@ jobs:
           const NOTES = [
             'mixBase is a music production tool for managing mix versions and releases.',
             '',
-            'Getting started: sign in with the demo account (see App Review credentials). It is pre-loaded with 3 released tracks with cover art and playable audio. Tap a project to see its mix versions and play them; the Player tab has full playback with a queue.',
+            'Getting started: sign in with the demo account (see App Review credentials). It is pre-loaded with 3 released tracks with cover art and playable audio.',
             '',
-            'Guideline 3.1.1: the app contains no purchase flows, no upgrade prompts, no pricing, and no links to external purchase pages. Every feature in the app is available on a free account: uploads, playback, sharing, the community feed, the release pipeline, AI artwork generation (included with every account, subject to a monthly quota), and video visualizers (rendered by our free built-in renderer, available to every account). There are no in-app purchases; the app is free.',
+            'RESPONSE TO THE SEPTEMBER 8 REJECTION (Guideline 3.1.1): the pro/Studio plan pricing the reviewer saw belongs to our separate web product and was reachable only because the Settings tab\'s Privacy Policy / Terms of Service / Support rows (and the sign-up screen\'s Terms link) opened mixbase.app in the browser, where pages link back to the site homepage. This build removes every website link from the app: the Privacy Policy, Terms of Service, and Support pages are now rendered natively inside the app, and no screen in the app opens our website at all. There is no route from the app to any page where plans, pricing, or purchases are visible.',
             '',
-            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content. The moderation backend was verified working in production immediately before this submission.',
+            'The app itself is entirely free and sells nothing: no purchase flows, no upgrade prompts, no plan names, no pricing, no In-App Purchases, and no links to external purchase pages. No feature in the app requires a subscription — uploads, playback, sharing, the community feed, the release pipeline, AI artwork generation (subject to a monthly quota on every account), and video visualizers (our free built-in renderer) all work on a free account.',
             '',
-            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. This flow was also verified working in production immediately before this submission; test with a throwaway account via "Create one" on the sign-in screen.',
+            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
+            '',
+            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. Test with a throwaway account via "Create one" on the sign-in screen.',
             '',
             'Permissions: Photos read access is requested only when uploading artwork from the photo library; add-only Photos access is requested only when saving a generated visualizer video to Photos.',
             '',
@@ -250,15 +263,6 @@ jobs:
           })
           console.log(`Review notes update: HTTP ${patchedNotes.status}`)
           if (!patchedNotes.ok) console.error(JSON.stringify(patchedNotes.json ?? patchedNotes.text).slice(0, 400))
-
-          // ── Cancel a rejected submission if one is open (none expected) ────
-          const rejectedSub = (subs.data ?? []).find(s => s.attributes.state === 'UNRESOLVED_ISSUES')
-          if (rejectedSub) {
-            const cancel = await api('PATCH', `/reviewSubmissions/${rejectedSub.id}`, {
-              data: { type: 'reviewSubmissions', id: rejectedSub.id, attributes: { canceled: true } },
-            })
-            console.log(`Canceled rejected submission ${rejectedSub.id}: HTTP ${cancel.status}`)
-          }
 
           // ── Submit via a draft holding the version, or a fresh submission ──
           const drafts = (subs.data ?? []).filter(s => s.attributes.state === 'READY_FOR_REVIEW')
