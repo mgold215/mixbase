@@ -18,6 +18,7 @@ struct SignUpView: View {
     @State private var password = ""
     @State private var confirm = ""
     @State private var validationError: String? = nil
+    @State private var showTerms = false
 
     private var formError: String? {
         if let v = validationError { return v }
@@ -115,13 +116,19 @@ struct SignUpView: View {
                     .opacity((authService.isLoading || email.isEmpty || password.isEmpty || confirm.isEmpty) ? 0.5 : 1)
 
                     // UGC apps must bind users to terms that prohibit
-                    // objectionable content (Guideline 1.2).
-                    Text("By creating an account you agree to our [Terms of Service](https://mixbase.app/terms), which prohibit abusive or objectionable content.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Color(hex: "#6b6050"))
-                        .tint(Color(hex: "#2dd4bf"))
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 2)
+                    // objectionable content (Guideline 1.2). Shown natively —
+                    // never as a link out to the website, whose pages can reach
+                    // the homepage's web pricing (Guideline 3.1.1).
+                    VStack(spacing: 2) {
+                        Text("By creating an account you agree to our Terms of Service, which prohibit abusive or objectionable content.")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "#6b6050"))
+                            .multilineTextAlignment(.center)
+                        Button("Read the Terms of Service") { showTerms = true }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                    .padding(.top, 2)
 
                     HStack(spacing: 4) {
                         Text("Already have an account?")
@@ -144,6 +151,15 @@ struct SignUpView: View {
         }
         .onChange(of: authService.isAuthenticated) { _, authenticated in
             if authenticated { dismiss() }
+        }
+        .sheet(isPresented: $showTerms) {
+            NavigationStack {
+                LegalDocView(
+                    title: "Terms of Service",
+                    updated: LegalContent.termsUpdated,
+                    sections: LegalContent.terms
+                )
+            }
         }
     }
 
