@@ -240,9 +240,19 @@ jobs:
             await new Promise(r => setTimeout(r, 50_000))
           }
           if (!newest) { console.error('No VALID iOS build uploaded after the fix merge appeared — aborting.'); process.exit(1) }
-          must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
-            data: { type: 'builds', id: newest.id },
-          }), 'attach new iOS build to version')
+          // A just-canceled submission takes a short while to release the
+          // version (409 INVALID_STATE on this PATCH, run 19) — retry with a wait.
+          let buildAttached = false
+          for (let i = 0; i < 8 && !buildAttached; i++) {
+            const att = await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
+              data: { type: 'builds', id: newest.id },
+            })
+            console.log(`Attach build ${newest.attributes.version} (attempt ${i + 1}): HTTP ${att.status}`)
+            if (att.ok) { buildAttached = true; break }
+            console.error(JSON.stringify(att.json ?? att.text).slice(0, 300))
+            await new Promise(r => setTimeout(r, 15_000))
+          }
+          if (!buildAttached) { console.error('Could not attach the new build to the version.'); process.exit(1) }
           console.log(`Attached build ${newest.attributes.version} (uploaded ${newest.attributes.uploadedDate}) to the version`)
           // Export compliance: Info.plist answers it for new builds, but make
           // sure this one isn't stranded on "Missing Compliance".
