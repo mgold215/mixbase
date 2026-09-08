@@ -330,9 +330,9 @@ struct PlayerView: View {
 
     // One clear bar holding every Now Playing control — AirPlay, Share, notes,
     // queue — evenly spread in a single rounded container instead of icons
-    // scattered across the nav bar's two corners. Share is deliberately NOT
-    // another thin line icon: a filled accent pill with a label, so it can't
-    // be mistaken for AirPlay at a glance. Share hides for tracks without a
+    // scattered across the nav bar's two corners. Every control is the same
+    // 18pt accent line icon — Share included, so the bar reads as one set
+    // rather than one button shouting. Share hides for tracks without a
     // link (another artist's feed track) and notes for mixes that aren't
     // yours; AirPlay and queue always ride.
     private var nowPlayingTopBar: some View {
@@ -343,17 +343,11 @@ struct PlayerView: View {
 
             if let shareURL {
                 ShareLink(item: shareURL) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Share")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundColor(Color(hex: "#080808"))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(Color(hex: "#2dd4bf")))
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 18))
+                        .foregroundColor(Color(hex: "#2dd4bf"))
                 }
+                .accessibilityLabel("Share")
                 .frame(maxWidth: .infinity)
             }
 
