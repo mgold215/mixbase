@@ -163,11 +163,12 @@ jobs:
           for (const s of subs.data ?? []) {
             console.log(`Submission ${s.id}: state=${s.attributes.state} submitted=${s.attributes.submittedDate ?? 'never'}`)
           }
+          // The commit carrying the 3.1.1 fix (native legal screens) merged to
+          // main at 13:32 UTC on 2026-09-08; only a build uploaded after that
+          // contains it. Run 18 proved "any build newer than the rejected one"
+          // is not enough — the daily agents' earlier merges upload builds too.
+          const MIN_UPLOAD = Date.parse('2026-09-08T13:32:00Z')
           const queued = (subs.data ?? []).find(s => ['WAITING_FOR_REVIEW', 'IN_REVIEW'].includes(s.attributes.state))
-          if (queued) {
-            console.log(`Already queued: submission ${queued.id} is ${queued.attributes.state}. Nothing to do.`)
-            process.exit(0)
-          }
 
           // ── Version ────────────────────────────────────────────────────────
           const vers = must(
@@ -213,7 +214,19 @@ jobs:
           // could pick a Mac build for the iOS version.
           const attachedRes = await api('GET', `/appStoreVersions/${vid}/build?fields[builds]=version,uploadedDate`)
           const attached = attachedRes.json?.data ?? null
-          console.log(`Currently attached build: ${attached ? attached.attributes.version : 'none'}`)
+          console.log(`Currently attached build: ${attached ? `${attached.attributes.version} (uploaded ${attached.attributes.uploadedDate})` : 'none'}`)
+          if (queued) {
+            if (attached && Date.parse(attached.attributes.uploadedDate) >= MIN_UPLOAD) {
+              console.log(`Already queued with a fix-era build: submission ${queued.id} is ${queued.attributes.state}. Nothing to do.`)
+              process.exit(0)
+            }
+            // Queued with a PRE-FIX build (run 18's mistake) — cancel and redo.
+            const cancelQ = await api('PATCH', `/reviewSubmissions/${queued.id}`, {
+              data: { type: 'reviewSubmissions', id: queued.id, attributes: { canceled: true } },
+            })
+            console.log(`Canceled stale queued submission ${queued.id} (pre-fix build): HTTP ${cancelQ.status}`)
+            if (!cancelQ.ok) { console.error(JSON.stringify(cancelQ.json ?? cancelQ.text).slice(0, 400)); process.exit(1) }
+          }
           // The 3.1.1 fix (native legal screens) only exists in the build the
           // merge just uploaded — resubmitting the reviewed build would be an
           // instant repeat rejection, so a different-id VALID build is REQUIRED.
@@ -222,11 +235,11 @@ jobs:
             const bs = must(await api('GET', `/builds?filter[app]=${app.id}&filter[preReleaseVersion.platform]=IOS&sort=-uploadedDate&limit=1&fields[builds]=version,processingState,expired,uploadedDate,usesNonExemptEncryption`), 'list builds')
             const b = bs.data?.[0]
             if (b && !b.attributes.expired && b.attributes.processingState === 'VALID'
-                && (!attached || b.id !== attached.id)) { newest = b; break }
-            console.log(`Waiting for a NEW VALID iOS build (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}` : 'none'})...`)
+                && Date.parse(b.attributes.uploadedDate) >= MIN_UPLOAD) { newest = b; break }
+            console.log(`Waiting for a VALID iOS build uploaded after the fix merge (newest: ${b ? `${b.attributes.version}/${b.attributes.processingState}/${b.attributes.uploadedDate}` : 'none'})...`)
             await new Promise(r => setTimeout(r, 50_000))
           }
-          if (!newest) { console.error('No NEW VALID iOS build appeared — aborting before touching the submission.'); process.exit(1) }
+          if (!newest) { console.error('No VALID iOS build uploaded after the fix merge appeared — aborting.'); process.exit(1) }
           must(await api('PATCH', `/appStoreVersions/${vid}/relationships/build`, {
             data: { type: 'builds', id: newest.id },
           }), 'attach new iOS build to version')
