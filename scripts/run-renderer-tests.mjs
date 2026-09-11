@@ -62,6 +62,7 @@ const SUITES = [
   'schema-heal-parity-test.mjs',
   'schema-heal-matcher-test.mjs',
   'usage-rpc-grants-test.mjs',
+  'native-client-entitlements-test.mjs',
   'usage-table-rls-test.mjs',
   'security-heal-trigger-test.mjs',
   'heal-retry-test.mjs',

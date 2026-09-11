@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage, clientKind } from '@/lib/tier'
 import { videoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
 import { isUuid } from '@/lib/validators'
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
   // Monthly tier gate — enforces the per-plan video quota (free/pro: 0, studio: 10).
   // Placed after input validation but before the paid Runway call so a bad request
   // never consumes quota. Mirrors generate-artwork's gate.
-  const gate = await checkAndIncrementUsage(userId, 'video')
+  const gate = await checkAndIncrementUsage(userId, 'video', { client: clientKind(req.headers) })
   if (gate.error) {
     // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
     return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })

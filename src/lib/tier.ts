@@ -17,6 +17,26 @@ export const TIER_LIMITS: Record<SubscriptionTier, { artworkGenerations: number;
   admin:  { artworkGenerations: 99999, videoGenerations: 99999 },
 }
 
+// ── Native apps are subscription-blind ───────────────────────────────────────
+// The iOS/macOS apps sell nothing and must not unlock anything bought
+// elsewhere: App Store Guideline 3.1.1 forbids accessing paid digital content
+// bought outside the app, and 3.1.3(b) only allows honoring a web subscription
+// in-app if the same subscription is also sold via In-App Purchase — which it
+// is not. So a request that arrives from a native app (Bearer-authenticated,
+// see X-Auth-Scheme in src/proxy.ts) gets ONE entitlement set for every
+// account, subscribed on the web or not: the free allowance. Web subscriptions
+// are honored only on the website. Confirmed to App Review, 2026-09-11.
+export const NATIVE_APP_LIMITS = TIER_LIMITS.free
+
+export type ClientKind = 'web' | 'native'
+
+// Which client a request came from, from the middleware's X-Auth-Scheme stamp
+// (a client cannot set it: proxy.ts strips the inbound header). Bearer-only
+// sessions are the native apps; everything else is the web app.
+export function clientKind(headers: Headers): ClientKind {
+  return headers.get('x-auth-scheme') === 'bearer' ? 'native' : 'web'
+}
+
 // Prices shown in the UI
 export const TIER_PRICES: Record<SubscriptionTier, string> = {
   free:   '$0/mo',
@@ -115,11 +135,14 @@ export async function getMonthUsage(userId: string): Promise<{ artworkGeneration
 // Returns { allowed, used, limit } — allowed=false means show upgrade prompt.
 export async function checkAndIncrementUsage(
   userId: string,
-  feature: 'artwork' | 'video'
+  feature: 'artwork' | 'video',
+  opts: { client?: ClientKind } = {},
 ): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean; month: string }> {
-  const profile = await getUserProfile(userId)
-  const tier = profile.subscription_tier
-  const limits = TIER_LIMITS[tier]
+  // Native apps never consult the subscription: same allowance for everyone
+  // (see NATIVE_APP_LIMITS). The profile tier is only read for web requests.
+  const native = opts.client === 'native'
+  const tier: SubscriptionTier = native ? 'free' : (await getUserProfile(userId)).subscription_tier
+  const limits = native ? NATIVE_APP_LIMITS : TIER_LIMITS[tier]
   const limit = feature === 'artwork' ? limits.artworkGenerations : limits.videoGenerations
   // Capture the reserved month and hand it back so the caller can refund the
   // SAME month it reserved. A generation that spans 00:00 UTC on the 1st would
