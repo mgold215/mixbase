@@ -235,6 +235,11 @@ export async function proxy(request: NextRequest) {
   // untouched (a latent spoofing vector for any future public route).
   const baseHeaders = new Headers(request.headers)
   baseHeaders.delete('x-user-id')
+  // Same for X-Auth-Scheme: it tells routes whether this session arrived as
+  // the web cookie or as the native apps' Bearer token, and tier.ts keys the
+  // native apps' subscription-blind entitlements on it, so a client must not
+  // be able to pick its own value.
+  baseHeaders.delete('x-auth-scheme')
 
   // PUBLIC_EXACT holds every leaf route (see its definition for why a leaf must
   // never be a startsWith() prefix). '/' is the clearest case: as a prefix it
@@ -270,8 +275,15 @@ export async function proxy(request: NextRequest) {
   // so a forged Bearer is rejected identically.
   const authHeader = request.headers.get('authorization')
   const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null
-  const accessToken = request.cookies.get('sb-access-token')?.value ?? bearerToken ?? undefined
+  const cookieToken = request.cookies.get('sb-access-token')?.value
+  const accessToken = cookieToken ?? bearerToken ?? undefined
   const refreshToken = request.cookies.get('sb-refresh-token')?.value
+  // How the session reached us. The native iOS/macOS apps only ever send a
+  // Bearer token and never hold the session cookie; the web app is the
+  // reverse. Follows the same precedence as accessToken above, and the
+  // refresh path below can only be reached with a refresh COOKIE, so it is a
+  // cookie session by construction.
+  const authScheme: 'cookie' | 'bearer' = !cookieToken && bearerToken ? 'bearer' : 'cookie'
 
   // ── Fast path: verify JWT signature locally — no network call ─────────────
   // verifyAccessToken checks the HS256 signature against SUPABASE_JWT_SECRET
@@ -322,6 +334,7 @@ export async function proxy(request: NextRequest) {
     // Token is present and not expired — inject user ID and pass through
     const requestHeaders = new Headers(baseHeaders)
     requestHeaders.set('X-User-Id', userId)
+    requestHeaders.set('X-Auth-Scheme', authScheme)
     return withAdminCheck(request, userId, requestHeaders)
   }
 
@@ -353,6 +366,7 @@ export async function proxy(request: NextRequest) {
       const expiresAt = refreshed.session.expires_at ?? Math.floor(Date.now() / 1000) + 3600
       const requestHeaders = new Headers(baseHeaders)
       requestHeaders.set('X-User-Id', refreshed.session.user.id)
+      requestHeaders.set('X-Auth-Scheme', authScheme)
       const res = await withAdminCheck(request, refreshed.session.user.id, requestHeaders)
       setSessionCookies(res, refreshed.session.access_token, refreshed.session.refresh_token, expiresAt)
       return res
@@ -382,6 +396,7 @@ export async function proxy(request: NextRequest) {
     if (userId) {
       const requestHeaders = new Headers(baseHeaders)
       requestHeaders.set('X-User-Id', userId)
+      requestHeaders.set('X-Auth-Scheme', authScheme)
       return NextResponse.next({ request: { headers: requestHeaders } })
     }
     // Transient failure and we can't even read a user id from the old token:

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage, clientKind } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { canonicalUuid } from '@/lib/validators'
 import { MODEL_ENDPOINTS, MODEL_INPUTS, MODEL_INPUTS_MINIMAL, resolveModelKey, composeLook, composePrompt } from '@/lib/artwork-models'
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Gate: check monthly artwork limit before hitting Replicate
-  const gate = await checkAndIncrementUsage(userId, 'artwork')
+  const gate = await checkAndIncrementUsage(userId, 'artwork', { client: clientKind(request.headers) })
   if (gate.error) {
     // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
     return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })

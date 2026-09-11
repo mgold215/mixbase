@@ -34,6 +34,7 @@
 ## Tiers & Stripe (enforced server-side in `src/lib/tier.ts`)
 - `free` $0: 3 artwork/mo, 0 video · `pro` $8.99: 25/0 · `studio` $19.99: 25/10
 - `POST /api/stripe/create-checkout` (passes `client_reference_id: userId`), `GET|POST /api/stripe/portal`, `POST /api/stripe/webhook` (public, signature-verified). `GET /api/subscription` returns tier + usage + limits.
+- **The native iOS/macOS apps are subscription-blind (App Store 3.1.1 / 3.1.3(b)).** `src/proxy.ts` stamps `X-Auth-Scheme: bearer|cookie` (inbound value stripped); Bearer-only sessions are the native apps, and `checkAndIncrementUsage(..., { client: clientKind(request.headers) })` gives them `NATIVE_APP_LIMITS` (= free) for EVERY account, web subscription or not; `/api/subscription` reports `free` to them. Web subscriptions are honored only on the website. This is what we told App Review on 2026-09-11 — never let a native request see or unlock a web tier (contract: `scripts/native-client-entitlements-test.mjs`).
 
 ## AI Features (per-user rate-limited + tier-gated)
 - `POST /api/chat/summarize-feedback` — Claude (`claude-opus-4-7`) mix-notes summary
@@ -47,7 +48,7 @@
 
 ## iOS
 - Use the `ios-build-deploy` skill for ANY iOS work — device IDs, CLI build/install, error recovery. Never tell the user to open Xcode.
-- **Apple Developer Program is ACTIVE (paid; team `AP8UC39D4D`) and the app has shipped via App Store Connect** — an ASC API key exists. Never suggest joining the program or forming anything.
+- **Apple Developer Program is ACTIVE (paid; team `AP8UC39D4D`); the app ships continuously to TestFlight and has an App Store Connect record + API key** — but as of 2026-09-11 version 1.0 has NOT been approved for the App Store (7 submissions: 3.1.1 paid-content findings, 1.2 UGC, 5.1.1 deletion, 2.1 info requests). Never suggest joining the program or forming anything.
 - **Primary ship path (no Mac needed): merging an `ios/` change to `main` triggers `.github/workflows/ios-testflight.yml`** — cloud-signed archive on a GitHub macOS runner, uploaded to TestFlight (secrets `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_API_KEY_P8_BASE64`). Matt's phone auto-updates via TestFlight. Backup: launchd auto-deploy on the Mac (`scripts/ios-autodeploy-install.sh`); manual cable build only for tight iteration.
 
 ## macOS App
@@ -64,4 +65,4 @@
 ## Business & Legal
 - Entity: moodmixformat, LLC (already formed — don't suggest forming one). EIN 39-2854188. Domain mixbase.app.
 - All branches unified into `main` (2026-04-26); ignore stale remotes (`app-store`, `ios-app`, `mobile-app`, `tst-auth`).
-- App Store: the app IS shipped/live (2026-08). If App Store metadata references privacy@/support@/dmca@/legal@/review@ mixbase.app, verify those aliases exist — don't frame them as pre-submission blockers.
+- App Store: NOT live yet (in review; see iOS section). Resubmission/notes updates run through the push-driven TEMP branches of `.github/workflows/asc-resubmit.yml` (`asc5-inspect` = read-only state dump, `asc6-submit` = attach newest post-fix build + notes + submit); workflow_dispatch is 403 for remote sessions, and Apple's Resolution Center has NO API — replies to App Review must be typed in App Store Connect. If App Store metadata references privacy@/support@/dmca@/legal@/review@ mixbase.app, verify those aliases exist — don't frame them as pre-submission blockers.
