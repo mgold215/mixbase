@@ -1,4 +1,4 @@
-# TEMP (branch asc6-submit only): PROOF + NOTES-ONLY update after the 2.1(b)
+# TEMP (branch asc6-submit only): NOTES-ONLY update after the 2.1(b)
 # information request of 2026-09-10 (submission 902f9887). No cancel, no
 # resubmit — the submission stays open and the reply itself goes through
 # App Store Connect's Resolution Center (no API for that). This writes the
@@ -30,46 +30,6 @@ jobs:
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
-      - name: Prove the claim against prod — native (Bearer) is subscription-blind, web (cookie) is not
-        env:
-          APP_BASE_URL: https://mixbase.app
-          PROOF_EMAIL: applereview@mixbase.app
-        run: |
-          cat > /tmp/proof.mjs <<'EOF3'
-          import { createHmac } from 'node:crypto'
-          const { APP_BASE_URL, PROOF_EMAIL, ASC_API_KEY_P8_BASE64 } = process.env
-          // Same derivation as .github/asc-maintenance/asc-testflight.mjs — the
-          // beta-review demo account's password never appears in the repo or logs.
-          const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
-          const password = 'Mb1!' + b64url(createHmac('sha256', Buffer.from(ASC_API_KEY_P8_BASE64, 'base64')).update('mixbase-testflight-demo-account-v1').digest()).slice(0, 20)
-
-          const signIn = await fetch(`${APP_BASE_URL}/api/auth`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: PROOF_EMAIL, password }),
-          })
-          if (signIn.status !== 200) { console.error(`sign-in as proof account failed: HTTP ${signIn.status}`); process.exit(1) }
-          const cookies = signIn.headers.getSetCookie?.() ?? []
-          const token = cookies.find(c => c.startsWith('sb-access-token='))?.split(';')[0].split('=').slice(1).join('=')
-          const cookieHeader = cookies.map(c => c.split(';')[0]).join('; ')
-          if (!token) { console.error('no access token cookie'); process.exit(1) }
-
-          const asNative = await (await fetch(`${APP_BASE_URL}/api/subscription`, { headers: { Authorization: `Bearer ${token}` } })).json()
-          const asWeb = await (await fetch(`${APP_BASE_URL}/api/subscription`, { headers: { Cookie: cookieHeader } })).json()
-          console.log('native (Bearer) view:', JSON.stringify({ tier: asNative.tier, limits: asNative.limits, hasStripeSubscription: asNative.hasStripeSubscription }))
-          console.log('web (cookie) view:   ', JSON.stringify({ tier: asWeb.tier, limits: asWeb.limits }))
-
-          let failed = 0
-          const check = (name, ok) => { console.log(`${ok ? 'ok ' : 'FAIL'}: ${name}`); if (!ok) failed++ }
-          check('web view sees the account\'s real tier (studio for this proof)', asWeb.tier === 'studio')
-          check('native view reports free regardless', asNative.tier === 'free')
-          check('native view reports no subscription', asNative.hasStripeSubscription === false && asNative.source === null)
-          check('native limits are the free allowance', asNative.limits?.artworkGenerations === 3 && asNative.limits?.videoGenerations === 0)
-          check('web limits are the studio allowance', asWeb.limits?.artworkGenerations === 25 && asWeb.limits?.videoGenerations === 10)
-          if (failed) { console.error(`\nPROOF FAILED (${failed})`); process.exit(1) }
-          console.log('\nPROOF GREEN: a web subscription is invisible to and unused by the native apps.')
-          EOF3
-          node /tmp/proof.mjs
-
       - name: Write the business-model answers into App Review notes
         run: |
           cat > /tmp/notes.mjs <<'EOF2'
@@ -113,20 +73,20 @@ jobs:
           const rd = must(await api('GET', `/appStoreVersions/${version.id}/appStoreReviewDetail`), 'read review detail')
 
           const NOTES = [
-            'mixBase is a music production tool for managing mix versions and releases.',
+            'mixBase is a music production tool for managing mix versions and releases. It is free: there are no paid plans, subscriptions, or purchases anywhere - not in the app and not on our website.',
             '',
-            'Getting started: sign in with the demo account (see App Review credentials). It is a standard free account, pre-loaded with 3 released tracks with cover art and playable audio.',
+            'Getting started: sign in with the demo account (see App Review credentials). It is a standard account, pre-loaded with 3 released tracks with cover art and playable audio.',
             '',
-            'BUSINESS MODEL — answers to the September 10 Guideline 2.1(b) questions:',
-            '1. Who uses paid content, subscriptions, features, or services in the app? No one. The app contains no paid content, subscriptions, features, or services; every user gets the same app with the same features.',
-            '2. Where can users purchase content/subscriptions/features accessed in the app? Nothing accessible in the app is sold anywhere. mixBase also operates a separate browser-based web product at mixbase.app with its own optional subscription; that subscription is used only on the website and is not accessible in, referenced by, or honored by the app.',
-            '3. What previously purchased content, subscriptions, features, or services can a user access in the app? None. A user who bought a website subscription gets exactly the same app as a user who did not.',
+            'BUSINESS MODEL - answers to the September 10 Guideline 2.1(b) questions:',
+            '1. Who uses paid content, subscriptions, features, or services in the app? No one. There are none. Every user gets the same app with the same features.',
+            '2. Where can users purchase content, subscriptions, features, or services accessed in the app? Nowhere. mixBase sells nothing, in the app or on mixbase.app. The website previously offered an optional subscription; it has been removed entirely and no purchase of any kind is offered anywhere.',
+            '3. What previously purchased content, subscriptions, features, or services can a user access in the app? None. Nothing has ever been purchasable in the app, and nothing purchased elsewhere applies to it.',
             '4. What paid content, subscriptions, or features are unlocked within the app without In-App Purchase? None.',
             '5. Physical goods bundled with digital content? No. We sell no physical goods.',
-            '6. Can users buy a paid digital subscription on mixbase.app and use it in the app? No. The website subscription applies only to the website in a browser. The app does not read or honor subscription status: every account, free or subscribed on the web, receives identical features and an identical monthly AI-artwork allowance in the app. The app never displays plans, prices, or subscription status, and never links to the website.',
-            '7. What does the website subscription contain? It is a web-only plan for the browser product: a higher monthly allowance of AI cover-artwork generations and access to a cloud AI video-generation feature, both used on the website. Neither applies inside the app: the app grants every account the same artwork allowance a free web account gets, and its video visualizers use a free built-in renderer that has no paid tier anywhere.',
+            '6. Can users buy a paid digital subscription on mixbase.app and use it in the app? No. There is no subscription on mixbase.app any more - the website is free, exactly like the app.',
+            '7. What are the contents and features of the paid digital subscription on mixbase.app? There is none. The website has no paid subscription, plan, or purchase. All features - uploads, playback, sharing, the community feed, the release pipeline, AI cover artwork (a monthly allowance identical for every account), and video visualizers (a free built-in renderer) - are free for every account on every platform. If we ever charge for anything in the app in the future, it will be offered only through Apple In-App Purchase.',
             '',
-            'Guideline 3.1.1: the app sells nothing and contains no purchase flows, no upgrade prompts, no plan names, no pricing, no In-App Purchases, and no links to external purchase pages. The Privacy Policy, Terms of Service, and Support pages are rendered natively inside the app; no screen opens our website.',
+            'Guideline 3.1.1: the app contains no purchase flows, no upgrade prompts, no plan names, no pricing, no In-App Purchases, and no links to external purchase pages. The Privacy Policy, Terms of Service, and Support pages are rendered natively inside the app; no screen opens our website.',
             '',
             'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
             '',
