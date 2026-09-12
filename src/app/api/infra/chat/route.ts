@@ -6,7 +6,6 @@ import { INFRA_NODES, INFRA_EDGES } from '@/lib/infra/topology'
 import { getRailwayStatus } from '@/lib/infra/railway'
 import { getSupabaseStatus } from '@/lib/infra/supabase'
 import { getGithubStatus } from '@/lib/infra/github'
-import { getStripeStatus } from '@/lib/infra/stripe'
 import { getSentryStatus } from '@/lib/infra/sentry'
 import { isReadonlySql } from '@/lib/infra/sql-guard'
 
@@ -32,11 +31,6 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_github_status',
     description: 'Get GitHub Actions CI status: latest workflow run per branch (main, tst) with status and conclusion.',
-    input_schema: { type: 'object' as const, properties: {}, required: [] },
-  },
-  {
-    name: 'get_stripe_status',
-    description: 'Get billing status: subscriber counts by tier, estimated MRR, and active Stripe subscription count.',
     input_schema: { type: 'object' as const, properties: {}, required: [] },
   },
   {
@@ -91,9 +85,6 @@ async function executeTool(name: string, input: Record<string, unknown> = {}): P
     if (name === 'get_github_status') {
       return JSON.stringify(await getGithubStatus()).slice(0, 6000)
     }
-    if (name === 'get_stripe_status') {
-      return JSON.stringify(await getStripeStatus()).slice(0, 6000)
-    }
     if (name === 'get_sentry_status') {
       return JSON.stringify(await getSentryStatus()).slice(0, 6000)
     }
@@ -128,7 +119,7 @@ export async function POST(request: NextRequest) {
 
   const systemPrompt = `You are the infrastructure assistant for mixBase, a Next.js app on Railway backed by Supabase. Today is ${new Date().toISOString().split('T')[0]}.
 
-You have READ-ONLY tools to inspect the live architecture: the topology graph; Railway environment/deploy/health status; Supabase row counts, storage usage, database size, and scaling signals; GitHub Actions CI status; Stripe billing (subscriber tiers, MRR); and Sentry error monitoring. There is also a read-only SQL tool for ad-hoc questions.
+You have READ-ONLY tools to inspect the live architecture: the topology graph; Railway environment/deploy/health status; Supabase row counts, storage usage, database size, and scaling signals; GitHub Actions CI status; and Sentry error monitoring. There is also a read-only SQL tool for ad-hoc questions.
 
 Rules:
 - You can only observe. You cannot change, scale, restart, or delete anything. If asked to take an action, explain what you see and what the user would need to do, but never claim to have changed anything.

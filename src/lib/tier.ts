@@ -1,49 +1,26 @@
 // src/lib/tier.ts
-// Subscription tier helper — single source of truth for limits, usage tracking, and tier management.
+// Monthly AI-generation allowance — single source of truth for limits and usage tracking.
 // All functions use supabaseAdmin (service-role key), bypassing RLS — server-side only.
+//
+// mixBase has NO paid plans (decision 2026-09-12, after App Review's 2.1(b)
+// business-model questions): every account gets the same allowance below, on
+// every platform, and nothing is sold on the website or in the apps. If we
+// ever charge, it will be through the App Store's In-App Purchase only. The
+// only exception is the platform owner/admin (an identity, not a purchase —
+// see isPlatformOwner), who is unlimited.
 
 import { supabaseAdmin } from './supabase'
 import { ensureUsageRpc, isMissingUsageRpc, ensureUsageRpcGrants, ensureUsageTableWriteLock } from './schema-heal'
 import { planUsageRefund } from './usage-refund'
 import { isAdminIdentity } from './admin-identity'
 
-export type SubscriptionTier = 'free' | 'pro' | 'studio' | 'admin'
+export type GenerationLimits = { artworkGenerations: number; videoGenerations: number }
 
-// Monthly generation allowances per tier (admin = unlimited)
-export const TIER_LIMITS: Record<SubscriptionTier, { artworkGenerations: number; videoGenerations: number }> = {
-  free:   { artworkGenerations: 3,     videoGenerations: 0     },
-  pro:    { artworkGenerations: 25,    videoGenerations: 0     },
-  studio: { artworkGenerations: 25,    videoGenerations: 10    },
-  admin:  { artworkGenerations: 99999, videoGenerations: 99999 },
-}
-
-// ── Native apps are subscription-blind ───────────────────────────────────────
-// The iOS/macOS apps sell nothing and must not unlock anything bought
-// elsewhere: App Store Guideline 3.1.1 forbids accessing paid digital content
-// bought outside the app, and 3.1.3(b) only allows honoring a web subscription
-// in-app if the same subscription is also sold via In-App Purchase — which it
-// is not. So a request that arrives from a native app (Bearer-authenticated,
-// see X-Auth-Scheme in src/proxy.ts) gets ONE entitlement set for every
-// account, subscribed on the web or not: the free allowance. Web subscriptions
-// are honored only on the website. Confirmed to App Review, 2026-09-11.
-export const NATIVE_APP_LIMITS = TIER_LIMITS.free
-
-export type ClientKind = 'web' | 'native'
-
-// Which client a request came from, from the middleware's X-Auth-Scheme stamp
-// (a client cannot set it: proxy.ts strips the inbound header). Bearer-only
-// sessions are the native apps; everything else is the web app.
-export function clientKind(headers: Headers): ClientKind {
-  return headers.get('x-auth-scheme') === 'bearer' ? 'native' : 'web'
-}
-
-// Prices shown in the UI
-export const TIER_PRICES: Record<SubscriptionTier, string> = {
-  free:   '$0/mo',
-  pro:    '$8.99/mo',
-  studio: '$19.99/mo',
-  admin:  'Platform Owner',
-}
+// The one allowance every account gets. Cloud video (Runway) stays owner-only:
+// it is metered per generation and has no free lane; the apps and the web
+// FreeStudio render visualizers locally/for free instead.
+export const MONTHLY_LIMITS: GenerationLimits = { artworkGenerations: 3, videoGenerations: 0 }
+export const ADMIN_LIMITS: GenerationLimits = { artworkGenerations: 99999, videoGenerations: 99999 }
 
 // Current month as 'YYYY-MM' — key for mb_usage rows
 export function currentMonth(): string {
@@ -56,7 +33,7 @@ export function currentMonth(): string {
 //
 // Identity comes from isAdminIdentity() (auth.users email / ADMIN_USER_IDS), NOT
 // from subscription_tier. Trusting the tier here was the same self-grant hole the
-// admin gates had, with a bill attached: TIER_LIMITS.admin is 99999 artwork and
+// admin gates had, with a bill attached: ADMIN_LIMITS is 99999 artwork and
 // 99999 video generations, so one PATCH of your own profile bought unmetered
 // Replicate and Runway spend on our account. See src/lib/admin-identity.ts.
 //
@@ -74,9 +51,9 @@ export async function isPlatformOwner(userId: string): Promise<boolean> {
   try {
     owner = await isAdminIdentity(userId)
     if (owner) {
-      // Persist so every tier read (/api/subscription, the admin UI's badge)
-      // agrees from now on. Fire-and-forget: the exemption must not block.
-      // Cheap and idempotent — a no-op update once the row already says 'admin'.
+      // Persist so the profiles row agrees with reality (subscription_tier is
+      // informational now — 'admin' or 'free'). Fire-and-forget: the exemption
+      // must not block. Cheap and idempotent — a no-op once the row says 'admin'.
       void supabaseAdmin
         .from('profiles')
         .update({ subscription_tier: 'admin' })
@@ -96,26 +73,6 @@ export async function isPlatformOwner(userId: string): Promise<boolean> {
   return owner
 }
 
-// Fetch user's subscription fields from profiles. Falls back to 'free' if row is missing.
-export async function getUserProfile(userId: string): Promise<{
-  subscription_tier: SubscriptionTier
-  subscription_source: string | null
-  stripe_customer_id: string | null
-  stripe_subscription_id: string | null
-}> {
-  const { data } = await supabaseAdmin
-    .from('profiles')
-    .select('subscription_tier, subscription_source, stripe_customer_id, stripe_subscription_id')
-    .eq('id', userId)
-    .single()
-  return {
-    subscription_tier: (data?.subscription_tier as SubscriptionTier) ?? 'free',
-    subscription_source: data?.subscription_source ?? null,
-    stripe_customer_id: data?.stripe_customer_id ?? null,
-    stripe_subscription_id: data?.stripe_subscription_id ?? null,
-  }
-}
-
 // Fetch this month's generation counts. Returns zeros if no row exists yet.
 export async function getMonthUsage(userId: string): Promise<{ artworkGenerations: number; videoGenerations: number }> {
   const { data } = await supabaseAdmin
@@ -131,19 +88,14 @@ export async function getMonthUsage(userId: string): Promise<{ artworkGeneration
 }
 
 // Call BEFORE hitting any external AI API.
-// Checks monthly limit; if allowed, atomically increments the counter.
-// Returns { allowed, used, limit } — allowed=false means show upgrade prompt.
+// Checks the monthly allowance; if allowed, atomically increments the counter.
+// Returns { allowed, used, limit } — allowed=false means the allowance is used
+// up until next month (there is nothing to buy; never show purchase copy).
 export async function checkAndIncrementUsage(
   userId: string,
   feature: 'artwork' | 'video',
-  opts: { client?: ClientKind } = {},
 ): Promise<{ allowed: boolean; used: number; limit: number; error?: boolean; month: string }> {
-  // Native apps never consult the subscription: same allowance for everyone
-  // (see NATIVE_APP_LIMITS). The profile tier is only read for web requests.
-  const native = opts.client === 'native'
-  const tier: SubscriptionTier = native ? 'free' : (await getUserProfile(userId)).subscription_tier
-  const limits = native ? NATIVE_APP_LIMITS : TIER_LIMITS[tier]
-  const limit = feature === 'artwork' ? limits.artworkGenerations : limits.videoGenerations
+  const limit = feature === 'artwork' ? MONTHLY_LIMITS.artworkGenerations : MONTHLY_LIMITS.videoGenerations
   // Capture the reserved month and hand it back so the caller can refund the
   // SAME month it reserved. A generation that spans 00:00 UTC on the 1st would
   // otherwise refund currentMonth() (the new month) and leave the reserved slot
@@ -152,19 +104,18 @@ export async function checkAndIncrementUsage(
 
   // Platform owner / admin: unlimited. Skip the quota reservation entirely so
   // even a usage-RPC outage can never block the owner's generations. Checked
-  // BEFORE the zero-limit reject so the owner passes even on a 'free' profile
-  // (isPlatformOwner then heals the profile to 'admin').
-  if (tier === 'admin' || await isPlatformOwner(userId)) {
-    const adminLimits = TIER_LIMITS.admin
+  // BEFORE the zero-limit reject so the owner passes for video too.
+  if (await isPlatformOwner(userId)) {
     return {
       allowed: true,
       used: 0,
-      limit: feature === 'artwork' ? adminLimits.artworkGenerations : adminLimits.videoGenerations,
+      limit: feature === 'artwork' ? ADMIN_LIMITS.artworkGenerations : ADMIN_LIMITS.videoGenerations,
       month,
     }
   }
 
-  // Zero-limit feature (e.g. free/pro video) — reject without touching the DB.
+  // Zero-limit feature (cloud video for everyone but the owner) — reject
+  // without touching the DB.
   if (limit <= 0) return { allowed: false, used: 0, limit, month }
 
   // Atomic reserve: try_increment_usage takes a row lock so the limit check and
@@ -231,8 +182,8 @@ async function legacyCheckAndIncrement(
 //
 // Why reserve-then-refund: the increment runs BEFORE the paid API call so two
 // concurrent generations can't both pass the check on a user's last credit. The
-// cost of that ordering is that an upstream failure would otherwise burn a paid
-// monthly slot with no result — a free user (3 artworks/mo) could be locked out
+// cost of that ordering is that an upstream failure would otherwise burn a
+// monthly slot with no result — a user (3 artworks/mo) could be locked out
 // for the month by two hiccups. This hands the slot back.
 //
 // Pass the SAME `month` checkAndIncrementUsage returned (gate.month). Defaults to
@@ -270,42 +221,4 @@ export async function refundUsage(
   } catch (err) {
     console.error(`[tier] refundUsage(${feature}) threw for ${userId}:`, err instanceof Error ? err.message : err)
   }
-}
-
-// Update subscription tier on a profile. Called by Stripe webhook and Apple IAP verify.
-export async function setSubscriptionTier(
-  userId: string,
-  tier: SubscriptionTier,
-  source: 'stripe' | 'apple',
-  fields?: {
-    stripe_customer_id?: string
-    stripe_subscription_id?: string | null
-    apple_original_transaction_id?: string
-    subscription_expires_at?: string | null
-  }
-) {
-  await supabaseAdmin
-    .from('profiles')
-    .update({ subscription_tier: tier, subscription_source: source, ...fields })
-    .eq('id', userId)
-}
-
-// Resolve Stripe subscription ID → user UUID
-export async function getUserByStripeSubscription(subscriptionId: string): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from('profiles')
-    .select('id')
-    .eq('stripe_subscription_id', subscriptionId)
-    .single()
-  return data?.id ?? null
-}
-
-// Resolve Stripe customer ID → user UUID
-export async function getUserByStripeCustomer(customerId: string): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from('profiles')
-    .select('id')
-    .eq('stripe_customer_id', customerId)
-    .single()
-  return data?.id ?? null
 }

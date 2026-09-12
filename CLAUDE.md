@@ -22,21 +22,20 @@
 ## Environment Variables (full list in `.env.example`)
 - `SUPABASE_SERVICE_ROLE_KEY` — **required**: admin DB access, auth, bypasses RLS/storage limits
 - `SUPABASE_JWT_SECRET` — **required on staging+prod**: middleware verifies access-token HS256 signatures locally; without it tokens are decoded UNVERIFIED (auth-bypass risk)
-- `STRIPE_WEBHOOK_SECRET` — **required if Stripe live**: without it all webhooks 400 and subscriptions never activate
 
 ## Auth
 - Middleware (`src/proxy.ts`) verifies the `sb-access-token` cookie via `verifyAccessToken()` against `SUPABASE_JWT_SECRET` (no Supabase round-trip), refreshes if expired, injects `X-User-Id`. Routes read identity from `X-User-Id` only — **never trust the request body for user ID**.
 
 ## Database (Supabase `mdefkqaawrusoaojstpq`, migrations in `supabase/migrations/`)
-- Tables: `profiles` (tier + Stripe IDs), `mb_projects`, `mb_versions`, `mb_feedback`, `mb_releases`, `mb_collections`, `mb_collection_items`, `mb_usage` (per-user monthly artwork/video counts, keyed YYYY-MM), `mb_feed_comments` (community-feed comments, migration 022), `mb_library_tracks` (released-track library — ISRC/UPC/dates synced from Spotify/Deezer, migration 027). Owner-only RLS throughout (migration 005), but **not all of them carry a `user_id` column** — verified 2026-08-30: `mb_versions`, `mb_feedback` and `mb_collection_items` have none, and `profiles` keys on `id`. They scope TRANSITIVELY and correctly (e.g. `mb_versions.users_own_versions` = `project_id in (select id from mb_projects where user_id = auth.uid())`). Check the actual column list before writing a policy or a filter against one of those. `mb_feed_comments` is deliberately cross-user (any signed-in user reads all rows, insert/delete own only). Server uses `supabaseAdmin`.
+- Tables: `profiles` (artist name, informational tier, legacy Stripe/Apple columns — unused), `mb_projects`, `mb_versions`, `mb_feedback`, `mb_releases`, `mb_collections`, `mb_collection_items`, `mb_usage` (per-user monthly artwork/video counts, keyed YYYY-MM), `mb_feed_comments` (community-feed comments, migration 022), `mb_library_tracks` (released-track library — ISRC/UPC/dates synced from Spotify/Deezer, migration 027). Owner-only RLS throughout (migration 005), but **not all of them carry a `user_id` column** — verified 2026-08-30: `mb_versions`, `mb_feedback` and `mb_collection_items` have none, and `profiles` keys on `id`. They scope TRANSITIVELY and correctly (e.g. `mb_versions.users_own_versions` = `project_id in (select id from mb_projects where user_id = auth.uid())`). Check the actual column list before writing a policy or a filter against one of those. `mb_feed_comments` is deliberately cross-user (any signed-in user reads all rows, insert/delete own only). Server uses `supabaseAdmin`.
 - RPCs (atomic, called by `src/lib/tier.ts`): `increment_artwork_usage(p_user_id, p_month)`, `increment_video_usage(p_user_id, p_month)`.
 
-## Tiers & Stripe (enforced server-side in `src/lib/tier.ts`)
-- `free` $0: 3 artwork/mo, 0 video · `pro` $8.99: 25/0 · `studio` $19.99: 25/10
-- `POST /api/stripe/create-checkout` (passes `client_reference_id: userId`), `GET|POST /api/stripe/portal`, `POST /api/stripe/webhook` (public, signature-verified). `GET /api/subscription` returns tier + usage + limits.
-- **The native iOS/macOS apps are subscription-blind (App Store 3.1.1 / 3.1.3(b)).** `src/proxy.ts` stamps `X-Auth-Scheme: bearer|cookie` (inbound value stripped); Bearer-only sessions are the native apps, and `checkAndIncrementUsage(..., { client: clientKind(request.headers) })` gives them `NATIVE_APP_LIMITS` (= free) for EVERY account, web subscription or not; `/api/subscription` reports `free` to them. Web subscriptions are honored only on the website. This is what we told App Review on 2026-09-11 — never let a native request see or unlock a web tier (contract: `scripts/native-client-entitlements-test.mjs`).
+## Pricing: NONE — no paid plans anywhere (decision 2026-09-12)
+- mixBase is free on the website and in the apps. Stripe, the pro/studio tiers, the homepage pricing section, the `/api/stripe/*` + `/api/subscription` routes, the admin tier controls and the infra Stripe node were all REMOVED (App Review 2.1(b) response, submission 902f9887). **If we ever charge, it will be through Apple's In-App Purchase only — never a web checkout.** Contract: `scripts/no-paid-plans-test.mjs` fails the build if any of it comes back.
+- Every account gets one allowance, enforced in `src/lib/tier.ts`: `MONTHLY_LIMITS` = 3 AI artworks / 0 cloud videos per month (cloud video is owner-only; the apps and web FreeStudio render visualizers for free). The platform owner/admin is exempt via `isPlatformOwner` (identity, not a purchase). `profiles.subscription_tier` still exists but is informational (`admin`/`free`) — never build an entitlement on it.
+- Quota-exhausted copy must stay purchase-free ("resets at the start of next month") — the iOS app additionally scrubs any server string mentioning upgrade/plan/price, but there must be nothing to scrub.
 
-## AI Features (per-user rate-limited + tier-gated)
+## AI Features (per-user rate-limited + monthly allowance)
 - `POST /api/chat/summarize-feedback` — Claude (`claude-opus-4-7`) mix-notes summary
 - `POST /api/generate-artwork` — Replicate image models (FLUX 1.1 Ultra raw / Seedream 4 / Imagen 4 Ultra / Recraft V3 / Flux 2 Pro / Imagen 4), optional `vary` flag appends a randomized photographic look (lens/light/weather/mood), polls up to 2min
 - `POST /api/finalize-artwork` — `sharp` + `opentype.js` text overlay. **Gotcha:** the bundled font is traced via `outputFileTracingIncludes` in `next.config.ts` — removing that config crashes the route on Railway.
@@ -59,7 +58,7 @@
 - Both TestFlight lanes mint runner dev certificates; `asc-cert-audit.yml` prunes them monthly (keeps newest 4 'Created via API') so the 2026-08-29 certificate-cap outage can't recur.
 
 ## Infra Control Panel
-- Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,stripe,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.
+- Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.
 - SwiftUI macOS client: scheme `MixbaseInfra` in the same `macos/project.yml`, build with `cd macos && ./build.sh`.
 
 ## Business & Legal

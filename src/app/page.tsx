@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { cookies } from 'next/headers'
 import { Upload, Star, Send, ClipboardList, Sparkles, Film } from 'lucide-react'
-import { TIER_PRICES, TIER_LIMITS } from '@/lib/tier'
 
 const LANDING_TITLE = 'mixBASE — Rough-to-release. Version control for music.'
 const LANDING_DESCRIPTION =
@@ -70,43 +69,6 @@ const STEPS = [
 
 export default async function Home() {
   const authed = (await cookies()).get('sb-authed')?.value === '1'
-
-  const tiers = [
-    {
-      name: 'Free',
-      price: TIER_PRICES.free,
-      highlight: false,
-      perks: [
-        'Unlimited projects, versions & share links',
-        `${TIER_LIMITS.free.artworkGenerations} AI artworks / month`,
-        'Curator & label pitch tracker',
-        'Release pipeline & collections',
-      ],
-    },
-    {
-      name: 'Pro',
-      price: TIER_PRICES.pro,
-      highlight: true,
-      perks: [
-        'Everything in Free',
-        `${TIER_LIMITS.pro.artworkGenerations} AI artworks / month`,
-        'Priority artwork generation',
-      ],
-    },
-    {
-      name: 'Studio',
-      price: TIER_PRICES.studio,
-      highlight: false,
-      // "Everything in Pro" already covers the 25 AI artworks, so lead with what
-      // Studio actually adds — the AI visualizer videos — instead of repeating
-      // the artwork count and reading like no upgrade over Pro.
-      perks: [
-        'Everything in Pro',
-        `${TIER_LIMITS.studio.videoGenerations} AI visualizer videos / month`,
-        'Priority visualizer rendering',
-      ],
-    },
-  ]
 
   const wordmark = (
     <span className="font-bold tracking-[0.04em]">
@@ -191,7 +153,7 @@ export default async function Home() {
             )}
           </div>
           {!authed && (
-            <p className="text-xs mt-4" style={{ color: 'var(--text-muted)' }}>Free plan · no card required</p>
+            <p className="text-xs mt-4" style={{ color: 'var(--text-muted)' }}>Free to use · no card required</p>
           )}
         </div>
       </section>
@@ -227,57 +189,6 @@ export default async function Home() {
               <p className="text-2xl mb-2" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{s.n}</p>
               <h3 className="font-semibold text-sm mb-1.5">{s.title}</h3>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <section className="max-w-4xl mx-auto px-4 pb-24">
-        <h2 className="text-3xl text-center mb-8" style={{ fontFamily: 'var(--font-bebas)' }}>
-          Simple pricing
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-4">
-          {tiers.map(t => (
-            <div
-              key={t.name}
-              className="rounded-2xl p-6 flex flex-col"
-              style={{
-                backgroundColor: 'var(--surface)',
-                border: t.highlight ? '1px solid var(--accent)' : '1px solid var(--border)',
-              }}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="font-semibold">{t.name}</h3>
-                {t.highlight && (
-                  <span
-                    className="text-xs font-medium px-2 py-0.5 rounded-full"
-                    style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
-                  >
-                    Most popular
-                  </span>
-                )}
-              </div>
-              <p className="text-2xl font-bold mb-4">{t.price}</p>
-              <ul className="space-y-2 text-sm flex-1" style={{ color: 'var(--text-secondary)' }}>
-                {t.perks.map(p => (
-                  <li key={p} className="flex gap-2">
-                    <span style={{ color: 'var(--accent)' }}>✓</span>
-                    {p}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href={authed ? '/profile' : '/signup'}
-                className="block text-center font-semibold text-sm px-4 py-2.5 rounded-xl mt-6"
-                style={
-                  t.highlight
-                    ? { backgroundColor: 'var(--accent)', color: 'var(--bg)' }
-                    : { border: '1px solid var(--border)', color: 'var(--text)' }
-                }
-              >
-                {authed ? 'Manage plan' : t.name === 'Free' ? 'Start free' : `Get ${t.name}`}
-              </Link>
             </div>
           ))}
         </div>

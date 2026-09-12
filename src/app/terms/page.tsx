@@ -6,7 +6,7 @@ export const metadata = {
 }
 
 export default function TermsPage() {
-  const updated = 'April 23, 2026'
+  const updated = 'September 12, 2026'
   const contact = 'legal@mixbase.app'
 
   return (
@@ -99,13 +99,10 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-base font-semibold mb-2" style={{ color: 'var(--text)' }}>8. Subscriptions and billing</h2>
+            <h2 className="text-base font-semibold mb-2" style={{ color: 'var(--text)' }}>8. Pricing</h2>
             <p>
-              If you subscribe to a paid plan, you authorize us to charge your payment method on a recurring basis.
-              Subscriptions auto-renew unless cancelled at least 24 hours before the renewal date.
-              Refunds are handled on a case-by-case basis — contact{' '}
-              <a href={`mailto:${contact}`} style={{ color: 'var(--accent)' }}>{contact}</a>.
-              Prices may change with 30 days&apos; notice.
+              mixBase is free to use. There are no subscriptions, paid plans, or in-app purchases.
+              If that ever changes, any purchase in the iOS or macOS app will be offered only through Apple&apos;s In-App Purchase.
             </p>
           </section>
 

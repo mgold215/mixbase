@@ -6,7 +6,6 @@ final class TopologyViewModel: ObservableObject {
     @Published var railway: RailwayStatus?
     @Published var supabase: SupabaseStatus?
     @Published var github: GithubStatus?
-    @Published var stripe: StripeStatus?
     @Published var sentry: SentryStatus?
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -33,13 +32,11 @@ final class TopologyViewModel: ObservableObject {
             async let rail: RailwayStatus = client.get("/api/infra/railway")
             async let supa: SupabaseStatus = client.get("/api/infra/supabase")
             async let gh: GithubStatus = client.get("/api/infra/github")
-            async let st: StripeStatus = client.get("/api/infra/stripe")
             async let se: SentryStatus = client.get("/api/infra/sentry")
             topology = try await topo
             railway = try await rail
             supabase = try await supa
             github = try await gh
-            stripe = try await st
             sentry = try await se
             lastUpdated = Date()
         } catch InfraAPIClient.APIError.unauthorized {

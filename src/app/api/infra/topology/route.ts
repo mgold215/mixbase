@@ -4,7 +4,6 @@ import { INFRA_NODES, INFRA_EDGES, LAYER_ORDER, type InfraNode } from '@/lib/inf
 import { getRailwayStatus, type RailwayStatus } from '@/lib/infra/railway'
 import { getSupabaseStatus, type SupabaseStatus } from '@/lib/infra/supabase'
 import { getGithubStatus, type GithubStatus } from '@/lib/infra/github'
-import { getStripeStatus, type StripeStatus } from '@/lib/infra/stripe'
 import { getSentryStatus, type SentryStatus } from '@/lib/infra/sentry'
 
 export const dynamic = 'force-dynamic'
@@ -63,12 +62,6 @@ function githubNodeStatus(github: GithubStatus): { status: NodeStatus; metric?: 
   return { status, metric }
 }
 
-function stripeNodeStatus(stripe: StripeStatus): { status: NodeStatus; metric?: string } {
-  const mrr = (stripe.estimatedMrrCents / 100).toFixed(0)
-  const paid = (stripe.tierCounts.pro ?? 0) + (stripe.tierCounts.studio ?? 0)
-  return { status: 'ok', metric: `$${mrr}/mo · ${paid} paid` }
-}
-
 function sentryNodeStatus(sentry: SentryStatus): { status: NodeStatus; metric?: string } {
   if (!sentry.configured) return { status: 'not_configured', metric: 'no token' }
   if (sentry.error) return { status: 'unknown' }
@@ -80,11 +73,10 @@ export async function GET(request: NextRequest) {
   const adminId = await assertAdmin(request)
   if (!adminId) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const [railway, supabase, github, stripe, sentry] = await Promise.all([
+  const [railway, supabase, github, sentry] = await Promise.all([
     getRailwayStatus(),
     getSupabaseStatus(),
     getGithubStatus(),
-    getStripeStatus(),
     getSentryStatus(),
   ])
 
@@ -96,8 +88,6 @@ export async function GET(request: NextRequest) {
         return { ...node, ...supabaseNodeStatus(node, supabase) }
       case 'github':
         return { ...node, ...githubNodeStatus(github) }
-      case 'stripe':
-        return { ...node, ...stripeNodeStatus(stripe) }
       case 'sentry':
         return { ...node, ...sentryNodeStatus(sentry) }
       case 'static':
@@ -115,7 +105,6 @@ export async function GET(request: NextRequest) {
       railway: { configured: railway.configured, error: railway.error ?? null },
       supabase: { configured: supabase.configured, managementConfigured: supabase.managementConfigured },
       github: { configured: github.configured, authenticated: github.authenticated },
-      stripe: { configured: stripe.configured },
       sentry: { configured: sentry.configured },
     },
     generatedAt: new Date().toISOString(),

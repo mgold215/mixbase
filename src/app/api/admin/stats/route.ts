@@ -8,22 +8,17 @@ export async function GET(request: NextRequest) {
 
   const month = currentMonth()
 
-  const [usageRes, profilesRes] = await Promise.all([
-    supabaseAdmin.from('mb_usage').select('user_id, artwork_generations, video_generations').eq('month', month),
-    supabaseAdmin.from('profiles').select('id, subscription_tier'),
-  ])
+  const usageRes = await supabaseAdmin.from('mb_usage').select('user_id, artwork_generations, video_generations').eq('month', month)
 
   const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
   if (listError) return NextResponse.json({ error: listError.message }, { status: 500 })
   const users = listData.users
   const emailMap = Object.fromEntries(users.map(u => [u.id, u.email ?? '']))
-  const tierMap  = Object.fromEntries((profilesRes.data ?? []).map(p => [p.id, p.subscription_tier]))
 
   const rows = (usageRes.data ?? [])
     .map(r => ({
       user_id:   r.user_id,
       email:     emailMap[r.user_id] ?? '—',
-      tier:      tierMap[r.user_id]  ?? 'free',
       artwork:   r.artwork_generations,
       video:     r.video_generations,
     }))

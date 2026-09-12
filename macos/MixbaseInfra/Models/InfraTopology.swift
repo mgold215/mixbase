@@ -14,7 +14,6 @@ struct InfraTopology: Decodable {
         let railway: ProviderSource
         let supabase: SupabaseSource
         let github: ConfiguredSource?
-        let stripe: ConfiguredSource?
         let sentry: ConfiguredSource?
     }
     struct ProviderSource: Decodable {

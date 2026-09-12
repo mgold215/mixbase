@@ -6,14 +6,8 @@ type AdminUser = {
   id: string
   email: string
   created_at: string
-  subscription_tier: string
   artwork_used: number
   video_used: number
-}
-
-const TIERS = ['free', 'pro', 'studio', 'admin'] as const
-const TIER_COLORS: Record<string, string> = {
-  free: '#555', pro: '#2dd4bf', studio: '#a78bfa', admin: '#f59e0b',
 }
 
 export default function AdminUsersPage() {
@@ -23,7 +17,6 @@ export default function AdminUsersPage() {
   const [creating, setCreating] = useState(false)
   const [newEmail, setNewEmail] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [newTier, setNewTier] = useState<string>('free')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -35,16 +28,6 @@ export default function AdminUsersPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
-
-  async function changeTier(userId: string, tier: string) {
-    const res = await fetch(`/api/admin/users/${userId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tier }),
-    })
-    if (!res.ok) { alert('Failed to update tier'); return }
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, subscription_tier: tier } : u))
-  }
 
   async function resetUsage(userId: string) {
     const res = await fetch(`/api/admin/users/${userId}`, {
@@ -70,13 +53,12 @@ export default function AdminUsersPage() {
     const res = await fetch('/api/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: newEmail, password: newPassword, tier: newTier }),
+      body: JSON.stringify({ email: newEmail, password: newPassword }),
     })
     if (res.ok) {
       setShowCreate(false)
       setNewEmail('')
       setNewPassword('')
-      setNewTier('free')
       load()
     } else {
       const d = await res.json()
@@ -127,14 +109,6 @@ export default function AdminUsersPage() {
               className="w-full text-sm px-3 py-2 rounded-lg outline-none"
               style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
             />
-            <select
-              value={newTier}
-              onChange={e => setNewTier(e.target.value)}
-              className="w-full text-sm px-3 py-2 rounded-lg outline-none"
-              style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
-            >
-              {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
             {error && <p className="text-xs text-red-400">{error}</p>}
             <div className="flex gap-2 justify-end">
               <button
@@ -164,7 +138,6 @@ export default function AdminUsersPage() {
           <thead>
             <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Email</th>
-              <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Tier</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Artwork</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Video</th>
               <th className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Joined</th>
@@ -181,20 +154,6 @@ export default function AdminUsersPage() {
                 }}
               >
                 <td className="px-4 py-3" style={{ color: 'var(--text)' }}>{u.email}</td>
-                <td className="px-4 py-3">
-                  <select
-                    value={u.subscription_tier}
-                    onChange={e => changeTier(u.id, e.target.value)}
-                    className="text-xs font-medium px-2 py-1 rounded-lg outline-none"
-                    style={{
-                      background: (TIER_COLORS[u.subscription_tier] ?? '#555') + '22',
-                      color: TIER_COLORS[u.subscription_tier] ?? 'var(--text)',
-                      border: 'none',
-                    }}
-                  >
-                    {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </td>
                 <td className="px-4 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {u.artwork_used} used
                 </td>

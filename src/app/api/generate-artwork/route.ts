@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { checkAndIncrementUsage, refundUsage, clientKind } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { artworkLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { canonicalUuid } from '@/lib/validators'
 import { MODEL_ENDPOINTS, MODEL_INPUTS, MODEL_INPUTS_MINIMAL, resolveModelKey, composeLook, composePrompt } from '@/lib/artwork-models'
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  // Rate limit: 10/hour per user (defence-in-depth alongside the monthly tier gate)
+  // Rate limit: 10/hour per user (defence-in-depth alongside the monthly allowance)
   const limit = await checkUserLimit(artworkLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
@@ -121,14 +121,14 @@ export async function POST(request: NextRequest) {
   }
 
   // Gate: check monthly artwork limit before hitting Replicate
-  const gate = await checkAndIncrementUsage(userId, 'artwork', { client: clientKind(request.headers) })
+  const gate = await checkAndIncrementUsage(userId, 'artwork')
   if (gate.error) {
     // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
     return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })
   }
   if (!gate.allowed) {
     return NextResponse.json(
-      { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Your quota resets at the start of next month.`, upgrade: true },
+      { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Your allowance resets at the start of next month.` },
       { status: 403 }
     )
   }
@@ -242,7 +242,7 @@ export async function POST(request: NextRequest) {
   try {
     // The catch below refunds, but nothing was ever cancelling this: a CDN that
     // accepts the connection and then drips bytes keeps `arrayBuffer()` pending
-    // forever, so the refund never runs and a free-tier user loses 1 of 3
+    // forever, so the refund never runs and a user loses 1 of 3
     // monthly generations with no image and no error. The deadline is what
     // turns that hang into the refund path that already exists.
     const imageRes = await fetch(outputUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })

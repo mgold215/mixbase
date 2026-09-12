@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 import { removeStorageObjects } from '@/lib/storage-remove'
@@ -184,13 +183,13 @@ export async function POST(request: NextRequest) {
   }
 
   // ── PRE-FLIGHT: can this erasure finish at all? ─────────────────────────────
-  // FIRST, before Stripe, before a single row or byte is touched.
+  // FIRST, before a single row or byte is touched.
   //
   // This Supabase project is shared by several of Matt's products, and they
   // share ONE auth.users. mixMASH keys mm_mixes / mm_tracks / mm_render_jobs to
   // auth.users with NO ACTION, so if this user has any mixMASH data, the very
   // LAST statement of this route — auth.admin.deleteUser — dies on a raw
-  // foreign-key violation. By then the Stripe subscription is cancelled, every
+  // foreign-key violation. By then every
   // mixBASE row is deleted and every byte is gone: the user has lost everything
   // AND still has an account, and the 500 they get names no cause. That is the
   // worst outcome this route can produce, and today nothing detects it.
@@ -230,33 +229,6 @@ export async function POST(request: NextRequest) {
       { error: 'Your account could not be deleted automatically because other data is still linked to it. Nothing was changed — support has been notified.' },
       { status: 409 },
     )
-  }
-
-  // Cancel any active Stripe subscription FIRST — once profiles is deleted the
-  // stripe_subscription_id is gone and the webhook can never reconcile, so a
-  // deleted account would keep getting billed. Cancellation must never block the
-  // deletion: log and continue on any error, and treat an already-cancelled sub
-  // (resource_missing) as success.
-  const { data: billing } = await supabaseAdmin
-    .from('profiles')
-    .select('stripe_subscription_id')
-    .eq('id', userId)
-    .single()
-  const subscriptionId = billing?.stripe_subscription_id
-  if (subscriptionId && process.env.STRIPE_SECRET_KEY) {
-    try {
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
-      await stripe.subscriptions.cancel(subscriptionId)
-    } catch (err) {
-      const code = (err as { code?: string })?.code
-      if (code !== 'resource_missing') {
-        console.error('[delete-account] Stripe cancel failed for', userId, err instanceof Error ? err.message : err)
-        Sentry.captureMessage('delete-account: Stripe subscription cancel failed', {
-          level: 'warning',
-          extra: { userId, subscriptionId, error: err instanceof Error ? err.message : String(err) },
-        })
-      }
-    }
   }
 
   // Gather projects (with both artwork URLs) and version IDs before deleting

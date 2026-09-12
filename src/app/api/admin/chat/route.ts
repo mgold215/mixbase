@@ -9,25 +9,13 @@ const client = new Anthropic()
 const TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_users',
-    description: 'List all user accounts with their tier and this month\'s usage.',
+    description: 'List all user accounts with this month\'s usage.',
     input_schema: { type: 'object' as const, properties: {}, required: [] },
   },
   {
     name: 'get_stats',
-    description: 'Get aggregate stats: total users, count by tier, total generations this month.',
+    description: 'Get aggregate stats: total users and total generations this month.',
     input_schema: { type: 'object' as const, properties: {}, required: [] },
-  },
-  {
-    name: 'set_user_tier',
-    description: 'Change a user\'s subscription tier.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        email: { type: 'string', description: 'User email address' },
-        tier:  { type: 'string', enum: ['free', 'pro', 'studio', 'admin'], description: 'New tier' },
-      },
-      required: ['email', 'tier'],
-    },
   },
   {
     name: 'reset_user_usage',
@@ -48,7 +36,6 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         email:    { type: 'string' },
         password: { type: 'string' },
-        tier:     { type: 'string', enum: ['free', 'pro', 'studio', 'admin'] },
       },
       required: ['email', 'password'],
     },
@@ -72,39 +59,19 @@ async function executeTool(name: string, input: Record<string, string>, requesti
       const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
       if (listError) return `Error listing users: ${listError.message}`
       const users = listData.users
-      const [profilesRes, usageRes] = await Promise.all([
-        supabaseAdmin.from('profiles').select('id, subscription_tier'),
-        supabaseAdmin.from('mb_usage').select('user_id, artwork_generations').eq('month', currentMonth()),
-      ])
-      const tierMap  = Object.fromEntries((profilesRes.data ?? []).map(p => [p.id, p.subscription_tier]))
-      const usageMap = Object.fromEntries((usageRes.data   ?? []).map(u => [u.user_id, u.artwork_generations]))
-      const rows = users.map(u => `${u.email} | ${tierMap[u.id] ?? 'free'} | artwork: ${usageMap[u.id] ?? 0}`)
+      const usageRes = await supabaseAdmin.from('mb_usage').select('user_id, artwork_generations').eq('month', currentMonth())
+      const usageMap = Object.fromEntries((usageRes.data ?? []).map(u => [u.user_id, u.artwork_generations]))
+      const rows = users.map(u => `${u.email} | artwork: ${usageMap[u.id] ?? 0}`)
       return rows.join('\n')
     }
 
     if (name === 'get_stats') {
       const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
       if (listError) return `Error: ${listError.message}`
-      const profilesRes = await supabaseAdmin.from('profiles').select('subscription_tier')
       const usageRes    = await supabaseAdmin.from('mb_usage').select('artwork_generations, video_generations').eq('month', currentMonth())
-      const tierCounts  = (profilesRes.data ?? []).reduce((acc: Record<string, number>, p) => {
-        acc[p.subscription_tier] = (acc[p.subscription_tier] ?? 0) + 1; return acc
-      }, {})
       const totalArtwork = (usageRes.data ?? []).reduce((s, r) => s + r.artwork_generations, 0)
       const totalVideo   = (usageRes.data ?? []).reduce((s, r) => s + r.video_generations,   0)
-      return JSON.stringify({ total_users: listData.users.length, by_tier: tierCounts, artwork_this_month: totalArtwork, video_this_month: totalVideo })
-    }
-
-    if (name === 'set_user_tier') {
-      const VALID_TIERS = ['free', 'pro', 'studio', 'admin']
-      if (!VALID_TIERS.includes(input.tier)) return `Invalid tier: ${input.tier}`
-      const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-      if (listError) return `Error: ${listError.message}`
-      const user = listData.users.find(u => u.email === input.email)
-      if (!user) return `User not found: ${input.email}`
-      const { error: updateError } = await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', user.id)
-      if (updateError) return `Error updating tier: ${updateError.message}`
-      return `Changed ${input.email} to ${input.tier}`
+      return JSON.stringify({ total_users: listData.users.length, artwork_this_month: totalArtwork, video_this_month: totalVideo })
     }
 
     if (name === 'reset_user_usage') {
@@ -117,15 +84,11 @@ async function executeTool(name: string, input: Record<string, string>, requesti
     }
 
     if (name === 'create_user') {
-      const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      const { error } = await supabaseAdmin.auth.admin.createUser({
         email: input.email, password: input.password, email_confirm: true,
       })
       if (error) return `Error: ${error.message}`
-      if (input.tier && input.tier !== 'free') {
-        const { error: tierError } = await supabaseAdmin.from('profiles').update({ subscription_tier: input.tier }).eq('id', data.user.id)
-        if (tierError) return `Created account for ${input.email} but failed to set tier: ${tierError.message}`
-      }
-      return `Created account for ${input.email} (${input.tier ?? 'free'})`
+      return `Created account for ${input.email}`
     }
 
     if (name === 'delete_user') {
@@ -159,7 +122,7 @@ export async function POST(request: NextRequest) {
 
   const systemPrompt = `You are the admin assistant for mixBase, a music mix versioning platform. Today is ${new Date().toISOString().split('T')[0]}.
 
-You have tools to manage users (list, create, change tier, reset usage, delete). Use them to answer questions and execute admin actions.
+You have tools to manage users (list, create, reset usage, delete). Use them to answer questions and execute admin actions.
 
 Rules:
 - Be concise. One or two sentences per response unless listing data.

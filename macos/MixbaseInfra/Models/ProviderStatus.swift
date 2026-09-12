@@ -19,15 +19,6 @@ struct GithubStatus: Decodable {
     }
 }
 
-// Mirrors GET /api/infra/stripe.
-struct StripeStatus: Decodable {
-    let configured: Bool
-    let tierCounts: [String: Int]
-    let estimatedMrrCents: Int
-    let activeSubscriptions: Int?
-    let error: String?
-}
-
 // Mirrors GET /api/infra/sentry.
 struct SentryStatus: Decodable {
     let configured: Bool
