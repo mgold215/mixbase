@@ -183,7 +183,7 @@ export const passwordChangeLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max
 // Account deletion: 5 per hour per user. A legitimate user does this once, ever.
 // The cap is not really about load — it bounds the blast radius of a stolen
 // session against the single most destructive, least reversible route in the
-// app (every byte, every row, and the Stripe subscription).
+// app (every byte, every row).
 //
 // Deliberately NOT step-up auth. Requiring current_password here — the obvious
 // stronger fix, and what /api/auth/change-password already does for a strictly

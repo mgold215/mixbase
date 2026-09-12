@@ -38,7 +38,6 @@ enum ProviderStyle {
         case "anthropic": return "sparkles"
         case "replicate": return "photo.artframe"
         case "runway":    return "film.fill"
-        case "stripe":    return "creditcard.fill"
         case "sentry":    return "exclamationmark.triangle.fill"
         case "github":    return "chevron.left.forwardslash.chevron.right"
         default:          return "square.dashed"

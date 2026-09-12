@@ -4,7 +4,7 @@ import { currentMonth } from '@/lib/tier'
 import { assertAdmin } from '@/lib/auth'
 import { isUuid } from '@/lib/validators'
 
-// PATCH /api/admin/users/[id] — update tier and/or reset usage
+// PATCH /api/admin/users/[id] — reset this month's usage
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   if (!await assertAdmin(request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
@@ -12,16 +12,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { tier, resetUsage } = body
-
-  if (tier) {
-    const VALID_TIERS = ['free', 'pro', 'studio', 'admin']
-    if (!VALID_TIERS.includes(tier)) {
-      return NextResponse.json({ error: 'Invalid tier' }, { status: 400 })
-    }
-    const { error } = await supabaseAdmin.from('profiles').update({ subscription_tier: tier }).eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+  const { resetUsage } = body
 
   if (resetUsage) {
     const { error: usageError } = await supabaseAdmin.from('mb_usage').delete().eq('user_id', id).eq('month', currentMonth())

@@ -28,7 +28,7 @@ const fail = (name, detail = '') => { console.error(`  ❌ ${name}${detail ? ' �
 
 if (!EMAIL || !PASSWORD) {
   console.error('❌ Provide admin credentials: node scripts/test-infra.mjs <base-url> <email> <password>')
-  console.error('   (the account must have subscription_tier = "admin")')
+  console.error('   (the account must be a platform admin — see src/lib/admin-identity.ts)')
   process.exit(1)
 }
 
@@ -118,10 +118,9 @@ async function main() {
     } else fail('GET /api/infra/supabase', `status ${status}`)
   }
 
-  // ── 5b. Phase-2 provider nodes (github / stripe / sentry) ───────────────────
+  // ── 5b. Phase-2 provider nodes (github / sentry) ────────────────────────────
   for (const [path, key] of [
     ['/api/infra/github', 'runs'],
-    ['/api/infra/stripe', 'tierCounts'],
     ['/api/infra/sentry', 'org'],
   ]) {
     const { status, json } = await getJson(path)

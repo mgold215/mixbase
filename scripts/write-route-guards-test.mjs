@@ -29,8 +29,8 @@
 // This Supabase project is shared by several products which all share ONE
 // auth.users. mixMASH keys mm_mixes / mm_tracks / mm_render_jobs to auth.users
 // with NO ACTION, so a user with mixMASH data cannot be deleted — and the
-// failure lands on the very LAST statement of the route, after the Stripe
-// subscription is cancelled, every mixBASE row is deleted and every byte is
+// failure lands on the very LAST statement of the route, after every mixBASE
+// row is deleted and every byte is
 // gone. The user loses everything and still has an account.
 //
 // The pre-flight asks that question FIRST and refuses without touching
@@ -201,9 +201,6 @@ registerHooks({
   },
 })
 
-// STRIPE_SECRET_KEY unset → the route skips the subscription cancel entirely,
-// so no Stripe network client is ever constructed.
-delete process.env.STRIPE_SECRET_KEY
 
 const { POST: DELETE_ACCOUNT } = await import(
   pathToFileURL(join(root, 'src/app/api/auth/delete-account/route.ts')).href)

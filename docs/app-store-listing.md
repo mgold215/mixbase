@@ -125,12 +125,7 @@ The app requires an internet connection to load audio files. No special hardware
 ---
 
 ## In-App Purchases
-None at launch. Consider adding after initial approval:
-- **mixBase Pro** — $4.99/month or $39.99/year
-  - Unlimited projects (free tier: 10 projects)
-  - Unlimited storage (free tier: 2 GB)
-  - AI artwork generation (free tier: 5 generations/month)
-  - Priority support
+None. mixBase is free on every platform — there are no subscriptions or paid plans on the website or in the apps (decision 2026-09-12, after App Review's 2.1(b) business-model questions). If the app ever charges for anything, it will be offered only through Apple's In-App Purchase; nothing is planned.
 
 ---
 

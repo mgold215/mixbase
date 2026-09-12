@@ -13,7 +13,6 @@ struct InspectorView: View {
                     case "railway":  railwaySection(node)
                     case "supabase": supabaseSection(node)
                     case "github":   githubSection()
-                    case "stripe":   stripeSection()
                     case "sentry":   sentrySection()
                     default:         staticSection(node)
                     }
@@ -144,28 +143,6 @@ struct InspectorView: View {
         }
     }
 
-    // MARK: - Stripe
-
-    @ViewBuilder
-    private func stripeSection() -> some View {
-        if let st = vm.stripe {
-            section("Billing") {
-                infoRow("Est. MRR", String(format: "$%.2f/mo", Double(st.estimatedMrrCents) / 100.0))
-                infoRow("Active subscriptions", st.activeSubscriptions != nil ? "\(st.activeSubscriptions!)" : "—")
-            }
-            section("Subscribers by tier") {
-                ForEach(["free", "pro", "studio", "admin"], id: \.self) { tier in
-                    infoRow(tier, "\(st.tierCounts[tier] ?? 0)")
-                }
-            }
-            if !st.configured {
-                note("STRIPE_SECRET_KEY isn't set — tier counts come from the profiles table; live subscription count is unavailable.")
-            }
-        } else {
-            note("No live Stripe data.")
-        }
-    }
-
     // MARK: - Sentry
 
     @ViewBuilder
@@ -193,7 +170,7 @@ struct InspectorView: View {
 
     private func staticSection(_ node: InfraNode) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            note("This node is part of the architecture but isn't live-probed in phase 1. Railway & Supabase are the live integrations; GitHub, Stripe, Sentry and the AI providers come online in phase 2.")
+            note("This node is part of the architecture but isn't live-probed in phase 1. Railway & Supabase are the live integrations; GitHub, Sentry and the AI providers come online in phase 2.")
             infoRow("Provider", node.provider)
             infoRow("Type", node.type)
             infoRow("Layer", node.layer)

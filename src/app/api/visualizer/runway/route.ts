@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { checkAndIncrementUsage, refundUsage, clientKind } from '@/lib/tier'
+import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { videoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
 import { isUuid } from '@/lib/validators'
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
   const userId = req.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  // Rate limit: 5/hour per user — defence-in-depth alongside the monthly tier gate below.
+  // Rate limit: 5/hour per user — defence-in-depth alongside the monthly allowance below.
   const limit = await checkUserLimit(videoLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
@@ -135,17 +135,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
-  // Monthly tier gate — enforces the per-plan video quota (free/pro: 0, studio: 10).
+  // Monthly allowance — cloud video is owner-only (MONTHLY_LIMITS.videoGenerations is 0).
   // Placed after input validation but before the paid Runway call so a bad request
   // never consumes quota. Mirrors generate-artwork's gate.
-  const gate = await checkAndIncrementUsage(userId, 'video', { client: clientKind(req.headers) })
+  const gate = await checkAndIncrementUsage(userId, 'video')
   if (gate.error) {
     // Couldn't reserve a slot (usage RPC failed) — don't run the paid call.
     return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })
   }
   if (!gate.allowed) {
     return NextResponse.json(
-      { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Your quota resets at the start of next month.`, upgrade: true },
+      { error: `Monthly video limit reached (${gate.used}/${gate.limit}). Your allowance resets at the start of next month.` },
       { status: 403 }
     )
   }
