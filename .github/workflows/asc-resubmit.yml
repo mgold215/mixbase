@@ -65,7 +65,7 @@ jobs:
             return r
           }
 
-          const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}&fields[apps]=name,contentRightsDeclaration,isOrEverWasMadeForKid,primaryLocale,sku`)
+          const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}`)
           const app = apps.json?.data?.[0]
           if (!app) { dump('find app FAILED', apps); process.exit(1) }
           console.log(`App: ${app.attributes.name} (${app.id}) ${JSON.stringify(app.attributes)}`)
