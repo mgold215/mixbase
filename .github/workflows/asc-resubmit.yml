@@ -1,9 +1,11 @@
-# TEMP (branch asc6-submit only): NOTES-ONLY update after the 2.1(b)
-# information request of 2026-09-10 (submission 902f9887). No cancel, no
-# resubmit — the submission stays open and the reply itself goes through
-# App Store Connect's Resolution Center (no API for that). This writes the
-# same seven answers into App Review Information so every reviewer who opens
-# the app record sees them.
+# TEMP (branch asc6-submit only): TERRITORY AVAILABILITY fix, 2026-09-15.
+# Version 1.0 is READY_FOR_DISTRIBUTION (approved, submission 902f9887) but the
+# App Store shows "App Not Available — not available in your country or
+# region". The read-only inspect run found GET /v1/apps/{id}/appAvailabilityV2
+# -> 404 "no resource of type appAvailabilities", i.e. the app record has NO
+# availability configured. This run re-confirms that with every read the API
+# offers, and only then creates one: available in every App Store territory,
+# and automatically in territories Apple adds later. Free app, no pre-order.
 #
 # Same push-driven pattern as the other asc-* TEMP branches: remote sessions
 # cannot workflow_dispatch (403), but a push to this branch runs it.
@@ -30,13 +32,14 @@ jobs:
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
-      - name: Write the business-model answers into App Review notes
+      - name: Confirm missing availability, then make the app available worldwide
         run: |
-          cat > /tmp/notes.mjs <<'EOF2'
+          cat > /tmp/availability.mjs <<'EOF'
           import crypto from 'node:crypto'
 
           const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, BUNDLE_ID } = process.env
-          const BASE = 'https://api.appstoreconnect.apple.com/v1'
+          const BASE = 'https://api.appstoreconnect.apple.com'
+
           const b64url = (buf) => Buffer.from(buf).toString('base64url')
           function jwt() {
             const header = b64url(JSON.stringify({ alg: 'ES256', kid: ASC_KEY_ID, typ: 'JWT' }))
@@ -58,48 +61,113 @@ jobs:
             try { json = JSON.parse(text) } catch { /* non-JSON */ }
             return { status: res.status, ok: res.ok, json, text }
           }
-          function must(r, what) {
-            if (!r.ok) { console.error(`FAILED: ${what} -> HTTP ${r.status}`); console.error(JSON.stringify(r.json ?? r.text, null, 2)); process.exit(1) }
-            return r.json
+          function dump(label, r, cap = 3000) {
+            console.log(`\n===== ${label} -> HTTP ${r.status} =====`)
+            const body = r.json ? JSON.stringify(r.json, null, 2) : r.text
+            console.log(body.length > cap ? body.slice(0, cap) + `\n...[truncated ${body.length - cap} chars]` : body)
+            return r
+          }
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+          async function summarizeTerritories(availId, label) {
+            const ta = await api('GET', `/v2/appAvailabilities/${availId}/territoryAvailabilities?limit=200&fields[territoryAvailabilities]=available,contentStatuses,releaseDate,preOrderEnabled,territory&include=territory`)
+            const rows = ta.json?.data ?? []
+            console.log(`\n${label}: territoryAvailabilities HTTP ${ta.status}, ${rows.length} rows`)
+            if (!ta.ok) { dump(`${label} error`, ta); return { ok: false, rows } }
+            const byStatus = {}
+            let availableCount = 0
+            for (const r of rows) {
+              const tid = r.relationships?.territory?.data?.id ?? '?'
+              if (r.attributes.available) availableCount++
+              const key = `${r.attributes.available ? 'available' : 'NOT available'} / ${(r.attributes.contentStatuses ?? []).join(',') || 'none'}`
+              byStatus[key] = (byStatus[key] ?? 0) + 1
+              if (['USA', 'CAN', 'GBR', 'DEU', 'AUS'].includes(tid)) console.log(`  ${tid}: ${JSON.stringify(r.attributes)}`)
+            }
+            console.log(`available in ${availableCount}/${rows.length} territories`)
+            console.log('status buckets:', JSON.stringify(byStatus, null, 2))
+            return { ok: true, rows, availableCount }
           }
 
-          const apps = must(await api('GET', `/apps?filter[bundleId]=${BUNDLE_ID}`), 'find app')
-          const app = apps.data?.[0]
-          if (!app) { console.error('No app'); process.exit(1) }
-          const vers = must(await api('GET', `/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=10`), 'list versions')
-          const version = (vers.data ?? []).sort((a, b) => new Date(b.attributes.createdDate) - new Date(a.attributes.createdDate))[0]
-          if (!version) { console.error('No version'); process.exit(1) }
-          console.log(`Version ${version.attributes.versionString}: state=${version.attributes.appVersionState ?? version.attributes.appStoreState}`)
-          const rd = must(await api('GET', `/appStoreVersions/${version.id}/appStoreReviewDetail`), 'read review detail')
+          // ── App + version state ──────────────────────────────────────────
+          const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}`)
+          const app = apps.json?.data?.[0]
+          if (!app) { dump('find app FAILED', apps); process.exit(1) }
+          console.log(`App: ${app.attributes.name} (${app.id})`)
+          const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=3`)
+          for (const v of vers.json?.data ?? []) {
+            console.log(`Version ${v.attributes.versionString}: state=${v.attributes.appVersionState ?? v.attributes.appStoreState} releaseType=${v.attributes.releaseType}`)
+          }
 
-          const NOTES = [
-            'mixBase is a music production tool for managing mix versions and releases. It is free: there are no paid plans, subscriptions, or purchases anywhere - not in the app and not on our website.',
-            '',
-            'Getting started: sign in with the demo account (see App Review credentials). It is a standard account, pre-loaded with 3 released tracks with cover art and playable audio.',
-            '',
-            'BUSINESS MODEL - answers to the September 10 Guideline 2.1(b) questions:',
-            '1. Who uses paid content, subscriptions, features, or services in the app? No one. There are none. Every user gets the same app with the same features.',
-            '2. Where can users purchase content, subscriptions, features, or services accessed in the app? Nowhere. mixBase sells nothing, in the app or on mixbase.app. The website previously offered an optional subscription; it has been removed entirely and no purchase of any kind is offered anywhere.',
-            '3. What previously purchased content, subscriptions, features, or services can a user access in the app? None. Nothing has ever been purchasable in the app, and nothing purchased elsewhere applies to it.',
-            '4. What paid content, subscriptions, or features are unlocked within the app without In-App Purchase? None.',
-            '5. Physical goods bundled with digital content? No. We sell no physical goods.',
-            '6. Can users buy a paid digital subscription on mixbase.app and use it in the app? No. There is no subscription on mixbase.app any more - the website is free, exactly like the app.',
-            '7. What are the contents and features of the paid digital subscription on mixbase.app? There is none. The website has no paid subscription, plan, or purchase. All features - uploads, playback, sharing, the community feed, the release pipeline, AI cover artwork (a monthly allowance identical for every account), and video visualizers (a free built-in renderer) - are free for every account on every platform. If we ever charge for anything in the app in the future, it will be offered only through Apple In-App Purchase.',
-            '',
-            'Guideline 3.1.1: the app contains no purchase flows, no upgrade prompts, no plan names, no pricing, no In-App Purchases, and no links to external purchase pages. The Privacy Policy, Terms of Service, and Support pages are rendered natively inside the app; no screen opens our website.',
-            '',
-            'Community feed (user-generated content, Guideline 1.2): long-press any feed track or comment to Report it or Block its author. Reported content is hidden for the reporter immediately, reviewed within 24 hours, and removed for everyone past a report threshold. Our Terms of Service prohibit objectionable content.',
-            '',
-            'Account deletion (Guideline 5.1.1(v)): Settings tab -> Delete Account (type DELETE to confirm) permanently deletes the account and all data. Test with a throwaway account via "Create one" on the sign-in screen.',
-            '',
-            'Permissions: Photos read access is requested only when uploading artwork from the photo library; add-only Photos access is requested only when saving a generated visualizer video to Photos.',
-            '',
-            'The app requires an internet connection.',
-          ].join('\n')
+          // ── Every read the API offers for availability ───────────────────
+          const readV2Rel = dump('GET /v1/apps/{id}/appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`), 1500)
+          const readV2ById = dump('GET /v2/appAvailabilities/{appId}', await api('GET', `/v2/appAvailabilities/${app.id}`), 1500)
+          const readV1Terr = dump('GET /v1/apps/{id}/availableTerritories (deprecated)', await api('GET', `/v1/apps/${app.id}/availableTerritories?limit=200`), 1500)
+          const readV1Avail = dump('GET /v1/apps/{id}/appAvailability (deprecated)', await api('GET', `/v1/apps/${app.id}/appAvailability`), 1500)
 
-          const patched = must(await api('PATCH', `/appStoreReviewDetails/${rd.data.id}`, {
-            data: { type: 'appStoreReviewDetails', id: rd.data.id, attributes: { notes: NOTES } },
-          }), 'update review notes')
-          console.log(`NOTES UPDATED (${NOTES.length} chars) on review detail ${patched.data.id}. No submission changes made.`)
-          EOF2
-          node /tmp/notes.mjs
+          const existingId = readV2Rel.json?.data?.id ?? readV2ById.json?.data?.id ?? null
+          if (existingId) {
+            console.log(`\nAvailability record EXISTS (${existingId}) — reading territories instead of creating.`)
+            const s = await summarizeTerritories(existingId, 'existing')
+            if (s.ok && s.availableCount === 0) {
+              console.log('\nRecord exists but the app is available in ZERO territories. Fix this via territory availability update.')
+            }
+            console.log('\nNo write performed (record already existed).')
+            process.exit(0)
+          }
+          const v1Count = (readV1Terr.json?.data ?? []).length
+          if (readV1Terr.ok && v1Count > 0) {
+            console.log(`\nDeprecated availableTerritories reports ${v1Count} territories although v2 has no record — not creating blindly.`)
+            process.exit(2)
+          }
+          console.log('\nCONFIRMED: no availability record on the app (v2 relationship 404, v2 by id 404, v1 reads empty/404).')
+
+          // ── All App Store territories ────────────────────────────────────
+          const terr = await api('GET', `/v1/territories?limit=200`)
+          const territories = (terr.json?.data ?? []).map((t) => t.id)
+          console.log(`\nterritories: HTTP ${terr.status}, ${territories.length} ids (USA present: ${territories.includes('USA')})`)
+          if (!terr.ok || territories.length === 0 || !territories.includes('USA')) { dump('territories FAILED', terr); process.exit(1) }
+
+          // ── Create: available everywhere, auto-available in new territories
+          const body = {
+            data: {
+              type: 'appAvailabilities',
+              attributes: { availableInNewTerritories: true },
+              relationships: {
+                app: { data: { type: 'apps', id: app.id } },
+                territoryAvailabilities: { data: territories.map((id) => ({ type: 'territoryAvailabilities', id: `\${${id}}` })) },
+              },
+            },
+            included: territories.map((id) => ({
+              type: 'territoryAvailabilities',
+              id: `\${${id}}`,
+              attributes: { available: true },
+              relationships: { territory: { data: { type: 'territories', id } } },
+            })),
+          }
+          let created = null
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const r = await api('POST', `/v2/appAvailabilities`, body)
+            if (r.ok) { created = r; break }
+            dump(`POST /v2/appAvailabilities attempt ${attempt} FAILED`, r, 2500)
+            if (r.status === 409 && /already|exist/i.test(r.text)) break
+            if (attempt < 3) await sleep(10000)
+          }
+          if (!created) {
+            console.log('\nCreate did not succeed. Re-reading availability in case it was created anyway…')
+            const again = await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`)
+            if (again.json?.data?.id) { await summarizeTerritories(again.json.data.id, 'post-failure re-read') }
+            process.exit(1)
+          }
+          console.log(`\nCREATED appAvailabilities ${created.json?.data?.id} availableInNewTerritories=${created.json?.data?.attributes?.availableInNewTerritories}`)
+
+          // ── Verify ───────────────────────────────────────────────────────
+          await sleep(5000)
+          const verify = dump('verify GET /v1/apps/{id}/appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`), 1500)
+          const vid = verify.json?.data?.id
+          if (!vid) { console.log('Verification read has no id — check App Store Connect > Pricing and Availability.'); process.exit(1) }
+          const s = await summarizeTerritories(vid, 'after create')
+          const usa = s.rows.find((r) => r.relationships?.territory?.data?.id === 'USA')
+          if (!usa?.attributes?.available) { console.log('\nUSA is still not available — investigate.'); process.exit(1) }
+          console.log('\nDone: app availability created; USA available. Store listing propagation can take a few hours.')
+          EOF
+          node /tmp/availability.mjs
