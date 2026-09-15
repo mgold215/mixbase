@@ -1,4 +1,4 @@
-# re-run 2026-09-15: state after APPROVAL of submission 902f9887
+# re-run 2026-09-15 (2): availability + price after 'App Not Available in your country'
 # re-run 2026-09-11: state after the 2.1(b) information request
 # TEMP (branch asc5-inspect only): read-only App Store review state dump.
 #
@@ -35,7 +35,7 @@ jobs:
           import crypto from 'node:crypto'
 
           const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, BUNDLE_ID } = process.env
-          const BASE = 'https://api.appstoreconnect.apple.com/v1'
+          const BASE = 'https://api.appstoreconnect.apple.com'
 
           const b64url = (buf) => Buffer.from(buf).toString('base64url')
           function jwt() {
@@ -46,7 +46,6 @@ jobs:
             const sig = crypto.sign('sha256', Buffer.from(`${header}.${payload}`), { key, dsaEncoding: 'ieee-p1363' })
             return `${header}.${payload}.${b64url(sig)}`
           }
-
           const TOKEN = jwt()
           async function api(method, path, body) {
             const res = await fetch(`${BASE}${path}`, {
@@ -59,63 +58,53 @@ jobs:
             try { json = JSON.parse(text) } catch { /* non-JSON */ }
             return { status: res.status, ok: res.ok, json, text }
           }
-          function dump(label, r, cap = 24000) {
+          function dump(label, r, cap = 6000) {
             console.log(`\n===== ${label} -> HTTP ${r.status} =====`)
             const body = r.json ? JSON.stringify(r.json, null, 2) : r.text
             console.log(body.length > cap ? body.slice(0, cap) + `\n...[truncated ${body.length - cap} chars]` : body)
             return r
           }
 
-          // App
-          const apps = await api('GET', `/apps?filter[bundleId]=${BUNDLE_ID}`)
+          const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}&fields[apps]=name,contentRightsDeclaration,isOrEverWasMadeForKid,primaryLocale,sku`)
           const app = apps.json?.data?.[0]
           if (!app) { dump('find app FAILED', apps); process.exit(1) }
-          console.log(`App: ${app.attributes.name} (${app.id})`)
+          console.log(`App: ${app.attributes.name} (${app.id}) ${JSON.stringify(app.attributes)}`)
 
-          // Review submissions — newest first
-          const subs = await api('GET', `/reviewSubmissions?filter[app]=${app.id}&limit=20`)
-          const subList = (subs.json?.data ?? []).sort(
-            (a, b) => new Date(b.attributes.submittedDate ?? 0) - new Date(a.attributes.submittedDate ?? 0)
-          )
-          for (const s of subList) {
-            console.log(`Submission ${s.id}: platform=${s.attributes.platform} state=${s.attributes.state} submitted=${s.attributes.submittedDate ?? 'never'}`)
-          }
-
-          // Versions (both platforms)
-          const vers = await api('GET', `/apps/${app.id}/appStoreVersions?limit=20`)
+          const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=5`)
           for (const v of vers.json?.data ?? []) {
-            const state = v.attributes.appVersionState ?? v.attributes.appStoreState
-            console.log(`Version ${v.attributes.versionString} platform=${v.attributes.platform} (${v.id}): state=${state} created=${v.attributes.createdDate}`)
+            console.log(`Version ${v.attributes.versionString}: state=${v.attributes.appVersionState ?? v.attributes.appStoreState} releaseType=${v.attributes.releaseType} earliestRelease=${v.attributes.earliestReleaseDate}`)
           }
 
-          // Items of the newest few submissions
-          for (const s of subList.slice(0, 4)) {
-            dump(`items of submission ${s.id} (${s.attributes.state})`,
-              await api('GET', `/reviewSubmissions/${s.id}/items`))
-          }
-
-          // Resolution Center — try the plausible endpoint shapes; failures are
-          // informative (the error names the required filter), not fatal.
-          const threadIds = new Set()
-          const collect = (r) => {
-            for (const t of r.json?.data ?? []) if (t.type === 'resolutionCenterThreads') threadIds.add(t.id)
-          }
-          collect(dump('threads by app filter', await api('GET', `/resolutionCenterThreads?filter[app]=${app.id}&limit=20`)))
-          for (const s of subList.slice(0, 4)) {
-            collect(dump(`threads by reviewSubmission ${s.id}`,
-              await api('GET', `/resolutionCenterThreads?filter[reviewSubmission]=${s.id}&limit=20`)))
-          }
-
-          for (const tid of threadIds) {
-            const viaSub = await api('GET', `/resolutionCenterThreads/${tid}/resolutionCenterMessages?limit=50`)
-            dump(`messages of thread ${tid} (subresource)`, viaSub)
-            if (!viaSub.ok) {
-              dump(`messages of thread ${tid} (filter)`,
-                await api('GET', `/resolutionCenterMessages?filter[resolutionCenterThread]=${tid}&limit=50`))
+          // ── Availability (v2) ────────────────────────────────────────────
+          const avail = dump('appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`))
+          const availId = avail.json?.data?.id
+          if (availId) {
+            const ta = await api('GET', `/v2/appAvailabilities/${availId}/territoryAvailabilities?limit=200&fields[territoryAvailabilities]=available,contentStatuses,releaseDate,preOrderEnabled,territory&include=territory`)
+            const rows = ta.json?.data ?? []
+            console.log(`\nterritoryAvailabilities: HTTP ${ta.status}, ${rows.length} rows`)
+            const byStatus = {}
+            let availableCount = 0
+            for (const r of rows) {
+              const tid = r.relationships?.territory?.data?.id ?? '?'
+              if (r.attributes.available) availableCount++
+              const key = `${r.attributes.available ? 'available' : 'NOT available'} / ${(r.attributes.contentStatuses ?? []).join(',') || 'none'}`
+              byStatus[key] = (byStatus[key] ?? 0) + 1
+              if (['USA', 'CAN', 'GBR'].includes(tid)) console.log(`  ${tid}: ${JSON.stringify(r.attributes)}`)
             }
-            dump(`messages of thread ${tid} with rejections`,
-              await api('GET', `/resolutionCenterThreads/${tid}/resolutionCenterMessages?limit=50&include=rejections,fromActor`), 40000)
+            console.log(`available in ${availableCount}/${rows.length} territories`)
+            console.log('status buckets:', JSON.stringify(byStatus, null, 2))
+            if (!ta.ok) dump('territoryAvailabilities error', ta)
           }
+
+          // ── Price schedule ───────────────────────────────────────────────
+          const sched = dump('appPriceSchedule', await api('GET', `/v1/apps/${app.id}/appPriceSchedule?include=baseTerritory`))
+          const schedId = sched.json?.data?.id
+          if (schedId) {
+            dump('manualPrices', await api('GET', `/v1/appPriceSchedules/${schedId}/manualPrices?include=appPricePoint,territory&limit=10`), 4000)
+            const auto = await api('GET', `/v1/appPriceSchedules/${schedId}/automaticPrices?limit=5`)
+            console.log(`automaticPrices: HTTP ${auto.status}, ${(auto.json?.data ?? []).length} rows`)
+          }
+
           console.log('\nRead-only inspection complete. No changes made.')
           EOF
           node /tmp/inspect.mjs
