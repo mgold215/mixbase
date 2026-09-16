@@ -1,4 +1,4 @@
-# re-run 2026-09-16: dump the LIVE listing copy + screenshot sets + newer builds
+# re-run 2026-09-16 (2): + does the API expose the demo account password to a runner?
 # TEMP (branch asc5-inspect only): read-only App Store state dump.
 #
 # Same push-driven pattern as previous asc-* TEMP branches — remote sessions
@@ -122,7 +122,15 @@ jobs:
             }
           }
 
-          // ── Review details (contact + notes length) ─────────────────────
+          // ── Review details: can a runner read the demo login? (password masked)
+          const iosVers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=1`)
+          const vid = iosVers.json?.data?.[0]?.id
+          if (vid) {
+            const rd = await api('GET', `/v1/appStoreVersions/${vid}/appStoreReviewDetail`)
+            const a = rd.json?.data?.attributes ?? {}
+            console.log(`\nreviewDetail HTTP ${rd.status}: id=${rd.json?.data?.id} demoAccountRequired=${a.demoAccountRequired} demoAccountName=${JSON.stringify(a.demoAccountName)} demoAccountPassword=${a.demoAccountPassword ? `<present, ${a.demoAccountPassword.length} chars>` : JSON.stringify(a.demoAccountPassword)} contact=${a.contactFirstName} ${a.contactLastName} notesLen=${(a.notes ?? '').length}`)
+            if (!rd.ok) console.log(rd.text.slice(0, 800))
+          }
           console.log('\nRead-only inspection complete. No changes made.')
           EOF
           node /tmp/inspect.mjs
