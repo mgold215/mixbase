@@ -72,15 +72,26 @@ final class ScreenshotTourTests: XCTestCase {
         settle(4)
         snap("project")
         app.swipeUp()
-        settle(2)
-        for _ in 0..<2 where !labeled("ROUGH MIX").exists {
-            tapIfHittable(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Version History'")).firstMatch)
-                || tapIfHittable(labeled("Version History"))
-            settle(2)
+        settle(3)
+        let historyRow = labeled("ROUGH MIX")
+        let historyHeader = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Version History'")).firstMatch
+        if historyHeader.waitForExistence(timeout: 5) {
+            // One tap opens it; a second would close it again, so wait for the
+            // rows after each attempt and fall back to a coordinate tap.
+            historyHeader.tap()
+            if !historyRow.waitForExistence(timeout: 5) {
+                historyHeader.coordinate(withNormalizedOffset: CGPoint(x: 0.3, y: 0.5)).tap()
+                _ = historyRow.waitForExistence(timeout: 5)
+            }
+            print("TOUR: version history expanded = \(historyRow.exists)")
         }
         expect(labeled("ROUGH MIX"), "the expanded version history", timeout: 5)
-        tapIfHittable(app.buttons.matching(NSPredicate(format: "label CONTAINS 'responses'")).firstMatch)
-            || tapIfHittable(labeled("responses"))
+        let responses = app.buttons.matching(NSPredicate(format: "label CONTAINS 'responses'")).firstMatch
+        if responses.waitForExistence(timeout: 3) {
+            responses.tap()
+            _ = labeled("Dani").waitForExistence(timeout: 4)
+            print("TOUR: feedback expanded = \(labeled("Dani").exists)")
+        }
         settle(3)
         snap("project-versions")
 

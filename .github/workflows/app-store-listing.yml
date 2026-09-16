@@ -146,14 +146,17 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/shots/iphone69"
           set -o pipefail
+          set +e
           xcodebuild test \
             -project ios/screenshots/ScreenshotTour.xcodeproj \
             -scheme ScreenshotTour \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath "$RUNNER_TEMP/dd-tour" \
             -resultBundlePath "$RUNNER_TEMP/tour.xcresult" \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/tour.log" | grep -E "Test Case|error|Never saw|TOUR-DIAG|passed|failed|\*\*" | tail -80 || true
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/tour.log" | grep -E "Test Case|error|Never saw|TOUR|passed|failed|\*\*" | tail -80
           STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "xcodebuild exit status: $STATUS"
           ls -la "$RUNNER_TEMP/shots/iphone69" || true
           for d in "$RUNNER_TEMP"/shots/iphone69/diag-*.txt; do
             [ -f "$d" ] || continue
