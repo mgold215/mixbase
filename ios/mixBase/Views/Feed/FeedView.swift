@@ -63,6 +63,13 @@ struct OlderMix: Codable, Identifiable {
     }
 }
 
+/// Feed timestamps are an actual date and time ("Sep 16, 8:31 AM"), not a
+/// countdown since upload — artists want to know WHEN a mix landed, and a
+/// relative "1 hr, 16 min" keeps ticking and says nothing about the day.
+func feedTimestamp(_ date: Date) -> String {
+    date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+}
+
 // MARK: - FeedView
 // The mixBASE community feed (web /feed on iOS): recent uploads across every
 // artist on the platform — listen, browse a project's older mixes, and leave
@@ -214,7 +221,7 @@ struct FeedView: View {
                     HStack(spacing: 6) {
                         Text(item.versionLabel)
                         Text("·")
-                        Text(item.createdAt, style: .relative)
+                        Text(feedTimestamp(item.createdAt))
                     }
                     .font(.caption2)
                     .foregroundColor(.gray)
@@ -235,7 +242,7 @@ struct FeedView: View {
                 Menu {
                     ForEach(item.older) { mix in
                         Button(action: { playOlder(mix, of: item) }) {
-                            Text("\(mix.versionLabel) · \(mix.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                            Text("\(mix.versionLabel) · \(feedTimestamp(mix.createdAt))")
                         }
                     }
                 } label: {
@@ -271,7 +278,7 @@ struct FeedView: View {
                                     .font(.caption)
                                     .fontWeight(.semibold)
                                     .foregroundColor(Color(hex: "#f0f0f0"))
-                                Text(comment.createdAt, style: .relative)
+                                Text(feedTimestamp(comment.createdAt))
                                     .font(.caption2)
                                     .foregroundColor(.gray.opacity(0.6))
                             }

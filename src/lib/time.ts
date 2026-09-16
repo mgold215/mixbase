@@ -11,3 +11,15 @@ export function timeAgo(date: string): string {
   if (hrs < 24) return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
 }
+
+// Absolute timestamp for the community feed ("Sep 16, 8:31 AM"): the feed shows
+// WHEN a mix or comment landed, not a countdown since then. Rendered in the
+// viewer's locale and time zone.
+export function formatDateTime(date: string): string {
+  return new Date(date).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
