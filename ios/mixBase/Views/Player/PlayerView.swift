@@ -242,6 +242,15 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Artist credit for someone else's song (community feed). The
+                // user's own tracks carry no per-track artist, so nothing shows.
+                if let artist = audioService.currentTrackArtist, !artist.isEmpty {
+                    Text(artist)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
+
                 // Version + status. Switching versions is tucked into a small
                 // menu instead of a row of pills for every version: the
                 // current mix on top, the instrumental slot under it, and the
