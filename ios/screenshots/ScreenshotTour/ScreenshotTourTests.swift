@@ -80,7 +80,7 @@ final class ScreenshotTourTests: XCTestCase {
             // rows after each attempt and fall back to a coordinate tap.
             historyHeader.tap()
             if !historyRow.waitForExistence(timeout: 5) {
-                historyHeader.coordinate(withNormalizedOffset: CGPoint(x: 0.3, y: 0.5)).tap()
+                historyHeader.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()
                 _ = historyRow.waitForExistence(timeout: 5)
             }
             print("TOUR: version history expanded = \(historyRow.exists)")
@@ -204,13 +204,6 @@ final class ScreenshotTourTests: XCTestCase {
             back.tap()
             settle(1.5)
         }
-    }
-
-    @discardableResult
-    private func tapIfHittable(_ element: XCUIElement) -> Bool {
-        guard element.waitForExistence(timeout: 3), element.isHittable else { return false }
-        element.tap()
-        return true
     }
 
     /// Waits for an anchor element. A miss is recorded with a screenshot and
