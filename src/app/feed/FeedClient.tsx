@@ -6,7 +6,7 @@ import { Play, Pause, MessageCircle, Send, History } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { audioProxyUrl, artworkProxyUrl } from '@/lib/supabase'
-import { timeAgo } from '@/lib/time'
+import { formatDateTime } from '@/lib/time'
 import type { FeedItem, FeedComment } from '@/lib/feed'
 
 export default function FeedClient({
@@ -190,7 +190,7 @@ const FeedRow = memo(function FeedRow({
 
         <div className="flex items-center gap-3 shrink-0">
           <span style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
-            {timeAgo(item.created_at)}
+            {formatDateTime(item.created_at)}
           </span>
           <button
             onClick={e => { e.stopPropagation(); setCommentsOpen(o => !o) }}
@@ -262,7 +262,7 @@ const FeedRow = memo(function FeedRow({
                   {o.version_label}
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
-                  {timeAgo(o.created_at)}
+                  {formatDateTime(o.created_at)}
                 </span>
               </div>
             )
@@ -279,7 +279,7 @@ const FeedRow = memo(function FeedRow({
                 {c.artist}
               </span>
               <span className="ml-2" style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 10, color: 'var(--text-muted)' }}>
-                {timeAgo(c.created_at)}
+                {formatDateTime(c.created_at)}
               </span>
               <p className="text-xs mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-muted)' }}>
                 {c.comment}
