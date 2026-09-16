@@ -5,6 +5,14 @@ import SwiftUI
 
 struct SettingsView: View {
 
+    /// Marketing version from the bundle (was a hardcoded "1.0.0" that went
+    /// stale the moment the project moved to 1.0.1).
+    static var appVersion: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
+    }
+
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var audioService: AudioService
 
@@ -138,7 +146,7 @@ struct SettingsView: View {
                         Text("Version")
                             .foregroundColor(Color(hex: "#f0f0f0"))
                         Spacer()
-                        Text("1.0.0")
+                        Text(Self.appVersion)
                             .foregroundColor(.gray)
                     }
                 } header: {
