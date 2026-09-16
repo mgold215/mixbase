@@ -150,6 +150,27 @@ if (version) {
   }
 }
 
+// ── 2b. Promotional text is the one field editable on the LIVE version ───
+if (request.syncLivePromo && copy.promotionalText) {
+  const live = (versions.json?.data ?? []).find((v) => (v.attributes.appVersionState ?? v.attributes.appStoreState) === "READY_FOR_DISTRIBUTION");
+  if (!live) log("live promo: no live version");
+  else {
+    const locs = await api("GET", `/v1/appStoreVersions/${live.id}/appStoreVersionLocalizations?limit=10`);
+    const ll = (locs.json?.data ?? []).find((l) => l.attributes.locale === "en-US");
+    if (!ll) log("live promo: no en-US localization on the live version");
+    else if ((ll.attributes.promotionalText ?? "") === copy.promotionalText) log(`live promo (${live.attributes.versionString}): already up to date`);
+    else {
+      log(`live promo (${live.attributes.versionString}): ${WRITE ? "updating" : "would update"}`);
+      if (WRITE) {
+        const r = await api("PATCH", `/v1/appStoreVersionLocalizations/${ll.id}`, {
+          data: { type: "appStoreVersionLocalizations", id: ll.id, attributes: { promotionalText: copy.promotionalText } },
+        });
+        if (!r.ok) fail("patch live promotional text", r);
+      }
+    }
+  }
+}
+
 // ── 3. Subtitle lives on the pending app info ────────────────────────────
 {
   const infos = await api("GET", `/v1/apps/${app.id}/appInfos?limit=5`);

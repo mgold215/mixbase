@@ -11,12 +11,12 @@ mixBase
 
 ## Subtitle (30 chars max)
 ```
-Mix Versions, Rough to Release
+Manage mixes, rough to release
 ```
 
 ## Promotional Text (170 chars max — appears at top, can be updated without a new review)
 ```
-Every bounce, mix and master in one place. Track every version, share private links for timestamped feedback, and run your release checklist from rough to release.
+Manage your mixes from rough to release. Track every version, share private links for timestamped feedback, and run your release checklist.
 ```
 
 ## Description (4000 chars max)
