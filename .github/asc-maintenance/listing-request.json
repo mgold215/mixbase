@@ -1,0 +1,10 @@
+{
+  "action": "inspect",
+  "version": "1.0.1",
+  "screenshots": ["01-home", "02-projects", "03-project", "04-player", "05-pipeline", "06-artwork", "07-feed"],
+  "deleteIpadSets": true,
+  "attachBuild": true,
+  "minBuildUploadedAt": "2026-09-16T14:20:00Z",
+  "buildWaitMinutes": 25,
+  "submit": false
+}

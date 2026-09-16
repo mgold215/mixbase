@@ -184,8 +184,13 @@ struct HomeView: View {
         .padding(.horizontal)
     }
 
+    /// Projects whose latest mix is still being worked on (not Finished or
+    /// Released). Projects with no upload yet count as in progress too.
     private var mixingCount: Int {
-        projects.filter { $0.genre != nil }.count
+        projects.filter { project in
+            guard let status = latestVersions[project.id]?.status else { return true }
+            return status != "Finished" && status != "Released"
+        }.count
     }
 
     // MARK: - Ambient Backdrop
@@ -420,9 +425,11 @@ struct HomeView: View {
 
     private func iconForActivityType(_ type: String) -> String {
         switch type {
-        case "version_created": return "plus.circle"
+        case "version_created", "version_upload": return "arrow.up.circle"
+        case "status_change": return "arrow.right.circle"
+        case "release_created": return "checklist"
         case "release_updated": return "arrow.triangle.2.circlepath"
-        case "feedback_added": return "bubble.left"
+        case "feedback_added", "feedback_received": return "bubble.left"
         case "project_created": return "folder.badge.plus"
         default: return "bell"
         }

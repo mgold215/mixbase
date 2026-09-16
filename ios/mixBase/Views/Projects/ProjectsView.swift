@@ -269,7 +269,8 @@ struct ProjectsView: View {
                 }
             }
 
-            StatusBadge(status: "Mix")
+            // Latest mix's real status; "Mix" only until the first upload lands.
+            StatusBadge(status: latestVersions[project.id]?.status ?? "Mix")
         }
         .padding(10)
         .background(Color(hex: "#111111"))
