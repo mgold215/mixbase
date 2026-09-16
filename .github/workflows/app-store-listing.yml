@@ -107,7 +107,12 @@ jobs:
             -configuration Release \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
             build | tail -40
           APP=$(find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name "mixBase.app" | head -1)
           if [ -z "$APP" ]; then echo "mixBase.app not found"; exit 1; fi
@@ -128,11 +133,16 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath "$RUNNER_TEMP/dd-tour" \
             -resultBundlePath "$RUNNER_TEMP/tour.xcresult" \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/tour.log" | grep -E "Test Case|error|Never saw|passed|failed|\*\*" | tail -80
-          ls -la "$RUNNER_TEMP/shots/iphone69"
-          for f in "$RUNNER_TEMP"/shots/iphone69/*.png; do
-            echo "$(basename "$f"): $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/tour.log" | grep -E "Test Case|error|Never saw|TOUR-DIAG|passed|failed|\*\*" | tail -80 || true
+          STATUS=${PIPESTATUS[0]}
+          ls -la "$RUNNER_TEMP/shots/iphone69" || true
+          for d in "$RUNNER_TEMP"/shots/iphone69/diag-*.txt; do
+            [ -f "$d" ] || continue
+            echo "===== $(basename "$d") (first 160 lines) ====="
+            head -160 "$d"
           done
+          cp "$RUNNER_TEMP/tour.log" "$RUNNER_TEMP/shots/iphone69/tour.log" 2>/dev/null || true
+          exit "$STATUS"
 
       - name: Upload screenshots
         if: always()
@@ -140,7 +150,7 @@ jobs:
         with:
           name: screenshots
           path: ${{ runner.temp }}/shots
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload test result bundle
         if: always()
@@ -160,6 +170,7 @@ jobs:
   commit:
     name: Commit screenshots to the branch
     needs: capture
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -169,19 +180,23 @@ jobs:
         with:
           ref: ${{ github.ref }}
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: screenshots
           path: shots
-      - name: Push PNGs to ios/metadata/screenshots (skip ci)
+      - name: Push PNGs and diagnostics to the branch (skip ci)
         run: |
-          ls -la shots/iphone69
-          rm -f ios/metadata/screenshots/*.png
-          cp shots/iphone69/*.png ios/metadata/screenshots/
+          ls -la shots/iphone69 || { echo "no capture output"; exit 0; }
+          mkdir -p ios/metadata/screenshots ios/metadata/screenshot-diagnostics
+          rm -f ios/metadata/screenshots/*.png ios/metadata/screenshot-diagnostics/*
+          cp shots/iphone69/[0-9][0-9]-*.png ios/metadata/screenshots/ 2>/dev/null || true
+          cp shots/iphone69/diag-* ios/metadata/screenshot-diagnostics/ 2>/dev/null || true
+          if [ -f shots/iphone69/tour.log ]; then tail -400 shots/iphone69/tour.log > ios/metadata/screenshot-diagnostics/tour.log; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A ios/metadata/screenshots
-          if git diff --cached --quiet; then echo "screenshots unchanged"; exit 0; fi
-          git commit -m "App Store screenshots captured on the simulator [skip ci]"
+          git add -A ios/metadata/screenshots ios/metadata/screenshot-diagnostics
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -m "App Store screenshots / diagnostics from the simulator [skip ci]"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
   publish:
