@@ -267,47 +267,49 @@ fun ProjectDetailScreen(projectId: String, onBack: () -> Unit, onOpenPlayer: () 
         }
     }
 
-    if (showEdit) {
-        EditProjectDialog(project, onDismiss = { showEdit = false }) { fields ->
-            showEdit = false
-            scope.launch {
-                try {
-                    container.supabase.updateProject(project.id, fields)
-                    container.library.reloadProject(project.id)
-                } catch (e: Exception) { error = e.displayMessage }
+    if (project != null) {
+        if (showEdit) {
+            EditProjectDialog(project, onDismiss = { showEdit = false }) { fields ->
+                showEdit = false
+                scope.launch {
+                    try {
+                        container.supabase.updateProject(project.id, fields)
+                        container.library.reloadProject(project.id)
+                    } catch (e: Exception) { error = e.displayMessage }
+                }
             }
         }
-    }
 
-    if (showGenerator) {
-        ArtworkGeneratorDialog(project = project, onDismiss = { showGenerator = false }) {
-            showGenerator = false
-            scope.launch { container.library.reloadProject(project.id) }
+        if (showGenerator) {
+            ArtworkGeneratorDialog(project = project, onDismiss = { showGenerator = false }) {
+                showGenerator = false
+                scope.launch { container.library.reloadProject(project.id) }
+            }
         }
-    }
 
-    if (showDelete) {
-        AlertDialog(
-            onDismissRequest = { showDelete = false },
-            containerColor = MbColors.Surface,
-            titleContentColor = MbColors.Text,
-            textContentColor = MbColors.TextBody,
-            title = { Text("Delete project?") },
-            text = { Text("\"${project.title}\" and all of its mixes will be removed. This cannot be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showDelete = false
-                    scope.launch {
-                        try {
-                            container.supabase.deleteProject(project.id)
-                            container.library.removeProject(project.id)
-                            onBack()
-                        } catch (e: Exception) { error = e.displayMessage }
-                    }
-                }) { Text("Delete", color = MbColors.Red) }
-            },
-            dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel", color = MbColors.TextMuted) } },
-        )
+        if (showDelete) {
+            AlertDialog(
+                onDismissRequest = { showDelete = false },
+                containerColor = MbColors.Surface,
+                titleContentColor = MbColors.Text,
+                textContentColor = MbColors.TextBody,
+                title = { Text("Delete project?") },
+                text = { Text("\"${project.title}\" and all of its mixes will be removed. This cannot be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showDelete = false
+                        scope.launch {
+                            try {
+                                container.supabase.deleteProject(project.id)
+                                container.library.removeProject(project.id)
+                                onBack()
+                            } catch (e: Exception) { error = e.displayMessage }
+                        }
+                    }) { Text("Delete", color = MbColors.Red) }
+                },
+                dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel", color = MbColors.TextMuted) } },
+            )
+        }
     }
 }
 
