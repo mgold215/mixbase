@@ -63,7 +63,7 @@ if (version) {
   const created = await api("POST", "/v1/appStoreVersions", {
     data: {
       type: "appStoreVersions",
-      attributes: { platform: "IOS", versionString: request.version, releaseType: "AFTER_APPROVAL" },
+      attributes: { platform: "IOS", versionString: request.version, releaseType: "AFTER_APPROVAL", copyright: copy.copyright },
       relationships: { app: { data: { type: "apps", id: app.id } } },
     },
   });
@@ -72,6 +72,47 @@ if (version) {
   log(`created version ${request.version} (${version.id})`);
 } else {
   log(`version ${request.version} does not exist yet (publish would create it)`);
+}
+
+// ── 1b. Copyright lives on the version itself ────────────────────────────
+if (version && copy.copyright && (version.attributes.copyright ?? "") !== copy.copyright) {
+  log(`copyright: ${JSON.stringify(version.attributes.copyright)} -> ${JSON.stringify(copy.copyright)}`);
+  if (WRITE) {
+    const r = await api("PATCH", `/v1/appStoreVersions/${version.id}`, {
+      data: { type: "appStoreVersions", id: version.id, attributes: { copyright: copy.copyright } },
+    });
+    if (!r.ok) fail("patch copyright", r);
+  }
+}
+
+// ── 1c. App Review details (demo login, contact, notes) must carry over ──
+if (version) {
+  const mine = await api("GET", `/v1/appStoreVersions/${version.id}/appStoreReviewDetail`);
+  const have = mine.json?.data ?? null;
+  if (have?.attributes?.demoAccountName) {
+    log(`review detail: present (demo ${have.attributes.demoAccountName}, notes ${(have.attributes.notes ?? "").length} chars)`);
+  } else {
+    const live = (versions.json?.data ?? []).find((v) => (v.attributes.appVersionState ?? v.attributes.appStoreState) === "READY_FOR_DISTRIBUTION");
+    const src = live ? await api("GET", `/v1/appStoreVersions/${live.id}/appStoreReviewDetail`) : null;
+    const a = src?.json?.data?.attributes;
+    if (!a) log("review detail: missing and no live version to copy from");
+    else {
+      const attrs = {};
+      for (const k of ["contactFirstName", "contactLastName", "contactPhone", "contactEmail", "demoAccountName", "demoAccountPassword", "demoAccountRequired", "notes"]) {
+        if (a[k] != null) attrs[k] = a[k];
+      }
+      log(`review detail: ${have ? "incomplete" : "missing"}; ${WRITE ? "copying" : "would copy"} from ${live.attributes.versionString} (demo ${a.demoAccountName}, notes ${(a.notes ?? "").length} chars)`);
+      if (WRITE) {
+        const r = have
+          ? await api("PATCH", `/v1/appStoreReviewDetails/${have.id}`, { data: { type: "appStoreReviewDetails", id: have.id, attributes: attrs } })
+          : await api("POST", "/v1/appStoreReviewDetails", {
+              data: { type: "appStoreReviewDetails", attributes: attrs,
+                relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: version.id } } } },
+            });
+        if (!r.ok) fail("write review detail", r);
+      }
+    }
+  }
 }
 
 // ── 2. Copy: en-US localization of the version ───────────────────────────

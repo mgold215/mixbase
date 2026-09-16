@@ -63,20 +63,24 @@ final class ScreenshotTourTests: XCTestCase {
         settle(6)
         snap("projects")
 
-        // 3. Project detail, then the same screen scrolled to the version history.
+        // 3. Project detail, then the same screen scrolled down with the
+        //    version history and the feedback opened up (both sit below the
+        //    fold, so scroll before tapping).
         tap(firstCard, "the first project card")
         let playLatest = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Play Latest'")).firstMatch
         expect(playLatest, "the project detail screen", timeout: 30)
         settle(4)
         snap("project")
-        let history = labeled("Version History")
-        if history.waitForExistence(timeout: 5) {
-            for _ in 0..<2 where !labeled("ROUGH MIX").exists {
-                history.tap()
-                settle(2)
-            }
-        }
         app.swipeUp()
+        settle(2)
+        for _ in 0..<2 where !labeled("ROUGH MIX").exists {
+            tapIfHittable(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Version History'")).firstMatch)
+                || tapIfHittable(labeled("Version History"))
+            settle(2)
+        }
+        expect(labeled("ROUGH MIX"), "the expanded version history", timeout: 5)
+        tapIfHittable(app.buttons.matching(NSPredicate(format: "label CONTAINS 'responses'")).firstMatch)
+            || tapIfHittable(labeled("responses"))
         settle(3)
         snap("project-versions")
 
@@ -189,6 +193,13 @@ final class ScreenshotTourTests: XCTestCase {
             back.tap()
             settle(1.5)
         }
+    }
+
+    @discardableResult
+    private func tapIfHittable(_ element: XCUIElement) -> Bool {
+        guard element.waitForExistence(timeout: 3), element.isHittable else { return false }
+        element.tap()
+        return true
     }
 
     /// Waits for an anchor element. A miss is recorded with a screenshot and

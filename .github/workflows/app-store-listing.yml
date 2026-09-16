@@ -37,8 +37,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Read listing-request.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      capture: ${{ steps.req.outputs.capture }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: req
+        run: |
+          node -e '
+            const r = require("./.github/asc-maintenance/listing-request.json");
+            const capture = r.capture === false ? "false" : "true";
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `capture=${capture}\n`);
+            console.log(JSON.stringify({ action: r.action, capture, submit: !!r.submit, version: r.version }));'
+
   seed:
     name: Seed demo artwork
+    needs: plan
+    if: needs.plan.outputs.capture == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -55,7 +73,8 @@ jobs:
 
   capture:
     name: Capture screenshots (simulator)
-    needs: seed
+    needs: [plan, seed]
+    if: needs.plan.outputs.capture == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -170,7 +189,7 @@ jobs:
   commit:
     name: Commit screenshots to the branch
     needs: capture
-    if: always()
+    if: always() && needs.capture.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -201,7 +220,8 @@ jobs:
 
   publish:
     name: Publish to App Store Connect
-    needs: capture
+    needs: [plan, capture]
+    if: always() && needs.plan.result == 'success' && (needs.capture.result == 'success' || needs.capture.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -214,10 +234,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - if: needs.capture.result == 'success'
+        uses: actions/download-artifact@v4
         with:
           name: screenshots
           path: shots
+      - name: Use the screenshots committed on this branch (no capture this run)
+        if: needs.capture.result == 'skipped'
+        run: |
+          mkdir -p shots/iphone69
+          cp ios/metadata/screenshots/[0-9][0-9]-*.png shots/iphone69/
+          ls -la shots/iphone69
       - name: Derive the 6.5-inch set (1284x2778) and strip alpha
         run: |
           python3 -m pip install --quiet --disable-pip-version-check pillow
