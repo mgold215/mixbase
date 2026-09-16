@@ -1,400 +1,400 @@
-    t =    28.12s Checking existence of `"OK" Button`
-    t =    28.15s Checking existence of `"Don't Allow" Button`
-    t =    28.19s Checking existence of `"Not Now" Button`
-    t =    28.54s Checking existence of `"Allow" Button`
-    t =    28.93s Checking existence of `"OK" Button`
-    t =    29.34s Checking existence of `"Don't Allow" Button`
-    t =    30.24s Waiting 40.0s for Any (First Match) to exist
-    t =    31.30s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =    31.30s         Checking existence of `Any (First Match)`
-    t =    39.40s Checking existence of `"Not Now" Button`
-    t =    39.53s Checking existence of `"Allow" Button`
-    t =    39.58s Checking existence of `"OK" Button`
-    t =    39.61s Checking existence of `"Don't Allow" Button`
-    t =    39.64s Checking existence of `"Not Now" Button`
-    t =    39.99s Checking existence of `"Allow" Button`
-    t =    40.40s Checking existence of `"OK" Button`
-    t =    40.81s Checking existence of `"Don't Allow" Button`
-    t =    42.05s Added attachment named 'home'
-    t =    42.05s Checking existence of `"Not Now" Button`
-    t =    42.10s Checking existence of `"Allow" Button`
-    t =    42.12s Checking existence of `"OK" Button`
-    t =    42.15s Checking existence of `"Don't Allow" Button`
-    t =    42.21s Checking existence of `"Not Now" Button`
-    t =    42.56s Checking existence of `"Allow" Button`
-    t =    42.86s Checking existence of `"OK" Button`
-    t =    43.11s Checking existence of `"Don't Allow" Button`
-    t =    43.94s Checking existence of `"Not Now" Button`
-    t =    43.99s Checking existence of `"Allow" Button`
-    t =    44.01s Checking existence of `"OK" Button`
-    t =    44.04s Checking existence of `"Don't Allow" Button`
-    t =    44.07s Checking existence of `"Not Now" Button`
-    t =    44.39s Checking existence of `"Allow" Button`
-    t =    44.71s Checking existence of `"OK" Button`
-    t =    44.98s Checking existence of `"Don't Allow" Button`
-    t =    45.72s Waiting 10.0s for "Projects" Button to exist
-    t =    46.76s     Checking `Expect predicate `existsNoRetry == 1` for object "Projects" Button`
-    t =    46.77s         Checking existence of `"Projects" Button`
-    t =    47.03s Tap "Projects" Button
-    t =    47.03s     Wait for com.moodmixformat.mixbase to idle
-    t =    47.03s     Find the "Projects" Button
-    t =    47.33s     Check for interrupting elements affecting "square.grid.2x2" Button
-    t =    47.47s     Synthesize event
-    t =    48.15s     Wait for com.moodmixformat.mixbase to idle
-    t =    50.79s Waiting 12.0s for "Projects" NavigationBar to exist
-    t =    51.87s     Checking `Expect predicate `existsNoRetry == 1` for object "Projects" NavigationBar`
-    t =    51.87s         Checking existence of `"Projects" NavigationBar`
-    t =    51.98s Waiting 30.0s for Any (First Match) to exist
-    t =    53.04s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =    53.04s         Checking existence of `Any (First Match)`
-    t =    59.12s Checking existence of `"Not Now" Button`
-    t =    59.19s Checking existence of `"Allow" Button`
-    t =    59.21s Checking existence of `"OK" Button`
-    t =    59.24s Checking existence of `"Don't Allow" Button`
-    t =    59.27s Checking existence of `"Not Now" Button`
-    t =    59.31s Checking existence of `"Allow" Button`
-    t =    59.37s Checking existence of `"OK" Button`
-    t =    59.43s Checking existence of `"Don't Allow" Button`
-    t =    59.98s Checking existence of `"Not Now" Button`
-    t =    60.00s Checking existence of `"Allow" Button`
-    t =    60.02s Checking existence of `"OK" Button`
-    t =    60.05s Checking existence of `"Don't Allow" Button`
-    t =    60.07s Checking existence of `"Not Now" Button`
-    t =    60.10s Checking existence of `"Allow" Button`
-    t =    60.13s Checking existence of `"OK" Button`
-    t =    60.16s Checking existence of `"Don't Allow" Button`
-    t =    60.88s Added attachment named 'projects'
-    t =    60.88s Waiting 10.0s for Any (First Match) to exist
-    t =    61.94s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =    61.94s         Checking existence of `Any (First Match)`
-    t =    62.00s Tap Any (First Match)
-    t =    62.00s     Wait for com.moodmixformat.mixbase to idle
-    t =    62.01s     Find the Any (First Match)
-    t =    62.07s     Check for interrupting elements affecting "KICK IT W/U, House, - 124 BPM, Released" Button
-    t =    62.14s     Synthesize event
-    t =    62.45s     Wait for com.moodmixformat.mixbase to idle
-    t =    63.53s Waiting 30.0s for Button (First Match) to exist
-    t =    64.54s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
-    t =    64.54s         Checking existence of `Button (First Match)`
-    t =    68.61s Checking existence of `"Not Now" Button`
-    t =    68.65s Checking existence of `"Allow" Button`
-    t =    68.69s Checking existence of `"OK" Button`
-    t =    68.74s Checking existence of `"Don't Allow" Button`
-    t =    68.79s Checking existence of `"Not Now" Button`
-    t =    68.86s Checking existence of `"Allow" Button`
-    t =    68.92s Checking existence of `"OK" Button`
-    t =    68.98s Checking existence of `"Don't Allow" Button`
-    t =    69.55s Checking existence of `"Not Now" Button`
-    t =    69.58s Checking existence of `"Allow" Button`
-    t =    69.62s Checking existence of `"OK" Button`
-    t =    69.65s Checking existence of `"Don't Allow" Button`
-    t =    69.69s Checking existence of `"Not Now" Button`
-    t =    69.75s Checking existence of `"Allow" Button`
-    t =    69.79s Checking existence of `"OK" Button`
-    t =    69.85s Checking existence of `"Don't Allow" Button`
-    t =    70.70s Added attachment named 'project'
-    t =    70.70s Waiting 5.0s for Any (First Match) to exist
-    t =    71.70s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =    71.71s         Checking existence of `Any (First Match)`
-    t =    71.76s Checking existence of `Any (First Match)`
-    t =    71.85s Tap Any (First Match)
-    t =    71.85s     Wait for com.moodmixformat.mixbase to idle
-    t =    71.85s     Find the Any (First Match)
-    t =    71.92s     Check for interrupting elements affecting "Version History, (3)" Button
-    t =    71.99s     Synthesize event
-    t =    72.03s         Scroll element to visible
-    t =    72.04s         Find the "Version History, (3)" Button
-    t =    72.16s         Computed hit point {219.16668224334717, 742.83334350585938} after scrolling to visible
-    t =    72.47s     Wait for com.moodmixformat.mixbase to idle
-    t =    75.02s Checking existence of `Any (First Match)`
-    t =    75.14s Tap "Version History, (3)" Button
-    t =    75.14s     Wait for com.moodmixformat.mixbase to idle
-    t =    75.15s     Find the "Version History, (3)" Button
-    t =    75.22s     Check for interrupting elements affecting "Version History, (3)" Button
-    t =    75.31s     Synthesize event
-    t =    75.60s     Wait for com.moodmixformat.mixbase to idle
-    t =    77.60s Swipe up Application 'com.moodmixformat.mixbase'
-    t =    77.60s     Wait for com.moodmixformat.mixbase to idle
-    t =    77.61s     Find the Application 'com.moodmixformat.mixbase'
-    t =    77.69s     Check for interrupting elements affecting "mixBase" Application
-    t =    77.76s     Synthesize event
-    t =    78.21s     Wait for com.moodmixformat.mixbase to idle
-    t =    81.96s Checking existence of `"Not Now" Button`
-    t =    82.03s Checking existence of `"Allow" Button`
-    t =    82.06s Checking existence of `"OK" Button`
-    t =    82.09s Checking existence of `"Don't Allow" Button`
-    t =    82.12s Checking existence of `"Not Now" Button`
-    t =    82.18s Checking existence of `"Allow" Button`
-    t =    82.24s Checking existence of `"OK" Button`
-    t =    82.30s Checking existence of `"Don't Allow" Button`
-    t =    82.89s Checking existence of `"Not Now" Button`
-    t =    82.94s Checking existence of `"Allow" Button`
-    t =    82.97s Checking existence of `"OK" Button`
-    t =    83.00s Checking existence of `"Don't Allow" Button`
-    t =    83.04s Checking existence of `"Not Now" Button`
-    t =    83.10s Checking existence of `"Allow" Button`
-    t =    83.17s Checking existence of `"OK" Button`
-    t =    83.25s Checking existence of `"Don't Allow" Button`
-    t =    84.09s Added attachment named 'project-versions'
-    t =    84.09s Waiting 10.0s for Button (First Match) to exist
-    t =    85.12s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
-    t =    85.13s         Checking existence of `Button (First Match)`
-    t =    85.20s Tap Button (First Match)
-    t =    85.20s     Wait for com.moodmixformat.mixbase to idle
-    t =    85.21s     Find the Button (First Match)
-    t =    85.27s     Check for interrupting elements affecting "Play Latest (FINAL MASTER)" Button
-    t =    85.34s     Synthesize event
-    t =    85.67s     Wait for com.moodmixformat.mixbase to idle
-    t =    89.66s Checking existence of `"Not Now" Button`
-    t =    89.76s Checking existence of `"Allow" Button`
-    t =    89.82s Checking existence of `"OK" Button`
-    t =    89.88s Checking existence of `"Don't Allow" Button`
-    t =    89.93s Checking existence of `"Not Now" Button`
-    t =    90.02s Checking existence of `"Allow" Button`
-    t =    90.10s Checking existence of `"OK" Button`
-    t =    90.27s Checking existence of `"Don't Allow" Button`
-    t =    90.98s Checking existence of `"Not Now" Button`
-    t =    91.04s Checking existence of `"Allow" Button`
-    t =    91.09s Checking existence of `"OK" Button`
-    t =    91.18s Checking existence of `"Don't Allow" Button`
-    t =    91.24s Checking existence of `"Not Now" Button`
-    t =    91.33s Checking existence of `"Allow" Button`
-    t =    91.42s Checking existence of `"OK" Button`
-    t =    91.51s Checking existence of `"Don't Allow" Button`
-    t =    92.10s Waiting 10.0s for "Player" Button to exist
-    t =    93.12s     Checking `Expect predicate `existsNoRetry == 1` for object "Player" Button`
-    t =    93.14s         Checking existence of `"Player" Button`
-    t =    93.36s Tap "Player" Button
-    t =    93.36s     Wait for com.moodmixformat.mixbase to idle
-    t =    93.41s     Find the "Player" Button
-    t =    93.53s     Check for interrupting elements affecting "play.circle" Button
-    t =    93.73s     Synthesize event
-    t =    94.18s     Wait for com.moodmixformat.mixbase to idle
-    t =    96.80s Waiting 12.0s for "Share" Button to exist
-    t =    97.82s     Checking `Expect predicate `existsNoRetry == 1` for object "Share" Button`
-    t =    97.82s         Checking existence of `"Share" Button`
-    t =    97.95s Waiting 30.0s for Any (First Match) to exist
-    t =    99.05s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =    99.05s         Checking existence of `Any (First Match)`
-    t =   107.15s Checking existence of `"Not Now" Button`
-    t =   107.27s Checking existence of `"Allow" Button`
-    t =   107.30s Checking existence of `"OK" Button`
-    t =   107.37s Checking existence of `"Don't Allow" Button`
-    t =   107.41s Checking existence of `"Not Now" Button`
-    t =   107.45s Checking existence of `"Allow" Button`
-    t =   107.49s Checking existence of `"OK" Button`
-    t =   107.52s Checking existence of `"Don't Allow" Button`
-    t =   108.05s Checking existence of `"Not Now" Button`
-    t =   108.08s Checking existence of `"Allow" Button`
-    t =   108.12s Checking existence of `"OK" Button`
-    t =   108.16s Checking existence of `"Don't Allow" Button`
-    t =   108.20s Checking existence of `"Not Now" Button`
-    t =   108.31s Checking existence of `"Allow" Button`
-    t =   108.35s Checking existence of `"OK" Button`
-    t =   108.40s Checking existence of `"Don't Allow" Button`
-    t =   109.33s Added attachment named 'player'
-    t =   109.33s Checking existence of `"Not Now" Button`
-    t =   109.36s Checking existence of `"Allow" Button`
-    t =   109.39s Checking existence of `"OK" Button`
-    t =   109.41s Checking existence of `"Don't Allow" Button`
-    t =   109.43s Checking existence of `"Not Now" Button`
-    t =   109.45s Checking existence of `"Allow" Button`
-    t =   109.48s Checking existence of `"OK" Button`
-    t =   109.50s Checking existence of `"Don't Allow" Button`
-    t =   110.02s Checking existence of `"Not Now" Button`
-    t =   110.07s Checking existence of `"Allow" Button`
-    t =   110.10s Checking existence of `"OK" Button`
-    t =   110.15s Checking existence of `"Don't Allow" Button`
-    t =   110.20s Checking existence of `"Not Now" Button`
-    t =   110.33s Checking existence of `"Allow" Button`
-    t =   110.36s Checking existence of `"OK" Button`
-    t =   110.39s Checking existence of `"Don't Allow" Button`
-    t =   110.93s Checking existence of `"Not Now" Button`
-    t =   110.96s Checking existence of `"Allow" Button`
-    t =   111.00s Checking existence of `"OK" Button`
-    t =   111.02s Checking existence of `"Don't Allow" Button`
-    t =   111.05s Checking existence of `"Not Now" Button`
-    t =   111.07s Checking existence of `"Allow" Button`
-    t =   111.10s Checking existence of `"OK" Button`
-    t =   111.12s Checking existence of `"Don't Allow" Button`
-    t =   111.77s Waiting 10.0s for "Pipeline" Button to exist
-    t =   112.81s     Checking `Expect predicate `existsNoRetry == 1` for object "Pipeline" Button`
-    t =   112.82s         Checking existence of `"Pipeline" Button`
-    t =   112.87s Tap "Pipeline" Button
-    t =   112.87s     Wait for com.moodmixformat.mixbase to idle
-    t =   112.88s     Find the "Pipeline" Button
-    t =   112.93s     Check for interrupting elements affecting "checklist" Button
-    t =   112.96s     Synthesize event
-    t =   113.28s     Wait for com.moodmixformat.mixbase to idle
-    t =   115.70s Waiting 12.0s for Any (First Match) to exist
-    t =   116.73s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =   116.73s         Checking existence of `Any (First Match)`
-    t =   122.84s Checking existence of `"Not Now" Button`
-    t =   122.92s Checking existence of `"Allow" Button`
-    t =   122.98s Checking existence of `"OK" Button`
-    t =   123.02s Checking existence of `"Don't Allow" Button`
-    t =   123.06s Checking existence of `"Not Now" Button`
-    t =   123.11s Checking existence of `"Allow" Button`
-    t =   123.41s Checking existence of `"OK" Button`
-    t =   123.45s Checking existence of `"Don't Allow" Button`
-    t =   124.21s Added attachment named 'pipeline'
-    t =   124.21s Checking existence of `"Not Now" Button`
-    t =   124.25s Checking existence of `"Allow" Button`
-    t =   124.28s Checking existence of `"OK" Button`
-    t =   124.31s Checking existence of `"Don't Allow" Button`
-    t =   124.33s Checking existence of `"Not Now" Button`
-    t =   124.37s Checking existence of `"Allow" Button`
-    t =   124.40s Checking existence of `"OK" Button`
-    t =   124.44s Checking existence of `"Don't Allow" Button`
-    t =   124.99s Checking existence of `"Not Now" Button`
-    t =   125.02s Checking existence of `"Allow" Button`
-    t =   125.05s Checking existence of `"OK" Button`
-    t =   125.08s Checking existence of `"Don't Allow" Button`
-    t =   125.10s Checking existence of `"Not Now" Button`
-    t =   125.18s Checking existence of `"Allow" Button`
-    t =   125.26s Checking existence of `"OK" Button`
-    t =   125.30s Checking existence of `"Don't Allow" Button`
-    t =   125.84s Checking existence of `"Not Now" Button`
-    t =   125.87s Checking existence of `"Allow" Button`
-    t =   125.91s Checking existence of `"OK" Button`
-    t =   125.94s Checking existence of `"Don't Allow" Button`
-    t =   125.97s Checking existence of `"Not Now" Button`
-    t =   126.01s Checking existence of `"Allow" Button`
-    t =   126.05s Checking existence of `"OK" Button`
-    t =   126.17s Checking existence of `"Don't Allow" Button`
-    t =   126.73s Waiting 10.0s for "Artwork" Button to exist
-    t =   127.79s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" Button`
-    t =   127.79s         Checking existence of `"Artwork" Button`
-    t =   127.86s Tap "Artwork" Button
-    t =   127.86s     Wait for com.moodmixformat.mixbase to idle
-    t =   127.87s     Find the "Artwork" Button
-    t =   127.94s     Check for interrupting elements affecting "photo.on.rectangle" Button
-    t =   128.03s     Synthesize event
-    t =   128.38s     Wait for com.moodmixformat.mixbase to idle
-    t =   130.41s Waiting 12.0s for "Artwork" NavigationBar to exist
-    t =   131.46s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" NavigationBar`
-    t =   131.46s         Checking existence of `"Artwork" NavigationBar`
-    t =   138.59s Checking existence of `"Not Now" Button`
-    t =   138.67s Checking existence of `"Allow" Button`
-    t =   138.70s Checking existence of `"OK" Button`
-    t =   138.74s Checking existence of `"Don't Allow" Button`
-    t =   138.77s Checking existence of `"Not Now" Button`
-    t =   138.83s Checking existence of `"Allow" Button`
-    t =   138.88s Checking existence of `"OK" Button`
-    t =   138.94s Checking existence of `"Don't Allow" Button`
-    t =   139.50s Checking existence of `"Not Now" Button`
-    t =   139.53s Checking existence of `"Allow" Button`
-    t =   139.56s Checking existence of `"OK" Button`
-    t =   139.59s Checking existence of `"Don't Allow" Button`
-    t =   139.62s Checking existence of `"Not Now" Button`
-    t =   139.76s Checking existence of `"Allow" Button`
-    t =   139.82s Checking existence of `"OK" Button`
-    t =   139.89s Checking existence of `"Don't Allow" Button`
-    t =   140.80s Added attachment named 'artwork'
-    t =   140.80s Checking existence of `"Not Now" Button`
-    t =   140.83s Checking existence of `"Allow" Button`
-    t =   140.86s Checking existence of `"OK" Button`
-    t =   140.89s Checking existence of `"Don't Allow" Button`
-    t =   140.92s Checking existence of `"Not Now" Button`
-    t =   140.98s Checking existence of `"Allow" Button`
-    t =   141.03s Checking existence of `"OK" Button`
-    t =   141.07s Checking existence of `"Don't Allow" Button`
-    t =   141.63s Checking existence of `"Not Now" Button`
-    t =   141.66s Checking existence of `"Allow" Button`
-    t =   141.68s Checking existence of `"OK" Button`
-    t =   141.71s Checking existence of `"Don't Allow" Button`
-    t =   141.74s Checking existence of `"Not Now" Button`
-    t =   141.81s Checking existence of `"Allow" Button`
-    t =   141.85s Checking existence of `"OK" Button`
-    t =   141.89s Checking existence of `"Don't Allow" Button`
-    t =   142.44s Checking existence of `"Not Now" Button`
-    t =   142.47s Checking existence of `"Allow" Button`
-    t =   142.49s Checking existence of `"OK" Button`
-    t =   142.51s Checking existence of `"Don't Allow" Button`
-    t =   142.54s Checking existence of `"Not Now" Button`
-    t =   142.59s Checking existence of `"Allow" Button`
-    t =   142.74s Checking existence of `"OK" Button`
-    t =   142.79s Checking existence of `"Don't Allow" Button`
-    t =   143.33s Waiting 10.0s for "Home" Button to exist
-    t =   144.38s     Checking `Expect predicate `existsNoRetry == 1` for object "Home" Button`
-    t =   144.38s         Checking existence of `"Home" Button`
-    t =   144.42s Tap "Home" Button
-    t =   144.42s     Wait for com.moodmixformat.mixbase to idle
-    t =   144.42s     Find the "Home" Button
-    t =   144.48s     Check for interrupting elements affecting "house" Button
-    t =   144.53s     Synthesize event
-    t =   144.83s     Wait for com.moodmixformat.mixbase to idle
-    t =   147.43s Waiting 12.0s for "mixBASE Feed" Button to exist
-    t =   148.51s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
-    t =   148.51s         Checking existence of `"mixBASE Feed" Button`
-    t =   149.34s Checking existence of `"mixBASE Feed" Button`
-    t =   149.59s Checking existence of `"mixBASE Feed" Button`
-    t =   149.92s Checking existence of `"mixBASE Feed" Button`
-    t =   150.33s Checking existence of `"mixBASE Feed" Button`
-    t =   150.66s Waiting 20.0s for "mixBASE Feed" Button to exist
-    t =   151.71s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
-    t =   151.71s         Checking existence of `"mixBASE Feed" Button`
-    t =   151.95s Waiting 10.0s for "mixBASE Feed" Button to exist
-    t =   152.99s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
-    t =   152.99s         Checking existence of `"mixBASE Feed" Button`
-    t =   153.23s Tap "mixBASE Feed" Button
-    t =   153.23s     Wait for com.moodmixformat.mixbase to idle
-    t =   153.32s     Find the "mixBASE Feed" Button
-    t =   153.56s     Check for interrupting elements affecting "mixBASE Feed" Button
-    t =   153.80s     Synthesize event
-    t =   154.11s     Wait for com.moodmixformat.mixbase to idle
-    t =   155.22s Waiting 30.0s for "mixBASE Feed" NavigationBar to exist
-    t =   156.26s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
-    t =   156.26s         Checking existence of `"mixBASE Feed" NavigationBar`
-    t =   164.97s Checking existence of `"Not Now" Button`
-    t =   165.02s Checking existence of `"Allow" Button`
-    t =   165.04s Checking existence of `"OK" Button`
-    t =   165.06s Checking existence of `"Don't Allow" Button`
-    t =   165.09s Checking existence of `"Not Now" Button`
-    t =   165.26s Checking existence of `"Allow" Button`
-    t =   165.46s Checking existence of `"OK" Button`
-    t =   165.60s Checking existence of `"Don't Allow" Button`
-    t =   166.58s Added attachment named 'feed'
-    t =   166.58s Checking existence of `"mixBASE Feed" Button`
-    t =   166.77s Waiting 3.0s for "BackButton" Button to exist
-    t =   167.80s     Checking `Expect predicate `existsNoRetry == 1` for object "BackButton" Button`
-    t =   167.82s         Checking existence of `"BackButton" Button`
-    t =   167.85s Tap "BackButton" Button
-    t =   167.85s     Wait for com.moodmixformat.mixbase to idle
-    t =   167.85s     Find the "BackButton" Button
-    t =   167.88s     Check for interrupting elements affecting "BackButton" Button
-    t =   168.89s     Synthesize event
-    t =   169.25s     Wait for com.moodmixformat.mixbase to idle
-    t =   172.79s Checking existence of `"mixBASE Feed" Button`
-    t =   173.01s Checking existence of `"mixBASE Feed" Button`
-    t =   173.35s Checking existence of `"mixBASE Feed" Button`
-    t =   173.69s Waiting 20.0s for Any (First Match) to exist
-    t =   174.71s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
-    t =   174.71s         Checking existence of `Any (First Match)`
-    t =   179.80s Checking existence of `"Not Now" Button`
-    t =   179.85s Checking existence of `"Allow" Button`
-    t =   179.90s Checking existence of `"OK" Button`
-    t =   179.94s Checking existence of `"Don't Allow" Button`
-    t =   179.98s Checking existence of `"Not Now" Button`
-    t =   180.29s Checking existence of `"Allow" Button`
-    t =   180.50s Checking existence of `"OK" Button`
-    t =   180.72s Checking existence of `"Don't Allow" Button`
-    t =   181.73s Added attachment named 'home-playing'
-    t =   181.74s Tear Down
-Test Case '-[ScreenshotTour.ScreenshotTourTests testTour]' passed (182.279 seconds).
-Test Suite 'ScreenshotTourTests' passed at 2026-09-16 15:27:55.122.
-	 Executed 1 test, with 0 failures (0 unexpected) in 182.279 (182.280) seconds
-Test Suite 'ScreenshotTour.xctest' passed at 2026-09-16 15:27:55.122.
-	 Executed 1 test, with 0 failures (0 unexpected) in 182.279 (182.281) seconds
-Test Suite 'All tests' passed at 2026-09-16 15:27:55.123.
-	 Executed 1 test, with 0 failures (0 unexpected) in 182.279 (182.282) seconds
-2026-09-16 15:27:57.831 xcodebuild[12210:36882] [MT] IDETestOperationsObserverDebug: 208.690 elapsed -- Testing started completed.
-2026-09-16 15:27:57.831 xcodebuild[12210:36882] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
-2026-09-16 15:27:57.832 xcodebuild[12210:36882] [MT] IDETestOperationsObserverDebug: 208.690 sec, +208.690 sec -- end
+    t =    44.36s     Checking `Expect predicate `existsNoRetry == 1` for object "Projects" Button`
+    t =    44.37s         Checking existence of `"Projects" Button`
+    t =    44.76s Tap "Projects" Button
+    t =    44.76s     Wait for com.moodmixformat.mixbase to idle
+    t =    44.77s     Find the "Projects" Button
+    t =    45.03s     Check for interrupting elements affecting "square.grid.2x2" Button
+    t =    45.17s     Synthesize event
+    t =    45.54s     Wait for com.moodmixformat.mixbase to idle
+    t =    48.42s Waiting 12.0s for "Projects" NavigationBar to exist
+    t =    49.48s     Checking `Expect predicate `existsNoRetry == 1` for object "Projects" NavigationBar`
+    t =    49.49s         Checking existence of `"Projects" NavigationBar`
+    t =    49.70s Waiting 30.0s for Any (First Match) to exist
+    t =    50.76s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    50.76s         Checking existence of `Any (First Match)`
+    t =    56.86s Checking existence of `"Not Now" Button`
+    t =    56.93s Checking existence of `"Allow" Button`
+    t =    56.99s Checking existence of `"OK" Button`
+    t =    57.05s Checking existence of `"Don't Allow" Button`
+    t =    57.10s Checking existence of `"Not Now" Button`
+    t =    57.18s Checking existence of `"Allow" Button`
+    t =    57.21s Checking existence of `"OK" Button`
+    t =    57.26s Checking existence of `"Don't Allow" Button`
+    t =    57.81s Checking existence of `"Not Now" Button`
+    t =    57.84s Checking existence of `"Allow" Button`
+    t =    57.87s Checking existence of `"OK" Button`
+    t =    57.90s Checking existence of `"Don't Allow" Button`
+    t =    57.94s Checking existence of `"Not Now" Button`
+    t =    57.97s Checking existence of `"Allow" Button`
+    t =    58.00s Checking existence of `"OK" Button`
+    t =    58.03s Checking existence of `"Don't Allow" Button`
+    t =    58.85s Added attachment named 'projects'
+    t =    58.85s Waiting 10.0s for Any (First Match) to exist
+    t =    59.86s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    59.86s         Checking existence of `Any (First Match)`
+    t =    59.93s Tap Any (First Match)
+    t =    59.93s     Wait for com.moodmixformat.mixbase to idle
+    t =    59.94s     Find the Any (First Match)
+    t =    60.02s     Check for interrupting elements affecting "KICK IT W/U, House, - 124 BPM, Released" Button
+    t =    60.12s     Synthesize event
+    t =    60.43s     Wait for com.moodmixformat.mixbase to idle
+    t =    61.56s Waiting 30.0s for Button (First Match) to exist
+    t =    62.61s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    62.61s         Checking existence of `Button (First Match)`
+    t =    66.70s Checking existence of `"Not Now" Button`
+    t =    66.75s Checking existence of `"Allow" Button`
+    t =    66.79s Checking existence of `"OK" Button`
+    t =    66.82s Checking existence of `"Don't Allow" Button`
+    t =    66.84s Checking existence of `"Not Now" Button`
+    t =    66.91s Checking existence of `"Allow" Button`
+    t =    66.99s Checking existence of `"OK" Button`
+    t =    67.04s Checking existence of `"Don't Allow" Button`
+    t =    67.59s Checking existence of `"Not Now" Button`
+    t =    67.64s Checking existence of `"Allow" Button`
+    t =    67.68s Checking existence of `"OK" Button`
+    t =    67.71s Checking existence of `"Don't Allow" Button`
+    t =    67.74s Checking existence of `"Not Now" Button`
+    t =    67.81s Checking existence of `"Allow" Button`
+    t =    67.86s Checking existence of `"OK" Button`
+    t =    67.91s Checking existence of `"Don't Allow" Button`
+    t =    68.81s Added attachment named 'project'
+    t =    68.82s Swipe up Application 'com.moodmixformat.mixbase'
+    t =    68.82s     Wait for com.moodmixformat.mixbase to idle
+    t =    68.83s     Find the Application 'com.moodmixformat.mixbase'
+    t =    68.89s     Check for interrupting elements affecting "mixBase" Application
+    t =    68.98s     Synthesize event
+    t =    69.43s     Wait for com.moodmixformat.mixbase to idle
+    t =    72.86s Checking existence of `Any (First Match)`
+    t =    73.11s Waiting 3.0s for Button (First Match) to exist
+    t =    74.14s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    74.14s         Checking existence of `Button (First Match)`
+    t =    74.25s Find the Button (First Match)
+    t =    74.38s Tap "Version History, (3)" Button
+    t =    74.38s     Wait for com.moodmixformat.mixbase to idle
+    t =    74.39s     Find the "Version History, (3)" Button
+    t =    74.56s     Check for interrupting elements affecting "Version History, (3)" Button
+    t =    74.66s     Synthesize event
+    t =    74.99s     Wait for com.moodmixformat.mixbase to idle
+    t =    77.01s Checking existence of `Any (First Match)`
+    t =    77.18s Waiting 3.0s for Button (First Match) to exist
+    t =    78.23s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    78.23s         Checking existence of `Button (First Match)`
+    t =    78.38s Find the Button (First Match)
+    t =    78.59s Tap "Version History, (3)" Button
+    t =    78.59s     Wait for com.moodmixformat.mixbase to idle
+    t =    78.60s     Find the "Version History, (3)" Button
+    t =    78.70s     Check for interrupting elements affecting "Version History, (3)" Button
+    t =    78.79s     Synthesize event
+    t =    79.09s     Wait for com.moodmixformat.mixbase to idle
+    t =    81.11s Waiting 5.0s for Any (First Match) to exist
+    t =    82.19s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    82.19s         Checking existence of `Any (First Match)`
+    t =    82.40s         Capturing element debug description
+    t =    83.14s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    83.14s         Checking existence of `Any (First Match)`
+    t =    83.26s         Capturing element debug description
+    t =    84.14s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    84.14s         Checking existence of `Any (First Match)`
+    t =    84.29s         Capturing element debug description
+    t =    85.14s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    85.14s         Checking existence of `Any (First Match)`
+    t =    85.32s         Capturing element debug description
+    t =    86.11s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    86.11s         Checking existence of `Any (First Match)`
+    t =    86.23s         Capturing element debug description
+    t =    86.23s     Checking existence of `Any (First Match)`
+    t =    86.37s Collecting debug information to assist test failure triage
+    t =    86.37s     Requesting snapshot of accessibility hierarchy for app with pid 16981
+    t =    86.82s Requesting snapshot of accessibility hierarchy for app with pid 16981
+    t =    87.32s Requesting snapshot of accessibility hierarchy for app with pid 16981
+TOUR-DIAG the expanded version history: app state 4
+    t =    87.42s Waiting 3.0s for Button (First Match) to exist
+    t =    88.44s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    88.44s         Checking existence of `Button (First Match)`
+    t =    88.49s Find the Button (First Match)
+    t =    88.57s Tap "FINAL MASTER, 3 responses" Button
+    t =    88.57s     Wait for com.moodmixformat.mixbase to idle
+    t =    88.58s     Find the "FINAL MASTER, 3 responses" Button
+    t =    88.64s     Check for interrupting elements affecting "FINAL MASTER, 3 responses" Button
+    t =    88.69s     Synthesize event
+    t =    89.00s     Wait for com.moodmixformat.mixbase to idle
+    t =    92.01s Checking existence of `"Not Now" Button`
+    t =    92.06s Checking existence of `"Allow" Button`
+    t =    92.10s Checking existence of `"OK" Button`
+    t =    92.13s Checking existence of `"Don't Allow" Button`
+    t =    92.15s Checking existence of `"Not Now" Button`
+    t =    92.22s Checking existence of `"Allow" Button`
+    t =    92.28s Checking existence of `"OK" Button`
+    t =    92.33s Checking existence of `"Don't Allow" Button`
+    t =    92.89s Checking existence of `"Not Now" Button`
+    t =    92.92s Checking existence of `"Allow" Button`
+    t =    92.95s Checking existence of `"OK" Button`
+    t =    92.99s Checking existence of `"Don't Allow" Button`
+    t =    93.03s Checking existence of `"Not Now" Button`
+    t =    93.09s Checking existence of `"Allow" Button`
+    t =    93.14s Checking existence of `"OK" Button`
+    t =    93.19s Checking existence of `"Don't Allow" Button`
+    t =    94.00s Added attachment named 'project-versions'
+    t =    94.00s Waiting 10.0s for Button (First Match) to exist
+    t =    95.02s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    95.02s         Checking existence of `Button (First Match)`
+    t =    95.09s Tap Button (First Match)
+    t =    95.09s     Wait for com.moodmixformat.mixbase to idle
+    t =    95.09s     Find the Button (First Match)
+    t =    95.16s     Check for interrupting elements affecting "Play Latest (FINAL MASTER)" Button
+    t =    95.22s     Synthesize event
+    t =    95.55s     Wait for com.moodmixformat.mixbase to idle
+    t =    99.29s Checking existence of `"Not Now" Button`
+    t =    99.35s Checking existence of `"Allow" Button`
+    t =    99.39s Checking existence of `"OK" Button`
+    t =    99.42s Checking existence of `"Don't Allow" Button`
+    t =    99.45s Checking existence of `"Not Now" Button`
+    t =    99.53s Checking existence of `"Allow" Button`
+    t =    99.58s Checking existence of `"OK" Button`
+    t =    99.64s Checking existence of `"Don't Allow" Button`
+    t =   100.20s Checking existence of `"Not Now" Button`
+    t =   100.26s Checking existence of `"Allow" Button`
+    t =   100.29s Checking existence of `"OK" Button`
+    t =   100.33s Checking existence of `"Don't Allow" Button`
+    t =   100.39s Checking existence of `"Not Now" Button`
+    t =   100.49s Checking existence of `"Allow" Button`
+    t =   100.55s Checking existence of `"OK" Button`
+    t =   100.61s Checking existence of `"Don't Allow" Button`
+    t =   101.18s Checking existence of `"Not Now" Button`
+    t =   101.21s Checking existence of `"Allow" Button`
+    t =   101.26s Checking existence of `"OK" Button`
+    t =   101.31s Checking existence of `"Don't Allow" Button`
+    t =   101.36s Checking existence of `"Not Now" Button`
+    t =   101.46s Checking existence of `"Allow" Button`
+    t =   101.54s Checking existence of `"OK" Button`
+    t =   101.60s Checking existence of `"Don't Allow" Button`
+    t =   102.15s Waiting 10.0s for "Player" Button to exist
+    t =   103.19s     Checking `Expect predicate `existsNoRetry == 1` for object "Player" Button`
+    t =   103.20s         Checking existence of `"Player" Button`
+    t =   103.27s Tap "Player" Button
+    t =   103.27s     Wait for com.moodmixformat.mixbase to idle
+    t =   103.33s     Find the "Player" Button
+    t =   103.46s     Check for interrupting elements affecting "play.circle" Button
+    t =   103.55s     Synthesize event
+    t =   103.95s     Wait for com.moodmixformat.mixbase to idle
+    t =   106.08s Waiting 12.0s for "Share" Button to exist
+    t =   107.15s     Checking `Expect predicate `existsNoRetry == 1` for object "Share" Button`
+    t =   107.15s         Checking existence of `"Share" Button`
+    t =   107.25s Waiting 30.0s for Any (First Match) to exist
+    t =   108.29s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   108.29s         Checking existence of `Any (First Match)`
+    t =   116.45s Checking existence of `"Not Now" Button`
+    t =   116.53s Checking existence of `"Allow" Button`
+    t =   116.56s Checking existence of `"OK" Button`
+    t =   116.60s Checking existence of `"Don't Allow" Button`
+    t =   116.65s Checking existence of `"Not Now" Button`
+    t =   116.67s Checking existence of `"Allow" Button`
+    t =   116.70s Checking existence of `"OK" Button`
+    t =   116.73s Checking existence of `"Don't Allow" Button`
+    t =   117.25s Checking existence of `"Not Now" Button`
+    t =   117.28s Checking existence of `"Allow" Button`
+    t =   117.36s Checking existence of `"OK" Button`
+    t =   117.40s Checking existence of `"Don't Allow" Button`
+    t =   117.46s Checking existence of `"Not Now" Button`
+    t =   117.50s Checking existence of `"Allow" Button`
+    t =   117.52s Checking existence of `"OK" Button`
+    t =   117.54s Checking existence of `"Don't Allow" Button`
+    t =   118.43s Added attachment named 'player'
+    t =   118.44s Checking existence of `"Not Now" Button`
+    t =   118.46s Checking existence of `"Allow" Button`
+    t =   118.49s Checking existence of `"OK" Button`
+    t =   118.51s Checking existence of `"Don't Allow" Button`
+    t =   118.54s Checking existence of `"Not Now" Button`
+    t =   118.57s Checking existence of `"Allow" Button`
+    t =   118.59s Checking existence of `"OK" Button`
+    t =   118.61s Checking existence of `"Don't Allow" Button`
+    t =   119.14s Checking existence of `"Not Now" Button`
+    t =   119.17s Checking existence of `"Allow" Button`
+    t =   119.22s Checking existence of `"OK" Button`
+    t =   119.26s Checking existence of `"Don't Allow" Button`
+    t =   119.38s Checking existence of `"Not Now" Button`
+    t =   119.46s Checking existence of `"Allow" Button`
+    t =   119.48s Checking existence of `"OK" Button`
+    t =   119.51s Checking existence of `"Don't Allow" Button`
+    t =   120.03s Checking existence of `"Not Now" Button`
+    t =   120.06s Checking existence of `"Allow" Button`
+    t =   120.09s Checking existence of `"OK" Button`
+    t =   120.12s Checking existence of `"Don't Allow" Button`
+    t =   120.14s Checking existence of `"Not Now" Button`
+    t =   120.16s Checking existence of `"Allow" Button`
+    t =   120.19s Checking existence of `"OK" Button`
+    t =   120.21s Checking existence of `"Don't Allow" Button`
+    t =   120.76s Waiting 10.0s for "Pipeline" Button to exist
+    t =   121.83s     Checking `Expect predicate `existsNoRetry == 1` for object "Pipeline" Button`
+    t =   121.83s         Checking existence of `"Pipeline" Button`
+    t =   121.98s Tap "Pipeline" Button
+    t =   121.98s     Wait for com.moodmixformat.mixbase to idle
+    t =   122.01s     Find the "Pipeline" Button
+    t =   122.04s     Check for interrupting elements affecting "checklist" Button
+    t =   122.07s     Synthesize event
+    t =   122.38s     Wait for com.moodmixformat.mixbase to idle
+    t =   123.95s Waiting 12.0s for Any (First Match) to exist
+    t =   124.98s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   124.98s         Checking existence of `Any (First Match)`
+    t =   131.04s Checking existence of `"Not Now" Button`
+    t =   131.07s Checking existence of `"Allow" Button`
+    t =   131.10s Checking existence of `"OK" Button`
+    t =   131.13s Checking existence of `"Don't Allow" Button`
+    t =   131.15s Checking existence of `"Not Now" Button`
+    t =   131.19s Checking existence of `"Allow" Button`
+    t =   131.23s Checking existence of `"OK" Button`
+    t =   131.37s Checking existence of `"Don't Allow" Button`
+    t =   131.91s Checking existence of `"Not Now" Button`
+    t =   131.94s Checking existence of `"Allow" Button`
+    t =   131.97s Checking existence of `"OK" Button`
+    t =   132.01s Checking existence of `"Don't Allow" Button`
+    t =   132.04s Checking existence of `"Not Now" Button`
+    t =   132.10s Checking existence of `"Allow" Button`
+    t =   132.15s Checking existence of `"OK" Button`
+    t =   132.19s Checking existence of `"Don't Allow" Button`
+    t =   133.03s Added attachment named 'pipeline'
+    t =   133.04s Checking existence of `"Not Now" Button`
+    t =   133.08s Checking existence of `"Allow" Button`
+    t =   133.11s Checking existence of `"OK" Button`
+    t =   133.15s Checking existence of `"Don't Allow" Button`
+    t =   133.19s Checking existence of `"Not Now" Button`
+    t =   133.29s Checking existence of `"Allow" Button`
+    t =   133.35s Checking existence of `"OK" Button`
+    t =   133.47s Checking existence of `"Don't Allow" Button`
+    t =   134.01s Checking existence of `"Not Now" Button`
+    t =   134.04s Checking existence of `"Allow" Button`
+    t =   134.08s Checking existence of `"OK" Button`
+    t =   134.11s Checking existence of `"Don't Allow" Button`
+    t =   134.14s Checking existence of `"Not Now" Button`
+    t =   134.19s Checking existence of `"Allow" Button`
+    t =   134.29s Checking existence of `"OK" Button`
+    t =   134.35s Checking existence of `"Don't Allow" Button`
+    t =   134.99s Checking existence of `"Not Now" Button`
+    t =   135.01s Checking existence of `"Allow" Button`
+    t =   135.03s Checking existence of `"OK" Button`
+    t =   135.06s Checking existence of `"Don't Allow" Button`
+    t =   135.09s Checking existence of `"Not Now" Button`
+    t =   135.14s Checking existence of `"Allow" Button`
+    t =   135.19s Checking existence of `"OK" Button`
+    t =   135.29s Checking existence of `"Don't Allow" Button`
+    t =   135.86s Waiting 10.0s for "Artwork" Button to exist
+    t =   136.91s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" Button`
+    t =   136.91s         Checking existence of `"Artwork" Button`
+    t =   136.97s Tap "Artwork" Button
+    t =   136.97s     Wait for com.moodmixformat.mixbase to idle
+    t =   136.97s     Find the "Artwork" Button
+    t =   137.02s     Check for interrupting elements affecting "photo.on.rectangle" Button
+    t =   137.08s     Synthesize event
+    t =   137.39s     Wait for com.moodmixformat.mixbase to idle
+    t =   139.35s Waiting 12.0s for "Artwork" NavigationBar to exist
+    t =   140.40s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" NavigationBar`
+    t =   140.40s         Checking existence of `"Artwork" NavigationBar`
+    t =   147.51s Checking existence of `"Not Now" Button`
+    t =   147.63s Checking existence of `"Allow" Button`
+    t =   147.67s Checking existence of `"OK" Button`
+    t =   147.72s Checking existence of `"Don't Allow" Button`
+    t =   147.77s Checking existence of `"Not Now" Button`
+    t =   147.90s Checking existence of `"Allow" Button`
+    t =   148.07s Checking existence of `"OK" Button`
+    t =   148.14s Checking existence of `"Don't Allow" Button`
+    t =   149.13s Added attachment named 'artwork'
+    t =   149.13s Checking existence of `"Not Now" Button`
+    t =   149.18s Checking existence of `"Allow" Button`
+    t =   149.25s Checking existence of `"OK" Button`
+    t =   149.28s Checking existence of `"Don't Allow" Button`
+    t =   149.36s Checking existence of `"Not Now" Button`
+    t =   149.54s Checking existence of `"Allow" Button`
+    t =   149.61s Checking existence of `"OK" Button`
+    t =   149.69s Checking existence of `"Don't Allow" Button`
+    t =   150.28s Checking existence of `"Not Now" Button`
+    t =   150.32s Checking existence of `"Allow" Button`
+    t =   150.36s Checking existence of `"OK" Button`
+    t =   150.39s Checking existence of `"Don't Allow" Button`
+    t =   150.44s Checking existence of `"Not Now" Button`
+    t =   150.52s Checking existence of `"Allow" Button`
+    t =   150.60s Checking existence of `"OK" Button`
+    t =   150.67s Checking existence of `"Don't Allow" Button`
+    t =   151.25s Waiting 10.0s for "Home" Button to exist
+    t =   152.29s     Checking `Expect predicate `existsNoRetry == 1` for object "Home" Button`
+    t =   152.30s         Checking existence of `"Home" Button`
+    t =   152.57s Tap "Home" Button
+    t =   152.57s     Wait for com.moodmixformat.mixbase to idle
+    t =   152.58s     Find the "Home" Button
+    t =   152.67s     Check for interrupting elements affecting "house" Button
+    t =   153.01s     Synthesize event
+    t =   153.37s     Wait for com.moodmixformat.mixbase to idle
+    t =   155.97s Waiting 12.0s for "mixBASE Feed" Button to exist
+    t =   157.03s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   157.03s         Checking existence of `"mixBASE Feed" Button`
+    t =   157.81s Checking existence of `"mixBASE Feed" Button`
+    t =   158.63s Checking existence of `"mixBASE Feed" Button`
+    t =   161.24s Checking existence of `"mixBASE Feed" Button`
+    t =   161.79s Checking existence of `"mixBASE Feed" Button`
+    t =   162.41s Waiting 20.0s for "mixBASE Feed" Button to exist
+    t =   163.49s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   163.49s         Checking existence of `"mixBASE Feed" Button`
+    t =   163.88s Waiting 10.0s for "mixBASE Feed" Button to exist
+    t =   164.90s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   164.90s         Checking existence of `"mixBASE Feed" Button`
+    t =   165.29s Tap "mixBASE Feed" Button
+    t =   165.29s     Wait for com.moodmixformat.mixbase to idle
+    t =   165.55s     Find the "mixBASE Feed" Button
+    t =   166.26s     Check for interrupting elements affecting "mixBASE Feed" Button
+    t =   166.93s     Synthesize event
+    t =   167.53s     Wait for com.moodmixformat.mixbase to idle
+    t =   169.00s Waiting 30.0s for "mixBASE Feed" NavigationBar to exist
+    t =   170.06s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   170.06s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   178.99s Checking existence of `"Not Now" Button`
+    t =   179.07s Checking existence of `"Allow" Button`
+    t =   179.12s Checking existence of `"OK" Button`
+    t =   179.15s Checking existence of `"Don't Allow" Button`
+    t =   179.19s Checking existence of `"Not Now" Button`
+    t =   179.28s Checking existence of `"Allow" Button`
+    t =   179.39s Checking existence of `"OK" Button`
+    t =   179.57s Checking existence of `"Don't Allow" Button`
+    t =   180.39s Added attachment named 'feed'
+    t =   180.39s Checking existence of `"mixBASE Feed" Button`
+    t =   180.56s Waiting 3.0s for "BackButton" Button to exist
+    t =   181.61s     Checking `Expect predicate `existsNoRetry == 1` for object "BackButton" Button`
+    t =   181.61s         Checking existence of `"BackButton" Button`
+    t =   181.65s Tap "BackButton" Button
+    t =   181.65s     Wait for com.moodmixformat.mixbase to idle
+    t =   181.67s     Find the "BackButton" Button
+    t =   181.69s     Check for interrupting elements affecting "BackButton" Button
+    t =   181.80s     Synthesize event
+    t =   182.38s     Wait for com.moodmixformat.mixbase to idle
+    t =   184.86s Checking existence of `"mixBASE Feed" Button`
+    t =   185.19s Checking existence of `"mixBASE Feed" Button`
+    t =   185.51s Checking existence of `"mixBASE Feed" Button`
+    t =   185.82s Waiting 20.0s for Any (First Match) to exist
+    t =   186.87s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   186.87s         Checking existence of `Any (First Match)`
+    t =   191.96s Checking existence of `"Not Now" Button`
+    t =   192.02s Checking existence of `"Allow" Button`
+    t =   192.07s Checking existence of `"OK" Button`
+    t =   192.12s Checking existence of `"Don't Allow" Button`
+    t =   192.17s Checking existence of `"Not Now" Button`
+    t =   192.72s Checking existence of `"Allow" Button`
+    t =   193.14s Checking existence of `"OK" Button`
+    t =   193.52s Checking existence of `"Don't Allow" Button`
+    t =   194.68s Added attachment named 'home-playing'
+/Users/runner/work/mixbase/mixbase/ios/screenshots/ScreenshotTour/ScreenshotTourTests.swift:121: error: -[ScreenshotTour.ScreenshotTourTests testTour] : XCTAssertTrue failed - Never saw: the expanded version history — see diag-*.png / diag-*.txt
+    t =   196.02s Tear Down
+Test Case '-[ScreenshotTour.ScreenshotTourTests testTour]' failed (196.766 seconds).
+Test Suite 'ScreenshotTourTests' failed at 2026-09-16 15:44:00.696.
+	 Executed 1 test, with 1 failure (0 unexpected) in 196.766 (196.768) seconds
+Test Suite 'ScreenshotTour.xctest' failed at 2026-09-16 15:44:00.699.
+	 Executed 1 test, with 1 failure (0 unexpected) in 196.766 (196.770) seconds
+Test Suite 'All tests' failed at 2026-09-16 15:44:00.699.
+	 Executed 1 test, with 1 failure (0 unexpected) in 196.766 (196.771) seconds
+2026-09-16 15:44:31.215 xcodebuild[12759:40539] [MT] IDETestOperationsObserverDebug: 267.181 elapsed -- Testing started completed.
+2026-09-16 15:44:31.215 xcodebuild[12759:40539] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-16 15:44:31.215 xcodebuild[12759:40539] [MT] IDETestOperationsObserverDebug: 267.181 sec, +267.181 sec -- end
 
 Test session results, code coverage, and logs:
 	/Users/runner/work/_temp/tour.xcresult
 
-** TEST SUCCEEDED **
+** TEST FAILED **
 
 Testing started
