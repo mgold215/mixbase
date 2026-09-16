@@ -15,5 +15,6 @@
   "attachBuild": true,
   "minBuildUploadedAt": "2026-09-16T14:44:00Z",
   "buildWaitMinutes": 25,
-  "submit": false
+  "submit": false,
+  "syncLivePromo": true
 }
