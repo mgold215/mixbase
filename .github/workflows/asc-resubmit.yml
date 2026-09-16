@@ -1,12 +1,8 @@
-# re-run 2026-09-15 (3): confirm territories moved from PROCESSING_TO_AVAILABLE to AVAILABLE
-# re-run 2026-09-15 (2): availability + price after 'App Not Available in your country'
-# re-run 2026-09-11: state after the 2.1(b) information request
-# TEMP (branch asc5-inspect only): read-only App Store review state dump.
+# re-run 2026-09-16: dump the LIVE listing copy + screenshot sets + newer builds
+# TEMP (branch asc5-inspect only): read-only App Store state dump.
 #
 # Same push-driven pattern as previous asc-* TEMP branches — remote sessions
-# cannot workflow_dispatch (403), but a push to this branch runs it. Read-only:
-# prints review submissions, version states, and the Resolution Center threads
-# and messages (the actual rejection text from App Review). Changes nothing.
+# cannot workflow_dispatch (403), but a push to this branch runs it. Read-only.
 
 name: App Store Resubmit
 
@@ -30,7 +26,7 @@ jobs:
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
-      - name: Dump review state + resolution center
+      - name: Dump listing metadata, screenshots and builds
         run: |
           cat > /tmp/inspect.mjs <<'EOF'
           import crypto from 'node:crypto'
@@ -59,53 +55,74 @@ jobs:
             try { json = JSON.parse(text) } catch { /* non-JSON */ }
             return { status: res.status, ok: res.ok, json, text }
           }
-          function dump(label, r, cap = 6000) {
-            console.log(`\n===== ${label} -> HTTP ${r.status} =====`)
-            const body = r.json ? JSON.stringify(r.json, null, 2) : r.text
-            console.log(body.length > cap ? body.slice(0, cap) + `\n...[truncated ${body.length - cap} chars]` : body)
-            return r
-          }
+          const show = (v) => JSON.stringify(v)
 
           const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}`)
           const app = apps.json?.data?.[0]
-          if (!app) { dump('find app FAILED', apps); process.exit(1) }
-          console.log(`App: ${app.attributes.name} (${app.id}) ${JSON.stringify(app.attributes)}`)
+          if (!app) { console.log('find app FAILED', apps.status, apps.text.slice(0, 500)); process.exit(1) }
+          console.log(`App: ${app.attributes.name} (${app.id})`)
 
-          const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=5`)
-          for (const v of vers.json?.data ?? []) {
-            console.log(`Version ${v.attributes.versionString}: state=${v.attributes.appVersionState ?? v.attributes.appStoreState} releaseType=${v.attributes.releaseType} earliestRelease=${v.attributes.earliestReleaseDate}`)
-          }
-
-          // ── Availability (v2) ────────────────────────────────────────────
-          const avail = dump('appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`))
-          const availId = avail.json?.data?.id
-          if (availId) {
-            const ta = await api('GET', `/v2/appAvailabilities/${availId}/territoryAvailabilities?limit=200&fields[territoryAvailabilities]=available,contentStatuses,releaseDate,preOrderEnabled,territory&include=territory`)
-            const rows = ta.json?.data ?? []
-            console.log(`\nterritoryAvailabilities: HTTP ${ta.status}, ${rows.length} rows`)
-            const byStatus = {}
-            let availableCount = 0
-            for (const r of rows) {
-              const tid = r.relationships?.territory?.data?.id ?? '?'
-              if (r.attributes.available) availableCount++
-              const key = `${r.attributes.available ? 'available' : 'NOT available'} / ${(r.attributes.contentStatuses ?? []).join(',') || 'none'}`
-              byStatus[key] = (byStatus[key] ?? 0) + 1
-              if (['USA', 'CAN', 'GBR'].includes(tid)) console.log(`  ${tid}: ${JSON.stringify(r.attributes)}`)
+          // ── App info (name / subtitle / categories) ─────────────────────
+          const infos = await api('GET', `/v1/apps/${app.id}/appInfos?include=primaryCategory,secondaryCategory&limit=5`)
+          for (const info of infos.json?.data ?? []) {
+            console.log(`\n== appInfo ${info.id}: state=${info.attributes.state ?? info.attributes.appStoreState} primary=${info.relationships?.primaryCategory?.data?.id} secondary=${info.relationships?.secondaryCategory?.data?.id} kidsAge=${info.attributes.kidsAgeBand}`)
+            const locs = await api('GET', `/v1/appInfos/${info.id}/appInfoLocalizations?limit=10`)
+            for (const l of locs.json?.data ?? []) {
+              const a = l.attributes
+              console.log(`   [${a.locale}] name=${show(a.name)} subtitle=${show(a.subtitle)} privacyPolicyUrl=${show(a.privacyPolicyUrl)} privacyChoicesUrl=${show(a.privacyChoicesUrl)}`)
             }
-            console.log(`available in ${availableCount}/${rows.length} territories`)
-            console.log('status buckets:', JSON.stringify(byStatus, null, 2))
-            if (!ta.ok) dump('territoryAvailabilities error', ta)
           }
 
-          // ── Price schedule ───────────────────────────────────────────────
-          const sched = dump('appPriceSchedule', await api('GET', `/v1/apps/${app.id}/appPriceSchedule?include=baseTerritory`))
-          const schedId = sched.json?.data?.id
-          if (schedId) {
-            dump('manualPrices', await api('GET', `/v1/appPriceSchedules/${schedId}/manualPrices?include=appPricePoint,territory&limit=10`), 4000)
-            const auto = await api('GET', `/v1/appPriceSchedules/${schedId}/automaticPrices?limit=5`)
-            console.log(`automaticPrices: HTTP ${auto.status}, ${(auto.json?.data ?? []).length} rows`)
+          // ── Versions (both platforms) + localizations + screenshot sets ─
+          for (const platform of ['IOS', 'MAC_OS']) {
+            const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=${platform}&limit=5`)
+            console.log(`\n\n######## ${platform}: ${(vers.json?.data ?? []).length} versions (HTTP ${vers.status})`)
+            for (const v of vers.json?.data ?? []) {
+              const a = v.attributes
+              console.log(`\n== version ${a.versionString} (${v.id}) state=${a.appVersionState ?? a.appStoreState} releaseType=${a.releaseType} created=${a.createdDate} copyright=${show(a.copyright)}`)
+              const build = await api('GET', `/v1/appStoreVersions/${v.id}/build?fields[builds]=version,uploadedDate,processingState`)
+              console.log(`   build: ${build.json?.data ? `${build.json.data.attributes.version} uploaded ${build.json.data.attributes.uploadedDate}` : `none (HTTP ${build.status})`}`)
+              const locs = await api('GET', `/v1/appStoreVersions/${v.id}/appStoreVersionLocalizations?limit=10`)
+              for (const l of locs.json?.data ?? []) {
+                const la = l.attributes
+                console.log(`\n   --- localization ${la.locale} (${l.id})`)
+                console.log(`   promotionalText: ${show(la.promotionalText)}`)
+                console.log(`   keywords: ${show(la.keywords)}`)
+                console.log(`   supportUrl: ${show(la.supportUrl)} marketingUrl: ${show(la.marketingUrl)}`)
+                console.log(`   whatsNew: ${show(la.whatsNew)}`)
+                console.log(`   description (${(la.description ?? '').length} chars):\n${la.description ?? ''}\n   --- end description`)
+                const sets = await api('GET', `/v1/appStoreVersionLocalizations/${l.id}/appScreenshotSets?include=appScreenshots&limit=20`)
+                const shotsById = new Map((sets.json?.included ?? []).filter((i) => i.type === 'appScreenshots').map((i) => [i.id, i]))
+                console.log(`   screenshot sets: ${(sets.json?.data ?? []).length} (HTTP ${sets.status})`)
+                for (const s of sets.json?.data ?? []) {
+                  const ids = (s.relationships?.appScreenshots?.data ?? []).map((d) => d.id)
+                  console.log(`     set ${s.attributes.screenshotDisplayType} (${s.id}): ${ids.length} screenshots`)
+                  for (const id of ids) {
+                    const sc = shotsById.get(id)
+                    if (!sc) { console.log(`       ${id}: (not included)`); continue }
+                    const sa = sc.attributes
+                    console.log(`       ${sa.fileName} ${sa.imageAsset?.width}x${sa.imageAsset?.height} ${sa.fileSize}B state=${sa.assetDeliveryState?.state} url=${(sa.imageAsset?.templateUrl ?? '').replace('{w}', String(sa.imageAsset?.width ?? 0)).replace('{h}', String(sa.imageAsset?.height ?? 0)).replace('{f}', 'png')}`)
+                  }
+                }
+                const prev = await api('GET', `/v1/appStoreVersionLocalizations/${l.id}/appPreviewSets?include=appPreviews&limit=20`)
+                console.log(`   preview (video) sets: ${(prev.json?.data ?? []).length} (HTTP ${prev.status})`)
+                for (const p of prev.json?.data ?? []) console.log(`     ${p.attributes.previewType}: ${(p.relationships?.appPreviews?.data ?? []).length} previews`)
+              }
+            }
           }
 
+          // ── Builds (newest first, both platforms) ───────────────────────
+          for (const platform of ['IOS', 'MAC_OS']) {
+            const builds = await api('GET', `/v1/builds?filter[app]=${app.id}&filter[preReleaseVersion.platform]=${platform}&sort=-uploadedDate&limit=8&fields[builds]=version,uploadedDate,processingState,expired,minOsVersion&include=preReleaseVersion&fields[preReleaseVersions]=version,platform`)
+            const pre = new Map((builds.json?.included ?? []).map((i) => [i.id, i.attributes.version]))
+            console.log(`\n== ${platform} builds (HTTP ${builds.status}):`)
+            for (const b of builds.json?.data ?? []) {
+              const a = b.attributes
+              console.log(`   ${pre.get(b.relationships?.preReleaseVersion?.data?.id) ?? '?'} (${a.version}) uploaded=${a.uploadedDate} state=${a.processingState} expired=${a.expired} minOS=${a.minOsVersion}`)
+            }
+          }
+
+          // ── Review details (contact + notes length) ─────────────────────
           console.log('\nRead-only inspection complete. No changes made.')
           EOF
           node /tmp/inspect.mjs
