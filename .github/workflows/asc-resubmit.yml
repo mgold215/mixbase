@@ -1,11 +1,9 @@
-# TEMP (branch asc6-submit only): TERRITORY AVAILABILITY fix, 2026-09-15.
-# Version 1.0 is READY_FOR_DISTRIBUTION (approved, submission 902f9887) but the
-# App Store shows "App Not Available — not available in your country or
-# region". The read-only inspect run found GET /v1/apps/{id}/appAvailabilityV2
-# -> 404 "no resource of type appAvailabilities", i.e. the app record has NO
-# availability configured. This run re-confirms that with every read the API
-# offers, and only then creates one: available in every App Store territory,
-# and automatically in territories Apple adds later. Free app, no pre-order.
+# TEMP (branch asc6-submit only): PROMOTIONAL TEXT fix on the LIVE 1.0 listing,
+# 2026-09-16. The live promo text claimed "compare side-by-side", which the app
+# does not do (no A/B compare — see AGENTS.md). Promotional text is the one
+# field Apple lets you change on a live version without a new review, so this
+# lands immediately. Description / subtitle / screenshots need version 1.0.1
+# (separate lane: .github/workflows/app-store-listing.yml).
 #
 # Same push-driven pattern as the other asc-* TEMP branches: remote sessions
 # cannot workflow_dispatch (403), but a push to this branch runs it.
@@ -32,13 +30,15 @@ jobs:
       ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
       BUNDLE_ID: com.moodmixformat.mixbase
     steps:
-      - name: Confirm missing availability, then make the app available worldwide
+      - name: Replace the live promotional text
         run: |
-          cat > /tmp/availability.mjs <<'EOF'
+          cat > /tmp/promo.mjs <<'EOF'
           import crypto from 'node:crypto'
 
           const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8_BASE64, BUNDLE_ID } = process.env
           const BASE = 'https://api.appstoreconnect.apple.com'
+          const PROMO = 'Every bounce, mix and master in one place. Track every version, share private links for timestamped feedback, and run your release checklist from rough to release.'
+          if (PROMO.length > 170) { console.log(`promo too long: ${PROMO.length}`); process.exit(1) }
 
           const b64url = (buf) => Buffer.from(buf).toString('base64url')
           function jwt() {
@@ -61,113 +61,25 @@ jobs:
             try { json = JSON.parse(text) } catch { /* non-JSON */ }
             return { status: res.status, ok: res.ok, json, text }
           }
-          function dump(label, r, cap = 3000) {
-            console.log(`\n===== ${label} -> HTTP ${r.status} =====`)
-            const body = r.json ? JSON.stringify(r.json, null, 2) : r.text
-            console.log(body.length > cap ? body.slice(0, cap) + `\n...[truncated ${body.length - cap} chars]` : body)
-            return r
-          }
-          const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-          async function summarizeTerritories(availId, label) {
-            const ta = await api('GET', `/v2/appAvailabilities/${availId}/territoryAvailabilities?limit=200&fields[territoryAvailabilities]=available,contentStatuses,releaseDate,preOrderEnabled,territory&include=territory`)
-            const rows = ta.json?.data ?? []
-            console.log(`\n${label}: territoryAvailabilities HTTP ${ta.status}, ${rows.length} rows`)
-            if (!ta.ok) { dump(`${label} error`, ta); return { ok: false, rows } }
-            const byStatus = {}
-            let availableCount = 0
-            for (const r of rows) {
-              const tid = r.relationships?.territory?.data?.id ?? '?'
-              if (r.attributes.available) availableCount++
-              const key = `${r.attributes.available ? 'available' : 'NOT available'} / ${(r.attributes.contentStatuses ?? []).join(',') || 'none'}`
-              byStatus[key] = (byStatus[key] ?? 0) + 1
-              if (['USA', 'CAN', 'GBR', 'DEU', 'AUS'].includes(tid)) console.log(`  ${tid}: ${JSON.stringify(r.attributes)}`)
-            }
-            console.log(`available in ${availableCount}/${rows.length} territories`)
-            console.log('status buckets:', JSON.stringify(byStatus, null, 2))
-            return { ok: true, rows, availableCount }
-          }
-
-          // ── App + version state ──────────────────────────────────────────
           const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}`)
           const app = apps.json?.data?.[0]
-          if (!app) { dump('find app FAILED', apps); process.exit(1) }
-          console.log(`App: ${app.attributes.name} (${app.id})`)
-          const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=3`)
-          for (const v of vers.json?.data ?? []) {
-            console.log(`Version ${v.attributes.versionString}: state=${v.attributes.appVersionState ?? v.attributes.appStoreState} releaseType=${v.attributes.releaseType}`)
-          }
-
-          // ── Every read the API offers for availability ───────────────────
-          const readV2Rel = dump('GET /v1/apps/{id}/appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`), 1500)
-          const readV2ById = dump('GET /v2/appAvailabilities/{appId}', await api('GET', `/v2/appAvailabilities/${app.id}`), 1500)
-          const readV1Terr = dump('GET /v1/apps/{id}/availableTerritories (deprecated)', await api('GET', `/v1/apps/${app.id}/availableTerritories?limit=200`), 1500)
-          const readV1Avail = dump('GET /v1/apps/{id}/appAvailability (deprecated)', await api('GET', `/v1/apps/${app.id}/appAvailability`), 1500)
-
-          const existingId = readV2Rel.json?.data?.id ?? readV2ById.json?.data?.id ?? null
-          if (existingId) {
-            console.log(`\nAvailability record EXISTS (${existingId}) — reading territories instead of creating.`)
-            const s = await summarizeTerritories(existingId, 'existing')
-            if (s.ok && s.availableCount === 0) {
-              console.log('\nRecord exists but the app is available in ZERO territories. Fix this via territory availability update.')
-            }
-            console.log('\nNo write performed (record already existed).')
-            process.exit(0)
-          }
-          const v1Count = (readV1Terr.json?.data ?? []).length
-          if (readV1Terr.ok && v1Count > 0) {
-            console.log(`\nDeprecated availableTerritories reports ${v1Count} territories although v2 has no record — not creating blindly.`)
-            process.exit(2)
-          }
-          console.log('\nCONFIRMED: no availability record on the app (v2 relationship 404, v2 by id 404, v1 reads empty/404).')
-
-          // ── All App Store territories ────────────────────────────────────
-          const terr = await api('GET', `/v1/territories?limit=200`)
-          const territories = (terr.json?.data ?? []).map((t) => t.id)
-          console.log(`\nterritories: HTTP ${terr.status}, ${territories.length} ids (USA present: ${territories.includes('USA')})`)
-          if (!terr.ok || territories.length === 0 || !territories.includes('USA')) { dump('territories FAILED', terr); process.exit(1) }
-
-          // ── Create: available everywhere, auto-available in new territories
-          const body = {
-            data: {
-              type: 'appAvailabilities',
-              attributes: { availableInNewTerritories: true },
-              relationships: {
-                app: { data: { type: 'apps', id: app.id } },
-                territoryAvailabilities: { data: territories.map((id) => ({ type: 'territoryAvailabilities', id: `\${${id}}` })) },
-              },
-            },
-            included: territories.map((id) => ({
-              type: 'territoryAvailabilities',
-              id: `\${${id}}`,
-              attributes: { available: true },
-              relationships: { territory: { data: { type: 'territories', id } } },
-            })),
-          }
-          let created = null
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            const r = await api('POST', `/v2/appAvailabilities`, body)
-            if (r.ok) { created = r; break }
-            dump(`POST /v2/appAvailabilities attempt ${attempt} FAILED`, r, 2500)
-            if (r.status === 409 && /already|exist/i.test(r.text)) break
-            if (attempt < 3) await sleep(10000)
-          }
-          if (!created) {
-            console.log('\nCreate did not succeed. Re-reading availability in case it was created anyway…')
-            const again = await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`)
-            if (again.json?.data?.id) { await summarizeTerritories(again.json.data.id, 'post-failure re-read') }
-            process.exit(1)
-          }
-          console.log(`\nCREATED appAvailabilities ${created.json?.data?.id} availableInNewTerritories=${created.json?.data?.attributes?.availableInNewTerritories}`)
-
-          // ── Verify ───────────────────────────────────────────────────────
-          await sleep(5000)
-          const verify = dump('verify GET /v1/apps/{id}/appAvailabilityV2', await api('GET', `/v1/apps/${app.id}/appAvailabilityV2`), 1500)
-          const vid = verify.json?.data?.id
-          if (!vid) { console.log('Verification read has no id — check App Store Connect > Pricing and Availability.'); process.exit(1) }
-          const s = await summarizeTerritories(vid, 'after create')
-          const usa = s.rows.find((r) => r.relationships?.territory?.data?.id === 'USA')
-          if (!usa?.attributes?.available) { console.log('\nUSA is still not available — investigate.'); process.exit(1) }
-          console.log('\nDone: app availability created; USA available. Store listing propagation can take a few hours.')
+          if (!app) { console.log('find app FAILED', apps.status, apps.text.slice(0, 500)); process.exit(1) }
+          const vers = await api('GET', `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=READY_FOR_DISTRIBUTION&limit=1`)
+          const live = vers.json?.data?.[0]
+          if (!live) { console.log('no live iOS version found', vers.status, vers.text.slice(0, 500)); process.exit(1) }
+          console.log(`live version ${live.attributes.versionString} (${live.id}) state=${live.attributes.appVersionState}`)
+          const locs = await api('GET', `/v1/appStoreVersions/${live.id}/appStoreVersionLocalizations`)
+          const loc = (locs.json?.data ?? []).find((l) => l.attributes.locale === 'en-US')
+          if (!loc) { console.log('no en-US localization', locs.status, locs.text.slice(0, 500)); process.exit(1) }
+          console.log(`before: ${JSON.stringify(loc.attributes.promotionalText)}`)
+          if (loc.attributes.promotionalText === PROMO) { console.log('already up to date'); process.exit(0) }
+          const patch = await api('PATCH', `/v1/appStoreVersionLocalizations/${loc.id}`, {
+            data: { type: 'appStoreVersionLocalizations', id: loc.id, attributes: { promotionalText: PROMO } },
+          })
+          console.log(`PATCH -> HTTP ${patch.status}`)
+          if (!patch.ok) { console.log(patch.text.slice(0, 1500)); process.exit(1) }
+          const again = await api('GET', `/v1/appStoreVersionLocalizations/${loc.id}`)
+          console.log(`after:  ${JSON.stringify(again.json?.data?.attributes?.promotionalText)}`)
           EOF
-          node /tmp/availability.mjs
+          node /tmp/promo.mjs
