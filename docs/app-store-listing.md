@@ -11,55 +11,53 @@ mixBase
 
 ## Subtitle (30 chars max)
 ```
-Rough-to-Release Versioning
+Mix Versions, Rough to Release
 ```
 
 ## Promotional Text (170 chars max — appears at top, can be updated without a new review)
 ```
-Track every version of every track — from first rough to final master. Share with collaborators, get timestamped feedback, ship to DSPs.
+Every bounce, mix and master in one place. Track every version, share private links for timestamped feedback, and run your release checklist from rough to release.
 ```
 
 ## Description (4000 chars max)
 
 ```
-mixBase is version control for music producers. Every time you bounce a mix, upload it. mixBase keeps every version — so you can hear how far a track has come, compare mixes side by side, and never lose a good take again.
+mixBase is version control for your music. Every time you bounce a mix, upload it: mixBase keeps every version of every track, from the first rough to the final master, so you can hear how far a song has come and never lose a good take again.
 
-TRACK YOUR MUSIC EVOLUTION
-Upload WAV, MP3, FLAC, and M4A files. Each upload creates a new version under the project, numbered automatically — name a file "MIX 3" or "MASTER 2" and mixBASE labels and stages it for you (Mix → Master → Finished → Released). Add private notes and change logs, and jump back to any version, anytime.
+TRACK EVERY VERSION
+Each upload becomes the next numbered mix of its project. Label it (rough mix, mix 2, final master), move it from Mix to Master to Released, add private notes and a change log, and jump back to any earlier version at any time.
 
-SHARE & GET REAL FEEDBACK
-Generate a secure share link for any version. Your collaborator, mix engineer, or A&R contact opens it in a browser — no account required. They hear your track and can leave timestamped comments pinned to the exact moment they're referencing. You see every note in your dashboard.
+LISTEN ANYWHERE
+A full-screen player with artwork, scrubbing, a queue, shuffle and repeat, lock-screen and Control Center controls, AirPlay, and a Now Playing widget for your home screen.
 
-RELEASE PIPELINE
-Add a release to the Pipeline and check off every milestone: mixing done, mastering done, artwork ready, DSP submitted, social posts scheduled. Track your releases across Spotify, Apple Music, Tidal, Bandcamp, SoundCloud, YouTube, and Amazon Music from one board.
+SHARE FOR FEEDBACK
+Send a private listening link for any mix. Collaborators open it in a browser, no account required, and leave comments pinned to the exact moment they mean. Their notes show up on that mix in the app.
 
-AI ARTWORK GENERATION
-Describe the vibe of a track in plain language and mixBase generates cover art using Flux AI. Generate multiple options, pick the one that fits, and attach it to the project — ready to submit to any DSP.
+MASTER CHECK
+Measure the loudness of your latest mix (LUFS and peak) right on your phone and get limiter and chain recommendations before you send it off.
 
-COLLECTIONS
-Group tracks into Albums, EPs, and Playlists. Drag to reorder. Attach cover art. Share entire collections with your team.
+RUN YOUR RELEASE PIPELINE
+Add a release and check off every milestone: mixing done, mastering done, artwork ready, submitted to DSPs, social posts out, press release sent. Keep your released catalog, with ISRC, UPC and release dates, in one library synced from your streaming profile.
 
-FULL-SCREEN PLAYER
-An immersive player with album art backdrop, waveform scrubber, shuffle, loop, and lock screen controls. Keyboard shortcuts on desktop. Works offline once tracks are cached.
+AI COVER ART
+Describe the vibe and generate cover-art concepts for a track, then apply the one that fits. Every account includes a monthly allowance.
 
-BUILT FOR PRODUCERS
-→ Audio waveform display with seek-to-position
-→ BPM and musical key display per version
-→ Per-version download control (you decide what collaborators can save)
-→ Private vs public notes on every version
-→ Activity feed showing the full history of every project
-→ Dark-first design that won't blind you in a dim studio
+HEAR WHAT OTHERS ARE MAKING
+The community feed shows what other artists on mixBase are working on, with comments on every upload. Report or block anything you don't want to see.
 
-Your audio never passes through our servers — files go directly to encrypted cloud storage, so large sessions upload fast and reliably even on mobile.
+BUILT FOR THE STUDIO
+- Genre, BPM and key on every project
+- Albums, EPs and playlists to group your tracks
+- A dark interface that won't blind you in a dim room
 
-mixBase is for independent producers and small teams who need a no-nonsense way to manage the messy middle of music production: the dozens of mix revisions, the feedback loops, the last-minute master tweaks, and the checklist of things to do before a song goes live.
+mixBase is free. There are no subscriptions, paid plans or in-app purchases.
 ```
 
 ---
 
 ## Keywords (100 chars max — comma-separated, no spaces after commas)
 ```
-music,producer,version control,mixing,mastering,DAW,audio,tracks,release,pipeline,feedback,bounce
+music production,mix versions,version control,producer,mastering,release pipeline,feedback,daw
 ```
 
 ## Support URL
@@ -129,7 +127,38 @@ None. mixBase is free on every platform — there are no subscriptions or paid p
 
 ---
 
+## What's New (Version 1.0.1)
+```
+A refreshed App Store listing with new screenshots, plus:
+- Project cards show each track's real mix status.
+- The Home dashboard's Mixing count reflects tracks still in progress.
+- The community feed shows the upload date and time.
+- Now Playing shows the song title on its own line.
+- Settings shows the installed version.
+```
+
 ## What's New (Version 1.0)
 ```
 First release. Build your music version history, share tracks for feedback, and manage your release pipeline — all in one place.
 ```
+
+---
+
+## Screenshots (automated)
+
+Store screenshots are captured on a GitHub macOS runner, not by hand: the
+`App Store Listing` workflow (`.github/workflows/app-store-listing.yml`,
+push-driven TEMP branch `asc7-listing`) builds the app for an iPhone 17 Pro Max
+simulator, signs in as the App Review demo account (login read from the
+version's review detail in App Store Connect, so no extra secret exists) and
+runs the XCUITest tour in `ios/screenshots/` — Home, Projects, Project detail,
+Now Playing, Pipeline, Artwork, Feed. The PNGs land in `ios/metadata/screenshots/`
+(6.9", 1320x2868); the 6.5" set is derived by resizing. `listing-request.json`
+chooses inspect vs publish, which shots to upload and whether to submit;
+`listing-copy.json` is the source of truth for the copy above.
+
+The demo account (review@mixbase.app) was seeded 2026-09-16 with the
+developer's three released singles, three mixes each, listener feedback, a
+release pipeline at three stages, the released-track library and a collection,
+so every screen has real content. Its cover art is refreshed from the released
+catalog by the workflow's seed job.

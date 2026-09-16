@@ -1,0 +1,214 @@
+# App Store listing lane: simulator screenshots + copy + build + submit.
+#
+# Push-driven TEMP branch, like the other asc-* lanes (remote sessions cannot
+# dispatch workflows, 403): create/refresh branch `asc7-listing` from main and
+# push. Orders come from .github/asc-maintenance/listing-request.json
+# ("inspect" = read-only dry run, "publish" = write to App Store Connect) and
+# the copy from listing-copy.json.
+#
+#   seed     (ubuntu)  gives the App Review demo account real released cover
+#                      art (signs in as that account; login comes from the
+#                      version's review detail in App Store Connect, so no
+#                      extra repo secret exists).
+#   capture  (macOS)   builds the real app from ios/mixBase.xcodeproj for the
+#                      simulator, boots an iPhone 17 Pro Max (6.9", 1320x2868),
+#                      signs in as the demo account and walks the app with the
+#                      XCUITest tour in ios/screenshots/, saving PNGs.
+#   commit   (ubuntu)  pushes the PNGs to ios/metadata/screenshots/ on this
+#                      branch with [skip ci] so they can be reviewed from any
+#                      session (its token can write; it holds no ASC key).
+#   publish  (ubuntu)  derives the 6.5" set (1284x2778) and runs
+#                      asc-listing.mjs per listing-request.json.
+#
+# macOS runners bill 10x on private repos — this lane never runs on main.
+
+name: App Store Listing
+
+on:
+  push:
+    branches: [asc7-listing]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-listing
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Seed demo artwork
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Released cover art onto the demo projects
+        run: node .github/asc-maintenance/listing-demo-seed.mjs
+
+  capture:
+    name: Capture screenshots (simulator)
+    needs: seed
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No versioned Xcode found"; exit 1; fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Demo login from App Store Connect
+        run: node .github/asc-maintenance/listing-demo-login.mjs
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the screenshot tour project
+        run: cd ios/screenshots && xcodegen generate
+
+      - name: Create and boot the simulator
+        id: sim
+        run: |
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+          DEVICE_TYPE=""
+          for name in "iPhone 17 Pro Max" "iPhone 16 Pro Max"; do
+            if xcrun simctl list devicetypes | grep -q "^$name ("; then DEVICE_TYPE="$name"; break; fi
+          done
+          if [ -z "$DEVICE_TYPE" ]; then xcrun simctl list devicetypes; echo "no 6.9-inch iPhone simulator"; exit 1; fi
+          RUNTIME=$(xcrun simctl list runtimes | grep -E '^iOS' | tail -1 | sed -E 's/.*- (com\.apple\.CoreSimulator\.SimRuntime\.[^ ]+).*/\1/')
+          echo "device: $DEVICE_TYPE  runtime: $RUNTIME"
+          UDID=$(xcrun simctl create "ShotPhone" "$DEVICE_TYPE" "$RUNTIME")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build the app for the simulator
+        run: |
+          xcodebuild \
+            -project ios/mixBase.xcodeproj \
+            -scheme mixBase \
+            -configuration Release \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tail -40
+          APP=$(find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name "mixBase.app" | head -1)
+          if [ -z "$APP" ]; then echo "mixBase.app not found"; exit 1; fi
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$APP"
+
+      - name: Walk the app and capture
+        env:
+          TEST_RUNNER_MIXBASE_EMAIL: ${{ env.MIXBASE_EMAIL }}
+          TEST_RUNNER_MIXBASE_PASSWORD: ${{ env.MIXBASE_PASSWORD }}
+          TEST_RUNNER_SCREENSHOT_DIR: ${{ runner.temp }}/shots/iphone69
+        run: |
+          mkdir -p "$RUNNER_TEMP/shots/iphone69"
+          set -o pipefail
+          xcodebuild test \
+            -project ios/screenshots/ScreenshotTour.xcodeproj \
+            -scheme ScreenshotTour \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$RUNNER_TEMP/dd-tour" \
+            -resultBundlePath "$RUNNER_TEMP/tour.xcresult" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/tour.log" | grep -E "Test Case|error|Never saw|passed|failed|\*\*" | tail -80
+          ls -la "$RUNNER_TEMP/shots/iphone69"
+          for f in "$RUNNER_TEMP"/shots/iphone69/*.png; do
+            echo "$(basename "$f"): $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}')"
+          done
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: error
+
+      - name: Upload test result bundle
+        if: always()
+        run: |
+          cd "$RUNNER_TEMP" && zip -qr tour.xcresult.zip tour.xcresult tour.log || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tour-xcresult
+          path: ${{ runner.temp }}/tour.xcresult.zip
+          if-no-files-found: ignore
+
+      - name: Shut down the simulator
+        if: always()
+        run: xcrun simctl shutdown "${{ steps.sim.outputs.udid }}" || true
+
+  commit:
+    name: Commit screenshots to the branch
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: screenshots
+          path: shots
+      - name: Push PNGs to ios/metadata/screenshots (skip ci)
+        run: |
+          ls -la shots/iphone69
+          rm -f ios/metadata/screenshots/*.png
+          cp shots/iphone69/*.png ios/metadata/screenshots/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A ios/metadata/screenshots
+          if git diff --cached --quiet; then echo "screenshots unchanged"; exit 0; fi
+          git commit -m "App Store screenshots captured on the simulator [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+  publish:
+    name: Publish to App Store Connect
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+      SCREENSHOTS_DIR: ${{ github.workspace }}/shots
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: screenshots
+          path: shots
+      - name: Derive the 6.5-inch set (1284x2778)
+        run: |
+          mkdir -p shots/iphone65
+          for f in shots/iphone69/*.png; do
+            convert "$f" -resize 1284x2778! "shots/iphone65/$(basename "$f")"
+          done
+          identify shots/iphone69/*.png shots/iphone65/*.png | awk '{print $1, $3}'
+      - name: Inspect or publish per listing-request.json
+        run: node .github/asc-maintenance/asc-listing.mjs
