@@ -52,3 +52,12 @@ test-results/
 # agent tool scratch dirs — untracked junk here has caused phantom lint failures
 .agents/
 .codex/
+
+# android (Gradle/Android Studio outputs — sources live in android/)
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/.kotlin/

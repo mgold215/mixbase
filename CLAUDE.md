@@ -57,6 +57,10 @@
 - Mac bundle id is `com.moodmixformat.mixbase` — SAME as iOS (universal app record; macOS platform of the existing mixBASE ASC app). Sign in with Apple therefore uses the already-authorized audience; nothing to add in Supabase. Don't "fix" the shared id — it's what makes one TestFlight app serve both platforms.
 - Both TestFlight lanes mint runner dev certificates; `asc-cert-audit.yml` prunes them monthly (keeps newest 4 'Created via API') so the 2026-08-29 certificate-cap outage can't recur.
 
+## Android App
+- Native Kotlin/Jetpack Compose app in `android/` (`core` = pure-JVM models + Supabase/API clients with unit tests; `app` = Compose UI + Media3 background playback). Same backend contracts as iOS — see `android/README.md` for the file-by-file mapping and the invariants (direct-to-Supabase uploads, `POST /api/versions` for the row, lowercase storage keys, purchase-free copy).
+- **The remote sandbox cannot build the `app` module** (Android SDK repo `dl.google.com` is blocked); run `cd android && gradle -c settings.core.gradle.kts :core:test` there. The real compile gate is `.github/workflows/android-app.yml` (core tests + `assembleDebug` + lint, uploads the debug APK as the `mixBase-debug-apk` artifact). Not on Google Play yet; no signing config.
+
 ## Infra Control Panel
 - Admin-gated read-only `GET /api/infra/{topology,railway,supabase,github,sentry}` + `POST /api/infra/chat` (Claude tool-loop) + `POST /api/infra/actions` (confirmation-gated Railway restart/redeploy, CI re-run — reversible ops only). Code in `src/lib/infra/`; gated by `assertAdmin` via `withAdminCheck` in `src/proxy.ts`. Read endpoints return `configured:false` on missing tokens, never 500.
 - SwiftUI macOS client: scheme `MixbaseInfra` in the same `macos/project.yml`, build with `cd macos && ./build.sh`.

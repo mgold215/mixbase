@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app is dark by design (same as iOS's .preferredColorScheme(.dark)).
+         Compose draws everything; this only styles the window before the first frame. -->
+    <style name="Theme.Mixbase" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/mb_background</item>
+        <item name="android:statusBarColor">@color/mb_background</item>
+        <item name="android:navigationBarColor">@color/mb_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/mb_teal</item>
+    </style>
+</resources>
