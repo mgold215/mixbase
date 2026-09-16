@@ -1,0 +1,400 @@
+    t =    29.87s Tap "Projects" Button
+    t =    29.87s     Wait for com.moodmixformat.mixbase to idle
+    t =    29.87s     Find the "Projects" Button
+    t =    30.11s     Check for interrupting elements affecting "square.grid.2x2" Button
+    t =    30.32s     Synthesize event
+    t =    30.39s         Scroll element to visible
+    t =    30.40s         Find the "square.grid.2x2" Button
+    t =    30.73s         Computed hit point {-1, -1} after scrolling to visible
+    t =    31.02s     Wait for com.moodmixformat.mixbase to idle
+    t =    31.03s Waiting 30.0s for Any (First Match) to exist
+    t =    32.04s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    32.04s         Checking existence of `Any (First Match)`
+    t =    38.41s Added attachment named 'projects'
+    t =    38.41s Waiting 10.0s for Any (First Match) to exist
+    t =    39.47s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    39.47s         Checking existence of `Any (First Match)`
+    t =    39.57s Tap Any (First Match)
+    t =    39.57s     Wait for com.moodmixformat.mixbase to idle
+    t =    39.58s     Find the Any (First Match)
+    t =    39.66s     Check for interrupting elements affecting "FINAL MASTER moved from Master to Released, KICK IT W/U, 4 days, 5 hr, ·, Sep 12 at 9:30 AM" Button
+    t =    39.79s     Synthesize event
+    t =    40.09s     Wait for com.moodmixformat.mixbase to idle
+    t =    40.29s Waiting 30.0s for Button (First Match) to exist
+    t =    41.39s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    41.39s         Checking existence of `Button (First Match)`
+    t =    41.58s Waiting 5.0s for Button (First Match) to exist
+    t =    42.60s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    42.60s         Checking existence of `Button (First Match)`
+    t =    42.67s Tap Button (First Match)
+    t =    42.67s     Wait for com.moodmixformat.mixbase to idle
+    t =    42.67s     Find the Button (First Match)
+    t =    42.79s     Check for interrupting elements affecting "Version History, (3)" Button
+    t =    42.86s     Synthesize event
+    t =    42.88s         Scroll element to visible
+    t =    42.89s         Find the "Version History, (3)" Button
+    t =    42.96s         Computed hit point {219.16668224334717, 742.83334350585938} after scrolling to visible
+    t =    43.26s     Wait for com.moodmixformat.mixbase to idle
+    t =    49.18s Added attachment named 'project'
+    t =    49.18s Waiting 10.0s for Button (First Match) to exist
+    t =    50.20s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =    50.20s         Checking existence of `Button (First Match)`
+    t =    50.26s Tap Button (First Match)
+    t =    50.26s     Wait for com.moodmixformat.mixbase to idle
+    t =    50.26s     Find the Button (First Match)
+    t =    50.32s     Check for interrupting elements affecting "Play Latest (FINAL MASTER)" Button
+    t =    50.38s     Synthesize event
+    t =    50.69s     Wait for com.moodmixformat.mixbase to idle
+    t =    54.26s Waiting 10.0s for "Player" Button to exist
+    t =    55.29s     Checking `Expect predicate `existsNoRetry == 1` for object "Player" Button`
+    t =    55.29s         Checking existence of `"Player" Button`
+    t =    55.35s Tap "Player" Button
+    t =    55.35s     Wait for com.moodmixformat.mixbase to idle
+    t =    55.36s     Find the "Player" Button
+    t =    55.48s     Check for interrupting elements affecting "play.circle" Button
+    t =    55.61s     Synthesize event
+    t =    55.99s     Wait for com.moodmixformat.mixbase to idle
+    t =    58.17s Waiting 30.0s for Any (First Match) to exist
+    t =    59.23s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    59.23s         Checking existence of `Any (First Match)`
+    t =    67.74s Added attachment named 'player'
+    t =    67.75s Waiting 10.0s for "Pipeline" Button to exist
+    t =    68.76s     Checking `Expect predicate `existsNoRetry == 1` for object "Pipeline" Button`
+    t =    68.76s         Checking existence of `"Pipeline" Button`
+    t =    68.83s Tap "Pipeline" Button
+    t =    68.83s     Wait for com.moodmixformat.mixbase to idle
+    t =    68.83s     Find the "Pipeline" Button
+    t =    68.86s     Check for interrupting elements affecting "checklist" Button
+    t =    68.91s     Synthesize event
+    t =    69.32s     Wait for com.moodmixformat.mixbase to idle
+    t =    71.33s Waiting 30.0s for Any (First Match) to exist
+    t =    72.37s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =    72.37s         Checking existence of `Any (First Match)`
+    t =    78.65s Added attachment named 'pipeline'
+    t =    78.65s Waiting 10.0s for "Artwork" Button to exist
+    t =    79.68s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" Button`
+    t =    79.69s         Checking existence of `"Artwork" Button`
+    t =    79.73s Tap "Artwork" Button
+    t =    79.73s     Wait for com.moodmixformat.mixbase to idle
+    t =    79.74s     Find the "Artwork" Button
+    t =    79.77s     Check for interrupting elements affecting "photo.on.rectangle" Button
+    t =    79.82s     Synthesize event
+    t =    80.13s     Wait for com.moodmixformat.mixbase to idle
+    t =    82.14s Waiting 30.0s for "Artwork" NavigationBar to exist
+    t =    83.14s     Checking `Expect predicate `existsNoRetry == 1` for object "Artwork" NavigationBar`
+    t =    83.14s         Checking existence of `"Artwork" NavigationBar`
+    t =    90.58s Added attachment named 'artwork'
+    t =    90.58s Waiting 10.0s for "Home" Button to exist
+    t =    91.65s     Checking `Expect predicate `existsNoRetry == 1` for object "Home" Button`
+    t =    91.65s         Checking existence of `"Home" Button`
+    t =    91.81s Tap "Home" Button
+    t =    91.81s     Wait for com.moodmixformat.mixbase to idle
+    t =    91.81s     Find the "Home" Button
+    t =    91.93s     Check for interrupting elements affecting "house" Button
+    t =    92.04s     Synthesize event
+    t =    92.44s     Wait for com.moodmixformat.mixbase to idle
+    t =    94.46s Waiting 20.0s for "mixBASE Feed" Button to exist
+    t =    95.51s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =    95.51s         Checking existence of `"mixBASE Feed" Button`
+    t =    95.69s         Capturing element debug description
+    t =    96.55s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =    96.55s         Checking existence of `"mixBASE Feed" Button`
+    t =    96.70s         Capturing element debug description
+    t =    97.55s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =    97.55s         Checking existence of `"mixBASE Feed" Button`
+    t =    97.69s         Capturing element debug description
+    t =    98.53s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =    98.53s         Checking existence of `"mixBASE Feed" Button`
+    t =    98.68s         Capturing element debug description
+    t =    99.52s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =    99.52s         Checking existence of `"mixBASE Feed" Button`
+    t =    99.63s         Capturing element debug description
+    t =   100.48s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   100.48s         Checking existence of `"mixBASE Feed" Button`
+    t =   100.61s         Capturing element debug description
+    t =   101.47s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   101.47s         Checking existence of `"mixBASE Feed" Button`
+    t =   101.58s         Capturing element debug description
+    t =   102.55s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   102.55s         Checking existence of `"mixBASE Feed" Button`
+    t =   102.69s         Capturing element debug description
+    t =   103.53s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   103.53s         Checking existence of `"mixBASE Feed" Button`
+    t =   103.68s         Capturing element debug description
+    t =   104.52s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   104.52s         Checking existence of `"mixBASE Feed" Button`
+    t =   104.62s         Capturing element debug description
+    t =   105.50s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   105.50s         Checking existence of `"mixBASE Feed" Button`
+    t =   105.61s         Capturing element debug description
+    t =   106.56s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   106.57s         Checking existence of `"mixBASE Feed" Button`
+    t =   106.78s         Capturing element debug description
+    t =   107.52s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   107.52s         Checking existence of `"mixBASE Feed" Button`
+    t =   107.65s         Capturing element debug description
+    t =   108.50s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   108.50s         Checking existence of `"mixBASE Feed" Button`
+    t =   108.61s         Capturing element debug description
+    t =   109.62s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   109.62s         Checking existence of `"mixBASE Feed" Button`
+    t =   109.68s         Capturing element debug description
+    t =   110.50s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   110.50s         Checking existence of `"mixBASE Feed" Button`
+    t =   110.64s         Capturing element debug description
+    t =   111.49s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   111.49s         Checking existence of `"mixBASE Feed" Button`
+    t =   111.62s         Capturing element debug description
+    t =   112.55s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   112.55s         Checking existence of `"mixBASE Feed" Button`
+    t =   112.66s         Capturing element debug description
+    t =   113.52s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   113.52s         Checking existence of `"mixBASE Feed" Button`
+    t =   113.78s         Capturing element debug description
+    t =   114.47s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   114.47s         Checking existence of `"mixBASE Feed" Button`
+    t =   114.61s         Capturing element debug description
+    t =   114.61s     Checking existence of `"mixBASE Feed" Button`
+    t =   114.75s Collecting debug information to assist test failure triage
+    t =   114.75s     Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   115.64s Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   116.26s Requesting snapshot of accessibility hierarchy for app with pid 24798
+TOUR-DIAG the feed button on Home: app state 4
+    t =   116.38s Waiting 10.0s for "mixBASE Feed" Button to exist
+    t =   117.44s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   117.44s         Checking existence of `"mixBASE Feed" Button`
+    t =   117.62s         Capturing element debug description
+    t =   118.46s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   118.46s         Checking existence of `"mixBASE Feed" Button`
+    t =   118.66s         Capturing element debug description
+    t =   119.39s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   119.39s         Checking existence of `"mixBASE Feed" Button`
+    t =   119.54s         Capturing element debug description
+    t =   120.48s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   120.48s         Checking existence of `"mixBASE Feed" Button`
+    t =   120.64s         Capturing element debug description
+    t =   121.48s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   121.48s         Checking existence of `"mixBASE Feed" Button`
+    t =   121.61s         Capturing element debug description
+    t =   122.44s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   122.44s         Checking existence of `"mixBASE Feed" Button`
+    t =   122.58s         Capturing element debug description
+    t =   123.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   123.41s         Checking existence of `"mixBASE Feed" Button`
+    t =   123.59s         Capturing element debug description
+    t =   124.42s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   124.42s         Checking existence of `"mixBASE Feed" Button`
+    t =   124.64s         Capturing element debug description
+    t =   125.39s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   125.39s         Checking existence of `"mixBASE Feed" Button`
+    t =   125.51s         Capturing element debug description
+    t =   126.39s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" Button`
+    t =   126.40s         Checking existence of `"mixBASE Feed" Button`
+    t =   126.75s         Capturing element debug description
+    t =   126.76s     Checking existence of `"mixBASE Feed" Button`
+    t =   126.85s Collecting debug information to assist test failure triage
+    t =   126.86s     Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   127.67s Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   130.22s Requesting snapshot of accessibility hierarchy for app with pid 24798
+TOUR-DIAG the feed button: app state 4
+    t =   130.35s Waiting 30.0s for "mixBASE Feed" NavigationBar to exist
+    t =   131.42s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   131.42s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   131.56s         Capturing element debug description
+    t =   132.36s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   132.36s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   132.41s         Capturing element debug description
+    t =   133.45s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   133.45s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   133.57s         Capturing element debug description
+    t =   134.36s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   134.36s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   134.63s         Capturing element debug description
+    t =   135.38s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   135.38s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   135.55s         Capturing element debug description
+    t =   136.40s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   136.40s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   136.49s         Capturing element debug description
+    t =   137.47s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   137.47s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   137.58s         Capturing element debug description
+    t =   138.42s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   138.42s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   138.63s         Capturing element debug description
+    t =   139.38s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   139.38s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   139.54s         Capturing element debug description
+    t =   140.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   140.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   140.68s         Capturing element debug description
+    t =   141.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   141.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   141.49s         Capturing element debug description
+    t =   142.36s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   142.36s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   142.50s         Capturing element debug description
+    t =   143.42s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   143.42s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   143.66s         Capturing element debug description
+    t =   144.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   144.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   144.47s         Capturing element debug description
+    t =   145.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   145.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   145.49s         Capturing element debug description
+    t =   146.43s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   146.43s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   146.52s         Capturing element debug description
+    t =   147.37s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   147.37s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   147.47s         Capturing element debug description
+    t =   148.43s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   148.43s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   148.50s         Capturing element debug description
+    t =   149.37s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   149.37s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   149.49s         Capturing element debug description
+    t =   150.38s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   150.38s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   150.50s         Capturing element debug description
+    t =   151.37s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   151.37s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   151.45s         Capturing element debug description
+    t =   152.38s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   152.38s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   152.46s         Capturing element debug description
+    t =   153.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   153.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   153.48s         Capturing element debug description
+    t =   154.46s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   154.46s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   154.57s         Capturing element debug description
+    t =   155.41s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   155.41s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   155.49s         Capturing element debug description
+    t =   156.43s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   156.44s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   156.57s         Capturing element debug description
+    t =   157.42s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   157.43s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   157.54s         Capturing element debug description
+    t =   158.39s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   158.39s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   158.46s         Capturing element debug description
+    t =   159.38s     Checking `Expect predicate `existsNoRetry == 1` for object "mixBASE Feed" NavigationBar`
+    t =   159.38s         Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   159.46s         Capturing element debug description
+    t =   160.37s     Checking existence of `"mixBASE Feed" NavigationBar`
+    t =   160.49s Collecting debug information to assist test failure triage
+    t =   160.49s     Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   161.21s Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   162.42s Requesting snapshot of accessibility hierarchy for app with pid 24798
+TOUR-DIAG the feed: app state 4
+    t =   170.95s Added attachment named 'feed'
+    t =   170.95s Waiting 5.0s for Button (First Match) to exist
+    t =   172.00s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =   172.00s         Checking existence of `Button (First Match)`
+    t =   172.18s         Capturing element debug description
+    t =   173.02s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =   173.02s         Checking existence of `Button (First Match)`
+    t =   173.15s         Capturing element debug description
+    t =   173.98s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =   173.98s         Checking existence of `Button (First Match)`
+    t =   174.12s         Capturing element debug description
+    t =   174.96s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =   174.96s         Checking existence of `Button (First Match)`
+    t =   175.09s         Capturing element debug description
+    t =   175.96s     Checking `Expect predicate `existsNoRetry == 1` for object Button (First Match)`
+    t =   175.96s         Checking existence of `Button (First Match)`
+    t =   176.07s         Capturing element debug description
+    t =   176.07s     Checking existence of `Button (First Match)`
+    t =   176.18s Collecting debug information to assist test failure triage
+    t =   176.18s     Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   176.34s Waiting 20.0s for Any (First Match) to exist
+    t =   177.43s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   177.43s         Checking existence of `Any (First Match)`
+    t =   177.57s         Capturing element debug description
+    t =   178.40s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   178.40s         Checking existence of `Any (First Match)`
+    t =   178.47s         Capturing element debug description
+    t =   179.39s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   179.39s         Checking existence of `Any (First Match)`
+    t =   179.53s         Capturing element debug description
+    t =   180.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   180.37s         Checking existence of `Any (First Match)`
+    t =   180.44s         Capturing element debug description
+    t =   181.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   181.36s         Checking existence of `Any (First Match)`
+    t =   181.52s         Capturing element debug description
+    t =   182.35s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   182.36s         Checking existence of `Any (First Match)`
+    t =   182.46s         Capturing element debug description
+    t =   183.40s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   183.40s         Checking existence of `Any (First Match)`
+    t =   183.52s         Capturing element debug description
+    t =   184.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   184.36s         Checking existence of `Any (First Match)`
+    t =   184.42s         Capturing element debug description
+    t =   185.35s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   185.35s         Checking existence of `Any (First Match)`
+    t =   185.42s         Capturing element debug description
+    t =   186.37s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   186.37s         Checking existence of `Any (First Match)`
+    t =   186.43s         Capturing element debug description
+    t =   187.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   187.36s         Checking existence of `Any (First Match)`
+    t =   187.46s         Capturing element debug description
+    t =   188.39s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   188.39s         Checking existence of `Any (First Match)`
+    t =   188.48s         Capturing element debug description
+    t =   189.41s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   189.41s         Checking existence of `Any (First Match)`
+    t =   189.50s         Capturing element debug description
+    t =   190.35s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   190.35s         Checking existence of `Any (First Match)`
+    t =   190.45s         Capturing element debug description
+    t =   191.41s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   191.41s         Checking existence of `Any (First Match)`
+    t =   191.48s         Capturing element debug description
+    t =   192.39s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   192.39s         Checking existence of `Any (First Match)`
+    t =   192.45s         Capturing element debug description
+    t =   193.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   193.36s         Checking existence of `Any (First Match)`
+    t =   193.47s         Capturing element debug description
+    t =   194.39s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   194.39s         Checking existence of `Any (First Match)`
+    t =   194.64s         Capturing element debug description
+    t =   195.36s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   195.36s         Checking existence of `Any (First Match)`
+    t =   195.49s         Capturing element debug description
+    t =   196.35s     Checking `Expect predicate `existsNoRetry == 1` for object Any (First Match)`
+    t =   196.35s         Checking existence of `Any (First Match)`
+    t =   196.49s         Capturing element debug description
+    t =   196.49s     Checking existence of `Any (First Match)`
+    t =   196.62s Collecting debug information to assist test failure triage
+    t =   196.62s     Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   197.08s Requesting snapshot of accessibility hierarchy for app with pid 24798
+    t =   197.39s Requesting snapshot of accessibility hierarchy for app with pid 24798
+TOUR-DIAG Home after the feed: app state 4
+    t =   202.71s Added attachment named 'home-playing'
+/Users/runner/work/mixbase/mixbase/ios/screenshots/ScreenshotTour/ScreenshotTourTests.swift:109: error: -[ScreenshotTour.ScreenshotTourTests testTour] : XCTAssertTrue failed - Never saw: the feed button on Home; the feed button; the feed; Home after the feed — see diag-*.png / diag-*.txt
+    t =   203.44s Tear Down
+Test Case '-[ScreenshotTour.ScreenshotTourTests testTour]' failed (203.949 seconds).
+Test Suite 'ScreenshotTourTests' failed at 2026-09-16 15:13:09.605.
+	 Executed 1 test, with 1 failure (0 unexpected) in 203.949 (203.950) seconds
+Test Suite 'ScreenshotTour.xctest' failed at 2026-09-16 15:13:09.606.
+	 Executed 1 test, with 1 failure (0 unexpected) in 203.949 (203.951) seconds
+Test Suite 'All tests' failed at 2026-09-16 15:13:09.606.
+	 Executed 1 test, with 1 failure (0 unexpected) in 203.949 (203.952) seconds
+2026-09-16 15:13:37.546 xcodebuild[11614:36371] [MT] IDETestOperationsObserverDebug: 466.889 elapsed -- Testing started completed.
+2026-09-16 15:13:37.546 xcodebuild[11614:36371] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-16 15:13:37.546 xcodebuild[11614:36371] [MT] IDETestOperationsObserverDebug: 466.889 sec, +466.889 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/runner/work/_temp/tour.xcresult
+
+** TEST FAILED **
+
+Testing started

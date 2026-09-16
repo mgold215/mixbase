@@ -1,0 +1,138 @@
+app state: 4 (2 = not running, 4 = foreground)
+
+Attributes: Application, 0x105e53370, pid: 24798, label: 'mixBase'
+Element subtree:
+ →Application, 0x105e53370, pid: 24798, label: 'mixBase'
+    Window (Main), 0x105c3e040, {{0.0, 0.0}, {440.0, 956.0}}
+      Other, 0x105c4b040, {{0.0, 0.0}, {440.0, 956.0}}
+        Other, 0x105c3fcb0, {{0.0, 0.0}, {440.0, 956.0}}
+          Other, 0x105c49520, {{0.0, 0.0}, {440.0, 956.0}}
+            Other, 0x105c4e200, {{0.0, 0.0}, {440.0, 956.0}}
+              Other, 0x105c4e480, {{0.0, 0.0}, {440.0, 956.0}}
+                Other, 0x105c4fb20, {{0.0, 0.0}, {440.0, 956.0}}
+                  Other, 0x105c4fc40, {{0.0, 0.0}, {440.0, 956.0}}
+                    Other, 0x105d41300, {{0.0, 0.0}, {440.0, 956.0}}
+                      Other, 0x105d9b050, {{0.0, 0.0}, {440.0, 956.0}}
+                        Other, 0x105d468c0, {{0.0, 0.0}, {440.0, 956.0}}
+                          Other, 0x105d4cdb0, {{0.0, 0.0}, {440.0, 956.0}}
+                            NavigationBar, 0x105c4fd60, {{0.0, 62.0}, {440.0, 54.0}}, identifier: '_TtGC7SwiftUI32NavigationStackHosting'
+                              Button, 0x105c4fe80, {{20.0, 62.0}, {44.0, 44.0}}, identifier: 'BackButton', label: 'Back'
+                            Other, 0x105c4ffa0, {{0.0, 0.0}, {440.0, 956.0}}
+                              Other, 0x105c500c0, {{0.0, 0.0}, {440.0, 956.0}}
+                                Other, 0x105c501e0, {{0.0, 0.0}, {440.0, 956.0}}
+                                  Other, 0x105c50300, {{0.0, 0.0}, {440.0, 956.0}}
+                                    ScrollView, 0x105c50420, {{0.0, 0.0}, {440.0, 956.0}}
+                                      Other, 0x105c50540, {{0.0, 0.0}, {440.0, 956.0}}
+                                        Other, 0x105c50660, {{0.0, 0.0}, {440.0, 170.8}}
+                                        Other, 0x105c50780, {{0.0, 808.2}, {440.0, 147.8}}
+                                      Other, 0x105c508a0, {{0.0, 0.0}, {440.0, 956.0}}
+                                        Other, 0x105c509c0, {{0.0, 808.2}, {440.0, 147.8}}
+                                          Image, 0x105c50ae0, {{-120.0, 813.0}, {680.0, 286.0}}, identifier: 'AdditionalDimmingOverlay'
+                                          Other, 0x105c50c00, {{0.0, 808.2}, {440.0, 147.8}}
+                                            Other, 0x105c50d20, {{0.0, 808.2}, {440.0, 147.8}}
+                                          Other, 0x105c50e40, {{0.0, 808.2}, {440.0, 147.8}}
+                                            Other, 0x105c56e60, {{0.0, 808.2}, {440.0, 147.8}}
+                                            Other, 0x105c56f80, {{0.0, 808.2}, {440.0, 147.8}}
+                                      Other, 0x105c570a0, {{0.0, 116.0}, {440.0, 987.3}}
+                                        Button, 0x105c571c0, {{269.3, 373.7}, {78.0, 25.3}}, label: 'Upload'
+                                          Image, 0x105c572e0, {{280.7, 381.0}, {13.0, 10.3}}, identifier: 'photo', label: 'Photo'
+                                          StaticText, 0x105c57400, {{299.0, 379.5}, {38.3, 13.3}}, label: 'Upload'
+                                        Button, 0x105e590a0, {{355.3, 372.3}, {68.7, 27.7}}, label: 'AI Art'
+                                          Image, 0x105e5b2d0, {{366.3, 379.3}, {12.0, 13.7}}, identifier: 'paintbrush', label: 'Format'
+                                          StaticText, 0x105e5b660, {{383.3, 379.5}, {30.7, 13.3}}, label: 'AI Art'
+                                        Button, 0x105e59e40, {{16.0, 432.0}, {193.7, 46.7}}, label: 'KICK IT W/U, House, 124 BPM, A min'
+                                          StaticText, 0x105e5a8c0, {{16.0, 432.0}, {123.3, 26.3}}, label: 'KICK IT W/U'
+                                          Image, 0x105e5a1c0, {{148.7, 440.3}, {9.7, 9.7}}, identifier: 'pencil', label: 'Edit'
+                                          Image, 0x105e5d550, {{17.0, 465.7}, {14.3, 12.0}}, identifier: 'guitars', label: 'Genres'
+                                          StaticText, 0x105e5d1e0, {{36.7, 464.3}, {36.3, 14.3}}, label: 'House'
+                                          Image, 0x105e5ce50, {{85.7, 466.3}, {11.7, 10.3}}, identifier: 'metronome', label: 'Tempo'
+                                          StaticText, 0x105e5c400, {{102.3, 464.3}, {50.0, 14.3}}, label: '124 BPM'
+                                          Image, 0x105e5c790, {{165.7, 466.0}, {6.7, 11.0}}, identifier: 'music.note', label: 'Song'
+                                          StaticText, 0x105e5c0b0, {{177.7, 464.3}, {32.0, 14.3}}, label: 'A min'
+                                        Button, 0x105e5bd20, {{16.0, 498.7}, {408.0, 42.0}}, label: 'Play Latest (FINAL MASTER)'
+                                          Image, 0x105e5b9d0, {{109.3, 513.0}, {11.7, 13.3}}, identifier: 'play.fill', label: 'Play'
+                                          StaticText, 0x105e52580, {{129.5, 510.7}, {203.0, 18.0}}, label: 'Play Latest (FINAL MASTER)'
+                                        Button, 0x105e5cb00, {{16.0, 560.7}, {408.0, 42.0}}, label: 'Create Visualizer'
+                                          Image, 0x105e4d170, {{32.0, 574.0}, {18.7, 15.3}}, identifier: 'sparkles.tv', label: 'sparkles.tv'
+                                          StaticText, 0x105e50260, {{60.7, 572.7}, {119.0, 18.0}}, label: 'Create Visualizer'
+                                          Image, 0x105e52fa0, {{403.3, 576.3}, {6.0, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        Button, 0x105e52c40, {{16.0, 622.7}, {408.0, 42.7}}, label: 'Upload Mix'
+                                          Image, 0x105e53690, {{170.3, 636.0}, {12.7, 16.0}}, identifier: 'arrow.up.doc', label: 'Previous Page'
+                                          StaticText, 0x105e4fef0, {{193.0, 635.0}, {78.7, 18.0}}, label: 'Upload Mix'
+                                        StaticText, 0x105e51ec0, {{32.5, 671.3}, {375.0, 13.3}}, label: 'Named from your file — put "master" in the filename to upload a master'
+                                        Image, 0x105e54b80, {{29.3, 717.3}, {13.7, 12.0}}, identifier: 'music.quarternote.3', label: 'music.quarternote.3'
+                                        StaticText, 0x105e505c0, {{52.3, 716.7}, {100.3, 13.3}}, label: 'INSTRUMENTAL'
+                                        StaticText, 0x105e50920, {{160.7, 716.7}, {44.3, 13.3}}, label: 'Optional'
+                                        Button, 0x105e51810, {{28.0, 740.0}, {384.0, 38.7}}, label: 'Upload instrumental'
+                                          Image, 0x105e547e0, {{138.3, 751.3}, {12.7, 16.0}}, identifier: 'arrow.up.doc', label: 'Previous Page'
+                                          StaticText, 0x105e53a20, {{161.2, 750.3}, {142.3, 18.0}}, label: 'Upload instrumental'
+                                        StaticText, 0x105e53d80, {{28.0, 788.7}, {352.0, 13.3}}, label: 'One no-vocals file, kept alongside your mixes — only you can see it'
+                                        Image, 0x105e4e950, {{29.0, 847.3}, {12.0, 12.0}}, identifier: 'gauge', label: 'Dashboard'
+                                        StaticText, 0x105e4db90, {{50.0, 846.5}, {101.0, 13.3}}, label: 'MASTER CHECK'
+                                        StaticText, 0x105e52220, {{159.0, 846.5}, {80.0, 13.3}}, label: 'FINAL MASTER'
+                                        Button, 0x105e51480, {{305.0, 846.0}, {107.0, 14.3}}, label: 'Measure loudness'
+                                        Button, 0x105e528f0, {{15.7, 892.3}, {407.0, 20.3}}, label: 'Version History, (3)'
+                                          Image, 0x105e54480, {{15.7, 895.0}, {16.7, 15.0}}, identifier: 'clock.arrow.circlepath', label: 'clock.arrow.circlepath'
+                                          StaticText, 0x105e4fb70, {{41.7, 892.3}, {122.0, 20.3}}, label: 'Version History'
+                                          StaticText, 0x105e4ca50, {{171.7, 893.5}, {20.3, 18.0}}, label: '(3)'
+                                          Image, 0x105e4ece0, {{412.3, 899.7}, {10.3, 6.0}}, identifier: 'chevron.down', label: 'Go Down'
+                                        StaticText, 0x105e4e5f0, {{16.0, 932.7}, {78.0, 20.3}}, label: 'Feedback'
+                                        StaticText, 0x105e4f820, {{102.0, 933.8}, {20.3, 18.0}}, label: '(3)'
+                                        Button, 0x105e4d4e0, {{28.0, 977.0}, {382.7, 14.3}}, label: 'FINAL MASTER, 3 responses'
+                                          StaticText, 0x105e4d840, {{28.0, 977.0}, {91.0, 14.3}}, label: 'FINAL MASTER'
+                                          StaticText, 0x105e4c700, {{127.0, 977.0}, {69.3, 14.3}}, label: '3 responses'
+                                          Image, 0x105e4bcb0, {{400.3, 981.3}, {10.3, 6.0}}, identifier: 'chevron.down', label: 'Go Down'
+                                      Other, 0x105e54100, {{407.0, 116.0}, {30.0, 757.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                        Other, 0x105e54f00, {{434.0, 119.0}, {3.0, 605.3}}
+                                      Other, 0x105e51b60, {{407.0, 116.0}, {30.0, 757.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                        Other, 0x105e55260, {{434.0, 119.0}, {3.0, 605.3}}
+                            Other, 0x105e55c90, {{0.0, 0.0}, {440.0, 956.0}}
+                              Other, 0x105e56da0, {{0.0, 0.0}, {440.0, 956.0}}
+                Other, 0x105e56a40, {{0.0, 873.0}, {440.0, 83.0}}
+                  Other, 0x105e566d0, {{0.0, 0.0}, {440.0, 956.0}}
+                    TabBar, 0x105e55ff0, {{0.0, 873.0}, {440.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x105e56360, {{21.0, 873.0}, {398.0, 62.0}}
+                        Other, 0x105e577e0, {{21.0, 873.0}, {84.6, 54.0}}
+                        Other, 0x105e58990, {{21.0, 873.0}, {398.0, 62.0}}
+                          Button, 0x105e58610, {{25.0, 877.0}, {84.6, 54.0}}, identifier: 'house', label: 'Home', Selected
+                            Image, 0x105e55930, {{51.0, 883.0}, {33.3, 28.0}}, identifier: 'house.fill', label: 'home'
+                          Button, 0x105e555e0, {{101.3, 877.0}, {84.6, 54.0}}, identifier: 'square.grid.2x2', label: 'Projects'
+                            Image, 0x105e58290, {{130.3, 884.3}, {27.0, 25.0}}, identifier: 'square.grid.2x2.fill', label: 'grid 2x2'
+                          Button, 0x105c57520, {{177.7, 877.0}, {84.6, 54.0}}, identifier: 'play.circle', label: 'Player'
+                            Image, 0x105c57640, {{206.7, 883.3}, {27.3, 27.3}}, identifier: 'play.circle.fill', label: 'play'
+                          Button, 0x105c57760, {{254.0, 877.0}, {84.6, 54.0}}, identifier: 'photo.on.rectangle', label: 'Artwork'
+                            Image, 0x105c57880, {{279.0, 883.3}, {34.3, 28.7}}, identifier: 'photo.fill.on.rectangle.fill', label: 'photo.fill.on.rectangle.fill'
+                          Button, 0x105e57f00, {{330.4, 877.0}, {84.6, 54.0}}, identifier: 'checklist', label: 'Pipeline'
+                            Image, 0x105e58d20, {{356.4, 883.3}, {32.0, 27.3}}, identifier: 'checklist', label: 'checklist'
+                        Other, 0x105e57b60, {{25.0, 877.0}, {84.6, 54.0}}
+                          Other, 0x105d4d120, {{25.0, 877.0}, {84.3, 54.0}}
+                            Other, 0x105d4d7b0, {{25.0, 877.0}, {84.3, 54.0}}
+                            Other, 0x105d4db20, {{25.0, 877.0}, {84.3, 54.0}}
+                              Other, 0x105c579a0, {{25.0, 877.0}, {84.3, 54.0}}
+                                Other, 0x105c57ac0, {{25.0, 877.0}, {84.3, 54.0}}
+                                  Other, 0x105c57be0, {{25.0, 877.0}, {84.3, 54.0}}
+                                Other, 0x105c57d00, {{25.0, 877.0}, {84.3, 54.0}}
+                              Other, 0x105e3b540, {{25.0, 877.0}, {84.3, 54.0}}
+                  Other, 0x105e0a990, {{0.0, 873.0}, {440.0, 83.0}}
+                    Other, 0x105e62cc0, {{0.0, 873.0}, {440.0, 83.0}}
+                      Other, 0x105e59410, {{0.0, 873.0}, {440.0, 83.0}}
+                        Other, 0x105e6a7b0, {{0.0, 873.0}, {440.0, 83.0}}
+                          Other, 0x105e65dd0, {{0.0, 873.0}, {440.0, 83.0}}
+                            Other, 0x105e6afd0, {{0.0, 873.0}, {440.0, 83.0}}
+                        Other, 0x105e995b0, {{0.0, 873.0}, {440.0, 83.0}}
+                          Other, 0x105e996d0, {{0.0, 873.0}, {440.0, 83.0}}
+              Image, 0x105e997f0, {{18.0, 823.0}, {38.0, 38.0}}
+              StaticText, 0x105e99910, {{66.0, 826.5}, {65.7, 15.7}}, label: 'LIVE IT UP'
+              StaticText, 0x105e951c0, {{66.0, 844.2}, {80.0, 13.3}}, label: 'FINAL MASTER'
+              Button, 0x105e952e0, {{346.0, 824.0}, {36.0, 36.0}}, identifier: 'pause.fill', label: 'Pause'
+              Button, 0x105d4fd80, {{392.0, 824.0}, {30.0, 36.0}}, identifier: 'forward.end.fill', label: 'Go To Start'
+    Window, 0x105d4f660, {{0.0, 0.0}, {440.0, 956.0}}
+      Other, 0x105d4fa00, {{0.0, 0.0}, {440.0, 956.0}}
+        Other, 0x105d4ef60, {{0.0, 0.0}, {440.0, 956.0}}
+Path to element:
+ →Application, 0x105e53370, pid: 24798, label: 'mixBase'
+Query chain:
+ →Find: Application 'com.moodmixformat.mixbase'
+  Output: {
+    Application, 0x105cdfde0, pid: 24798, label: 'mixBase'
+  }
