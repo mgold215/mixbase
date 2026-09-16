@@ -13,7 +13,9 @@ name: Android App
 
 on:
   push:
-    branches: [main]
+    # claude/** so an in-progress Android branch gets a real compile before
+    # it is ever proposed for main (the sandbox cannot build :app itself).
+    branches: [main, 'claude/**']
     paths:
       - 'android/**'
       - '.github/workflows/android-app.yml'
