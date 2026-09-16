@@ -79,6 +79,21 @@ class AudioService: ObservableObject {
     /// song animating over the wrong track would be actively misleading.
     @Published var currentVisualizerUrl: String?
 
+    /// Artist credit for the currently playing track when it is NOT the signed-in
+    /// user's own song (community feed). nil means "use the user's own artistName".
+    /// Kept separate from the title so the lock screen / car display never shows
+    /// the artist twice ("Song — Artist" on the title line AND on the artist line).
+    @Published var currentTrackArtist: String?
+
+    /// The artist name shown on the Now Playing artist line: the per-track credit
+    /// when one was supplied, otherwise the signed-in user's own artist name.
+    var displayArtistName: String {
+        if let artist = currentTrackArtist?.trimmingCharacters(in: .whitespacesAndNewlines), !artist.isEmpty {
+            return artist
+        }
+        return artistName
+    }
+
     /// The user's artist name for the Now Playing artist slot — empty until the
     /// profile fetch lands. The fetch usually finishes AFTER play() has pushed
     /// metadata, so a change must repaint the lock screen / car display, which
@@ -237,7 +252,7 @@ class AudioService: ObservableObject {
     // MARK: - Playback Controls
 
     /// Load and play a specific version's audio file.
-    func play(version: Version, trackName: String? = nil, artworkUrl: String? = nil, visualizerUrl: String? = nil) {
+    func play(version: Version, trackName: String? = nil, artist: String? = nil, artworkUrl: String? = nil, visualizerUrl: String? = nil) {
         guard let url = URL(string: version.audioUrl) else {
             print("AudioService: Invalid audio URL: \(version.audioUrl)")
             return
@@ -252,6 +267,9 @@ class AudioService: ObservableObject {
 
         currentVersion = version
         if let trackName = trackName { currentTrackName = trackName }
+        // Per-track artist credit is reset on every track change: a feed track's
+        // artist must not linger onto the user's own next song.
+        currentTrackArtist = artist
         if let artworkUrl = artworkUrl { currentArtworkUrl = artworkUrl }
         currentVisualizerUrl = visualizerUrl
 
@@ -502,7 +520,8 @@ class AudioService: ObservableObject {
         var info = [String: Any]()
 
         info[MPMediaItemPropertyTitle] = currentTrackName ?? "mixBase"
-        info[MPMediaItemPropertyArtist] = artistName.isEmpty ? "mixBase" : artistName
+        let artist = displayArtistName
+        info[MPMediaItemPropertyArtist] = artist.isEmpty ? "mixBase" : artist
 
         // Explicit media type + non-live flag: Bluetooth AVRCP head units (Tesla, car
         // stereos) and AirPlay receivers use these to decide whether to show a scrubber
@@ -564,7 +583,7 @@ class AudioService: ObservableObject {
         let snapshot = NowPlayingSnapshot(
             trackName: currentTrackName ?? "mixBase",
             versionName: version.displayName,
-            artistName: artistName.isEmpty ? nil : artistName,
+            artistName: displayArtistName.isEmpty ? nil : displayArtistName,
             artworkUrl: currentArtworkUrl,
             projectId: version.projectId,
             isPlaying: isPlaying,

@@ -401,7 +401,7 @@ struct FeedView: View {
             allowDownload: false,
             createdAt: item.createdAt
         )
-        audioService.play(version: version, trackName: "\(item.title) — \(item.artist)", artworkUrl: item.artworkUrl)
+        audioService.play(version: version, trackName: item.title, artist: item.artist, artworkUrl: item.artworkUrl)
     }
 
     private func playOlder(_ mix: OlderMix, of item: FeedItem) {
@@ -422,7 +422,7 @@ struct FeedView: View {
             allowDownload: false,
             createdAt: mix.createdAt
         )
-        audioService.play(version: version, trackName: "\(item.title) — \(item.artist)", artworkUrl: item.artworkUrl)
+        audioService.play(version: version, trackName: item.title, artist: item.artist, artworkUrl: item.artworkUrl)
     }
 
     private func postComment(on item: FeedItem) async {
