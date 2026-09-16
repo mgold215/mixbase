@@ -48,51 +48,60 @@ final class ScreenshotTourTests: XCTestCase {
         app.launch()
         signIn(email: email, password: password)
 
-        // 1. Home: stats, tracks carousel, recent activity.
+        // 1. Home: stats, tracks carousel, recent activity. The first sign-in
+        //    on a fresh simulator raises the Passwords "Save Password?" sheet.
         expect(app.tabBars.buttons["Home"], "the tab bar after sign-in", timeout: 60)
+        dismissSystemPrompts(within: 6)
         expect(labeled("Recent Activity"), "Home content", timeout: 40)
         settle(8)
         snap("home")
 
         // 2. Projects grid.
-        tap(app.tabBars.buttons["Projects"], "the Projects tab")
+        openTab("Projects", anchor: app.navigationBars["Projects"], "the Projects tab")
         let firstCard = labeled("KICK IT W/U")
         expect(firstCard, "the project grid", timeout: 30)
         settle(6)
         snap("projects")
 
-        // 3. Project detail with the version history expanded.
+        // 3. Project detail, then the same screen scrolled to the version history.
         tap(firstCard, "the first project card")
         let playLatest = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Play Latest'")).firstMatch
         expect(playLatest, "the project detail screen", timeout: 30)
-        let history = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Version History'")).firstMatch
-        if history.waitForExistence(timeout: 5) { history.tap() }
-        settle(5)
+        settle(4)
         snap("project")
+        let history = labeled("Version History")
+        if history.waitForExistence(timeout: 5) {
+            for _ in 0..<2 where !labeled("ROUGH MIX").exists {
+                history.tap()
+                settle(2)
+            }
+        }
+        app.swipeUp()
+        settle(3)
+        snap("project-versions")
 
         // 4. Now Playing: start the latest mix, then open the full player.
         tap(playLatest, "Play Latest")
         settle(3)
-        tap(app.tabBars.buttons["Player"], "the Player tab")
+        openTab("Player", anchor: app.buttons["Share"], "the Player tab")
         expect(labeled("KICK IT W/U"), "the now-playing title", timeout: 30)
         settle(8)
         snap("player")
 
         // 5. Pipeline board.
-        tap(app.tabBars.buttons["Pipeline"], "the Pipeline tab")
-        expect(labeled("Released Library"), "the pipeline", timeout: 30)
+        openTab("Pipeline", anchor: labeled("Released Library"), "the Pipeline tab")
         settle(6)
         snap("pipeline")
 
         // 6. Artwork library.
-        tap(app.tabBars.buttons["Artwork"], "the Artwork tab")
-        expect(app.navigationBars["Artwork"], "the artwork library", timeout: 30)
+        openTab("Artwork", anchor: app.navigationBars["Artwork"], "the Artwork tab")
         settle(7)
         snap("artwork")
 
-        // 7. Community feed (reached from Home).
-        tap(app.tabBars.buttons["Home"], "the Home tab")
+        // 7. Community feed (reached from the Home root).
         let feedButton = app.buttons["mixBASE Feed"]
+        openTab("Home", anchor: feedButton, "the Home tab")
+        popToRoot(until: feedButton)
         expect(feedButton, "the feed button on Home", timeout: 20)
         tap(feedButton, "the feed button")
         expect(app.navigationBars["mixBASE Feed"], "the feed", timeout: 30)
@@ -100,8 +109,7 @@ final class ScreenshotTourTests: XCTestCase {
         snap("feed")
 
         // 8. Home again, now with the ambient now-playing backdrop.
-        let back = app.navigationBars["mixBASE Feed"].buttons.firstMatch
-        if back.waitForExistence(timeout: 5) { back.tap() }
+        popToRoot(until: feedButton)
         expect(labeled("Recent Activity"), "Home after the feed", timeout: 20)
         settle(5)
         snap("home-playing")
@@ -135,6 +143,52 @@ final class ScreenshotTourTests: XCTestCase {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS[c] %@", text))
             .firstMatch
+    }
+
+    /// System sheets (the Passwords "Save Password?" prompt after the first
+    /// sign-in, permission alerts) live in SpringBoard, outside the app's tree,
+    /// and swallow the next tap if left up. Checks both hosts for a while.
+    private func dismissSystemPrompts(within timeout: TimeInterval) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for host in [springboard, app] {
+                for label in ["Not Now", "Allow", "OK", "Don't Allow"] {
+                    let button = host.buttons[label]
+                    if button.exists && button.isHittable {
+                        button.tap()
+                        print("TOUR: dismissed a '\(label)' prompt")
+                        settle(1)
+                        return dismissSystemPrompts(within: 2)
+                    }
+                }
+            }
+            settle(0.5)
+        } while Date() < deadline
+    }
+
+    /// Selects a tab and verifies its content appeared; a prompt or a stale
+    /// pushed screen can eat the first tap, so it retries.
+    private func openTab(_ name: String, anchor: XCUIElement, _ what: String) {
+        for attempt in 1...3 {
+            dismissSystemPrompts(within: attempt == 1 ? 2 : 1)
+            let button = app.tabBars.buttons[name]
+            if button.waitForExistence(timeout: 10) { button.tap() }
+            if anchor.waitForExistence(timeout: 12) { return }
+        }
+        misses.append(what)
+        diagnose(what)
+    }
+
+    /// Pops pushed screens on the current tab until `anchor` (a root-only
+    /// element) shows up.
+    private func popToRoot(until anchor: XCUIElement) {
+        for _ in 0..<4 where !anchor.exists {
+            let back = app.navigationBars.buttons.matching(identifier: "BackButton").firstMatch
+            guard back.waitForExistence(timeout: 3) else { return }
+            back.tap()
+            settle(1.5)
+        }
     }
 
     /// Waits for an anchor element. A miss is recorded with a screenshot and
@@ -171,6 +225,7 @@ final class ScreenshotTourTests: XCTestCase {
     }
 
     private func snap(_ name: String) {
+        dismissSystemPrompts(within: 1)
         shotIndex += 1
         let shot = XCUIScreen.main.screenshot()
         let file = outDir.appendingPathComponent(String(format: "%02d-%@.png", shotIndex, name))
