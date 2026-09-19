@@ -36,6 +36,13 @@ struct ProjectsView: View {
     // Loading
     @State private var isLoading = true
 
+    // Search — filters tracks and collections in place, as you type
+    @State private var searchQuery = ""
+
+    // Tracks layout: artwork grid (default) or compact list. Remembered
+    // across launches, per device.
+    @AppStorage("projectsTracksListLayout") private var isListLayout = false
+
     // 2-column grid
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -65,7 +72,7 @@ struct ProjectsView: View {
                                 .tint(Color(hex: "#2dd4bf"))
                                 .padding(.top, 60)
                         } else if selectedSegment == 0 {
-                            tracksGrid
+                            tracksSection
                         } else {
                             collectionsSection
                         }
@@ -79,6 +86,21 @@ struct ProjectsView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                // Grid/list toggle — tracks only; collections are always a list.
+                if selectedSegment == 0 {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isListLayout.toggle()
+                            }
+                        }) {
+                            Image(systemName: isListLayout ? "square.grid.2x2" : "list.bullet")
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                        .accessibilityLabel(Text(isListLayout ? "Show as grid" : "Show as list"))
+                    }
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         if selectedSegment == 0 {
@@ -90,8 +112,13 @@ struct ProjectsView: View {
                         Image(systemName: "plus")
                             .foregroundColor(Color(hex: "#2dd4bf"))
                     }
+                    .accessibilityLabel(Text(selectedSegment == 0 ? "New project" : "New collection"))
                 }
             }
+            .searchable(
+                text: $searchQuery,
+                prompt: selectedSegment == 0 ? "Search tracks" : "Search collections"
+            )
             .task {
                 await loadAll()
             }
@@ -124,25 +151,62 @@ struct ProjectsView: View {
         openNewProject = false
     }
 
-    // MARK: - Tracks Grid
-    private var tracksGrid: some View {
+    // MARK: - Search
+    // One query filters whichever segment is showing. Matching is generous on
+    // tracks (title, genre, key, BPM, mix status) so "135", "Am" and "master"
+    // all find something without a filter UI.
+    private var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var filteredProjects: [Project] {
+        let query = trimmedQuery
+        guard !query.isEmpty else { return projects }
+        return projects.filter { project in
+            if project.title.localizedCaseInsensitiveContains(query) { return true }
+            if project.genre?.localizedCaseInsensitiveContains(query) == true { return true }
+            if project.keySignature?.localizedCaseInsensitiveContains(query) == true { return true }
+            if let bpm = project.bpm, String(bpm).contains(query) { return true }
+            if latestVersions[project.id]?.status.localizedCaseInsensitiveContains(query) == true { return true }
+            return false
+        }
+    }
+
+    private var filteredCollections: [Collection] {
+        let query = trimmedQuery
+        guard !query.isEmpty else { return collections }
+        return collections.filter { collection in
+            collection.title.localizedCaseInsensitiveContains(query)
+                || collection.type.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    // MARK: - Tracks Section
+    private var tracksSection: some View {
         Group {
             if projects.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray)
-                    Text("No projects yet")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                    Text("Tap + to create your first project")
-                        .font(.subheadline)
-                        .foregroundColor(.gray.opacity(0.6))
+                emptyState(
+                    icon: "music.note.list",
+                    title: "No projects yet",
+                    subtitle: "Tap + to create your first project"
+                )
+            } else if filteredProjects.isEmpty {
+                noMatchesState(what: "tracks")
+            } else if isListLayout {
+                LazyVStack(spacing: 10) {
+                    ForEach(filteredProjects) { project in
+                        NavigationLink(destination: ProjectDetailView(projectId: project.id)) {
+                            projectRow(project: project)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .padding(.top, 80)
+                .padding(.horizontal)
+                .padding(.top, 12)
+                .padding(.bottom, 80)
             } else {
                 LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(projects) { project in
+                    ForEach(filteredProjects) { project in
                         NavigationLink(destination: ProjectDetailView(projectId: project.id)) {
                             projectCard(project: project)
                         }
@@ -160,21 +224,16 @@ struct ProjectsView: View {
     private var collectionsSection: some View {
         Group {
             if collections.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "rectangle.stack.badge.plus")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray)
-                    Text("No collections yet")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                    Text("Create a playlist, EP, or album")
-                        .font(.subheadline)
-                        .foregroundColor(.gray.opacity(0.6))
-                }
-                .padding(.top, 80)
+                emptyState(
+                    icon: "rectangle.stack.badge.plus",
+                    title: "No collections yet",
+                    subtitle: "Create a playlist, EP, or album"
+                )
+            } else if filteredCollections.isEmpty {
+                noMatchesState(what: "collections")
             } else {
                 LazyVStack(spacing: 12) {
-                    ForEach(collections) { collection in
+                    ForEach(filteredCollections) { collection in
                         NavigationLink(destination: CollectionDetailView(
                             collection: collection,
                             allProjects: projects,
@@ -223,30 +282,8 @@ struct ProjectsView: View {
                 }
 
                 if let version = latestVersions[project.id] {
-                    Button(action: {
-                        audioService.play(
-                            version: version,
-                            trackName: project.title,
-                            artworkUrl: project.artworkUrl,
-                            visualizerUrl: project.visualizerUrl
-                        )
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color(hex: "#2dd4bf"))
-                                .frame(width: 32, height: 32)
-                            if audioService.currentVersion?.projectId == project.id && audioService.isPlaying {
-                                Image(systemName: "waveform")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(Color(hex: "#080808"))
-                            } else {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(Color(hex: "#080808"))
-                            }
-                        }
-                    }
-                    .padding(6)
+                    playButton(project: project, version: version, diameter: 32)
+                        .padding(6)
                 }
             }
 
@@ -275,6 +312,130 @@ struct ProjectsView: View {
         .padding(10)
         .background(Color(hex: "#111111"))
         .cornerRadius(12)
+    }
+
+    // MARK: - Project Row (list layout)
+    // Compact counterpart to projectCard: same information, one line each, so
+    // a long catalogue scans quickly. Tapping the artwork plays; tapping the
+    // rest opens the project.
+    private func projectRow(project: Project) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        artworkPlaceholder
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                } else {
+                    artworkPlaceholder
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+
+                if let version = latestVersions[project.id] {
+                    // Scrim keeps the teal button readable over busy cover art.
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.black.opacity(0.35))
+                        .frame(width: 56, height: 56)
+                    playButton(project: project, version: version, diameter: 28)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(project.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .lineLimit(1)
+
+                let details = detailLine(project)
+                if !details.isEmpty {
+                    Text(details)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            StatusBadge(status: latestVersions[project.id]?.status ?? "Mix")
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.gray.opacity(0.5))
+        }
+        .padding(10)
+        .background(Color(hex: "#111111"))
+        .cornerRadius(12)
+    }
+
+    // "House · 135 BPM · Am" — only the parts this project actually has.
+    private func detailLine(_ project: Project) -> String {
+        var parts: [String] = []
+        if let genre = project.genre, !genre.isEmpty { parts.append(genre) }
+        if let bpm = project.bpm { parts.append("\(bpm) BPM") }
+        if let key = project.keySignature, !key.isEmpty { parts.append(key) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Play Button
+    // Shared by the grid card and the list row; the row passes a smaller
+    // diameter so the button sits comfortably on a 56pt thumbnail.
+    private func playButton(project: Project, version: Version, diameter: CGFloat) -> some View {
+        Button(action: {
+            audioService.play(
+                version: version,
+                trackName: project.title,
+                artworkUrl: project.artworkUrl,
+                visualizerUrl: project.visualizerUrl
+            )
+        }) {
+            ZStack {
+                Circle()
+                    .fill(Color(hex: "#2dd4bf"))
+                    .frame(width: diameter, height: diameter)
+                Image(systemName: isPlayingProject(project) ? "waveform" : "play.fill")
+                    .font(.system(size: diameter * 0.375))
+                    .foregroundColor(Color(hex: "#080808"))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Play \(project.title)"))
+    }
+
+    private func isPlayingProject(_ project: Project) -> Bool {
+        audioService.currentVersion?.projectId == project.id && audioService.isPlaying
+    }
+
+    // MARK: - Empty States
+    private func emptyState(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 48))
+                .foregroundColor(.gray)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.gray)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundColor(.gray.opacity(0.6))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 32)
+        .padding(.top, 80)
+    }
+
+    private func noMatchesState(what: String) -> some View {
+        emptyState(
+            icon: "magnifyingglass",
+            title: "No \(what) found",
+            subtitle: "Nothing matches \u{201C}\(trimmedQuery)\u{201D}"
+        )
     }
 
     // MARK: - Collection Row
