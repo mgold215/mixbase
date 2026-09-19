@@ -1,6 +1,6 @@
 {
-  "action": "publish",
-  "capture": true,
+  "action": "inspect",
+  "capture": false,
   "version": "1.0.1",
   "screenshots": [
     "01-home",
