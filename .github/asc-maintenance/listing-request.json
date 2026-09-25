@@ -1,5 +1,5 @@
 {
-  "action": "inspect",
+  "action": "publish",
   "capture": false,
   "version": "1.0.1",
   "screenshots": [
@@ -13,8 +13,8 @@
   ],
   "deleteIpadSets": true,
   "attachBuild": true,
-  "minBuildUploadedAt": "2026-09-16T14:44:00Z",
-  "buildWaitMinutes": 25,
-  "submit": false,
+  "minBuildUploadedAt": "2026-09-25T13:46:00Z",
+  "buildWaitMinutes": 30,
+  "submit": true,
   "syncLivePromo": true
 }
