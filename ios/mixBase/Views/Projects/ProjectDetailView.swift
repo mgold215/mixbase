@@ -646,6 +646,26 @@ struct ProjectDetailView: View {
     }
 
     // MARK: - Feedback Section
+
+    // m:ss — a note pinned at 0:00 is legitimate (same format as MixNotesSheet).
+    private func noteClock(_ seconds: Int) -> String {
+        "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+    }
+
+    private func playFeedback(version: Version, at seconds: Int) {
+        if audioService.currentVersion?.id != version.id, let project {
+            audioService.play(
+                version: version,
+                trackName: project.title,
+                artworkUrl: project.artworkUrl,
+                visualizerUrl: project.visualizerUrl
+            )
+        } else if !audioService.isPlaying {
+            audioService.resume()
+        }
+        audioService.seek(to: Double(seconds))
+    }
+
     @ViewBuilder
     private var feedbackSection: some View {
         let allFeedback = versions.flatMap { v in feedbackByVersion[v.id] ?? [] }
@@ -710,15 +730,32 @@ struct ProjectDetailView: View {
 
                                         Spacer()
 
-                                        Text(feedback.createdAt, style: .date)
+                                        Text(feedback.createdAt.formatted(date: .abbreviated, time: .shortened))
                                             .font(.caption2)
                                             .foregroundColor(.gray.opacity(0.5))
                                     }
 
-                                    if let comment = feedback.comment, !comment.isEmpty {
-                                        Text(comment)
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        // Song position the note is pinned to — tap to
+                                        // hear that mix from that moment (web parity).
+                                        if let ts = feedback.timestampSeconds {
+                                            Button(action: { playFeedback(version: version, at: ts) }) {
+                                                Text(noteClock(ts))
+                                                    .font(.caption2.monospacedDigit())
+                                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color(hex: "#2dd4bf").opacity(0.12))
+                                                    .clipShape(Capsule())
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+
+                                        if let comment = feedback.comment, !comment.isEmpty {
+                                            Text(comment)
+                                                .font(.caption)
+                                                .foregroundColor(.gray)
+                                        }
                                     }
                                 }
                                 .padding(10)
