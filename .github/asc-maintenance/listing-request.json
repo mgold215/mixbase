@@ -1,5 +1,5 @@
 {
-  "action": "publish",
+  "action": "inspect",
   "capture": false,
   "version": "1.0.1",
   "screenshots": [
@@ -15,6 +15,6 @@
   "attachBuild": true,
   "minBuildUploadedAt": "2026-09-25T13:46:00Z",
   "buildWaitMinutes": 30,
-  "submit": true,
+  "submit": false,
   "syncLivePromo": true
 }
