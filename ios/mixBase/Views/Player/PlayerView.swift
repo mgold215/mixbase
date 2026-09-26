@@ -62,6 +62,8 @@ struct WaveformScrubber: View {
                               : AnyShapeStyle(Color(hex: "#f0f0f0").opacity(0.14)))
                         .frame(width: barWidth,
                                height: max(3, geo.size.height * heights[i]))
+                        // Soft glow on the played bars so they pop over the canvas.
+                        .shadow(color: filled ? Color(hex: "#2dd4bf").opacity(0.5) : .clear, radius: 4)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
@@ -87,6 +89,16 @@ struct WaveformScrubber: View {
             let raw = CGFloat((a ^ (b << 1)) & 0xFF) / 255.0
             return 0.2 + 0.8 * pow(raw, 0.7)
         }
+    }
+}
+
+// MARK: - PressScaleButtonStyle
+// A quick squeeze on press so the hero play button feels physical.
+struct PressScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -207,134 +219,223 @@ struct PlayerView: View {
     }
 
     // MARK: - Now Playing Screen
+    // Spotify-Canvas layout: the visual owns the whole screen (a pinned
+    // visualizer plays full-bleed, edge to edge, top to bottom) and everything
+    // from the song title down sits in one cluster pinned to the bottom, over a
+    // dark scrim so it reads cleanly on any video. Without a visualizer the
+    // artwork goes full width over its own blurred glow instead — square art
+    // cropped to 9:16 would cut off cover text.
     @ViewBuilder
     private func nowPlayingScreen(version: Version) -> some View {
-        VStack(spacing: 0) {
-            // One clear control bar along the top — see nowPlayingTopBar.
-            nowPlayingTopBar
-                .padding(.top, 4)
+        ZStack {
+            if hasVisualizer {
+                canvasLayer
+                canvasScrims
+            }
 
-            Spacer(minLength: 16)
+            VStack(spacing: 0) {
+                // One clear control bar along the top — see nowPlayingTopBar.
+                nowPlayingTopBar
+                    .padding(.top, 4)
 
-            // Artwork — large, centered, with a soft teal glow
-            artworkImage
-                .padding(.horizontal, 44)
-
-            Spacer(minLength: 30)
-
-            // Track title — tap to open the song's project page (playback keeps
-            // going; AudioService is global). The full-queue Menu that used to
-            // live here scrolled unusably with a long catalogue — song picking
-            // stays in the Up Next sheet and the track list instead.
-            VStack(spacing: 8) {
-                NavigationLink(destination: ProjectDetailView(projectId: version.projectId)) {
-                    HStack(spacing: 6) {
-                        Text(audioService.currentTrackName ?? "Unknown Track")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(hex: "#f0f0f0"))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(Color(hex: "#2dd4bf"))
-                    }
-                }
-                .buttonStyle(.plain)
-
-                // Artist credit for someone else's song (community feed). The
-                // user's own tracks carry no per-track artist, so nothing shows.
-                if let artist = audioService.currentTrackArtist, !artist.isEmpty {
-                    Text(artist)
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .lineLimit(1)
+                if hasVisualizer {
+                    Spacer(minLength: 0)
+                } else {
+                    Spacer(minLength: 12)
+                    artworkImage
+                        .padding(.horizontal, 16)
+                    Spacer(minLength: 20)
                 }
 
-                // Version + status. Switching versions is tucked into a small
-                // menu instead of a row of pills for every version: the
-                // current mix on top, the instrumental slot under it, and the
-                // full history one level down — the old flat list spilled
-                // every mix ever uploaded (duplicate names and all) into one
-                // unscannable column.
-                HStack(spacing: 6) {
-                    if let currentMix = sortedVersions.first {
-                        Menu {
-                            // The song's current mix — the latest upload.
-                            versionMenuButton(currentMix)
+                nowPlayingInfo(version: version)
+                    .padding(.horizontal, 24)
 
-                            // The pinned no-vocals file (one per project).
-                            // Grayed out rather than hidden when the project
-                            // has none, so the slot stays discoverable.
-                            if let instrumentalUrl = playingProject?.instrumentalUrl {
-                                Button(action: { playInstrumental(url: instrumentalUrl) }) {
-                                    if isInstrumentalCurrent {
-                                        Label("Instrumental", systemImage: "checkmark")
-                                    } else {
-                                        Text("Instrumental")
-                                    }
-                                }
-                            } else {
-                                Button("Instrumental") {}.disabled(true)
-                            }
-
-                            if sortedVersions.count > 1 {
-                                Menu("Previous Mixes") {
-                                    ForEach(sortedVersions.dropFirst()) { v in
-                                        versionMenuButton(v)
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(version.displayName)
-                                    .fontWeight(.semibold)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 9))
-                            }
+                // Waveform scrubber + time
+                VStack(spacing: 6) {
+                    WaveformScrubber(
+                        progress: playbackProgress,
+                        seed: version.id,
+                        onSeek: { fraction in
+                            audioService.seek(to: Double(fraction) * audioService.duration)
                         }
-                    } else {
-                        Text(version.displayName)
-                            .fontWeight(.semibold)
+                    )
+                    HStack {
+                        Text(formatTime(audioService.currentTime))
+                        Spacer()
+                        Text("-\(formatTime(max(0, audioService.duration - audioService.currentTime)))")
                     }
-                    StatusBadge(status: version.status)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(Color(hex: "#f0f0f0").opacity(0.6))
                 }
-                .font(.caption)
-                .foregroundColor(Color(hex: "#2dd4bf"))
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+
+                // Transport controls
+                playbackControls
+                    .padding(.top, 18)
+                    .padding(.bottom, 28)
             }
-            .padding(.horizontal, 24)
-
-            Spacer(minLength: 28)
-
-            // Waveform scrubber + time
-            VStack(spacing: 6) {
-                WaveformScrubber(
-                    progress: playbackProgress,
-                    seed: version.id,
-                    onSeek: { fraction in
-                        audioService.seek(to: Double(fraction) * audioService.duration)
-                    }
-                )
-                HStack {
-                    Text(formatTime(audioService.currentTime))
-                    Spacer()
-                    Text("-\(formatTime(max(0, audioService.duration - audioService.currentTime)))")
-                }
-                .font(.caption2)
-                .foregroundColor(Color(hex: "#f0f0f0").opacity(0.5))
-            }
-            .padding(.horizontal, 28)
-
-            // Transport controls
-            playbackControls
-                .padding(.top, 26)
-
-            Spacer(minLength: 44)
         }
         // Reload versions when the playing project changes (for the switcher)
         .task(id: version.projectId) {
             await loadVersionsForCurrentProject(projectId: version.projectId)
         }
+    }
+
+    // Title, artist credit and the version switcher — left-aligned and large,
+    // the way a canvas player labels the track.
+    @ViewBuilder
+    private func nowPlayingInfo(version: Version) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Track title — tap to open the song's project page (playback keeps
+            // going; AudioService is global). The full-queue Menu that used to
+            // live here scrolled unusably with a long catalogue — song picking
+            // stays in the Up Next sheet and the track list instead.
+            NavigationLink(destination: ProjectDetailView(projectId: version.projectId)) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(audioService.currentTrackName ?? "Unknown Track")
+                        .font(.system(size: 30, weight: .heavy))
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                }
+                .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+            }
+            .buttonStyle(.plain)
+
+            // Artist credit for someone else's song (community feed). The
+            // user's own tracks carry no per-track artist, so nothing shows.
+            if let artist = audioService.currentTrackArtist, !artist.isEmpty {
+                Text(artist)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(Color(hex: "#f0f0f0").opacity(0.7))
+                    .lineLimit(1)
+            }
+
+            // Version + status. Switching versions is tucked into a small
+            // menu instead of a row of pills for every version: the
+            // current mix on top, the instrumental slot under it, and the
+            // full history one level down — the old flat list spilled
+            // every mix ever uploaded (duplicate names and all) into one
+            // unscannable column.
+            HStack(spacing: 8) {
+                if let currentMix = sortedVersions.first {
+                    Menu {
+                        // The song's current mix — the latest upload.
+                        versionMenuButton(currentMix)
+
+                        // The pinned no-vocals file (one per project).
+                        // Grayed out rather than hidden when the project
+                        // has none, so the slot stays discoverable.
+                        if let instrumentalUrl = playingProject?.instrumentalUrl {
+                            Button(action: { playInstrumental(url: instrumentalUrl) }) {
+                                if isInstrumentalCurrent {
+                                    Label("Instrumental", systemImage: "checkmark")
+                                } else {
+                                    Text("Instrumental")
+                                }
+                            }
+                        } else {
+                            Button("Instrumental") {}.disabled(true)
+                        }
+
+                        if sortedVersions.count > 1 {
+                            Menu("Previous Mixes") {
+                                ForEach(sortedVersions.dropFirst()) { v in
+                                    versionMenuButton(v)
+                                }
+                            }
+                        }
+                    } label: {
+                        versionChip(version.displayName, showsChevron: true)
+                    }
+                } else {
+                    versionChip(version.displayName, showsChevron: false)
+                }
+                StatusBadge(status: version.status)
+            }
+            .font(.caption)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // The version name as a small glass pill — reads as tappable and stays
+    // legible over a moving canvas.
+    private func versionChip(_ name: String, showsChevron: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(name)
+                .fontWeight(.semibold)
+            if showsChevron {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+        }
+        .foregroundColor(Color(hex: "#2dd4bf"))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color(hex: "#2dd4bf").opacity(0.35)))
+    }
+
+    // MARK: - Canvas
+    private var hasVisualizer: Bool {
+        guard let viz = audioService.currentVisualizerUrl else { return false }
+        return URL(string: viz) != nil
+    }
+
+    // The full-bleed visual: artwork as the instant frame, the looping
+    // visualizer on top once it buffers. Sized by a GeometryReader so the
+    // aspect-fill never pushes the layout wider than the screen.
+    private var canvasLayer: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color(hex: "#080808")
+                if let artworkUrl = audioService.currentArtworkUrl,
+                   let url = URL(string: artworkUrl) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Color.clear
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                }
+                visualizerOverlay
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    // A light fade under the top bar and a deep one behind the bottom cluster,
+    // so the controls pop over any footage while the middle stays pure canvas.
+    private var canvasScrims: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Color.black.opacity(0.55), Color.black.opacity(0)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 160)
+            Spacer(minLength: 0)
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0), location: 0),
+                    .init(color: Color.black.opacity(0.55), location: 0.35),
+                    .init(color: Color(hex: "#080808").opacity(0.92), location: 1)
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 420)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     // One clear bar holding every Now Playing control — AirPlay, Share, notes,
@@ -377,12 +478,13 @@ struct PlayerView: View {
             .frame(maxWidth: .infinity)
         }
         .padding(.vertical, 8)
+        // Frosted glass so the bar floats over a full-screen canvas.
         .background(
             RoundedRectangle(cornerRadius: 24)
-                .fill(Color(hex: "#f0f0f0").opacity(0.05))
+                .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
-                        .stroke(Color(hex: "#f0f0f0").opacity(0.08))
+                        .stroke(Color(hex: "#f0f0f0").opacity(0.12))
                 )
         )
         .padding(.horizontal, 16)
@@ -504,17 +606,19 @@ struct PlayerView: View {
                 } placeholder: {
                     artworkPlaceholder
                 }
-                .overlay(visualizerOverlay)
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .shadow(color: Color(hex: "#2dd4bf").opacity(0.25), radius: 30, y: 10)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .shadow(color: Color(hex: "#2dd4bf").opacity(0.3), radius: 34, y: 10)
                 .shadow(color: .black.opacity(0.6), radius: 24, y: 16)
             } else {
                 artworkPlaceholder
-                    .overlay(visualizerOverlay)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
             }
         }
+        // Full width, but free to shrink on short screens so the bottom
+        // cluster never gets pushed off.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .aspectRatio(1, contentMode: .fit)
     }
 
     // The project's pinned visualizer, looping over the artwork while the track
@@ -540,26 +644,34 @@ struct PlayerView: View {
             .aspectRatio(1, contentMode: .fit)
             .overlay(
                 Image(systemName: "music.note")
-                    .font(.system(size: 48))
+                    .font(.system(size: 56))
                     .foregroundColor(.gray.opacity(0.3))
             )
     }
 
     // MARK: - Playback Controls
+    // Spread edge to edge under the scrubber. The play button is the hero: a
+    // bigger teal disc whose glow swells while music is playing.
     private var playbackControls: some View {
-        HStack(spacing: 36) {
+        HStack(spacing: 0) {
             // Shuffle (state lives in AudioService so it applies everywhere)
             Button(action: { audioService.isShuffled.toggle() }) {
                 Image(systemName: "shuffle")
-                    .font(.body)
-                    .foregroundColor(audioService.isShuffled ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(audioService.isShuffled ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.55))
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("Shuffle")
+            .frame(maxWidth: .infinity)
 
             Button(action: { audioService.prev() }) {
                 Image(systemName: "backward.end.fill")
-                    .font(.title3)
+                    .font(.system(size: 26))
                     .foregroundColor(Color(hex: "#f0f0f0"))
+                    .frame(width: 52, height: 52)
             }
+            .accessibilityLabel("Previous")
+            .frame(maxWidth: .infinity)
 
             Button(action: { audioService.togglePlayPause() }) {
                 Group {
@@ -568,29 +680,46 @@ struct PlayerView: View {
                             .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "#080808")))
                     } else {
                         Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title2)
+                            .font(.system(size: 30, weight: .bold))
                             .foregroundColor(Color(hex: "#080808"))
+                            .offset(x: audioService.isPlaying ? 0 : 2) // optical centre for the triangle
                     }
                 }
-                .frame(width: 68, height: 68)
-                .background(Color(hex: "#2dd4bf"))
-                .clipShape(Circle())
-                .shadow(color: Color(hex: "#2dd4bf").opacity(0.4), radius: 16, y: 4)
+                .frame(width: 78, height: 78)
+                .background(
+                    Circle().fill(LinearGradient(
+                        colors: [Color(hex: "#5eead4"), Color(hex: "#2dd4bf"), Color(hex: "#14b8a6")],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                )
+                .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                .shadow(color: Color(hex: "#2dd4bf").opacity(audioService.isPlaying ? 0.7 : 0.4),
+                        radius: audioService.isPlaying ? 26 : 14, y: 4)
+                .animation(.easeInOut(duration: 0.35), value: audioService.isPlaying)
             }
+            .buttonStyle(PressScaleButtonStyle())
+            .accessibilityLabel(audioService.isPlaying ? "Pause" : "Play")
+            .frame(maxWidth: .infinity)
 
             Button(action: { audioService.next() }) {
                 Image(systemName: "forward.end.fill")
-                    .font(.title3)
+                    .font(.system(size: 26))
                     .foregroundColor(Color(hex: "#f0f0f0"))
+                    .frame(width: 52, height: 52)
             }
+            .accessibilityLabel("Next")
+            .frame(maxWidth: .infinity)
 
             // Loop (off → all → one)
             Button(action: { audioService.loopMode = nextLoopMode(audioService.loopMode) }) {
                 Image(systemName: audioService.loopMode == .one ? "repeat.1" : "repeat")
-                    .font(.body)
-                    .foregroundColor(audioService.loopMode != .off ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.5))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(audioService.loopMode != .off ? Color(hex: "#2dd4bf") : Color(hex: "#f0f0f0").opacity(0.55))
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("Repeat")
+            .frame(maxWidth: .infinity)
         }
+        .padding(.horizontal, 12)
     }
 
     // MARK: - Helpers
