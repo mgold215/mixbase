@@ -156,6 +156,10 @@ alter table mb_projects
 alter table mb_projects
   add column if not exists instrumental_url text;
 
+-- Migration 040: per-mix "Share to feed" opt-out
+alter table public.mb_versions
+  add column if not exists in_feed boolean not null default true;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

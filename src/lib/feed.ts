@@ -3,7 +3,7 @@
 // Server-side only (supabaseAdmin). Shared by the /feed page and GET /api/feed.
 
 import { supabaseAdmin } from './supabase'
-import { ensureFeedCommentsTable, isMissingFeedCommentsTable, ensureUgcModerationTables, isMissingUgcModerationTable } from './schema-heal'
+import { ensureFeedCommentsTable, isMissingFeedCommentsTable, ensureUgcModerationTables, isMissingUgcModerationTable, ensureVersionInFeedColumn, isMissingInFeedColumn } from './schema-heal'
 import { publicArtistName } from './display-name'
 import { versionDisplayLabel } from './mix-status'
 
@@ -202,10 +202,13 @@ async function getModerationState(viewerId: string | undefined, versionIds: stri
 }
 
 export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
-  const { data: versions, error } = await supabaseAdmin
+  const fetchVersions = () => supabaseAdmin
     .from('mb_versions')
     .select('id, project_id, label, version_number, audio_filename, status, audio_url, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, user_id)')
     .not('audio_url', 'is', null)
+    // Mixes uploaded with "Share to feed" unticked stay private (migration 040)
+    // — excluded here, so they never appear as an entry or an older mix.
+    .eq('in_feed', true)
     // Ownerless projects (residue of the fixed iOS null-owner insert bug) must
     // not reach a cross-user feed: their user_id serializes as "", which strict
     // clients reject as a UUID — one such row blanked the entire iOS feed —
@@ -213,6 +216,11 @@ export async function getFeed(viewerId?: string): Promise<FeedItem[]> {
     .not('mb_projects.user_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(RAW_VERSION_FETCH)
+  let { data: versions, error } = await fetchVersions()
+  // Deploy may have beaten migration 040 — heal the column and retry once.
+  if (error && isMissingInFeedColumn(error) && await ensureVersionInFeedColumn()) {
+    ({ data: versions, error } = await fetchVersions())
+  }
   if (error) throw new Error(error.message)
 
   type ProjectJoin = { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; user_id?: string }

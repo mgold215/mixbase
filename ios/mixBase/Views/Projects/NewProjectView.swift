@@ -20,6 +20,9 @@ struct NewProjectView: View {
     @State private var showFilePicker = false
     @State private var selectedFileURL: URL?
     @State private var selectedFileName: String?
+    // "Share to feed" for the first mix — on by default; off keeps it off the
+    // community feed.
+    @State private var shareToFeed = true
 
     // UI state
     @State private var isSubmitting = false
@@ -60,6 +63,13 @@ struct NewProjectView: View {
                                 Image(systemName: "folder")
                                     .foregroundColor(.gray)
                             }
+                        }
+                        if selectedFileURL != nil {
+                            Toggle(isOn: $shareToFeed) {
+                                Text("Share to feed")
+                                    .foregroundColor(Color(hex: "#f0f0f0"))
+                            }
+                            .tint(Color(hex: "#2dd4bf"))
                         }
                     } header: {
                         Text("Audio File")
@@ -231,7 +241,8 @@ struct NewProjectView: View {
                         label: nil,
                         audioFilename: fileURL.lastPathComponent,
                         durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
-                        fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)
+                        fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL),
+                        shareToFeed: shareToFeed
                     )
                 }
 

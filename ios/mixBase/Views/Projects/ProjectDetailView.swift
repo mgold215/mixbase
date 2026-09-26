@@ -32,6 +32,9 @@ struct ProjectDetailView: View {
     // Audio upload for new versions
     @State private var showAudioPicker = false
     @State private var isUploadingAudio = false
+    // "Share to feed" for the next mix upload — on by default; off keeps the
+    // mix off the community feed.
+    @State private var shareToFeed = true
     @State private var uploadProgress = ""
 
     // Instrumental slot — one pinned no-vocals file per project (migration
@@ -160,6 +163,14 @@ struct ProjectDetailView: View {
                                     .cornerRadius(10)
                                 }
                                 .padding(.horizontal)
+
+                                Toggle(isOn: $shareToFeed) {
+                                    Text("Share to feed")
+                                        .font(.subheadline)
+                                        .foregroundColor(Color(hex: "#f0f0f0"))
+                                }
+                                .tint(Color(hex: "#2dd4bf"))
+                                .padding(.horizontal, 20)
 
                                 Text("Named from your file — put \"master\" in the filename to upload a master")
                                     .font(.caption2)
@@ -1088,7 +1099,8 @@ struct ProjectDetailView: View {
                 label: nil,
                 audioFilename: url.lastPathComponent,
                 durationSeconds: await AudioFileMetadata.durationSeconds(of: tempURL),
-                fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL)
+                fileSizeBytes: AudioFileMetadata.fileSize(of: tempURL),
+                shareToFeed: shareToFeed
             )
 
             versions.append(version)

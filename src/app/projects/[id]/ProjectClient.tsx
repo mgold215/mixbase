@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
+import ShareToFeedToggle from '@/components/ShareToFeedToggle'
 import type { Release } from '@/lib/supabase'
 
 const CHECKLIST_ITEMS = [
@@ -209,6 +210,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
   const instrumentalInputRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState(false)
   const [uploading, setUploading] = useState(false)
+  // "Share to feed" for the next mix upload — ticked by default
+  const [shareToFeed, setShareToFeed] = useState(true)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [savedNoteKey, setSavedNoteKey] = useState<string | null>(null)
@@ -693,6 +696,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
         audio_filename: file.name,
         duration_seconds: audioDuration,
         file_size_bytes: file.size,
+        share_to_feed: shareToFeed,
       }),
     })
 
@@ -736,6 +740,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
           // Restoring re-inserts the row, so carry its status — bringing back
           // "MASTER 2" must not demote it to a fresh Mix.
           status: archivedVersion.status,
+          // …and its feed choice: a mix kept off the feed stays off it.
+          share_to_feed: archivedVersion.in_feed !== false,
         }),
       })
       if (res.ok) {
@@ -1066,6 +1072,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                     <Upload size={15} />
                     Update Mix
                   </button>
+                  <ShareToFeedToggle checked={shareToFeed} onChange={setShareToFeed} />
                   {uploadStatus.startsWith('Error') && (
                     <span className="text-xs text-red-400">{uploadStatus}</span>
                   )}
