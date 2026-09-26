@@ -86,6 +86,34 @@ export function isMissingInstrumentalColumn(error: { message?: string } | null):
   return !!error?.message && /instrumental_url/.test(error.message)
 }
 
+// ── mb_versions.in_feed (migration 040) ─────────────────────────────────────────
+// The per-mix "Share to feed" choice. getFeed() filters on it and
+// POST /api/versions writes it; both catch the missing-column error, heal, and
+// retry, so a deploy that beats the migration can't blank the feed or fail
+// uploads.
+
+const IN_FEED_SQL =
+  "alter table public.mb_versions add column if not exists in_feed boolean not null default true; notify pgrst, 'reload schema';"
+
+let inFeedEnsured: Promise<boolean> | null = null
+
+export function ensureVersionInFeedColumn(): Promise<boolean> {
+  if (!inFeedEnsured) {
+    inFeedEnsured = runQuery(IN_FEED_SQL, 'mb_versions.in_feed column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) inFeedEnsured = null
+        return ok
+      })
+  }
+  return inFeedEnsured
+}
+
+/** True when a PostgREST error is the missing in_feed column failure. */
+export function isMissingInFeedColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /in_feed/.test(error.message)
+}
+
 // ── mb_visualizers.settings (migration 031) ─────────────────────────────────
 // The FX-engine recipe persisted with each saved clip. A deploy that beats the
 // migration would fail every insert that includes `settings`; the write paths

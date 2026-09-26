@@ -6,6 +6,7 @@ import { Upload, Music, Trash2 } from 'lucide-react'
 import { analyzeFile } from '@/lib/audio-analysis'
 import { readAudioDuration } from '@/lib/audio-duration'
 import { usePlayer } from '@/contexts/PlayerContext'
+import ShareToFeedToggle from '@/components/ShareToFeedToggle'
 
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
                'Cm', 'C#m', 'Dm', 'D#m', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bm']
@@ -22,6 +23,7 @@ export default function NewProjectForm() {
   const [detectingMeta, setDetectingMeta] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
+  const [shareToFeed, setShareToFeed] = useState(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function set(field: string, value: string) {
@@ -226,6 +228,7 @@ export default function NewProjectForm() {
         audio_filename: selectedFile.name,
         duration_seconds: duration,
         file_size_bytes: selectedFile.size,
+        share_to_feed: shareToFeed,
       }),
     })
 
@@ -344,6 +347,10 @@ export default function NewProjectForm() {
             ))}
           </select>
         </div>
+
+        {selectedFile && (
+          <ShareToFeedToggle checked={shareToFeed} onChange={setShareToFeed} disabled={loading} />
+        )}
 
         {/* Upload progress */}
         {uploadStatus && (

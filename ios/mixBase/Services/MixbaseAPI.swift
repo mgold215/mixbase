@@ -359,11 +359,15 @@ final class MixbaseAPI {
         label: String?,
         audioFilename: String? = nil,
         durationSeconds: Int? = nil,
-        fileSizeBytes: Int? = nil
+        fileSizeBytes: Int? = nil,
+        shareToFeed: Bool = true
     ) async throws -> Version {
         var body: [String: Any] = [
             "project_id": projectId.uuidString.lowercased(),
             "audio_url": audioUrl,
+            // The uploader's "Share to feed" toggle. Only false keeps the mix
+            // off the community feed (migration 040).
+            "share_to_feed": shareToFeed,
         ]
         // Omit rather than send NSNull: the route forwards these straight into
         // the insert, so a null would clobber a value a later heal or the web

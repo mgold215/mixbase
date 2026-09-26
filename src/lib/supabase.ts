@@ -145,6 +145,8 @@ export type Version = {
   change_log: string | null
   share_token: string | null
   allow_download: boolean
+  /** Shown on the community feed — the uploader's "Share to feed" choice (migration 040) */
+  in_feed?: boolean
   created_at: string
 }
 

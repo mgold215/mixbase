@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
-import { ensureVersionUniqueIndex } from '@/lib/schema-heal'
+import { ensureVersionUniqueIndex, ensureVersionInFeedColumn, isMissingInFeedColumn } from '@/lib/schema-heal'
 import { resolveAllowDownload } from '@/lib/version-defaults'
 import { normalizeStatus, nextKindLabel, parseVersionName, type MixStatus } from '@/lib/mix-status'
 
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const {
     project_id, audio_url, audio_filename, duration_seconds,
     file_size_bytes, label, status, private_notes, public_notes,
-    change_log, allow_download,
+    change_log, allow_download, share_to_feed,
   } = body
 
   if (!project_id || !audio_url) {
@@ -114,12 +114,18 @@ export async function POST(request: NextRequest) {
         duration_seconds, file_size_bytes, label: resolvedLabel,
         status: resolvedStatus, private_notes, public_notes, change_log,
         allow_download: resolveAllowDownload(allow_download, previousAllowDownload),
+        // "Share to feed" checkbox — on unless the uploader explicitly unticked
+        // it. Only a literal false opts out, so older clients that don't send
+        // the field keep publishing exactly as before (migration 040).
+        in_feed: share_to_feed !== false,
       })
       .select()
       .single()
 
     if (!insert.error) { data = insert.data; lastError = null; break }
     lastError = insert.error
+    // Deploy may have beaten migration 040 — heal in_feed and retry.
+    if (isMissingInFeedColumn(insert.error) && await ensureVersionInFeedColumn()) continue
     // 23505 = unique_violation → another upload took this number; recompute+retry.
     if (insert.error.code !== '23505') break
   }
