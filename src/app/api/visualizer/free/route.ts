@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { storeVisualizer, userOwnsProject } from '@/lib/visualizer-store'
+import { tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
 import {
-  renderFreeVisualizer, tryAcquireTranscodeSlot, releaseTranscodeSlot,
-  FREE_FORMATS, FREE_EFFECTS, isFreeFormat, isFreeEffect,
-} from '@/lib/visualizer-encode'
+  renderFreeVisualizer, FREE_FORMATS, isFreeFormat, resolveFreeEffect, freeEffectList,
+} from '@/lib/free-render'
+import { EFFECTS } from '@/lib/free-effects'
 import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { freeRenderLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 
-// Download the artwork + render up to 30s of 1080p + push to storage. Advisory
+// Download the artwork + render up to 30s of 1080p (the web generator's own
+// effect engine, drawn server-side — see free-render.ts) + push to storage. Advisory
 // on Railway (plain `next start`), like the other video routes.
 export const maxDuration = 300
 
@@ -22,14 +24,14 @@ const MAX_IMAGE_BYTES = 50 * 1024 * 1024
 export async function GET() {
   return NextResponse.json({
     formats: Object.entries(FREE_FORMATS).map(([id, f]) => ({ id, ...f })),
-    effects: Object.entries(FREE_EFFECTS).map(([id, e]) => ({ id, ...e })),
+    effects: freeEffectList(),
   })
 }
 
 // POST /api/visualizer/free — server-side free visualizer render. The web free
 // generator records a browser canvas, which iOS (native app and Safari alike)
-// cannot do — this renders the same artwork-to-motion-loop idea with ffmpeg so
-// every client has a free path. No monthly tier gate on purpose: the web
+// cannot do — this runs the same effect engine on the server so every client
+// gets the web's effects for free. No monthly tier gate on purpose: the web
 // equivalent is free and unlimited, so the hourly limiter + encoder gate are
 // the protection here, matching /api/visualizer/save's posture.
 export async function POST(req: NextRequest) {
@@ -56,7 +58,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'imageUrl must be a Supabase storage URL' }, { status: 400 })
   }
   if (!isFreeFormat(format)) return NextResponse.json({ error: 'Unknown format' }, { status: 400 })
-  if (!isFreeEffect(effect)) return NextResponse.json({ error: 'Unknown effect' }, { status: 400 })
+  const effectId = resolveFreeEffect(effect)
+  if (!effectId) return NextResponse.json({ error: 'Unknown effect' }, { status: 400 })
   if (!(await userOwnsProject(userId, projectId))) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
@@ -90,7 +93,7 @@ export async function POST(req: NextRequest) {
   try {
     bytes = await renderFreeVisualizer(img, {
       format,
-      effect,
+      effect: effectId,
       bpm: typeof bpm === 'number' ? bpm : undefined,
     })
   } catch (err) {
@@ -106,7 +109,7 @@ export async function POST(req: NextRequest) {
     bytes,
     contentType: 'video/mp4',
     kind: 'free',
-    title: `${FREE_FORMATS[format].label} · ${FREE_EFFECTS[effect].label}`,
+    title: `${FREE_FORMATS[format].label} · ${EFFECTS[effectId].label}`,
     sourceImageUrl: imageUrl,
   })
   if (!stored) return NextResponse.json({ error: 'Failed to save visualizer' }, { status: 500 })

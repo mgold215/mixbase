@@ -89,9 +89,26 @@ final class MixbaseAPI {
     // purchased outside Apple's In-App Purchase. Do not add generation here
     // without shipping StoreKit IAP alongside it.
 
-    /// Server-rendered free visualizer (ffmpeg on the backend — no AI credits).
-    /// The render takes seconds for the 6s formats, up to ~1 min for YouTube.
-    /// Returns the stored mf-video URL (always persisted to the Media library).
+    /// One effect the free generator offers — the web generator's own list.
+    struct FreeEffectOption: Decodable, Identifiable, Equatable {
+        let id: String
+        let label: String
+        let description: String
+        let beatSynced: Bool
+    }
+
+    /// The effects the server-side free generator renders. The server runs the
+    /// web generator's own effect engine, so this is the web's list; fetched so
+    /// effects added on the web show up here without an app update.
+    func fetchFreeVisualizerEffects() async throws -> [FreeEffectOption] {
+        struct Options: Decodable { let effects: [FreeEffectOption] }
+        let data = try await requestData(path: "/api/visualizer/free", method: "GET")
+        return try decoder.decode(Options.self, from: data).effects
+    }
+
+    /// Server-rendered free visualizer (the web's effect engine, drawn on the
+    /// backend — no AI credits). Seconds for the 6s formats, up to ~1 min for
+    /// YouTube. Returns the stored mf-video URL (always persisted to the library).
     func generateFreeVisualizer(
         projectId: UUID,
         imageUrl: String,

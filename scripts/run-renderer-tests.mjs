@@ -102,6 +102,7 @@ const SUITES = [
   'viz-recover-test.mjs',
   'finalize-test.mjs',
   'visualizer-transcode-test.mjs',
+  'free-render-test.mjs',
   'video-test.mjs',
   'video-timeout-test.mjs',
 ]
