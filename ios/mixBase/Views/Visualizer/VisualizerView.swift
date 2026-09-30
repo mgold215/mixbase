@@ -25,19 +25,38 @@ struct VisualizerView: View {
     // Lets the presenting screen update its copy of the pin immediately
     var onPinChanged: ((String?) -> Void)? = nil
 
-    // Free generator state (server-side ffmpeg render — no AI credits).
-    // Options are the static contract of /api/visualizer/free.
+    // Free generator state (server-side render of the web generator's own
+    // effect engine — no AI credits). The effect list is refreshed from
+    // GET /api/visualizer/free; this built-in copy mirrors the web's
+    // (src/lib/free-effects.ts) so the picker is complete even offline.
     @State private var freeFormat = "canvas"
-    @State private var freeEffect = "drift"
+    @State private var freeEffect = "kenburns"
     @State private var freeBpm = "122"
     @State private var isFreeGenerating = false
+    @State private var freeEffects: [MixbaseAPI.FreeEffectOption] = VisualizerView.builtInFreeEffects
 
     private let freeFormats: [(id: String, label: String)] = [
-        ("canvas", "9:16 Canvas"), ("square", "1:1 Square"), ("youtube", "16:9 YouTube"),
+        ("canvas", "9:16 Canvas"), ("square", "1:1 Square"), ("youtube", "16:9 YouTube"), ("story", "9:16 Story"),
     ]
-    private let freeEffects: [(id: String, label: String)] = [
-        ("drift", "Cinematic Drift"), ("pulse", "Deep Pulse"), ("orbit", "Orbit"),
+
+    private static let builtInFreeEffects: [MixbaseAPI.FreeEffectOption] = [
+        .init(id: "kenburns", label: "Cinematic Drift", description: "Slow weightless zoom & pan", beatSynced: false),
+        .init(id: "drone", label: "Drone Shot", description: "Circles the art, zooming in & out", beatSynced: false),
+        .init(id: "parallax", label: "Depth Float", description: "Art floats over blurred depth", beatSynced: false),
+        .init(id: "dust", label: "Dust & Glow", description: "Floating particles, warm light", beatSynced: false),
+        .init(id: "pulse", label: "Deep Pulse", description: "Breathes on the beat", beatSynced: true),
+        .init(id: "strobe", label: "Club Strobe", description: "Beat punch, downbeat flash", beatSynced: true),
+        .init(id: "zoomblur", label: "Warp Zoom", description: "Radial warp bursts on the beat", beatSynced: true),
+        .init(id: "liquid", label: "Liquid", description: "Slow underwater ripple", beatSynced: false),
+        .init(id: "orbit", label: "Orbit", description: "Weightless sway & rotation", beatSynced: false),
+        .init(id: "kaleido", label: "Kaleidoscope", description: "Mirrored prism, slow spin", beatSynced: false),
+        .init(id: "vhs", label: "VHS", description: "Tape fuzz, tracking roll", beatSynced: false),
+        .init(id: "glitch", label: "Glitch", description: "RGB-split digital bursts", beatSynced: true),
     ]
+
+    private var selectedFreeEffect: MixbaseAPI.FreeEffectOption? {
+        freeEffects.first { $0.id == freeEffect }
+    }
 
     // Library state
     @State private var library: [Visualizer] = []
@@ -102,9 +121,9 @@ struct VisualizerView: View {
                     }
 
                     // MARK: - Free Generator
-                    // Server-side ffmpeg render of the artwork into a seamless
-                    // loop — the iOS counterpart of the web's free generator
-                    // (which records a browser canvas this platform doesn't have).
+                    // Server-side render of the artwork into a seamless loop by
+                    // the web generator's own effect engine — the web records a
+                    // browser canvas, which this platform doesn't have.
                     if let artworkUrl, !artworkUrl.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Free Generator")
@@ -141,8 +160,15 @@ struct VisualizerView: View {
                                 .padding(.horizontal)
                             }
 
-                            // BPM — only the beat-synced effect uses it
-                            if freeEffect == "pulse" {
+                            if let selected = selectedFreeEffect {
+                                Text(selected.description)
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                    .padding(.horizontal)
+                            }
+
+                            // BPM — only beat-synced effects use it
+                            if selectedFreeEffect?.beatSynced == true {
                                 HStack(spacing: 8) {
                                     Text("Track BPM")
                                         .font(.caption)
@@ -217,6 +243,9 @@ struct VisualizerView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             await loadLibrary()
+        }
+        .task {
+            await loadFreeEffects()
         }
     }
 
@@ -376,6 +405,21 @@ struct VisualizerView: View {
         isLoadingLibrary = false
     }
 
+    // Keep the built-in list when the fetch fails or comes back empty — the
+    // picker must never go blank.
+    private func loadFreeEffects() async {
+        do {
+            let effects = try await MixbaseAPI.shared.fetchFreeVisualizerEffects()
+            guard !effects.isEmpty else { return }
+            freeEffects = effects
+            if !effects.contains(where: { $0.id == freeEffect }) {
+                freeEffect = effects[0].id
+            }
+        } catch {
+            print("VisualizerView: failed to load free effects — \(error.localizedDescription)")
+        }
+    }
+
     private func generateFree() {
         guard let artworkUrl else { return }
         isFreeGenerating = true
@@ -388,7 +432,7 @@ struct VisualizerView: View {
                     imageUrl: artworkUrl,
                     format: freeFormat,
                     effect: freeEffect,
-                    bpm: freeEffect == "pulse" ? Int(freeBpm) : nil
+                    bpm: selectedFreeEffect?.beatSynced == true ? Int(freeBpm) : nil
                 )
                 // Free renders always persist server-side — pin for instant
                 // payoff and refresh the library so it appears there too.

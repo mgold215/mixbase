@@ -69,7 +69,9 @@ const nextConfig: NextConfig = {
 
   // Keep the ffmpeg binary wrappers unbundled — their exported paths resolve
   // relative to node_modules at runtime and break if the bundler inlines them.
-  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', '@ffprobe-installer/ffprobe'],
+  // @napi-rs/canvas (the server-side free visualizer renderer) loads a native
+  // .node binary per platform, which the bundler can't inline either.
+  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', '@ffprobe-installer/ffprobe', '@napi-rs/canvas'],
 
   // Canonicalize www → apex. Session cookies are host-only, so www.mixbase.app
   // and mixbase.app hold two independent sessions — a user drifting between the

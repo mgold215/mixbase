@@ -19,6 +19,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1020.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@napi-rs/canvas": "1.0.9",
     "@sentry/nextjs": "^10.51.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.100.0",
