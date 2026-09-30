@@ -154,6 +154,9 @@ export async function renderFreeVisualizer(
         start, end, total,
         ffmpeg: FFMPEG,
         args: sliceEncodeArgs(W, H, seg),
+        // Just inside the render deadline, so the encoder's own SIGKILL
+        // watchdog fires before the worker is torn down around it.
+        timeoutMs: FREE_RENDER_TIMEOUT_MS - 10_000,
       }, deadline, stops))
     }
     try {

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { EFFECTS, type EffectId, type LayerHandle } from './free-effects.ts'
+import { armDeadline } from './proc-deadline.ts'
 
 // One slice of a server-side free visualizer render (see free-render.ts).
 //
@@ -31,6 +32,10 @@ export type FreeRenderSlice = {
   total: number
   ffmpeg: string
   args: string[]
+  // Wall-clock budget for this slice's encoder. Terminating the worker does
+  // not reliably take the ffmpeg child with it, so the child gets its own
+  // SIGKILL watchdog like every other spawn in the app.
+  timeoutMs: number
 }
 
 async function run(job: FreeRenderSlice): Promise<void> {
@@ -63,16 +68,22 @@ async function run(job: FreeRenderSlice): Promise<void> {
   let stderr = ''
   proc.stderr?.on('data', d => { stderr += String(d); if (stderr.length > 20_000) stderr = stderr.slice(-10_000) })
   const closed = new Promise<number | null>((resolve, reject) => {
+    armDeadline(proc, job.timeoutMs, 0, 'free visualizer slice', reject)
     proc.on('error', reject)
     proc.on('close', code => resolve(code))
   })
+  // The render loop stops as soon as the encoder is gone for any reason —
+  // exited, killed by the watchdog, or failed to spawn — so a pending 'drain'
+  // wait can never outlive it.
+  let dead = false
+  const gone = closed.then(() => { dead = true }, () => { dead = true })
   // A dead encoder surfaces as EPIPE on the next write; the exit code below
   // carries the real reason, so swallow the stream error itself.
   proc.stdin!.on('error', () => {})
 
   const dc = ctx as unknown as CanvasRenderingContext2D
   for (let f = job.start; f < job.end; f++) {
-    if (proc.exitCode !== null) break
+    if (dead) break
     // @napi-rs/canvas keeps a snapshot of every canvas drawn INTO a context
     // until that context is reset — ~70 MB per frame for Drone Shot's scratch
     // layer, which OOM-killed a 30s render. Every effect paints the whole
@@ -84,7 +95,7 @@ async function run(job: FreeRenderSlice): Promise<void> {
     draw(dc, f / job.total, f)
     const { data } = ctx.getImageData(0, 0, job.W, job.H)
     const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-    if (!proc.stdin!.write(buf)) await once(proc.stdin!, 'drain')
+    if (!proc.stdin!.write(buf)) await Promise.race([once(proc.stdin!, 'drain'), gone])
     // Each readback is a native 8 MB buffer freed by a finalizer that only
     // runs once the loop yields; a tight synchronous loop grows without bound.
     else await new Promise(resolve => setImmediate(resolve))
