@@ -51,8 +51,15 @@ class AudioService: ObservableObject {
     /// with tracks swapped via replaceCurrentItem(with:) — tearing down and recreating
     /// the player mid-AirPlay dropped the HomePod/Sonos route and playback fell back to
     /// the phone on every track change.
-    private let player: AVPlayer = {
-        let player = AVPlayer()
+    ///
+    /// It's an AVQueuePlayer so the NEXT song can sit behind the current one and
+    /// buffer while this one plays (see preloadUpcoming) — skipping or
+    /// auto-advancing then starts instantly instead of after a silent download
+    /// gap. It never advances on its own (actionAtItemEnd = .pause): next(),
+    /// loop and shuffle stay decided here, exactly as before.
+    private let player: AVQueuePlayer = {
+        let player = AVQueuePlayer()
+        player.actionAtItemEnd = .pause
         // Let AVPlayer buffer/recover from stalls on its own instead of dying silently.
         player.automaticallyWaitsToMinimizeStalling = true
         // "External playback" is AVPlayer's *video* AirPlay mode (Apple TV rendering).
@@ -123,13 +130,28 @@ class AudioService: ObservableObject {
 
     /// Ordered queue used by next/prev and auto-advance. The player screen pushes its
     /// filtered/sorted list here; falls back to a lazily-loaded "all tracks" list.
-    @Published private(set) var queue: [QueueItem] = []
+    @Published private(set) var queue: [QueueItem] = [] {
+        didSet { preloadUpcoming() }
+    }
 
     /// Repeat mode. Owned here so it survives navigating away from the player screen.
     @Published var loopMode: LoopMode = .off
 
     /// Shuffle toggle. Owned here for the same reason.
-    @Published var isShuffled: Bool = false
+    @Published var isShuffled: Bool = false {
+        didSet {
+            guard oldValue != isShuffled else { return }
+            plannedShuffleNext = nil
+            preloadUpcoming()
+        }
+    }
+
+    /// The song buffering behind the current one, and which version it is.
+    private var preloaded: (versionId: UUID, item: AVPlayerItem)?
+
+    /// With shuffle on, the random pick for "next" is made ahead of time so the
+    /// song that gets preloaded is the one next() actually plays.
+    private var plannedShuffleNext: QueueItem?
 
     /// Tracks user *intent* to play, independent of the live AVPlayer status (which can
     /// momentarily report paused/waiting during loads). Keeps isPlaying truthful without
@@ -263,7 +285,17 @@ class AudioService: ObservableObject {
         removeTimeObserver()
         playerCancellables.removeAll()
 
-        let playerItem = AVPlayerItem(url: url)
+        // Reuse the preloaded item when it's the song being asked for — its audio
+        // is already (partly) downloaded, so playback starts without a gap.
+        var reuse: AVPlayerItem?
+        if let pre = preloaded, pre.versionId == version.id,
+           pre.item.status != .failed,
+           player.items().dropFirst().first === pre.item {
+            reuse = pre.item
+        }
+        preloaded = nil
+        plannedShuffleNext = nil
+        let playerItem = reuse ?? AVPlayerItem(url: url)
 
         currentVersion = version
         if let trackName = trackName { currentTrackName = trackName }
@@ -286,11 +318,21 @@ class AudioService: ObservableObject {
         activateSession()
         // Swap the item on the persistent player — keeps the current output route
         // (AirPlay/Bluetooth) alive across track and version changes.
-        player.replaceCurrentItem(with: playerItem)
+        if reuse != nil {
+            player.advanceToNextItem()
+        } else {
+            // Drop any stale preloaded song before swapping, so it can't be
+            // played by mistake later.
+            for queued in player.items() where queued !== player.currentItem {
+                player.remove(queued)
+            }
+            player.replaceCurrentItem(with: playerItem)
+        }
         player.play()
         updateNowPlayingInfo()
         addTimeObserver()
         observePlayer(player, item: playerItem)
+        preloadUpcoming()
 
         // The Bluetooth/AVRCP artist slot shows whatever name we hold at play
         // time. If the launch-time profile fetch never ran (session restored
@@ -413,19 +455,51 @@ class AudioService: ObservableObject {
 
     /// Skip to the next track in the queue (honours shuffle + loop).
     func next() {
+        guard let target = upcomingItem() else { return }
+        play(item: target)
+    }
+
+    /// The song next() will play: the following queue entry, or with shuffle
+    /// on a random other one — picked once and remembered so the preloaded
+    /// song and the played song are the same.
+    private func upcomingItem() -> QueueItem? {
         let list = orderedQueue()
-        guard !list.isEmpty else { return }
+        guard !list.isEmpty else { return nil }
         guard let curPid = currentVersion?.projectId,
               let idx = list.firstIndex(where: { $0.projectId == curPid }) else {
-            play(item: list[0]); return
+            return list[0]
         }
         if isShuffled && list.count > 1 {
+            if let planned = plannedShuffleNext, planned.projectId != curPid,
+               list.contains(where: { $0.projectId == planned.projectId && $0.version.id == planned.version.id }) {
+                return planned
+            }
             var target = list[Int.random(in: 0..<list.count)]
             while target.projectId == curPid { target = list[Int.random(in: 0..<list.count)] }
-            play(item: target)
-        } else {
-            play(item: list[(idx + 1) % list.count])
+            plannedShuffleNext = target
+            return target
         }
+        return list[(idx + 1) % list.count]
+    }
+
+    /// Queue the upcoming song behind the current one so it buffers while this
+    /// one plays. Called after every track start and whenever the queue or
+    /// shuffle changes. Only one song is ever preloaded.
+    private func preloadUpcoming() {
+        guard currentVersion != nil, player.currentItem != nil,
+              let next = upcomingItem(),
+              next.version.id != currentVersion?.id,
+              let url = URL(string: next.version.audioUrl) else { return }
+        if let pre = preloaded, pre.versionId == next.version.id,
+           player.items().dropFirst().first === pre.item { return }
+
+        for queued in player.items() where queued !== player.currentItem {
+            player.remove(queued)
+        }
+        let item = AVPlayerItem(url: url)
+        guard player.canInsert(item, after: player.currentItem) else { return }
+        player.insert(item, after: player.currentItem)
+        preloaded = (next.version.id, item)
     }
 
     /// Skip to the previous track. First 3s restarts the current track (standard transport).
