@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid } from '@/lib/validators'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
+import { isAdminIdentity } from '@/lib/admin-identity'
 import { readPhoto, studioPrefix, uploadStudio } from '@/lib/cassette-server'
 import { extractHandwriting } from '@/lib/handwriting'
 
@@ -13,9 +14,11 @@ export const maxDuration = 60
 // Lifts the artist's handwriting off a photo (src/lib/handwriting.ts) and
 // saves it as this project's lettering: studio/<userId>/lettering-<projectId>-<ts>.png.
 // No AI involved — every stroke in the result is the artist's own ink.
+// Owner-only (404 otherwise) — see src/app/api/cassette-studio/route.ts.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  if (!(await isAdminIdentity(userId))) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const limit = await checkUserLimit(cassetteStudioLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })

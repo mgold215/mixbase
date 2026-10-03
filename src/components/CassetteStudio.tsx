@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
-import { Camera, PenLine, Shuffle, Image as ImageIcon, X, RefreshCw } from 'lucide-react'
+import { Camera, PenLine, Shuffle, Image as ImageIcon, X, RefreshCw, Film, ExternalLink } from 'lucide-react'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 
@@ -14,6 +14,16 @@ type StudioFile = { path: string; url: string; createdAt: string | null }
 type Position = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right'
 type Size = 'small' | 'medium' | 'large'
 type SceneChoice = 'random' | 'custom' | 'photo' | string
+
+// Moving cover formats — the ids and sizes of FREE_FORMATS in
+// src/lib/free-render.ts (POST /api/cassette-studio/motion validates them).
+type MotionFormat = 'canvas' | 'square' | 'youtube' | 'story'
+const MOTION_FORMATS: { value: MotionFormat; label: string }[] = [
+  { value: 'canvas', label: 'Canvas 9:16' },
+  { value: 'square', label: 'Square' },
+  { value: 'youtube', label: 'YouTube 16:9' },
+  { value: 'story', label: 'Story' },
+]
 
 const POSITIONS: { value: Position; label: string }[] = [
   { value: 'top-left', label: '↖' }, { value: 'top-center', label: '↑' }, { value: 'top-right', label: '↗' },
@@ -81,8 +91,22 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   const [error, setError] = useState('')
   const [lastScene, setLastScene] = useState<string | null>(null)
   const [hasRendered, setHasRendered] = useState(false)
+  // Moving cover (no AI): the cover just made, animated — reels turning,
+  // camera drift, live grain. Reset whenever a new cover replaces it.
+  const [motionFormat, setMotionFormat] = useState<MotionFormat>('canvas')
+  const [motionBusy, setMotionBusy] = useState(false)
+  const [motionError, setMotionError] = useState('')
+  const [motionVideo, setMotionVideo] = useState<{ url: string; format: MotionFormat } | null>(null)
+  // The project's CURRENT cover can already move (a studio cover with its
+  // layers saved) — offers the row on open, not only after a new render.
+  const [canMove, setCanMove] = useState(false)
 
   const load = useCallback(async () => {
+    // Best-effort: a failed check only hides the row until the next render.
+    fetch(`/api/cassette-studio/motion?project_id=${projectId}`)
+      .then(r => (r.ok ? readJson(r) : null))
+      .then(d => setCanMove(d?.available === true))
+      .catch(() => {})
     try {
       const res = await fetch(`/api/cassette-studio?project_id=${projectId}`)
       const data = await readJson(res)
@@ -198,6 +222,8 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       onRendered(data.artwork_url as string, (data.finalized_artwork_url as string | null) ?? null)
       if (mode === 'scene') setLastScene((data.scene_label as string | null) ?? null)
       setHasRendered(true)
+      setMotionVideo(null)
+      setMotionError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error. Try again.')
     } finally {
@@ -205,7 +231,29 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
     }
   }
 
-  const working = busy !== null
+  async function makeItMove() {
+    setMotionBusy(true)
+    setMotionError('')
+    try {
+      const format = motionFormat
+      const res = await fetch('/api/cassette-studio/motion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, format }),
+      })
+      const data = await readJson(res)
+      if (!res.ok || typeof data?.video_url !== 'string') throw new Error((data?.error as string) ?? 'Could not render the moving cover.')
+      setMotionVideo({ url: data.video_url, format })
+    } catch (err) {
+      setMotionError(err instanceof Error ? err.message : 'Network error. Try again.')
+    } finally {
+      setMotionBusy(false)
+    }
+  }
+
+  // A moving-cover render reads the CURRENT cover's layers server-side, so a
+  // new cover must not replace it mid-render.
+  const working = busy !== null || motionBusy
   const canRender = !!subject && !working && (scene !== 'custom' || setting.trim().length > 0) && (scene !== 'photo' || !!bgFile)
   const currentLettering = lettering.find(l => l.path === letterPath) ?? null
 
@@ -374,6 +422,52 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
         )}
       </div>
       {!subject && busy !== 'load' && <p className="text-[10px] text-[#666]">Add a cassette photo to start.</p>}
+
+      {/* 4 — Make it move: the cover just made as a looping clip, no AI. */}
+      {(hasRendered || canMove) && (
+        <section className="space-y-2 border-t border-[#1e1e1e] pt-3">
+          <p className="text-[11px] font-medium text-[#999]">Make it move</p>
+          <div className="flex flex-wrap items-center gap-1">
+            {MOTION_FORMATS.map(f => (
+              <button
+                key={f.value}
+                onClick={() => setMotionFormat(f.value)}
+                disabled={motionBusy}
+                className={`px-2 py-1 rounded-md text-[10px] ${motionFormat === f.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'} disabled:opacity-50`}
+              >
+                {f.label}
+              </button>
+            ))}
+            <button
+              onClick={makeItMove}
+              disabled={working}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+            >
+              {motionBusy
+                ? <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />{motionFormat === 'youtube' ? 'Rendering (~1 min)…' : 'Rendering…'}</>
+                : <><Film size={12} />Make it move</>}
+            </button>
+          </div>
+          <p className="text-[10px] text-[#666] leading-snug">The reels turn, the camera drifts and the film grain moves. Built from this cover itself, with no AI. Saved to your visualizers.</p>
+          {motionError && <p className="text-red-400 text-xs">{motionError}</p>}
+          {motionVideo && (
+            <div className="space-y-1.5">
+              <video
+                key={motionVideo.url}
+                src={motionVideo.url}
+                muted
+                loop
+                autoPlay
+                playsInline
+                className={`rounded-lg bg-black ${motionVideo.format === 'youtube' ? 'w-full aspect-video' : motionVideo.format === 'square' ? 'w-48 aspect-square' : 'w-32 aspect-[9/16]'}`}
+              />
+              <a href={motionVideo.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
+                <ExternalLink size={10} />Open the clip
+              </a>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   )
 }

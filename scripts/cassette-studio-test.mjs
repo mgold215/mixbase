@@ -16,8 +16,10 @@
 import sharp from 'sharp'
 import { extractHandwriting } from '../src/lib/handwriting.ts'
 import {
-  COVER, FILL_SIZE, applyLettering, buildFillRequest, composeCover, isOwnStudioKey,
+  COVER, FILL_SIZE, applyLettering, buildFillRequest, composeCover, composeLayers, finishCover, flattenLayers, isOwnStudioKey,
   placeSubject, seeThrough, studioPrefix, trimSubject,
+  tintLettering, resolveLetteringColor, letteringPlacement, motionLayerFiles,
+  plateKey, layerKey, titleKey, parseStudioMotionKey, cassetteCoverStamp, finalizedCoverStamp,
 } from '../src/lib/cassette-studio.ts'
 import { CASSETTE_SCENES, isSceneId, scenePrompt } from '../src/lib/cassette-scenes.ts'
 
@@ -152,6 +154,35 @@ console.log('\ncomposite')
   check('contact shadow darkens the surface under the cassette', under[2] < far[2] - 10, `${under} vs ${far}`)
   const finished = await composeCover({ background: bg, subject: subj.png, box, kind: 'scene', seed: 1 })
   check('film finish path still outputs a cover-size JPEG', (await sharp(finished).metadata()).width === COVER)
+
+  // The still is the motion layers flattened: composeCover is exactly
+  // finishCover(composeLayers()), so a moving cover starts from the same pixels.
+  const layers = await composeLayers({ background: bg, subject: subj.png, box, kind: 'photo', seed: 1 })
+  check('composeCover === finishCover(composeLayers()) (raw)', Buffer.compare(await finishCover(layers, 1, true), art) === 0)
+
+  // The two files a moving cover is rebuilt from.
+  const files = await motionLayerFiles(layers)
+  const pm = await sharp(files.plateJpeg).metadata()
+  const lm = await sharp(files.layerPng).metadata()
+  check('motion plate is a cover-size JPEG', pm.format === 'jpeg' && pm.width === COVER && pm.height === COVER)
+  check('motion layer is an RGBA PNG at the placed size', lm.format === 'png' && lm.channels === 4 && lm.width === box.width && lm.height === box.height, `${lm.width}x${lm.height}`)
+  check('motion layer offsets are the box offsets', files.left === box.left && files.top === box.top)
+  const layerRaw = await sharp(files.layerPng).raw().toBuffer()
+  check('motion layer pixels are the finished cassette, losslessly', Buffer.compare(layerRaw, layers.layer) === 0)
+  // Plate + layer re-flattened reproduce the still (up to the plate's JPEG).
+  const plateRaw = await sharp(files.plateJpeg).raw().toBuffer()
+  const reflat = flattenLayers({ ...layers, plate: plateRaw })
+  let err = 0
+  for (let i = 0; i < reflat.length; i += 97) err += Math.abs(reflat[i] - r.data[i])
+  check('plate + layer re-flatten to the still', err / (reflat.length / 97) < 3, (err / (reflat.length / 97)).toFixed(2))
+  // A box poking outside the cover is clipped, never a negative offset.
+  const offBox = { left: -40, top: 100, width: 300, height: 200 }
+  const offLayers = { plate: Buffer.alloc(COVER * COVER * 3), layer: Buffer.alloc(300 * 200 * 4, 255), box: offBox, width: COVER, height: COVER }
+  const off = await motionLayerFiles(offLayers)
+  const om = await sharp(off.layerPng).metadata()
+  check('a box poking outside the cover is clipped to non-negative offsets', off.left === 0 && off.top === 100 && om.width === 260 && om.height === 200, `${off.left},${off.top} ${om.width}x${om.height}`)
+  check('a box entirely outside the cover saves nothing',
+    (await motionLayerFiles({ ...offLayers, box: { left: -400, top: 0, width: 300, height: 200 } })) === null)
 }
 
 // ── Lettering ───────────────────────────────────────────────────────────────
@@ -170,6 +201,38 @@ console.log('\nlettering')
   let red = 0
   for (let y = 150; y < 900; y += 4) for (let x = COVER - 1500; x < COVER - 150; x += 4) { const i = (y * COVER + x) * 3; if (r.data[i] > 180 && r.data[i + 1] < 90) red++ }
   check('lettering lands top-right', red > 200, String(red))
+
+  // tintLettering: the coloured title card the moving cover uses.
+  const tinted = await sharp(await tintLettering(word, '#e03a3e')).raw().toBuffer({ resolveWithObject: true })
+  const src = await sharp(word).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  check('tint keeps the lettering\'s native size', tinted.info.width === 600 && tinted.info.height === 160 && tinted.info.channels === 4)
+  let rgbOk = true, alphaOk = true, inked = 0
+  for (let i = 0; i < 600 * 160; i++) {
+    const o = i * 4
+    if (tinted.data[o] !== 0xe0 || tinted.data[o + 1] !== 0x3a || tinted.data[o + 2] !== 0x3e) rgbOk = false
+    if (tinted.data[o + 3] !== Math.round(src.data[o + 3] * 0.96)) alphaOk = false
+    if (tinted.data[o + 3] > 200) inked++
+  }
+  check('tint: RGB is the colour everywhere', rgbOk)
+  check('tint: alpha is the ink × 0.96', alphaOk && inked > 5000, String(inked))
+  const fallback = await sharp(await tintLettering(word, 'auto')).raw().toBuffer()
+  check('tint: an unresolved colour falls back to marker-white', fallback[0] === 0xf4 && fallback[1] === 0xf1 && fallback[2] === 0xea)
+  const sized = await sharp(await tintLettering(word, '#ffffff', { width: 300, height: 80 })).metadata()
+  check('tint: optional resize', sized.width === 300 && sized.height === 80)
+
+  // The still's overlay IS tintLettering at the placed size: rebuild
+  // applyLettering's output from the exported pieces, byte for byte.
+  for (const [bgImg, opts] of [[dark, { color: '#e03a3e', position: 'top-right' }], [bright, {}], [dark, { position: 'bottom-center', size: 'large' }]]) {
+    const out = await applyLettering(bgImg, word, opts)
+    const place = letteringPlacement(COVER, COVER, 600, 160, opts.position, opts.size)
+    const colour = await resolveLetteringColor(bgImg, place, opts.color)
+    const overlay = await tintLettering(word, colour, { width: place.width, height: place.height })
+    const manual = await sharp(bgImg).composite([{ input: overlay, left: place.left, top: place.top }]).jpeg({ quality: 92, chromaSubsampling: '4:2:0' }).toBuffer()
+    check(`applyLettering = placement + resolved colour + tintLettering (${opts.position ?? 'default'})`,
+      colour === out.color && Buffer.compare(manual, out.jpeg) === 0)
+  }
+  check('resolveLetteringColor passes a hex through', (await resolveLetteringColor(bright, { left: 0, top: 0, width: 10, height: 10 }, '#123456')) === '#123456')
+  check('resolveLetteringColor: auto on bright → ink-black', (await resolveLetteringColor(bright, { left: 0, top: 0, width: 10, height: 10 }, 'auto')) === '#161616')
 }
 
 // ── Studio key ownership ────────────────────────────────────────────────────
@@ -186,6 +249,61 @@ console.log('\nstudio keys')
   check('temp inputs are not subjects', !isOwnStudioKey(`${studioPrefix(me)}tmp-1790000000000-photo.jpg`, me, 'subject'))
   check('kinds are not interchangeable', !isOwnStudioKey(`${studioPrefix(me)}subject-1790000000000.png`, me, 'lettering'))
   check('non-strings refused', !isOwnStudioKey(null, me, 'subject') && !isOwnStudioKey({}, me, 'subject'))
+
+  // Motion layers: plate / layer / title. Key builders round-trip through the
+  // parser; everything else is refused.
+  const ts = '1790000000000'
+  check('plate key shape', plateKey(me, ts) === `studio/${me}/plate-${ts}.jpg`)
+  check('layer key shape', layerKey(me, ts, 852, 1104) === `studio/${me}/layer-${ts}-852-1104.png`)
+  check('title key shape', titleKey(me, ts, 'bottom-left', 'medium') === `studio/${me}/title-${ts}-bottom-left-medium.png`)
+  check('plate key parses', JSON.stringify(parseStudioMotionKey(plateKey(me, ts), me)) === JSON.stringify({ kind: 'plate', ts }))
+  check('layer key parses with its offsets', JSON.stringify(parseStudioMotionKey(layerKey(me, ts, 852, 1104), me)) === JSON.stringify({ kind: 'layer', ts, left: 852, top: 1104 }))
+  check('layer key at the origin parses', parseStudioMotionKey(layerKey(me, ts, 0, 0), me)?.left === 0)
+  for (const pos of ['bottom-left', 'bottom-center', 'bottom-right', 'top-left', 'top-center', 'top-right']) {
+    for (const sz of ['small', 'medium', 'large']) {
+      const k = parseStudioMotionKey(titleKey(me, ts, pos, sz), me)
+      if (!(k?.kind === 'title' && k.position === pos && k.size === sz && k.ts === ts)) check(`title ${pos}/${sz} round-trips`, false)
+    }
+  }
+  check('every title position × size round-trips', true)
+  const refused = [
+    [`studio/${other}/plate-${ts}.jpg`, "another user's plate"],
+    [`studio/${me}/../${other}/plate-${ts}.jpg`, 'traversal'],
+    [`studio/${me}/x/plate-${ts}.jpg`, 'nested path'],
+    [`studio/${me}/plate-${ts}.png`, 'plate with the wrong extension'],
+    [`studio/${me}/plate-123.jpg`, 'short stamp'],
+    [`studio/${me}/layer-${ts}--5-10.png`, 'negative offset'],
+    [`studio/${me}/layer-${ts}-05-10.png`, 'leading zero'],
+    [`studio/${me}/layer-${ts}-3000-10.png`, 'offset outside the cover'],
+    [`studio/${me}/layer-${ts}-10.png`, 'one offset'],
+    [`studio/${me}/layer-${ts}-1.5-10.png`, 'fractional offset'],
+    [`studio/${me}/title-${ts}-middle-medium.png`, 'unknown position'],
+    [`studio/${me}/title-${ts}-bottom-left-huge.png`, 'unknown size'],
+    [`studio/${me}/subject-${ts}.png`, 'a subject is not a motion layer'],
+    [`studio/${me}/tmp-${ts}-fill.jpg`, 'temp input'],
+  ]
+  for (const [key, label] of refused) check(`motion key refused: ${label}`, parseStudioMotionKey(key, me) === null)
+  check('motion key refused: non-strings', parseStudioMotionKey(null, me) === null && parseStudioMotionKey(42, me) === null)
+  check('motion layers are never subjects or lettering (library + DELETE stay closed)',
+    !isOwnStudioKey(plateKey(me, ts), me, 'subject') && !isOwnStudioKey(layerKey(me, ts, 1, 2), me, 'lettering') &&
+    !isOwnStudioKey(titleKey(me, ts, 'top-left', 'small'), me, 'lettering'))
+
+  // Cover keys → the stamp that links a cover to its layers.
+  check('ai-cassette cover stamp', cassetteCoverStamp(`${proj}/ai-cassette-${ts}.jpg`, proj) === ts)
+  check('own-photo cassette cover stamp', cassetteCoverStamp(`${proj}/cassette-${ts}.jpg`, proj) === ts)
+  check('finalized stamp', finalizedCoverStamp(`${proj}/finalized-${ts}.jpg`, proj) === ts)
+  const notCovers = [
+    [`${proj}/ai-${ts}.webp`, 'a generated (non-studio) cover'],
+    [`${proj}/${ts}.jpg`, 'an upload'],
+    [`${proj}/finalized-${ts}.jpg`, 'a finalized key'],
+    [`${other.replace('9999', 'aaaa')}/ai-cassette-${ts}.jpg`, "another project's cover"],
+    [`${proj.toUpperCase()}/ai-cassette-${ts}.jpg`, 'an uppercase project segment'],
+    [`${proj}/x/ai-cassette-${ts}.jpg`, 'a nested key'],
+    [`${proj}/ai-cassette-${ts}.jpg.png`, 'a trailing extension'],
+  ]
+  for (const [key, label] of notCovers) check(`not a studio cover: ${label}`, cassetteCoverStamp(key, proj) === null)
+  check('finalized stamp refuses a cover key', finalizedCoverStamp(`${proj}/ai-cassette-${ts}.jpg`, proj) === null)
+  check('stamps refuse null / a non-uuid project', cassetteCoverStamp(null, proj) === null && cassetteCoverStamp(`x/ai-cassette-${ts}.jpg`, 'x') === null)
 }
 
 // ── Scenes ──────────────────────────────────────────────────────────────────

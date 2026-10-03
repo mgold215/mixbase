@@ -2,10 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { ensureProfileSocialColumns, isMissingProfileSocialColumn, upsertProfileViaManagementSql } from '@/lib/schema-heal'
 import { isHttpUrl } from '@/lib/social-links'
+import { isAdminIdentity } from '@/lib/admin-identity'
 
 const PROFILE_COLS = 'artist_name, display_name, spotify_url, youtube_url'
 
-// GET /api/auth/me — return the authenticated user's email + profile
+// GET /api/auth/me — return the authenticated user's email + profile.
+//
+// `owner_tools` tells a client whether to show the platform owner's own
+// tools (Cassette Studio, moving covers, AI video). It is the same
+// isAdminIdentity question the owner-only routes ask (auth.users email /
+// ADMIN_USER_IDS — never a profile column the user can write), and it fails
+// closed: any lookup error answers false, and the routes refuse on their own
+// regardless of what a client shows.
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) {
@@ -31,12 +39,14 @@ export async function GET(request: NextRequest) {
   }
 
   const p = profile as { artist_name?: string; display_name?: string; spotify_url?: string; youtube_url?: string } | null
+  const ownerTools = await isAdminIdentity(userId).catch(() => false)
   return NextResponse.json({
     email: user.email,
     artist_name: p?.artist_name ?? '',
     display_name: p?.display_name ?? '',
     spotify_url: p?.spotify_url ?? '',
     youtube_url: p?.youtube_url ?? '',
+    owner_tools: ownerTools === true,
   })
 }
 

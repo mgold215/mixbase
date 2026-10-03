@@ -193,9 +193,11 @@ type Props = {
   inModal?: boolean
   /** Owner account only — pre-fills the artwork generator's house-style prompt */
   ownerDefaults?: boolean
+  /** Platform owner's own tools (Cassette Studio). Server-computed with isAdminIdentity; the routes gate independently. */
+  ownerTools?: boolean
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false, ownerTools = false }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -949,6 +951,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               showFinalize={false}
               showActions={false}
               ownerDefaults={ownerDefaults}
+              ownerTools={ownerTools}
             />
           </div>
 
@@ -1336,6 +1339,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               onArtworkUpdated={handleArtworkUpdated}
               onFinalizedUpdated={handleFinalizedUpdated}
               ownerDefaults={ownerDefaults}
+              ownerTools={ownerTools}
             />
           </div>
         )}

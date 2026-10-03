@@ -14,7 +14,7 @@
 // mutated copy of the source that reintroduces the bug, and must go RED there.
 // A rule that cannot fail is not evidence.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -113,6 +113,52 @@ check('stripper does remove comment text',
 check('stripper keeps string literals intact',
   stripComments(`const s = "a // b"`).includes('a // b'))
 
+// ── Rule 7: owner-only tools ask the same identity question ──────────────────
+// Cassette Studio (and its moving cover) is the platform owner's own tool. Every
+// handler under src/app/api/cassette-studio/** must answer a non-owner with a
+// 404 straight after the 401 — before reading the body, touching storage or a
+// rate limiter — and decide it with isAdminIdentity, never with a profile column
+// the user can write (profiles.is_owner is as user-writable as
+// subscription_tier). The web surfaces that SHOW the tool, and the flag the apps
+// read (/api/auth/me owner_tools), must come from the same question.
+const OWNER_GATE = /if \(!userId\) return NextResponse\.json\(\{ error: 'Not authenticated' \}, \{ status: 401 \}\)\s*\n\s*if \(!\(await isAdminIdentity\(userId\)\)\) return NextResponse\.json\(\{ error: 'Not found' \}, \{ status: 404 \}\)/
+const studioRoutes = []
+const walkRoutes = (dir) => {
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    if (e.isDirectory()) walkRoutes(`${dir}/${e.name}`)
+    else if (e.name === 'route.ts') studioRoutes.push(`${dir}/${e.name}`)
+  }
+}
+walkRoutes('src/app/api/cassette-studio')
+check('found the Cassette Studio routes (rule is anchored)', studioRoutes.length >= 5, studioRoutes.join(', '))
+function handlerBodies(code) {
+  const out = []
+  const re = /export async function (GET|POST|PUT|PATCH|DELETE)\s*\(/g
+  let m
+  const starts = []
+  while ((m = re.exec(code))) starts.push([m[1], m.index])
+  for (let i = 0; i < starts.length; i++) out.push([starts[i][0], code.slice(starts[i][1], i + 1 < starts.length ? starts[i + 1][1] : code.length)])
+  return out
+}
+for (const file of studioRoutes) {
+  const code = stripComments(read(file))
+  const handlers = handlerBodies(code)
+  check(`${file} exports at least one handler`, handlers.length > 0)
+  for (const [verb, body] of handlers) {
+    check(`${file} ${verb}: 404s a non-owner right after the 401`, OWNER_GATE.test(body))
+  }
+  check(`${file} does not gate on a profile column`, !/is_owner|subscription_tier/.test(code))
+}
+const me = stripComments(read('src/app/api/auth/me/route.ts'))
+check('/api/auth/me owner_tools comes from isAdminIdentity', /isAdminIdentity\(userId\)/.test(me) && /owner_tools:/.test(me) && !/is_owner:/.test(me))
+for (const page of ['src/app/projects/[id]/page.tsx', 'src/app/@modal/(.)projects/[id]/page.tsx']) {
+  const code = stripComments(read(page))
+  check(`${page} computes ownerTools with isAdminIdentity`, /isAdminIdentity\(userId\)/.test(code) && /ownerTools=\{ownerTools === true\}/.test(code))
+}
+const gen = stripComments(read('src/components/ArtworkGenerator.tsx'))
+check('ArtworkGenerator renders Cassette Studio only for ownerTools',
+  /\{ownerTools && \(\s*<button[\s\S]{0,400}?Cassette Studio/.test(gen) && /showActions && ownerTools && mode === 'cassette'/.test(gen))
+
 // ── Witnesses: each rule must go red on a reintroduced bug ───────────────────
 console.log('\n  witness: the rules go red when the hole is reopened')
 
@@ -133,6 +179,22 @@ check('witness: rule 3 catches an identity source that reads profiles',
   /from\(\s*['"`]profiles['"`]\s*\)/.test(stripComments(`supabaseAdmin.from('profiles').select('subscription_tier')`)))
 check('witness: rule 5 catches a cached false',
   /adminCache\.set\([^)]*,\s*false\s*\)/.test(`adminCache.set(userId, false)`))
+
+{
+  const ungated = `export async function POST(request: NextRequest) {
+  const userId = request.headers.get('X-User-Id')
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  const limit = await checkUserLimit(cassetteStudioLimiter, userId)`
+  check('witness: rule 7 catches a Cassette Studio handler without the owner gate', !OWNER_GATE.test(ungated))
+  const late = `${ungated}
+  if (!(await isAdminIdentity(userId))) return NextResponse.json({ error: 'Not found' }, { status: 404 })`
+  check('witness: rule 7 catches an owner gate that runs after other work', !OWNER_GATE.test(late))
+  const profileGate = `if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  if (!profile.is_owner) return NextResponse.json({ error: 'Not found' }, { status: 404 })`
+  check('witness: rule 7 catches a gate on profiles.is_owner', !OWNER_GATE.test(profileGate) && /is_owner/.test(profileGate))
+  check('witness: handlerBodies splits each exported handler',
+    handlerBodies('export async function GET(a) { 1 }\nexport async function DELETE(b) { 2 }').map(h => h[0]).join() === 'GET,DELETE')
+}
 
 // The real files must still be clean once every witness has proven the rules bite.
 for (const [file, label] of GATES) {

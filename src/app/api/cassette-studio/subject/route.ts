@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import sharp from 'sharp'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
+import { isAdminIdentity } from '@/lib/admin-identity'
 import { cutOut, readPhoto, removeStudio, studioPrefix, uploadStudio, StudioUnavailable } from '@/lib/cassette-server'
 import { seeThrough, trimSubject } from '@/lib/cassette-studio'
 
@@ -17,9 +18,11 @@ export const maxDuration = 120
 //      instead of whatever was behind it in the photo;
 //   4. trim + save as studio/<userId>/subject-<ts>.png.
 // Done once per cassette; every render after that reuses it for free.
+// Owner-only (404 otherwise) — see src/app/api/cassette-studio/route.ts.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  if (!(await isAdminIdentity(userId))) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const limit = await checkUserLimit(cassetteStudioLimiter, userId)
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: rateLimitHeaders(limit) })
