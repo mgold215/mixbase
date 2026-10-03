@@ -327,7 +327,7 @@ export type ComposeOptions = {
   raw?: boolean
 }
 
-export async function composeCover(opts: ComposeOptions): Promise<Buffer> {
+export async function composeLayers(opts: ComposeOptions): Promise<CoverLayers> {
   const { box, kind } = opts
   const depth = clamp(opts.depth ?? (kind === 'photo' ? 0.5 : 0), 0, 1)
   const reflection = clamp(opts.reflection ?? 0, 0, 1)
@@ -452,34 +452,79 @@ export async function composeCover(opts: ComposeOptions): Promise<Buffer> {
   for (let i = 0; i < sw * sh; i++) aRaw[i] = subj[i * 4 + 3]
   const aBlur = await sharp(aRaw, { raw: { width: sw, height: sh, channels: 1 } }).blur(Math.max(0.5, sw * 0.004)).raw().toBuffer()
 
-  // 7. Composite.
+  // 7. The cassette layer, finished (harmonised + light-wrapped), and the
+  // plate it sits on. Kept apart so the motion renderer
+  // (src/lib/cassette-motion.ts) can move them independently; the still
+  // cover is just one alpha-over of the two.
+  const plate = Buffer.alloc(W * H * 3)
+  for (let i = 0; i < plate.length; i++) plate[i] = clamp8(bg[i])
+  const layer = Buffer.alloc(sw * sh * 4)
   for (let y = 0; y < sh; y++) {
     const yy = box.top + y
-    if (yy < 0 || yy >= H) continue
     for (let x = 0; x < sw; x++) {
       const xx = box.left + x
-      if (xx < 0 || xx >= W) continue
       const si = y * sw + x
       const a = alpha[si]
+      const o = si * 4
+      layer[o + 3] = clamp8(a * 255)
       if (a <= 0) continue
-      const rim = clamp((1 - aBlur[si] / 255) * 2.2, 0, 1) * 0.4
-      const bi = ((yy - ry) * rw + (xx - rx)) * 3
-      const di = (yy * W + xx) * 3
+      const inFrame = yy >= 0 && yy < H && xx >= 0 && xx < W
+      const rim = inFrame ? clamp((1 - aBlur[si] / 255) * 2.2, 0, 1) * 0.4 : 0
+      const bi = inFrame ? ((yy - ry) * rw + (xx - rx)) * 3 : 0
       for (let c = 0; c < 3; c++) {
-        let v = subj[si * 4 + c] * gain[c]
-        v += (bgBlur[bi + c] - v) * rim
-        bg[di + c] += (v - bg[di + c]) * a
+        let v = subj[o + c] * gain[c]
+        if (rim > 0) v += (bgBlur[bi + c] - v) * rim
+        layer[o + c] = clamp8(v)
       }
     }
   }
+  return { plate, layer, box, width: W, height: H }
+}
 
-  const out = Buffer.alloc(W * H * 3)
-  for (let i = 0; i < out.length; i++) out[i] = clamp8(bg[i])
-  const jpeg = await sharp(out, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 97 }).toBuffer()
-  if (opts.raw) return jpeg
-  // One grain field across the whole frame — the single strongest cue that
-  // cassette and scene were captured together.
-  return applyFilmFinish(jpeg, { seed: opts.seed, grain: 0.5, vignette: 0.3, saturation: 0.95, quality: 92 })
+export type CoverLayers = {
+  /** Raw RGB, width×height: the scene with the cassette's shadow/reflection, no cassette. */
+  plate: Buffer
+  /** Raw RGBA, box.width×box.height: the finished cassette. */
+  layer: Buffer
+  box: Box
+  width: number
+  height: number
+}
+
+/** Alpha-over of the cassette layer onto the plate. Raw RGB out. */
+export function flattenLayers(l: CoverLayers): Buffer {
+  const out = Buffer.from(l.plate)
+  const { box, width: W, height: H } = l
+  for (let y = 0; y < box.height; y++) {
+    const yy = box.top + y
+    if (yy < 0 || yy >= H) continue
+    for (let x = 0; x < box.width; x++) {
+      const xx = box.left + x
+      if (xx < 0 || xx >= W) continue
+      const o = (y * box.width + x) * 4
+      const a = l.layer[o + 3] / 255
+      if (a <= 0) continue
+      const d = (yy * W + xx) * 3
+      for (let c = 0; c < 3; c++) out[d + c] = clamp8(out[d + c] + (l.layer[o + c] - out[d + c]) * a)
+    }
+  }
+  return out
+}
+
+/**
+ * The still cover: layers flattened, then one grain field across the whole
+ * frame — the single strongest cue that cassette and scene were captured
+ * together. Returns JPEG.
+ */
+export async function composeCover(opts: ComposeOptions): Promise<Buffer> {
+  return finishCover(await composeLayers(opts), opts.seed, opts.raw)
+}
+
+export async function finishCover(layers: CoverLayers, seed: number, raw = false): Promise<Buffer> {
+  const flat = flattenLayers(layers)
+  const jpeg = await sharp(flat, { raw: { width: layers.width, height: layers.height, channels: 3 } }).jpeg({ quality: 97 }).toBuffer()
+  if (raw) return jpeg
+  return applyFilmFinish(jpeg, { seed, grain: 0.5, vignette: 0.3, saturation: 0.95, quality: 92 })
 }
 
 // ── Lettering ──────────────────────────────────────────────────────────────
