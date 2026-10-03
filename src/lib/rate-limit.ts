@@ -171,6 +171,15 @@ export const artworkHistoryLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max
 // a few covers in one sitting.
 export const finalizeArtworkLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// Cassette Studio (cut-out, handwriting lift, scene render): 30 per hour per
+// user, shared across the three routes. Each call is a full-resolution sharp
+// composite (3000×3000) and the cut-out / scene calls also hit Replicate. The
+// AI scene path additionally counts against the monthly artwork allowance;
+// this cap is the CPU/spend backstop for the non-AI paths (own photo,
+// re-lettering) that the allowance does not see. The owner is exempt
+// (checkUserLimit).
+export const cassetteStudioLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
+
 // Password change: 10 per hour per user. Every request runs a real
 // signInWithPassword with a caller-supplied current_password, so without a cap
 // the route is an unbounded password-guessing oracle against the account whose

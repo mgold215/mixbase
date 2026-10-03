@@ -346,6 +346,8 @@ const ACCOUNTED = {
   'src/app/api/tus/[uploadId]/route.ts': 'proxies chunks into an EXISTING session; names no key',
   'src/lib/visualizer-store.ts': 'lowercases at the mint itself (keyProjectId, 2026-08-18)',
   'src/lib/visualizer-transcode.ts': 'derives its key from an existing one (mp4TwinPath)',
+  'src/app/api/cassette-studio/render/route.ts': 'canonicalUuid at the id; studio inputs keyed by the X-User-Id uid',
+  'src/lib/cassette-server.ts': 'uploadStudio: keys built by callers from the X-User-Id uid + canonicalUuid project ids',
 }
 
 const minting = walk(join(repoRoot, 'src'))
