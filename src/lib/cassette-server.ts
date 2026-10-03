@@ -5,6 +5,9 @@
 //   studio/<userId>/subject-<ts>.png               a cut-out cassette (reused across projects)
 //   studio/<userId>/lettering-<projectId>-<ts>.png one handwriting lockup for one project
 //   studio/<userId>/tmp-<ts>-*.{jpg,png}           FLUX/cut-out inputs, deleted after each call
+//   studio/<userId>/plate-<ts>.jpg                 a cover's scene plate        ┐ moving-cover inputs,
+//   studio/<userId>/layer-<ts>-<left>-<top>.png    its finished cassette layer  │ written by every render
+//   studio/<userId>/title-<fts>-<pos>-<size>.png   its coloured lettering       ┘ (parseStudioMotionKey)
 //
 // Deliberately NOT under `<projectId>/`: Artwork History lists that prefix and
 // offers every object in it as a restorable cover. A cut-out cassette or a bare
@@ -26,12 +29,18 @@ export const studioPublicUrl = (path: string) =>
 
 export type StudioFile = { path: string; url: string; createdAt: string | null }
 
-/** List the caller's studio folder, newest first. */
-export async function listStudio(userId: string): Promise<StudioFile[]> {
+/**
+ * List the caller's studio folder, newest first. `search` narrows the listing
+ * to names matching it (Storage's own filter; callers still check each key's
+ * exact shape). Every render adds two or three motion-layer files to the
+ * folder, so lookups for one kind of file pass the leaf's leading part rather
+ * than relying on it landing inside one page of everything.
+ */
+export async function listStudio(userId: string, search?: string): Promise<StudioFile[]> {
   const prefix = studioPrefix(userId)
   const { data, error } = await supabaseAdmin.storage
     .from(STUDIO_BUCKET)
-    .list(prefix.slice(0, -1), { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } })
+    .list(prefix.slice(0, -1), { limit: 1000, sortBy: { column: 'created_at', order: 'desc' }, ...(search ? { search } : {}) })
   if (error) throw new Error(error.message)
   return (data ?? [])
     .filter(e => e.name && !e.name.startsWith('tmp-'))

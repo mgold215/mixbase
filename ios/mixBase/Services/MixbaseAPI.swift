@@ -1,11 +1,18 @@
 import Foundation
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 // MARK: - MixbaseAPI
-// Client for the web app's authenticated API routes (mixbase.app). These are
-// the routes that run the paid AI generation server-side — artwork via
-// Replicate, visualizers via Runway — with per-tier limits enforced where the
-// keys live. The middleware accepts `Authorization: Bearer <supabase access
-// token>`, which is exactly how this client authenticates.
+// Client for the web app's authenticated API routes (mixbase.app). These run
+// the server-side work the app can't do on device — AI artwork via Replicate,
+// the free visualizer renderer, finished YouTube/Shorts renders, and the
+// owner-only tools (Cassette Studio, moving covers, AI video via Runway) —
+// with every allowance enforced where the keys live. There are NO paid plans
+// anywhere (decision 2026-09-12): everyone gets the same free allowance, and
+// the owner-only tools are gated server-side by identity, not by a purchase.
+// The middleware accepts `Authorization: Bearer <supabase access token>`,
+// which is exactly how this client authenticates.
 
 final class MixbaseAPI {
 
@@ -22,8 +29,10 @@ final class MixbaseAPI {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 6 * 60
-        config.timeoutIntervalForResource = 8 * 60
+        // AI video (/api/visualizer/runway) sends nothing until it finishes and
+        // can take ~8 min worst case; the request timeout is an IDLE timeout.
+        config.timeoutIntervalForRequest = 10 * 60
+        config.timeoutIntervalForResource = 12 * 60
         self.session = URLSession(configuration: config)
 
         // Same tolerant date handling as SupabaseService: ISO 8601 with and
@@ -83,11 +92,12 @@ final class MixbaseAPI {
     }
 
     // MARK: - Visualizers
-    // Deliberately view/pin/delete only. Visualizer GENERATION is a web-only
-    // feature: it is gated to paid accounts server-side, and App Store
-    // Guideline 3.1.1 forbids the app exposing functionality that is
-    // purchased outside Apple's In-App Purchase. Do not add generation here
-    // without shipping StoreKit IAP alongside it.
+    // The free generator (no AI) and finished YouTube/Shorts renders are open
+    // to every account. AI video (Runway) and moving covers are owner-only:
+    // the server refuses them for anyone else, and the app only shows them
+    // when AuthService.ownerTools is true. Nothing here is ever sold — there
+    // are no paid plans (2026-09-12), and if that ever changes it will be
+    // Apple In-App Purchase only.
 
     /// One effect the free generator offers — the web generator's own list.
     struct FreeEffectOption: Decodable, Identifiable, Equatable {
@@ -107,7 +117,7 @@ final class MixbaseAPI {
     }
 
     /// Server-rendered free visualizer (the web's effect engine, drawn on the
-    /// backend — no AI credits). Seconds for the 6s formats, up to ~1 min for
+    /// backend — no AI). Seconds for the 6s formats, up to ~1 min for
     /// YouTube. Returns the stored mf-video URL (always persisted to the library).
     func generateFreeVisualizer(
         projectId: UUID,
@@ -143,9 +153,347 @@ final class MixbaseAPI {
 
     /// Pin (or clear, with nil) a video as a project's visualizer. The server
     /// verifies the URL is a visualizer the user actually owns.
-    func pinVisualizer(projectId: UUID, videoUrl: String?) async throws {
-        let body: [String: Any] = ["visualizer_url": videoUrl ?? NSNull()]
+    ///
+    /// `wide` picks the slot: landscape output (a 16:9 YouTube render, or an
+    /// AI ratio wider than tall) goes in `visualizer_wide_url`, everything
+    /// else in `visualizer_url` — the same convention every client follows,
+    /// so finished YouTube renders pick the horizontal loop and Shorts the
+    /// vertical one.
+    func pinVisualizer(projectId: UUID, videoUrl: String?, wide: Bool = false) async throws {
+        let key = wide ? "visualizer_wide_url" : "visualizer_url"
+        let body: [String: Any] = [key: videoUrl ?? NSNull()]
         _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
+    // MARK: - AI video (owner-only; Runway image-to-video)
+
+    struct AIVideoRatio: Decodable, Hashable {
+        let value: String
+        let label: String
+
+        /// "1280:720" → true. Landscape output pins to the wide slot.
+        var isLandscape: Bool {
+            let parts = value.split(separator: ":")
+            guard parts.count == 2,
+                  let w = Double(parts[0]),
+                  let h = Double(parts[1]) else { return false }
+            return w > h
+        }
+    }
+
+    struct AIVideoModel: Decodable, Identifiable, Equatable {
+        let id: String
+        let label: String
+        let durations: [Int]
+        let ratios: [AIVideoRatio]
+    }
+
+    struct AIVideoResult {
+        let videoUrl: String
+        /// false → the server could not persist the clip; `videoUrl` is the
+        /// provider's temporary link (expires within hours) and can't be pinned.
+        let saved: Bool
+        let visualizerId: String?
+    }
+
+    /// Models + their valid durations/ratios, from the server's registry.
+    func fetchAIVideoModels() async throws -> [AIVideoModel] {
+        struct Options: Decodable { let models: [AIVideoModel] }
+        let data = try await requestData(path: "/api/visualizer/runway", method: "GET")
+        return try decoder.decode(Options.self, from: data).models
+    }
+
+    /// Generate an AI video loop from an artwork image. Blocks while the
+    /// server polls the provider — up to ~5 minutes.
+    func generateAIVideo(
+        projectId: UUID,
+        imageUrl: String,
+        model: String,
+        duration: Int,
+        ratio: String,
+        promptText: String?
+    ) async throws -> AIVideoResult {
+        var body: [String: Any] = [
+            "imageUrl": imageUrl,
+            "projectId": projectId.uuidString.lowercased(),
+            "model": model,
+            "duration": duration,
+            "ratio": ratio,
+        ]
+        if let promptText {
+            let trimmed = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["promptText"] = String(trimmed.prefix(1000)) }
+        }
+        let json = try await requestJSON(path: "/api/visualizer/runway", method: "POST", body: body)
+        guard let url = json["videoUrl"] as? String, !url.isEmpty else {
+            throw MixbaseAPIError.invalidResponse("No video URL in response")
+        }
+        return AIVideoResult(
+            videoUrl: url,
+            saved: (json["saved"] as? Bool) == true,
+            visualizerId: json["visualizerId"] as? String
+        )
+    }
+
+    // MARK: - Finished videos (every account — no AI, no allowance)
+
+    /// One /api/finalize-video job, as POST (202) and GET ?job= return it.
+    struct FinishedVideoJob: Decodable {
+        let jobId: String
+        let status: String          // rendering | uploading | done | error
+        let progress: Double?       // 0–100
+        let stage: String?
+        let format: String?
+        let videoUrl: String?
+        let error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case jobId = "job_id"
+            case status
+            case progress
+            case stage
+            case format
+            case videoUrl = "video_url"
+            case error
+        }
+    }
+
+    /// The newest saved finished render per format for one project.
+    struct LatestFinishedVideos: Decodable {
+        let youtube: Visualizer?
+        let shorts: Visualizer?
+    }
+
+    /// What POST /api/finalize-video answered.
+    enum FinishedVideoStart {
+        /// 202: a new render started for exactly what was asked.
+        case started(FinishedVideoJob)
+        /// 409: a render is already running for this ACCOUNT. The server's
+        /// single-flight is per account, not per project or format, so the
+        /// running job may be a different song or format entirely. jobId is
+        /// that render's id; the caller re-attaches only to a job it knows is
+        /// this project's own, and otherwise shows `message`.
+        case alreadyRunning(jobId: String?, message: String)
+    }
+
+    /// Start a finished render. format is "youtube" or "shorts"; clipSeconds
+    /// (15/30/60) and startMode ("start"/"hook"/"middle") only apply to
+    /// Shorts. A 409 (a render already running for this account) comes back
+    /// as .alreadyRunning — never as a job, since it may not be this request.
+    func startFinishedVideo(
+        projectId: UUID,
+        format: String,
+        color: String?,
+        clipSeconds: Int?,
+        startMode: String?
+    ) async throws -> FinishedVideoStart {
+        var body: [String: Any] = [
+            "project_id": projectId.uuidString.lowercased(),
+            "format": format,
+        ]
+        if let color { body["color"] = color }
+        if format == "shorts" {
+            if let clipSeconds { body["clip_seconds"] = clipSeconds }
+            if let startMode { body["start_mode"] = startMode }
+        }
+        let payload = try JSONSerialization.data(withJSONObject: body)
+        let (status, data) = try await send(
+            path: "/api/finalize-video",
+            method: "POST",
+            contentType: "application/json",
+            body: payload
+        )
+        if status == 409 {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let jobId = (json?["job_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let message = scrubbedError(statusCode: status, data: data).errorDescription
+                ?? "A render is already running — wait for it to finish"
+            return .alreadyRunning(jobId: jobId, message: message)
+        }
+        guard (200...299).contains(status) else {
+            throw scrubbedError(statusCode: status, data: data)
+        }
+        return .started(try decoder.decode(FinishedVideoJob.self, from: data))
+    }
+
+    /// Poll a render job. nil = the server no longer knows the job (404): a
+    /// deploy or another replica interrupted it — stop polling.
+    func pollFinishedVideo(jobId: String) async throws -> FinishedVideoJob? {
+        let encoded = jobId.addingPercentEncoding(withAllowedCharacters: Self.queryValueAllowed) ?? jobId
+        let (status, data) = try await send(
+            path: "/api/finalize-video?job=\(encoded)",
+            method: "GET",
+            contentType: nil,
+            body: nil
+        )
+        if status == 404 { return nil }
+        guard (200...299).contains(status) else {
+            throw scrubbedError(statusCode: status, data: data)
+        }
+        return try decoder.decode(FinishedVideoJob.self, from: data)
+    }
+
+    /// Latest saved YouTube + Shorts renders for a project (either may be nil).
+    func latestFinishedVideos(projectId: UUID) async throws -> LatestFinishedVideos {
+        let data = try await requestData(
+            path: "/api/finalize-video?project_id=\(projectId.uuidString.lowercased())",
+            method: "GET"
+        )
+        return try decoder.decode(LatestFinishedVideos.self, from: data)
+    }
+
+    // MARK: - Cassette Studio (owner-only)
+    // The artist's real cassette photo, cut out once and dropped into a new
+    // scene, lettered in their own handwriting. Every route 404s for anyone
+    // but the owner; the app only shows the screen when ownerTools is true.
+
+    /// A saved cut-out cassette or handwriting image (studio/<userId>/…).
+    struct StudioFile: Decodable, Identifiable, Equatable {
+        let path: String
+        let url: String
+        let createdAt: String?
+
+        var id: String { path }
+    }
+
+    struct StudioLibrary: Decodable {
+        let subjects: [StudioFile]
+        let lettering: [StudioFile]
+    }
+
+    struct CassetteRenderResult: Decodable {
+        let artworkUrl: String
+        let finalizedArtworkUrl: String?
+        let scene: String?
+        let sceneLabel: String?
+        let promptUsed: String?
+        let color: String?
+
+        enum CodingKeys: String, CodingKey {
+            case artworkUrl = "artwork_url"
+            case finalizedArtworkUrl = "finalized_artwork_url"
+            case scene
+            case sceneLabel = "scene_label"
+            case promptUsed = "prompt_used"
+            case color
+        }
+    }
+
+    /// The user's saved cassettes, plus this project's handwriting, newest first.
+    func listStudio(projectId: UUID) async throws -> StudioLibrary {
+        let data = try await requestData(
+            path: "/api/cassette-studio?project_id=\(projectId.uuidString.lowercased())",
+            method: "GET"
+        )
+        return try decoder.decode(StudioLibrary.self, from: data)
+    }
+
+    /// Remove one saved cassette or handwriting image.
+    func deleteStudioFile(path: String) async throws {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: Self.queryValueAllowed) ?? path
+        _ = try await requestData(path: "/api/cassette-studio?path=\(encoded)", method: "DELETE")
+    }
+
+    /// Cut a cassette out of a photo (any format the device can decode — it
+    /// is re-encoded here as a ≤2400px JPEG, never uploaded raw).
+    func uploadSubject(imageData: Data) async throws -> StudioFile {
+        struct Response: Decodable { let subject: StudioFile }
+        let jpeg = try Self.uploadableJPEG(imageData, maxEdge: 2400)
+        let data = try await requestMultipart(
+            path: "/api/cassette-studio/subject",
+            fields: [],
+            files: [MultipartFile(name: "photo", filename: "cassette.jpg", data: jpeg)]
+        )
+        return try decoder.decode(Response.self, from: data).subject
+    }
+
+    /// Lift the artist's handwriting off a photo as this project's lettering.
+    func uploadLettering(projectId: UUID, imageData: Data) async throws -> StudioFile {
+        struct Response: Decodable { let lettering: StudioFile }
+        let jpeg = try Self.uploadableJPEG(imageData, maxEdge: 2400)
+        let data = try await requestMultipart(
+            path: "/api/cassette-studio/lettering",
+            fields: [MultipartField(name: "project_id", value: projectId.uuidString.lowercased())],
+            files: [MultipartFile(name: "photo", filename: "lettering.jpg", data: jpeg)]
+        )
+        return try decoder.decode(Response.self, from: data).lettering
+    }
+
+    /// Build a cover. scene is a preset id, "random", "custom" (with
+    /// `setting`), "photo" (with `background` image data) or "keep" (re-letter
+    /// the current cover). The server applies the result to the project.
+    func renderCassette(
+        projectId: UUID,
+        scene: String,
+        subject: String?,
+        setting: String?,
+        background: Data?,
+        lettering: String?,
+        color: String,
+        position: String,
+        size: String,
+        reflection: Bool
+    ) async throws -> CassetteRenderResult {
+        var fields: [MultipartField] = [
+            MultipartField(name: "project_id", value: projectId.uuidString.lowercased()),
+            MultipartField(name: "scene", value: scene),
+        ]
+        if let subject, !subject.isEmpty {
+            fields.append(MultipartField(name: "subject", value: subject))
+        }
+        if scene == "custom", let setting {
+            fields.append(MultipartField(name: "setting", value: String(setting.prefix(300))))
+        }
+        if let lettering, !lettering.isEmpty {
+            fields.append(MultipartField(name: "lettering", value: lettering))
+        }
+        fields.append(MultipartField(name: "color", value: color))
+        fields.append(MultipartField(name: "position", value: position))
+        fields.append(MultipartField(name: "size", value: size))
+        if reflection {
+            fields.append(MultipartField(name: "reflection", value: "1"))
+        }
+
+        var files: [MultipartFile] = []
+        if scene == "photo", let background {
+            let jpeg = try Self.uploadableJPEG(background, maxEdge: 3000)
+            files.append(MultipartFile(name: "background", filename: "background.jpg", data: jpeg))
+        }
+
+        let data = try await requestMultipart(path: "/api/cassette-studio/render", fields: fields, files: files)
+        return try decoder.decode(CassetteRenderResult.self, from: data)
+    }
+
+    // MARK: - Moving cover (owner-only; no AI)
+
+    struct MotionAvailability: Decodable {
+        let available: Bool
+        let reason: String?
+    }
+
+    /// Whether this project's current cover was made in Cassette Studio with
+    /// its layers saved (only those covers can move).
+    func cassetteMotionAvailability(projectId: UUID) async throws -> MotionAvailability {
+        let data = try await requestData(
+            path: "/api/cassette-studio/motion?project_id=\(projectId.uuidString.lowercased())",
+            method: "GET"
+        )
+        return try decoder.decode(MotionAvailability.self, from: data)
+    }
+
+    /// Render the moving cover in one of the free formats (canvas, square,
+    /// youtube, story). Saved to the visualizer library server-side; returns
+    /// the stored video URL.
+    func renderCassetteMotion(projectId: UUID, format: String) async throws -> String {
+        let body: [String: Any] = [
+            "project_id": projectId.uuidString.lowercased(),
+            "format": format,
+        ]
+        let json = try await requestJSON(path: "/api/cassette-studio/motion", method: "POST", body: body)
+        guard let url = json["video_url"] as? String, !url.isEmpty else {
+            throw MixbaseAPIError.invalidResponse("No video URL in response")
+        }
+        return url
     }
 
     // MARK: - Instrumental slot
@@ -257,6 +605,13 @@ final class MixbaseAPI {
     /// Recent uploads across ALL artists — one entry per project (newest mix),
     /// with inter-artist comments and that project's older mixes.
     // MARK: - Account
+
+    /// Whether this account sees the owner-only tools (`owner_tools` from
+    /// GET /api/auth/me). A response without the field reads as false.
+    func fetchOwnerTools() async throws -> Bool {
+        let json = try await requestJSON(path: "/api/auth/me", method: "GET")
+        return (json["owner_tools"] as? Bool) == true
+    }
 
     /// Permanently delete the signed-in account and all its data (Guideline
     /// 5.1.1(v)). Goes through requestData so an expired access token is
@@ -435,11 +790,38 @@ final class MixbaseAPI {
         return json
     }
 
-    /// Perform an authenticated request. On 401, refreshes the Supabase session
-    /// (coalesced in AuthService) and retries once with the new token. Non-2xx
-    /// responses surface the server's own `error` message — that's where the
-    /// tier-limit and upgrade prompts come from.
+    /// Perform an authenticated JSON request — a thin wrapper over
+    /// requestCore (same auth, 401 refresh+retry and error scrubbing).
     private func requestData(path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+        var payload: Data? = nil
+        if let body {
+            payload = try JSONSerialization.data(withJSONObject: body)
+        }
+        return try await requestCore(
+            path: path,
+            method: method,
+            contentType: payload == nil ? nil : "application/json",
+            body: payload
+        )
+    }
+
+    /// Perform an authenticated request and return the body of a 2xx
+    /// response. Anything else throws the server's own (scrubbed) message.
+    private func requestCore(path: String, method: String, contentType: String?, body: Data?) async throws -> Data {
+        let (status, data) = try await send(path: path, method: method, contentType: contentType, body: body)
+        guard (200...299).contains(status) else {
+            throw scrubbedError(statusCode: status, data: data)
+        }
+        return data
+    }
+
+    /// The transport core. Sends the Bearer token; on 401, refreshes the
+    /// Supabase session (coalesced in AuthService) and retries once with the
+    /// new token. Returns the final status code and body WITHOUT judging the
+    /// status, so the few callers that treat a non-2xx as data (409 "already
+    /// running", 404 "job gone") can read it; everyone else goes through
+    /// requestCore.
+    private func send(path: String, method: String, contentType: String?, body: Data?) async throws -> (Int, Data) {
         func makeRequest(token: String?) throws -> URLRequest {
             guard let url = URL(string: "\(baseURL)\(path)") else {
                 throw MixbaseAPIError.invalidResponse("Bad URL: \(path)")
@@ -450,8 +832,10 @@ final class MixbaseAPI {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
             if let body {
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                if let contentType {
+                    request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+                }
+                request.httpBody = body
             }
             return request
         }
@@ -468,33 +852,149 @@ final class MixbaseAPI {
         guard let http = response as? HTTPURLResponse else {
             throw MixbaseAPIError.invalidResponse("Not an HTTP response")
         }
-        guard (200...299).contains(http.statusCode) else {
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                // Monthly tier limits come back with `upgrade: true`. On iOS there
-                // is no in-app purchase, so we must NOT surface the web's
-                // "Upgrade to generate more" copy — App Store Guideline 3.1.1
-                // forbids steering users to an external purchase. Show neutral,
-                // purchase-free copy instead.
-                if (json["upgrade"] as? Bool) == true {
-                    throw MixbaseAPIError.serverError("You've reached this month's limit for AI generations. It resets at the start of next month.")
-                }
-                // Otherwise prefer the server's own human-readable error — but
-                // never trust it to be purchase-free. Belt-and-braces for
-                // Guideline 3.1.1: if ANY server message mentions upgrading,
-                // plans, pricing, or buying (flagged or not), replace it with
-                // the same neutral copy rather than steering to a purchase.
-                if let message = json["error"] as? String {
-                    let purchaseWords = ["upgrade", "plan", "tier", "subscri", "purchase", "billing", "pricing", "credit", "buy "]
-                    let lowered = message.lowercased()
-                    if purchaseWords.contains(where: { lowered.contains($0) }) {
-                        throw MixbaseAPIError.serverError("This action isn't available right now. Please try again later.")
-                    }
-                    throw MixbaseAPIError.serverError(message)
-                }
+        return (http.statusCode, data)
+    }
+
+    /// The error a non-2xx response surfaces as: the server's own `error`
+    /// message — but never anything purchase-shaped.
+    private func scrubbedError(statusCode: Int, data: Data) -> MixbaseAPIError {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            // Legacy monthly-limit responses carried `upgrade: true`. There
+            // are no paid plans anywhere (2026-09-12), and the App Store app
+            // must never point anyone at a purchase, so this always maps to
+            // neutral, purchase-free copy.
+            if (json["upgrade"] as? Bool) == true {
+                return MixbaseAPIError.serverError("You've reached this month's limit for AI generations. It resets at the start of next month.")
             }
-            throw MixbaseAPIError.httpError(statusCode: http.statusCode)
+            // Otherwise prefer the server's own human-readable error — but
+            // never trust it to be purchase-free. Belt-and-braces: if ANY
+            // server message mentions upgrading, plans, pricing, or buying
+            // (flagged or not), replace it with neutral copy so nothing
+            // purchase-shaped can ever reach the app.
+            if let message = json["error"] as? String {
+                let purchaseWords = ["upgrade", "plan", "tier", "subscri", "purchase", "billing", "pricing", "credit", "buy "]
+                let lowered = message.lowercased()
+                if purchaseWords.contains(where: { lowered.contains($0) }) {
+                    return MixbaseAPIError.serverError("This action isn't available right now. Please try again later.")
+                }
+                return MixbaseAPIError.serverError(message)
+            }
         }
-        return data
+        return MixbaseAPIError.httpError(statusCode: statusCode)
+    }
+
+    // MARK: - Multipart
+
+    /// One text part of a multipart/form-data body (sent WITHOUT filename=,
+    /// so the server's FormData reads it as a string).
+    struct MultipartField {
+        let name: String
+        let value: String
+    }
+
+    /// One file part (sent WITH filename= and Content-Type image/jpeg, so the
+    /// server's FormData reads it as a File). Always a JPEG here.
+    struct MultipartFile {
+        let name: String
+        let filename: String
+        let data: Data
+    }
+
+    /// Railway's proxy truncates request bodies at exactly 10 MiB; stay clear
+    /// of it so an oversize upload fails here, legibly, not mid-flight.
+    private static let maxMultipartBytes = 10 * 1024 * 1024 - 64 * 1024
+
+    /// Build a multipart/form-data body with CRLF line endings.
+    static func multipartBody(boundary: String, fields: [MultipartField], files: [MultipartFile]) -> Data {
+        var body = Data()
+        let crlf = "\r\n"
+        for field in fields {
+            body.append(Data("--\(boundary)\(crlf)".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(field.name)\"\(crlf)".utf8))
+            body.append(Data(crlf.utf8))
+            body.append(Data(field.value.utf8))
+            body.append(Data(crlf.utf8))
+        }
+        for file in files {
+            body.append(Data("--\(boundary)\(crlf)".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(file.name)\"; filename=\"\(file.filename)\"\(crlf)".utf8))
+            body.append(Data("Content-Type: image/jpeg\(crlf)".utf8))
+            body.append(Data(crlf.utf8))
+            body.append(file.data)
+            body.append(Data(crlf.utf8))
+        }
+        body.append(Data("--\(boundary)--\(crlf)".utf8))
+        return body
+    }
+
+    /// Authenticated multipart POST (same auth, refresh and error handling as
+    /// the JSON requests).
+    private func requestMultipart(path: String, fields: [MultipartField], files: [MultipartFile]) async throws -> Data {
+        let boundary = "mixbase-\(UUID().uuidString)"
+        let body = Self.multipartBody(boundary: boundary, fields: fields, files: files)
+        guard body.count < Self.maxMultipartBytes else {
+            throw MixbaseAPIError.serverError("That photo is too large — try a smaller one.")
+        }
+        return try await requestCore(
+            path: path,
+            method: "POST",
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            body: body
+        )
+    }
+
+    /// Query-value encoding matching JS encodeURIComponent: everything except
+    /// the unreserved characters is escaped (including "/").
+    private static let queryValueAllowed: CharacterSet = {
+        var set = CharacterSet.alphanumerics
+        set.insert(charactersIn: "-._~")
+        return set
+    }()
+
+    // MARK: - Image downscaling (ImageIO — iOS and macOS alike)
+
+    /// Re-encode any image the device can decode (HEIC, PNG, JPEG, …) as a
+    /// JPEG whose longest edge is at most `maxEdge` pixels, honouring EXIF
+    /// orientation. ImageIO never decodes the full-resolution bitmap, so a
+    /// 48 MP photo costs no more memory than the output. nil when the data
+    /// isn't a readable image. (Same technique as NowPlayingStore's widget
+    /// thumbnail, which is private to that file and also built into the
+    /// widget extension.)
+    static func downscaledJPEG(_ data: Data, maxEdge: Int, quality: Double = 0.88) -> Data? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else { return nil }
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maxEdge),
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        let destOptions: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(destination, cgImage, destOptions as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return out as Data
+    }
+
+    /// The server caps each photo at 9 MiB and the whole request must stay
+    /// under 10 MiB, so aim for at most 8 MiB per photo.
+    private static let maxPhotoBytes = 8 * 1024 * 1024
+
+    /// downscaledJPEG, stepping size and quality down in the (rare) case a
+    /// very detailed image still comes out over the per-photo budget.
+    static func uploadableJPEG(_ data: Data, maxEdge: Int) throws -> Data {
+        var edge = maxEdge
+        var quality = 0.88
+        for _ in 0..<4 {
+            guard let jpeg = downscaledJPEG(data, maxEdge: edge, quality: quality) else {
+                throw MixbaseAPIError.serverError("Could not read that image — try a different photo.")
+            }
+            if jpeg.count <= maxPhotoBytes { return jpeg }
+            edge = edge * 3 / 4
+            quality = max(0.6, quality - 0.1)
+        }
+        throw MixbaseAPIError.serverError("That photo is too large — try a smaller one.")
     }
 
     /// The current Supabase access token, as persisted by AuthService.

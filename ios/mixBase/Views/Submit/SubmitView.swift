@@ -115,7 +115,7 @@ struct SubmitView: View {
                         Button(action: { selectedProject = project }) {
                             VStack(spacing: 6) {
                                 // Artwork
-                                if let url = project.artworkUrl, let imgUrl = URL(string: url) {
+                                if let url = project.displayArtworkUrl, let imgUrl = URL(string: url) {
                                     AsyncImage(url: imgUrl) { image in
                                         image.resizable().aspectRatio(contentMode: .fill)
                                     } placeholder: {

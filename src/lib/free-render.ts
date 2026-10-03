@@ -61,7 +61,9 @@ export function clampFreeBpm(v: unknown): number {
   return Math.min(200, Math.max(60, Math.round(v)))
 }
 
-const FREE_FPS = 30
+// Shared with the Cassette Studio moving cover (cassette-render.ts), whose
+// slices are encoded by sliceEncodeArgs below at this same rate.
+export const FREE_FPS = 30
 
 // A 30s 1080p loop of the heaviest effect (Drone Shot, ~250 ms/frame) is
 // minutes of single-core CPU. This is a hard wall, not a target.

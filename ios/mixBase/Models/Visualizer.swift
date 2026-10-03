@@ -37,5 +37,5 @@ struct Visualizer: Codable, Identifiable {
     }
 }
 
-// (RunwayModel/RunwayRatio removed with the in-app generator — visualizer
-// generation is web-only; see MixbaseAPI's Visualizers note re Guideline 3.1.1.)
+// AI video model/ratio options live in MixbaseAPI (AIVideoModel/AIVideoRatio),
+// fetched from the server's registry; see MixbaseAPI's Visualizers note.

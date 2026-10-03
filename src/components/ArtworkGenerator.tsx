@@ -60,6 +60,8 @@ type Props = {
   showActions?: boolean
   /** Pre-fill the owner's house-style prompt (owner account only) */
   ownerDefaults?: boolean
+  /** Platform owner's own tools — Cassette Studio renders ONLY when true. */
+  ownerTools?: boolean
 }
 
 export default function ArtworkGenerator({
@@ -69,6 +71,7 @@ export default function ArtworkGenerator({
   showFinalize = true,
   showActions = true,
   ownerDefaults = false,
+  ownerTools = false,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload' | 'cassette'>('idle')
   // Subject only — the photographic treatment (lens, light, weather, mood) is
@@ -357,15 +360,18 @@ export default function ArtworkGenerator({
             Generate with AI
           </button>
           {/* Cassette Studio: the artist's real cassette photo in a new scene,
-              lettered in their own handwriting (src/components/CassetteStudio.tsx). */}
-          <button
-            onClick={() => setMode('cassette')}
-            disabled={uploading}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2a2a2a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            <Disc3 size={13} />
-            Cassette Studio
-          </button>
+              lettered in their own handwriting (src/components/CassetteStudio.tsx).
+              Owner-only — not rendered at all for anyone else (its routes 404 too). */}
+          {ownerTools && (
+            <button
+              onClick={() => setMode('cassette')}
+              disabled={uploading}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2a2a2a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <Disc3 size={13} />
+              Cassette Studio
+            </button>
+          )}
           <label className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#333] text-white rounded-xl transition-colors ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-[#2a2a2a] cursor-pointer'}`}>
             {uploading ? (
               <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Uploading...</>
@@ -575,7 +581,7 @@ export default function ArtworkGenerator({
       )}
       {/* Cassette Studio mode — stays open after each render so "Make
           another" is one click; the preview above shows each result. */}
-      {showActions && mode === 'cassette' && (
+      {showActions && ownerTools && mode === 'cassette' && (
         <CassetteStudio
           projectId={projectId}
           onRendered={(art, finalized) => { onArtworkUpdated(art); onFinalizedUpdated(finalized) }}

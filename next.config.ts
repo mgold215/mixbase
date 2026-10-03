@@ -57,7 +57,8 @@ const nextConfig: NextConfig = {
   // Bundle Futura Bold .ttf into the finalize-artwork route's deploy.
   // Next's tracer doesn't follow dynamic readFileSync(process.cwd()...), so without
   // this the font goes missing on Railway and the route throws at module load.
-  // finalize-video additionally needs the ffmpeg/ffprobe binaries traced.
+  // finalize-video additionally needs the ffmpeg/ffprobe binaries traced, and
+  // the Cassette Studio moving cover encodes with the same ffmpeg.
   outputFileTracingIncludes: {
     '/api/finalize-artwork': ['./src/fonts/**/*.ttf'],
     '/api/finalize-video': [
@@ -65,6 +66,7 @@ const nextConfig: NextConfig = {
       './node_modules/@ffmpeg-installer/**',
       './node_modules/@ffprobe-installer/**',
     ],
+    '/api/cassette-studio/motion': ['./node_modules/@ffmpeg-installer/**'],
   },
 
   // Keep the ffmpeg binary wrappers unbundled — their exported paths resolve

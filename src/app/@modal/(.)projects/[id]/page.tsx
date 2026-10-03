@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
+import { isAdminIdentity } from '@/lib/admin-identity'
 import ModalShell from '@/components/ModalShell'
 import ProjectClient from '@/app/projects/[id]/ProjectClient'
 import { getFeedCommentsForVersions, type FeedComment } from '@/lib/feed'
@@ -13,7 +14,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
   const { id } = await params
   const userId = await getUserId()
 
-  const [projectRes, versionsRes, releaseRes, profileRes] = await Promise.all([
+  const [projectRes, versionsRes, releaseRes, profileRes, ownerTools] = await Promise.all([
     supabaseAdmin.from('mb_projects').select('*').eq('id', id).eq('user_id', userId).single(),
     supabaseAdmin
       .from('mb_versions')
@@ -26,6 +27,9 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
       .eq('project_id', id)
       .maybeSingle(),
     supabaseAdmin.from('profiles').select('is_owner').eq('id', userId).maybeSingle(),
+    // Owner-only tools (Cassette Studio). The identity check, not
+    // profiles.is_owner: that column is user-writable. Fails closed.
+    isAdminIdentity(userId).catch(() => false),
   ])
 
   if (projectRes.error || !projectRes.data) return null
@@ -47,6 +51,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
         initialFeedComments={feedCommentsByVersion}
         inModal
         ownerDefaults={profileRes.data?.is_owner === true}
+        ownerTools={ownerTools === true}
       />
     </ModalShell>
   )

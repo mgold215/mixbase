@@ -104,6 +104,7 @@ const SUITES = [
   'finalize-test.mjs',
   'visualizer-transcode-test.mjs',
   'free-render-test.mjs',
+  'cassette-motion-test.mjs',
   'video-test.mjs',
   'video-timeout-test.mjs',
 ]
