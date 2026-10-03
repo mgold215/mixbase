@@ -854,7 +854,7 @@ struct PlayerView: View {
                         projectId: project.id,
                         version: latest,
                         trackName: project.title,
-                        artworkUrl: project.artworkUrl,
+                        artworkUrl: project.displayArtworkUrl,
                         visualizerUrl: project.visualizerUrl
                     ))
                 }

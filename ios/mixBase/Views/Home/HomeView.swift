@@ -278,7 +278,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 Group {
-                    if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                    if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                         AsyncImage(url: url) { image in
                             image.resizable().aspectRatio(contentMode: .fill)
                         } placeholder: { trackArtworkPlaceholder }
@@ -294,7 +294,7 @@ struct HomeView: View {
                         audioService.play(
                             version: version,
                             trackName: project.title,
-                            artworkUrl: project.artworkUrl,
+                            artworkUrl: project.displayArtworkUrl,
                             visualizerUrl: project.visualizerUrl
                         )
                         selectedTab = 2  // Jump to the Player
@@ -407,7 +407,7 @@ struct HomeView: View {
                     audioService.play(
                         version: version,
                         trackName: project.title,
-                        artworkUrl: project.artworkUrl,
+                        artworkUrl: project.displayArtworkUrl,
                         visualizerUrl: project.visualizerUrl
                     )
                 }) {

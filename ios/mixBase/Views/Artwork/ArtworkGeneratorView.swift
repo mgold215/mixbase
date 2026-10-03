@@ -6,7 +6,8 @@ import SwiftUI
 // 2. Pick an image model (FLUX Ultra, Seedream, Imagen, Recraft, ...)
 // 3. Optionally toggle "Vary the look" for a randomized photographic treatment
 // 4. Generate — the server creates the image AND applies it to the project
-// Generation is tier-gated server-side; limit errors surface with upgrade copy.
+// Generation counts against the monthly allowance server-side; a limit error
+// surfaces as neutral, purchase-free copy (there are no paid plans).
 
 struct ArtworkGeneratorView: View {
 
@@ -150,7 +151,7 @@ struct ArtworkGeneratorView: View {
                     .disabled(prompt.isEmpty || isGenerating)
                     .padding(.horizontal)
 
-                    // MARK: - Error Message (incl. tier-limit upgrade copy)
+                    // MARK: - Error Message (incl. the monthly-limit notice)
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.caption)

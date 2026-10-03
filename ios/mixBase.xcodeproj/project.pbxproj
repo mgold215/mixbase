@@ -52,6 +52,7 @@
 		/* Views - Artwork */
 		A100000080 /* ArtworkGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000080; };
 		A100000081 /* ArtworkLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000081; };
+		A100000082 /* CassetteStudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000082; };
 
 		/* Views - Visualizer */
 		A1000000E0 /* VisualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000E0; };
@@ -137,6 +138,7 @@
 		B100000072 /* ReleasedLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleasedLibraryView.swift; sourceTree = "<group>"; };
 		B100000080 /* ArtworkGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkGeneratorView.swift; sourceTree = "<group>"; };
 		B100000081 /* ArtworkLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkLibraryView.swift; sourceTree = "<group>"; };
+		B100000082 /* CassetteStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CassetteStudioView.swift; sourceTree = "<group>"; };
 		B1000000E0 /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
 		B1000000F0 /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -359,6 +361,7 @@
 			children = (
 				B100000080 /* ArtworkGeneratorView.swift */,
 				B100000081 /* ArtworkLibraryView.swift */,
+				B100000082 /* CassetteStudioView.swift */,
 			);
 			path = Artwork;
 			sourceTree = "<group>";
@@ -576,6 +579,7 @@
 				A100000025 /* MixbaseAPI.swift in Sources */,
 				A1000000E0 /* VisualizerView.swift in Sources */,
 				A100000081 /* ArtworkLibraryView.swift in Sources */,
+				A100000082 /* CassetteStudioView.swift in Sources */,
 				A100000072 /* ReleasedLibraryView.swift in Sources */,
 				A1000000F0 /* FeedView.swift in Sources */,
 				A100000092 /* NowPlayingStore.swift in Sources */,
@@ -698,7 +702,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -730,7 +734,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -756,7 +760,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -783,7 +787,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moodmixformat.mixbase.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

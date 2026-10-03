@@ -17,6 +17,13 @@ class AuthService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
 
+    // Owner-only tools (Cassette Studio, moving covers, AI video). Mirrors
+    // `owner_tools` from GET /api/auth/me — the server's isAdminIdentity check.
+    // FAILS CLOSED: false until the server says otherwise, false on any error,
+    // false after sign-out. The server gates every one of those routes on its
+    // own as well; this flag only decides what the UI shows.
+    @Published var ownerTools = false
+
     private let supabaseURL = Config.supabaseURL
     private let supabaseAnonKey = Config.supabaseAnonKey
 
@@ -62,6 +69,35 @@ class AuthService: ObservableObject {
         loadArtistName()
 
         Task { await ensureFreshToken() }
+
+        // App launch with a restored session: learn whether this account sees
+        // the owner tools. (A stale access token is refreshed by MixbaseAPI's
+        // own 401 retry, coalesced with the refresh above.)
+        refreshOwnerTools()
+    }
+
+    // MARK: - Owner tools flag
+    private var ownerToolsTask: Task<Void, Never>?
+
+    /// Re-read `owner_tools` from the server. Any failure leaves the flag false.
+    func refreshOwnerTools() {
+        ownerToolsTask?.cancel()
+        guard isAuthenticated else {
+            ownerTools = false
+            ownerToolsTask = nil
+            return
+        }
+        ownerToolsTask = Task { [weak self] in
+            let allowed: Bool
+            do {
+                allowed = try await MixbaseAPI.shared.fetchOwnerTools()
+            } catch {
+                allowed = false
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.ownerTools = allowed && self.isAuthenticated
+            self.ownerToolsTask = nil
+        }
     }
 
     // MARK: - Artist name (Now Playing / Control Center / Bluetooth AVRCP)
@@ -160,6 +196,7 @@ class AuthService: ObservableObject {
             if http.statusCode == 200 {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 applySession(json: json, email: email)
+                refreshOwnerTools()
             } else {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 errorMessage = (json?["error_description"] as? String) ?? "Invalid email or password"
@@ -225,6 +262,7 @@ class AuthService: ObservableObject {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let email = (json?["user"] as? [String: Any])?["email"] as? String ?? ""
                 applySession(json: json, email: email)
+                refreshOwnerTools()
             } else {
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 errorMessage = (json?["error_description"] as? String)
@@ -242,6 +280,9 @@ class AuthService: ObservableObject {
         refreshTimer = nil
         artistNameTask?.cancel()
         artistNameTask = nil
+        ownerToolsTask?.cancel()
+        ownerToolsTask = nil
+        ownerTools = false
         AudioService.shared.artistName = ""
         KeychainService.clearAll()
         SupabaseService.shared.setAccessToken(nil)

@@ -47,6 +47,26 @@ struct Project: Codable, Identifiable {
     // When this project was last updated
     var updatedAt: Date
 
+    // ── Decode-only columns ────────────────────────────────────────────────
+    // Read from PostgREST but NEVER written back: SupabaseService.updateProject
+    // PATCHes the whole encoded Project, and both of these are owned by the
+    // server (see encode(to:) below).
+
+    // The lettered cover (artist/title baked in) — written by the web's
+    // Finalize step and by Cassette Studio; cleared server-side whenever
+    // artwork_url changes through PATCH /api/projects/[id].
+    var finalizedArtworkUrl: String?
+
+    // Optional horizontal (16:9) visualizer pin (migration 020). Pinned via
+    // PATCH /api/projects/[id], which verifies the video is the user's own.
+    var visualizerWideUrl: String?
+
+    /// The cover to SHOW: the lettered render when there is one, else the raw
+    /// source. Generators keep using `artworkUrl` (the clean source image).
+    var displayArtworkUrl: String? {
+        finalizedArtworkUrl ?? artworkUrl
+    }
+
     // MARK: - CodingKeys
     // This tells Swift how to map our camelCase property names
     // to the snake_case column names used in Supabase / JSON.
@@ -62,5 +82,30 @@ struct Project: Codable, Identifiable {
         case shareToken = "share_token"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case finalizedArtworkUrl = "finalized_artwork_url"
+        case visualizerWideUrl = "visualizer_wide_url"
+    }
+
+    // MARK: - Encoding
+    // Decoding stays synthesized (every key above; the optionals tolerate a
+    // missing column). Encoding is written out so it reproduces EXACTLY what
+    // the synthesized encoder sent before the two decode-only columns existed
+    // — encode for non-optionals, encodeIfPresent for optionals, same order —
+    // and deliberately leaves out finalized_artwork_url and visualizer_wide_url.
+    // A whole-object PATCH must never write those: a stale local copy would
+    // resurrect a cleared finalized cover or overwrite a wide pin set elsewhere.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(artworkUrl, forKey: .artworkUrl)
+        try container.encodeIfPresent(genre, forKey: .genre)
+        try container.encodeIfPresent(bpm, forKey: .bpm)
+        try container.encodeIfPresent(keySignature, forKey: .keySignature)
+        try container.encodeIfPresent(visualizerUrl, forKey: .visualizerUrl)
+        try container.encodeIfPresent(instrumentalUrl, forKey: .instrumentalUrl)
+        try container.encodeIfPresent(shareToken, forKey: .shareToken)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
