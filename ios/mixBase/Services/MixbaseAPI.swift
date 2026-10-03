@@ -176,6 +176,15 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/versions/\(versionId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    /// Move a version along the workflow (Mix → Master → Finished → Released).
+    /// Goes through PATCH /api/versions/[id] rather than PostgREST so the
+    /// server stays the one authority on the status set (it folds anything
+    /// unknown back onto it).
+    func setVersionStatus(versionId: UUID, status: String) async throws {
+        let body: [String: Any] = ["status": status]
+        _ = try await requestJSON(path: "/api/versions/\(versionId.uuidString.lowercased())", method: "PATCH", body: body)
+    }
+
     // MARK: - Artwork assignment (Media library)
 
     /// Set an existing artwork image as a project's cover (must be a Supabase

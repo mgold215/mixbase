@@ -531,7 +531,29 @@ struct ProjectDetailView: View {
 
                 Spacer()
 
-                StatusBadge(status: version.status)
+                // Tap the badge to change status — the only way to mark a mix
+                // Finished or Released after upload (upload only ever detects
+                // Mix or Master from the filename). Nested in the row's plain
+                // outer Button like the Share button, so it takes the tap.
+                Menu {
+                    ForEach(MixStatus.all, id: \.self) { status in
+                        Button(action: { setStatus(version, to: status) }) {
+                            if status == version.status {
+                                Label(status, systemImage: "checkmark")
+                            } else {
+                                Text(status)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        StatusBadge(status: version.status)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.gray)
+                    }
+                }
+                .accessibilityLabel("Status: \(version.status). Change status.")
 
                 // Download-consent toggle. Sits inside the row's outer Button
                 // exactly like the Share button beside it — that nesting is
@@ -603,6 +625,35 @@ struct ProjectDetailView: View {
                 await MainActor.run {
                     if let i = versions.firstIndex(where: { $0.id == version.id }) {
                         versions[i].allowDownload = previous
+                    }
+                }
+            }
+        }
+    }
+
+    /// Change a version's status. Optimistic with an explicit revert, same
+    /// shape as toggleAllowDownload: a failed PATCH puts the old value back.
+    private func setStatus(_ version: Version, to status: String) {
+        guard let idx = versions.firstIndex(where: { $0.id == version.id }),
+              versions[idx].status != status else { return }
+        let previous = versions[idx].status
+        versions[idx].status = status
+
+        Task {
+            do {
+                try await MixbaseAPI.shared.setVersionStatus(versionId: version.id, status: status)
+                // The Tracks list caches each project's latest version and only
+                // reloads on pull-to-refresh — tell it so its badge updates now.
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .versionStatusChanged, object: nil,
+                        userInfo: ["versionId": version.id, "status": status]
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    if let i = versions.firstIndex(where: { $0.id == version.id }) {
+                        versions[i].status = previous
                     }
                 }
             }
@@ -1399,4 +1450,10 @@ struct MasterCheckCard: View {
             errorText = error.localizedDescription
         }
     }
+}
+
+extension Notification.Name {
+    /// Posted after a version's status is saved; userInfo carries
+    /// "versionId" (UUID) and "status" (String).
+    static let versionStatusChanged = Notification.Name("versionStatusChanged")
 }

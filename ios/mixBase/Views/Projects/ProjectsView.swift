@@ -122,6 +122,13 @@ struct ProjectsView: View {
             .task {
                 await loadAll()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .versionStatusChanged)) { note in
+                guard let versionId = note.userInfo?["versionId"] as? UUID,
+                      let status = note.userInfo?["status"] as? String,
+                      let projectId = latestVersions.first(where: { $0.value.id == versionId })?.key
+                else { return }
+                latestVersions[projectId]?.status = status
+            }
         }
         // Sheets must be on NavigationStack (not inner ZStack) for reliable iPad presentation
         .sheet(isPresented: $showNewProject) {

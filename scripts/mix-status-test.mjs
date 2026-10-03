@@ -157,8 +157,13 @@ check('iOS creates versions through POST /api/versions, not a direct insert',
 check('iOS no longer inserts into mb_versions directly',
   !/\/rest\/v1\/mb_versions[^?]/.test(iosService.replace(/\/rest\/v1\/mb_versions\?/g, '')),
   'a direct insert would put status, label, version_number and allow_download back in the client')
-check('iOS sends no status of its own — the server parses the filename',
-  !/"status":/.test(iosApi))
+// Scoped to the UPLOAD function: the artist moving a mix to Finished/Released
+// by hand (setVersionStatus → PATCH, which the server normalizes) is a choice
+// the server honours, not the phone minting a status for a fresh upload.
+const createVersionBody = iosApi.match(/func createVersion\([\s\S]*?\n    \}\n/)?.[0] ?? ''
+check('iOS createVersion exists (scope for the next check)', createVersionBody.length > 0)
+check('iOS sends no status of its own on upload — the server parses the filename',
+  !/"status"/.test(createVersionBody))
 check('iOS no longer references the retired "WIP" status',
   !iosService.includes('"WIP"') && !iosApi.includes('"WIP"'))
 
