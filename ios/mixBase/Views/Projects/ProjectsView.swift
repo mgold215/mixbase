@@ -274,7 +274,7 @@ struct ProjectsView: View {
     private func projectCard(project: Project) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
-                if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                     AsyncImage(url: url) { image in
                         image.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
@@ -328,7 +328,7 @@ struct ProjectsView: View {
     private func projectRow(project: Project) -> some View {
         HStack(spacing: 12) {
             ZStack {
-                if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                     AsyncImage(url: url) { image in
                         image.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
@@ -397,7 +397,7 @@ struct ProjectsView: View {
             audioService.play(
                 version: version,
                 trackName: project.title,
-                artworkUrl: project.artworkUrl,
+                artworkUrl: project.displayArtworkUrl,
                 visualizerUrl: project.visualizerUrl
             )
         }) {
@@ -584,7 +584,7 @@ struct ProjectsView: View {
         if let legacy = collection.artworkUrl, !legacy.isEmpty { return legacy }
         let projectMap = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
         for item in (collectionItems[collection.id] ?? []).sorted(by: { $0.position < $1.position }) {
-            if let art = projectMap[item.projectId]?.artworkUrl, !art.isEmpty { return art }
+            if let art = projectMap[item.projectId]?.displayArtworkUrl, !art.isEmpty { return art }
         }
         return nil
     }
@@ -750,7 +750,7 @@ struct CollectionDetailView: View {
     private var displayCoverUrl: String? {
         if let cover = collection.coverUrl, !cover.isEmpty { return cover }
         if let legacy = collection.artworkUrl, !legacy.isEmpty { return legacy }
-        return orderedProjects.first(where: { $0.artworkUrl?.isEmpty == false })?.artworkUrl
+        return orderedProjects.first(where: { $0.displayArtworkUrl?.isEmpty == false })?.displayArtworkUrl
     }
 
     var body: some View {
@@ -1015,7 +1015,7 @@ struct CollectionDetailView: View {
                     .foregroundColor(Color(hex: "#2dd4bf"))
                     .frame(width: 24)
 
-                if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                     AsyncImage(url: url) { image in
                         image.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
@@ -1081,7 +1081,7 @@ struct CollectionDetailView: View {
                 projectId: project.id,
                 version: version,
                 trackName: project.title,
-                artworkUrl: project.artworkUrl,
+                artworkUrl: project.displayArtworkUrl,
                 visualizerUrl: project.visualizerUrl
             )
         }
@@ -1539,7 +1539,7 @@ struct AddTrackSheet: View {
                         ForEach(availableProjects) { project in
                             Button(action: { addProject(project) }) {
                                 HStack(spacing: 12) {
-                                    if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+                                    if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                                         AsyncImage(url: url) { image in
                                             image.resizable().aspectRatio(contentMode: .fill)
                                         } placeholder: {

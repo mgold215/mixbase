@@ -13,6 +13,10 @@ struct ProjectDetailView: View {
 
     @EnvironmentObject var audioService: AudioService
 
+    // Owner-only tools (Cassette Studio) are shown only when the server says
+    // this account is the owner — see AuthService.ownerTools.
+    @ObservedObject private var authService = AuthService.shared
+
     @State private var project: Project?
     @State private var versions: [Version] = []
     @State private var isLoading = true
@@ -76,7 +80,7 @@ struct ProjectDetailView: View {
                                 audioService.play(
                                     version: latest,
                                     trackName: project.title,
-                                    artworkUrl: project.artworkUrl,
+                                    artworkUrl: project.displayArtworkUrl,
                                     visualizerUrl: project.visualizerUrl
                                 )
                             }) {
@@ -101,13 +105,15 @@ struct ProjectDetailView: View {
                             projectTitle: project.title,
                             artworkUrl: project.artworkUrl,
                             pinnedUrl: project.visualizerUrl,
-                            onPinChanged: { url in self.project?.visualizerUrl = url }
+                            pinnedWideUrl: project.visualizerWideUrl,
+                            onPinChanged: { url in self.project?.visualizerUrl = url },
+                            onWidePinChanged: { url in self.project?.visualizerWideUrl = url }
                         )) {
                             HStack {
                                 Image(systemName: "sparkles.tv")
-                                Text(project.visualizerUrl == nil ? "Create Visualizer" : "Visualizer")
+                                Text(project.visualizerUrl == nil && project.visualizerWideUrl == nil ? "Create Visualizer" : "Visualizer")
                                 Spacer()
-                                if project.visualizerUrl != nil {
+                                if project.visualizerUrl != nil || project.visualizerWideUrl != nil {
                                     HStack(spacing: 3) {
                                         Image(systemName: "pin.fill")
                                         Text("Pinned")
@@ -275,8 +281,8 @@ struct ProjectDetailView: View {
     @ViewBuilder
     private func artworkSection(project: Project) -> some View {
         ZStack(alignment: .bottomTrailing) {
-            // Large artwork image
-            if let artworkUrl = project.artworkUrl, let url = URL(string: artworkUrl) {
+            // Large artwork image — the lettered cover when there is one
+            if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
                 AsyncImage(url: url) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
@@ -309,9 +315,42 @@ struct ProjectDetailView: View {
                     .cornerRadius(8)
                 }
 
-                // Generate AI artwork (server applies it; update our copy live)
+                // Cassette Studio — owner-only (the server 404s it for anyone
+                // else). The server applies the new cover; mirror it locally.
+                if authService.ownerTools {
+                    NavigationLink(destination: CassetteStudioView(
+                        projectId: projectId,
+                        onRendered: { artworkUrl, finalizedUrl in
+                            self.project?.artworkUrl = artworkUrl
+                            self.project?.finalizedArtworkUrl = finalizedUrl
+                        },
+                        onVisualizerPinned: { url, wide in
+                            if wide {
+                                self.project?.visualizerWideUrl = url
+                            } else {
+                                self.project?.visualizerUrl = url
+                            }
+                        }
+                    )) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "recordingtape")
+                            Text("Cassette")
+                        }
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(8)
+                    }
+                }
+
+                // Generate AI artwork (server applies it — and drops any
+                // lettered cover — so update our copy live)
                 NavigationLink(destination: ArtworkGeneratorView(projectId: projectId, onGenerated: { url in
                     self.project?.artworkUrl = url
+                    self.project?.finalizedArtworkUrl = nil
                 })) {
                     HStack(spacing: 4) {
                         Image(systemName: "paintbrush")
@@ -479,7 +518,7 @@ struct ProjectDetailView: View {
             audioService.play(
                 version: version,
                 trackName: project.title,
-                artworkUrl: project.artworkUrl,
+                artworkUrl: project.displayArtworkUrl,
                 visualizerUrl: project.visualizerUrl
             )
         }) {
@@ -694,12 +733,12 @@ struct ProjectDetailView: View {
             let filename = "\(projectId.storageKeyComponent)-\(Int(Date().timeIntervalSince1970)).jpg"
             let publicUrl = try await SupabaseService.shared.uploadArtwork(data: data, filename: filename)
 
-            // Update the project's artwork URL
-            if var updatedProject = project {
-                updatedProject.artworkUrl = publicUrl
-                try await SupabaseService.shared.updateProject(updatedProject)
-                project = updatedProject
-            }
+            // Point the project at it through the web route rather than a
+            // PostgREST PATCH: the route validates the URL and clears any
+            // lettered (finalized) cover, which belonged to the old artwork.
+            try await MixbaseAPI.shared.assignArtworkToProject(projectId: projectId, artworkUrl: publicUrl)
+            project?.artworkUrl = publicUrl
+            project?.finalizedArtworkUrl = nil
         } catch {
             print("Failed to upload artwork: \(error.localizedDescription)")
         }
@@ -719,7 +758,7 @@ struct ProjectDetailView: View {
             audioService.play(
                 version: version,
                 trackName: project.title,
-                artworkUrl: project.artworkUrl,
+                artworkUrl: project.displayArtworkUrl,
                 visualizerUrl: project.visualizerUrl
             )
         } else if !audioService.isPlaying {
@@ -999,7 +1038,7 @@ struct ProjectDetailView: View {
         audioService.play(
             version: synthetic,
             trackName: project.title,
-            artworkUrl: project.artworkUrl,
+            artworkUrl: project.displayArtworkUrl,
             visualizerUrl: project.visualizerUrl
         )
     }

@@ -458,12 +458,16 @@ struct ArtworkDetailSheet: View {
             }
             .sheet(isPresented: $showVisualizer) {
                 if let projectId = item.projectId {
+                    // Start from the project's current pins (the screen also
+                    // re-reads them from the server on appear).
+                    let pinnedProject = projects.first { $0.id == projectId }
                     NavigationStack {
                         VisualizerView(
                             projectId: projectId,
                             projectTitle: item.title,
                             artworkUrl: item.imageUrl,
-                            pinnedUrl: nil
+                            pinnedUrl: pinnedProject?.visualizerUrl,
+                            pinnedWideUrl: pinnedProject?.visualizerWideUrl
                         )
                     }
                 }

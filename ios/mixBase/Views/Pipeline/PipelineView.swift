@@ -227,7 +227,7 @@ struct PipelineView: View {
             // Artwork for each linked project, keyed by project id
             let projects = try await fetchedProjects
             artworkByProject = Dictionary(uniqueKeysWithValues: projects.compactMap { project in
-                project.artworkUrl.map { (project.id, $0) }
+                project.displayArtworkUrl.map { (project.id, $0) }
             })
         } catch {
             print("PipelineView: Failed to load releases — \(error.localizedDescription)")
