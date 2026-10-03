@@ -883,10 +883,14 @@ struct ProjectDetailView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Text("Instrumental")
+                    // Named after the version it goes with ("MASTER 3
+                    // Instrumental") so it's clear which mix it matches.
+                    Text([instrumentalVersionName(project: project), "Instrumental"]
+                            .compactMap { $0 }.joined(separator: " "))
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(Color(hex: "#f0f0f0"))
+                        .lineLimit(1)
 
                     Spacer()
 
@@ -1000,10 +1004,31 @@ struct ProjectDetailView: View {
         )
     }
 
+    /// The version the instrumental goes with: the newest version uploaded at
+    /// or before it. Only the upload time is stored — it's the epoch-ms stamp
+    /// in the storage key (<projectId>/instrumental-<epochMs>.<ext>, same shape
+    /// on web and iOS) — so this is read from there rather than a new column.
+    /// nil when the key has no stamp or no version predates the instrumental.
+    private func instrumentalVersionName(project: Project) -> String? {
+        guard let url = project.instrumentalUrl,
+              let match = url.range(of: #"instrumental-(\d{10,})\."#, options: .regularExpression)
+        else { return nil }
+        let digits = url[match].filter(\.isNumber)
+        guard let ms = Double(digits) else { return nil }
+        let uploadedAt = Date(timeIntervalSince1970: ms / 1000)
+        return versions
+            .filter { $0.createdAt <= uploadedAt }
+            .max(by: { $0.createdAt < $1.createdAt })?
+            .displayName
+    }
+
     /// Saved file name for the instrumental share/download —
-    /// title-instrumental.<real ext>, matching the web's download name.
+    /// title-<version>-instrumental.<real ext> (title-instrumental.<ext> when
+    /// the version can't be told). The web still saves title-instrumental.<ext>.
     private func instrumentalDownloadName(project: Project) -> String {
-        let base = project.title
+        let title = [project.title, instrumentalVersionName(project: project)]
+            .compactMap { $0 }.joined(separator: " ")
+        let base = title
             .replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         let key = project.instrumentalUrl?.split(separator: "?").first.map(String.init) ?? ""
