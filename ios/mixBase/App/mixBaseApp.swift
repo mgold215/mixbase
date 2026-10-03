@@ -30,6 +30,11 @@ struct mixBaseApp: App {
             // doesn't 401 and bounce the user to login.
             if newPhase == .active {
                 Task { await authService.ensureFreshToken() }
+                // A failed launch-time owner lookup fails closed; retry it on
+                // return rather than hiding owner tools until a cold launch.
+                if authService.isAuthenticated && !authService.ownerTools {
+                    authService.refreshOwnerTools()
+                }
             }
         }
     }

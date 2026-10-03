@@ -38,6 +38,23 @@ export type CassetteMotionInput = {
   seed?: number
 }
 
+
+/**
+ * The free generator's slice encode, with a bitrate ceiling. The moving cover
+ * draws FRESH grain on every frame (cassette-motion-scene.ts) — temporal noise
+ * is what makes it read as camera footage — and noise is the one thing H.264
+ * cannot predict, so plain CRF 20 lands at 20–28 Mbit/s (a 30 s YouTube loop
+ * ≈ 100 MB). Capped CRF keeps quality where it matters and the file a sane
+ * size for the iOS player and mf-video. Every slice uses identical settings,
+ * so the concat stays lossless.
+ */
+export function cassetteEncodeArgs(W: number, H: number, out: string): string[] {
+  const args = sliceEncodeArgs(W, H, out)
+  const crf = args.indexOf('-crf')
+  args.splice(crf, 2, '-crf', '22', '-maxrate', '8M', '-bufsize', '16M')
+  return args
+}
+
 function runSlice(slice: CassetteRenderSlice, deadline: number, stops: (() => void)[]): Promise<void> {
   return new Promise((resolve, reject) => {
     // The LITERAL new Worker(new URL('./…', import.meta.url)) form is what
@@ -97,7 +114,7 @@ export async function renderCassetteMotion(input: CassetteMotionInput): Promise<
         W, H, duration, fps: FREE_FPS, seed,
         start, end, total,
         ffmpeg: FFMPEG,
-        args: sliceEncodeArgs(W, H, seg),
+        args: cassetteEncodeArgs(W, H, seg),
         // Just inside the render deadline, so the encoder's own SIGKILL
         // watchdog fires before the worker is torn down around it.
         timeoutMs: CASSETTE_RENDER_TIMEOUT_MS - 10_000,

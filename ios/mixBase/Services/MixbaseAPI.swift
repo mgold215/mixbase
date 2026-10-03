@@ -29,8 +29,10 @@ final class MixbaseAPI {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 6 * 60
-        config.timeoutIntervalForResource = 8 * 60
+        // AI video (/api/visualizer/runway) sends nothing until it finishes and
+        // can take ~8 min worst case; the request timeout is an IDLE timeout.
+        config.timeoutIntervalForRequest = 10 * 60
+        config.timeoutIntervalForResource = 12 * 60
         self.session = URLSession(configuration: config)
 
         // Same tolerant date handling as SupabaseService: ISO 8601 with and

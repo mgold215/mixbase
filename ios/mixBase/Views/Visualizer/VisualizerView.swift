@@ -250,7 +250,7 @@ struct VisualizerView: View {
                     saveToPhotosButton(url: pinnedUrl, labeled: true)
                 }
                 .padding(.horizontal)
-            } else {
+            } else if pinnedWideUrl == nil {
                 Text("No visualizer pinned yet — pin one from your library below.")
                     .font(.subheadline)
                     .foregroundColor(.gray)
