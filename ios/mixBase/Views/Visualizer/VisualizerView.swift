@@ -207,19 +207,15 @@ struct VisualizerView: View {
             await loadOwnerTools()
         }
         .onAppear {
-            // Back on screen with a render still in flight (e.g. after a tab
-            // switch): pick the polling up again.
-            if let job = finishJob, finishPollTask == nil {
-                let jobId = job.jobId
-                finishPollTask = Task {
-                    await pollFinish(jobId: jobId)
-                }
-            }
+            // Back on screen with this project's render still in flight —
+            // after a tab switch (view kept alive) or after leaving and
+            // reopening the screen (fresh view): pick the polling up again.
+            resumeFinishIfNeeded()
         }
         .onDisappear {
             // Stop polling while off screen. The render itself keeps going
-            // server-side; starting it again re-attaches (the server answers
-            // 409 with the running job's id).
+            // server-side, and FinishedRenderJobs remembers it, so coming
+            // back resumes the progress.
             finishPollTask?.cancel()
             finishPollTask = nil
         }
@@ -563,7 +559,7 @@ struct VisualizerView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: min(max(job.progress ?? 0, 0), 100), total: 100)
                             .tint(Color(hex: "#2dd4bf"))
-                        Text("\(job.stage ?? "Rendering") · \(Int(job.progress ?? 0))%")
+                        Text(Self.finishProgressText(job))
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
@@ -1092,7 +1088,7 @@ struct VisualizerView: View {
 
         Task {
             do {
-                let job = try await MixbaseAPI.shared.startFinishedVideo(
+                let result = try await MixbaseAPI.shared.startFinishedVideo(
                     projectId: projectId,
                     format: format,
                     color: color,
@@ -1100,7 +1096,26 @@ struct VisualizerView: View {
                     startMode: format == "shorts" ? startMode : nil
                 )
                 isStartingFinish = false
-                await handleFinishJob(job)
+                switch result {
+                case .started(let job):
+                    await handleFinishJob(job, format: format)
+                case .alreadyRunning(let jobId, let message):
+                    // The server allows one render per ACCOUNT, so the running
+                    // job may be another song or the other format. Re-attach
+                    // only when it is the render this app recorded for THIS
+                    // project; otherwise say so and leave the screen idle —
+                    // never pass someone else's job off as this request.
+                    if let jobId,
+                       let entry = FinishedRenderJobs.shared.entry(for: projectId, userId: authService.userId),
+                       entry.jobId == jobId {
+                        resumeFinish(entry)
+                        if entry.format != format {
+                            finishError = Self.shortError(message) ?? message
+                        }
+                    } else {
+                        finishError = Self.shortError(message) ?? "A render is already running — wait for it to finish"
+                    }
+                }
             } catch {
                 isStartingFinish = false
                 finishError = Self.shortError(error.localizedDescription) ?? "Could not start the render. Please try again."
@@ -1108,15 +1123,30 @@ struct VisualizerView: View {
         }
     }
 
-    private func handleFinishJob(_ job: MixbaseAPI.FinishedVideoJob) async {
+    private func handleFinishJob(_ job: MixbaseAPI.FinishedVideoJob, format: String) async {
         if job.status == "done" {
+            FinishedRenderJobs.shared.clear(projectId: projectId, jobId: job.jobId)
             finishJob = nil
             await loadLibrary()
             await loadLatestFinished()
         } else if job.status == "error" {
+            FinishedRenderJobs.shared.clear(projectId: projectId, jobId: job.jobId)
             finishJob = nil
             finishError = Self.shortError(job.error) ?? "The render failed. Please try again."
         } else {
+            // Remember it outside this view, so leaving the screen and coming
+            // back shows the live progress instead of an idle Render button.
+            if let userId = authService.userId {
+                FinishedRenderJobs.shared.record(
+                    FinishedRenderJobs.Entry(
+                        jobId: job.jobId,
+                        format: job.format ?? format,
+                        userId: userId,
+                        startedAt: Date()
+                    ),
+                    for: projectId
+                )
+            }
             finishJob = job
             finishPollTask?.cancel()
             let jobId = job.jobId
@@ -1126,19 +1156,64 @@ struct VisualizerView: View {
         }
     }
 
+    /// Pick this project's running render back up, if the app started one
+    /// that has not settled yet. Called on every appearance: the view may be
+    /// the same one (tab switch) or a brand-new one whose @State never saw
+    /// the render (the screen was popped or the sheet swiped away).
+    private func resumeFinishIfNeeded() {
+        guard finishPollTask == nil else { return }
+        if let entry = FinishedRenderJobs.shared.entry(for: projectId, userId: authService.userId) {
+            finishError = nil
+            resumeFinish(entry)
+        } else if finishJob != nil {
+            // Settled while this screen was hidden; the .task on appear
+            // reloads the latest renders.
+            finishJob = nil
+        }
+    }
+
+    /// Show a recorded render's progress and poll it (first poll right away).
+    private func resumeFinish(_ entry: FinishedRenderJobs.Entry) {
+        if finishJob?.jobId != entry.jobId {
+            finishJob = MixbaseAPI.FinishedVideoJob(
+                jobId: entry.jobId,
+                status: "rendering",
+                progress: nil,
+                stage: "Rendering",
+                format: entry.format,
+                videoUrl: nil,
+                error: nil
+            )
+        }
+        finishPollTask?.cancel()
+        let jobId = entry.jobId
+        finishPollTask = Task {
+            await pollFinish(jobId: jobId, immediately: true)
+        }
+    }
+
     /// Poll every 2.5 s until the job is done, failed, or gone (404).
-    private func pollFinish(jobId: String) async {
+    /// `immediately` skips the first wait (resuming a render already under way).
+    private func pollFinish(jobId: String, immediately: Bool = false) async {
         var failures = 0
+        var skipWait = immediately
         while !Task.isCancelled {
-            do {
-                try await Task.sleep(nanoseconds: 2_500_000_000)
-            } catch {
-                return // cancelled
+            if skipWait {
+                skipWait = false
+            } else {
+                do {
+                    try await Task.sleep(nanoseconds: 2_500_000_000)
+                } catch {
+                    return // cancelled
+                }
             }
             do {
                 guard let job = try await MixbaseAPI.shared.pollFinishedVideo(jobId: jobId) else {
                     // 404: a deploy or another server instance lost the job.
+                    // (Cancelled = off screen: keep the record, so the next
+                    // visit polls again and shows this outcome.)
                     if Task.isCancelled { return }
+                    FinishedRenderJobs.shared.clear(projectId: projectId, jobId: jobId)
                     finishJob = nil
                     finishError = "Render was interrupted — try again"
                     await loadLatestFinished()
@@ -1147,12 +1222,14 @@ struct VisualizerView: View {
                 if Task.isCancelled { return }
                 failures = 0
                 if job.status == "done" {
+                    FinishedRenderJobs.shared.clear(projectId: projectId, jobId: jobId)
                     finishJob = nil
                     await loadLibrary()
                     await loadLatestFinished()
                     return
                 }
                 if job.status == "error" {
+                    FinishedRenderJobs.shared.clear(projectId: projectId, jobId: jobId)
                     finishJob = nil
                     finishError = Self.shortError(job.error) ?? "The render failed. Please try again."
                     return
@@ -1162,6 +1239,9 @@ struct VisualizerView: View {
                 if Task.isCancelled { return }
                 failures += 1
                 if failures >= 5 {
+                    // The render may well still be going: keep the record, so
+                    // the next visit (or a re-tap, whose 409 names this job)
+                    // picks it back up.
                     finishJob = nil
                     finishError = "Lost touch with the render. Check Your Videos in a minute."
                     await loadLatestFinished()
@@ -1169,6 +1249,17 @@ struct VisualizerView: View {
                 }
             }
         }
+    }
+
+    /// The progress line under the bar: which render, its stage, and percent.
+    private static func finishProgressText(_ job: MixbaseAPI.FinishedVideoJob) -> String {
+        let what: String
+        switch job.format ?? "" {
+        case "shorts": what = "Short"
+        case "youtube": what = "YouTube video"
+        default: what = "Video"
+        }
+        return "\(what) · \(job.stage ?? "Rendering") · \(Int(job.progress ?? 0))%"
     }
 
     /// Job errors can carry raw ffmpeg stderr — show only the first line,
@@ -1223,6 +1314,70 @@ struct VisualizerView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - FinishedRenderJobs
+// The finished (YouTube/Shorts) renders this app started, by project — kept
+// OUTSIDE any view. VisualizerView is pushed from ProjectDetailView or shown
+// in a sheet from ArtworkLibraryView, so its @State is gone the moment the
+// user leaves, while the render keeps going server-side for minutes. Reopening
+// the screen looks the project up here and resumes polling, so it shows live
+// progress instead of an idle Render button.
+//
+// It is also how a 409 is read correctly: the server allows one render per
+// ACCOUNT (any project, any format), so a 409 is only "this project's own
+// render" when its job_id is the one recorded here.
+//
+// In memory only, like the server's own job map (lost on deploy by design): a
+// relaunch starts empty, and a 409 then just shows the server's message.
+
+@MainActor
+final class FinishedRenderJobs {
+
+    static let shared = FinishedRenderJobs()
+
+    struct Entry {
+        let jobId: String
+        let format: String      // youtube | shorts
+        let userId: String      // the account that started it
+        let startedAt: Date
+    }
+
+    // The server keeps a settled job readable for an hour after it was
+    // created (JOB_TTL_MS in src/lib/video-job-policy.ts). Past that a poll
+    // 404s even for a render that succeeded, which would read as
+    // "interrupted" — so an older record is dropped rather than resumed. The
+    // latest-renders list shows the result either way.
+    private static let maxAge: TimeInterval = 55 * 60
+
+    private var jobs: [UUID: Entry] = [:]
+
+    private init() {}
+
+    /// The render this app recorded for a project, if it belongs to the
+    /// signed-in account and is recent enough to still be polled.
+    func entry(for projectId: UUID, userId: String?) -> Entry? {
+        guard let entry = jobs[projectId] else { return nil }
+        guard let userId,
+              entry.userId == userId,
+              Date().timeIntervalSince(entry.startedAt) < Self.maxAge else {
+            jobs[projectId] = nil
+            return nil
+        }
+        return entry
+    }
+
+    func record(_ entry: Entry, for projectId: UUID) {
+        jobs[projectId] = entry
+    }
+
+    /// Forget a project's render — only while it is still `jobId`, so a late
+    /// answer about an older job can never erase a newer render's record.
+    func clear(projectId: UUID, jobId: String) {
+        if jobs[projectId]?.jobId == jobId {
+            jobs[projectId] = nil
         }
     }
 }

@@ -262,17 +262,29 @@ final class MixbaseAPI {
         let shorts: Visualizer?
     }
 
+    /// What POST /api/finalize-video answered.
+    enum FinishedVideoStart {
+        /// 202: a new render started for exactly what was asked.
+        case started(FinishedVideoJob)
+        /// 409: a render is already running for this ACCOUNT. The server's
+        /// single-flight is per account, not per project or format, so the
+        /// running job may be a different song or format entirely. jobId is
+        /// that render's id; the caller re-attaches only to a job it knows is
+        /// this project's own, and otherwise shows `message`.
+        case alreadyRunning(jobId: String?, message: String)
+    }
+
     /// Start a finished render. format is "youtube" or "shorts"; clipSeconds
     /// (15/30/60) and startMode ("start"/"hook"/"middle") only apply to
-    /// Shorts. A render already running for this account (409) is not an
-    /// error: the returned job is that one, so the caller re-attaches to it.
+    /// Shorts. A 409 (a render already running for this account) comes back
+    /// as .alreadyRunning — never as a job, since it may not be this request.
     func startFinishedVideo(
         projectId: UUID,
         format: String,
         color: String?,
         clipSeconds: Int?,
         startMode: String?
-    ) async throws -> FinishedVideoJob {
+    ) async throws -> FinishedVideoStart {
         var body: [String: Any] = [
             "project_id": projectId.uuidString.lowercased(),
             "format": format,
@@ -291,22 +303,15 @@ final class MixbaseAPI {
         )
         if status == 409 {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            if let jobId = json?["job_id"] as? String, !jobId.isEmpty {
-                return FinishedVideoJob(
-                    jobId: jobId,
-                    status: "rendering",
-                    progress: nil,
-                    stage: "Already rendering",
-                    format: nil,
-                    videoUrl: nil,
-                    error: nil
-                )
-            }
+            let jobId = (json?["job_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let message = scrubbedError(statusCode: status, data: data).errorDescription
+                ?? "A render is already running — wait for it to finish"
+            return .alreadyRunning(jobId: jobId, message: message)
         }
         guard (200...299).contains(status) else {
             throw scrubbedError(statusCode: status, data: data)
         }
-        return try decoder.decode(FinishedVideoJob.self, from: data)
+        return .started(try decoder.decode(FinishedVideoJob.self, from: data))
     }
 
     /// Poll a render job. nil = the server no longer knows the job (404): a
