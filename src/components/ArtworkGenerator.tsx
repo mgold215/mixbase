@@ -1,11 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
-import { Sparkles, Upload, X, Wand2, Download, RotateCcw } from 'lucide-react'
+import { Sparkles, Upload, X, Wand2, Download, RotateCcw, Disc3 } from 'lucide-react'
 import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { IMAGE_MODELS } from '@/lib/artwork-models'
+import CassetteStudio from '@/components/CassetteStudio'
 // Type-only: erased at compile time, so the client bundle never pulls in
 // artwork-history.ts's server-side dependency chain.
 import type { ArtworkHistoryItem } from '@/lib/artwork-history'
@@ -69,7 +70,7 @@ export default function ArtworkGenerator({
   showActions = true,
   ownerDefaults = false,
 }: Props) {
-  const [mode, setMode] = useState<'idle' | 'generate' | 'upload'>('idle')
+  const [mode, setMode] = useState<'idle' | 'generate' | 'upload' | 'cassette'>('idle')
   // Subject only — the photographic treatment (lens, light, weather, mood) is
   // layered on server-side by the Vary option so repeat runs look different.
   const [prompt, setPrompt] = useState(
@@ -355,6 +356,16 @@ export default function ArtworkGenerator({
             <Sparkles size={13} />
             Generate with AI
           </button>
+          {/* Cassette Studio: the artist's real cassette photo in a new scene,
+              lettered in their own handwriting (src/components/CassetteStudio.tsx). */}
+          <button
+            onClick={() => setMode('cassette')}
+            disabled={uploading}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#2dd4bf]/40 text-[#2dd4bf] rounded-xl hover:bg-[#2a2a2a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Disc3 size={13} />
+            Cassette Studio
+          </button>
           <label className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#1e1e1e] border border-[#333] text-white rounded-xl transition-colors ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-[#2a2a2a] cursor-pointer'}`}>
             {uploading ? (
               <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Uploading...</>
@@ -561,6 +572,15 @@ export default function ArtworkGenerator({
             )}
           </button>
         </div>
+      )}
+      {/* Cassette Studio mode — stays open after each render so "Make
+          another" is one click; the preview above shows each result. */}
+      {showActions && mode === 'cassette' && (
+        <CassetteStudio
+          projectId={projectId}
+          onRendered={(art, finalized) => { onArtworkUpdated(art); onFinalizedUpdated(finalized) }}
+          onClose={() => setMode('idle')}
+        />
       )}
       {/* Generate mode */}
       {showActions && mode === 'generate' && (

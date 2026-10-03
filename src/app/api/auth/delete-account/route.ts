@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { supabaseAdmin } from '@/lib/supabase'
 import { removeStorageObjects } from '@/lib/storage-remove'
+import { removeStudioFolder } from '@/lib/cassette-server'
 import { accountDeleteLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 import {
   AUDIO_BUCKET,
@@ -592,6 +593,10 @@ export async function POST(request: NextRequest) {
   // DELETE /api/projects/[id]. A storage failure still must NOT trap the user in
   // an undeletable account, so it is logged for a later sweep, never returned.
   await removeAccountAssets(userId, assetKeys, candidateUrls)
+  // Cassette Studio tools (cut-out cassettes, handwriting lockups) live under
+  // studio/<userId>/ in mf-artwork, attributed to this user by prefix alone —
+  // no column names them, so the survivor-scanned sweep above never sees them.
+  await removeStudioFolder(userId)
 
   // Delete the auth user last (cascades to profiles via FK). Log + Sentry the
   // failure like every branch above — this was the one 500 path that returned
