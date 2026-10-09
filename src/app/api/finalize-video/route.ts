@@ -55,6 +55,9 @@ export async function POST(request: NextRequest) {
   }
   const format: VideoFormat = body.format === 'shorts' ? 'shorts' : 'youtube'
   const color: string = isHexColor(body.color) ? body.color : DEFAULT_TEXT_COLOR
+  // Opt-out only: anything but an explicit false keeps the title cards, so
+  // older clients that never send it render exactly as before.
+  const showText = body.show_text !== false
   const clipSeconds: number = SHORTS_LENGTHS.includes(body.clip_seconds) ? body.clip_seconds : 30
   const startSec: number = typeof body.start_sec === 'number' && body.start_sec >= 0 && Number.isFinite(body.start_sec)
     ? body.start_sec : 0
@@ -151,6 +154,7 @@ export async function POST(request: NextRequest) {
     artist,
     format,
     color,
+    showText,
     startSec,
     startMode,
     clipSeconds,
