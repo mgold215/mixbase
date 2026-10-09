@@ -46,6 +46,7 @@ export default function VideoFinalizer({
   const [jobs, setJobs] = useState<Partial<Record<VideoFormat, JobState>>>({})
   const [errors, setErrors] = useState<Partial<Record<VideoFormat, string>>>({})
   const [color, setColor] = useState('#FFFFFF')
+  const [showText, setShowText] = useState(true)
   const [shortLen, setShortLen] = useState<15 | 30 | 60>(30)
   const [shortStart, setShortStart] = useState<'start' | 'hook' | 'middle'>('hook')
   const pollTimers = useRef<Partial<Record<VideoFormat, ReturnType<typeof setInterval>>>>({})
@@ -136,6 +137,7 @@ export default function VideoFinalizer({
           project_id: projectId,
           format,
           color,
+          show_text: showText,
           // start_mode (not a client-computed second): the server resolves it
           // against the PROBED audio duration, so Hook/Middle work even when
           // this client never learned the song length (duration_seconds is
@@ -196,23 +198,32 @@ export default function VideoFinalizer({
     <div className="max-w-2xl space-y-5">
       <p className="text-xs text-[var(--text-muted)] leading-relaxed">
         Loops a pinned visualizer seamlessly for the length of the song, flashes the artist name and
-        title (styled like your artwork) through the track, and muxes in the current mix — rendered
+        title through the track (or no text at all), and muxes in the current mix — rendered
         server-side into an upload-ready MP4. The full-length video renders from your horizontal pin,
         the Short from your vertical pin.
       </p>
 
-      {/* Shared text color */}
+      {/* Shared text: a color for the title cards, or no text at all */}
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text color</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text</p>
         <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setShowText(false)}
+            aria-pressed={!showText}
+            className={`h-7 px-3 text-[10px] font-medium rounded-full border-2 transition-colors ${
+              !showText ? 'border-[#2dd4bf] bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'border-[#333] text-[#888] hover:border-[#555]'
+            }`}
+          >
+            No text
+          </button>
           {TEXT_COLORS.map(c => (
             <button
               key={c.value}
-              onClick={() => setColor(c.value)}
+              onClick={() => { setColor(c.value); setShowText(true) }}
               title={c.label}
               aria-label={`Text color ${c.label}`}
               className={`w-7 h-7 rounded-full border-2 transition-all ${
-                color === c.value ? 'border-[#2dd4bf] scale-110' : 'border-[#333] hover:border-[#555]'
+                showText && color === c.value ? 'border-[#2dd4bf] scale-110' : 'border-[#333] hover:border-[#555]'
               }`}
               style={{ backgroundColor: c.value }}
             />

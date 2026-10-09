@@ -57,6 +57,8 @@ export type BuildVideoArgs = {
   artist: string
   format: VideoFormat
   color?: string
+  /** false = no title cards at all (just the loop + audio). Default true. */
+  showText?: boolean
   /** Shorts only: where in the song the clip starts (seconds). */
   startSec?: number
   /**
@@ -463,14 +465,18 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
 
     // ── Text overlay PNG: the artwork lockup, scaled to this frame ──────────
     // Width drives the type scale exactly like the artwork (fractions of W),
-    // so the video card matches the finalized cover.
-    const overlay = await buildTextOverlay(title, artist, W, 'medium', true, color)
+    // so the video card matches the finalized cover. Soft shadow rather than
+    // the artwork's tight outline. Skipped entirely for "No text" renders.
+    const showText = args.showText !== false
     const textFile = join(dir, 'text.png')
-    await writeFile(textFile, overlay.png)
+    if (showText) {
+      const overlay = await buildTextOverlay(title, artist, W, 'medium', true, color, 'soft')
+      await writeFile(textFile, overlay.png)
+    }
 
     // ── Pass 2: loop for the song, flash text, mux audio ────────────────────
     report(0.2, 'Rendering full video')
-    const windows = flashWindows(outDur)
+    const windows = showText ? flashWindows(outDur) : []
     const F = FLASH_FADE_SEC
     const loops = Math.ceil(outDur / unitDur) + 1
 
@@ -506,7 +512,7 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
     const inputArgs = [
       '-stream_loop', String(loops - 1), '-i', unitFile,
       ...(startSec > 0 ? ['-ss', startSec.toFixed(3)] : []), '-i', audioFile,
-      '-loop', '1', '-i', textFile,
+      ...(windows.length > 0 ? ['-loop', '1', '-i', textFile] : []),
     ]
     await run(FFMPEG, [
       '-y', ...inputArgs,
