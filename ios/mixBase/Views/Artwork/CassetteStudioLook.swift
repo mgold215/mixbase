@@ -79,6 +79,10 @@ struct CassetteLookSection: View {
     @State private var preview: CGImage?
     @State private var isPreviewing = false
     @State private var previewError: String?
+    // The 250 ms wait before a preview; every change restarts it.
+    @State private var debounceTask: Task<Void, Never>?
+    // The preview request in flight; cancelled only when a newer one starts,
+    // so a drag that pauses still shows the in-between results (as on the web).
     @State private var previewTask: Task<Void, Never>?
 
     @AppStorage(CassetteLookMemory.keepKey) private var keepLook = true
@@ -178,7 +182,10 @@ struct CassetteLookSection: View {
             saveError = nil
             requestPreview(debounced: true)
         }
-        .onDisappear { previewTask?.cancel() }
+        .onDisappear {
+            debounceTask?.cancel()
+            previewTask?.cancel()
+        }
     }
 
     // MARK: Preview
@@ -332,19 +339,30 @@ struct CassetteLookSection: View {
 
     // MARK: Actions
 
-    /// Fetch a preview of the current look. A newer request cancels the one
-    /// in flight; slider drags wait for 250 ms of quiet first. The sliders
-    /// never wait on this.
+    /// Fetch a preview of the current look, 250 ms after the last change
+    /// (straight away on open). The sliders never wait on this.
     private func requestPreview(debounced: Bool) {
-        previewTask?.cancel()
+        debounceTask?.cancel()
         let settings = look
         isPreviewing = true
         previewError = nil
-        previewTask = Task {
+        debounceTask = Task {
             if debounced {
                 try? await Task.sleep(for: .milliseconds(250))
+                if Task.isCancelled { return }
             }
-            if Task.isCancelled { return }
+            startPreview(settings)
+        }
+    }
+
+    /// Start one preview request, cancelling the one in flight (the contract:
+    /// a newer preview cancels the older one when it STARTS). Until then an
+    /// older answer may still land and is shown, so a drag that pauses shows
+    /// its in-between results; the spinner stays up until the look on screen
+    /// has its own preview.
+    private func startPreview(_ settings: MixbaseAPI.FilterSettings) {
+        previewTask?.cancel()
+        previewTask = Task {
             do {
                 let data = try await MixbaseAPI.shared.filterPreview(projectId: projectId, settings: settings)
                 if Task.isCancelled { return }
@@ -354,9 +372,13 @@ struct CassetteLookSection: View {
                 preview = image
             } catch {
                 if Task.isCancelled { return }
+                // A newer look is already on its way; its answer decides.
+                guard settings == look else { return }
                 previewError = "Preview didn't load: \(error.localizedDescription)"
             }
-            isPreviewing = false
+            if settings == look {
+                isPreviewing = false
+            }
         }
     }
 

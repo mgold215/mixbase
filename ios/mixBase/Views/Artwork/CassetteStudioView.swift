@@ -897,12 +897,11 @@ struct CassetteStudioView: View {
     }
 
     /// Section 4's presets, sliders and the look on the cover now. Called on
-    /// open and after every render; a failure leaves the section as it was
-    /// (hidden on open), since the rest of the studio works without it.
+    /// open and after every render. A failed read hides the section (as on
+    /// the web) rather than showing the previous cover's look as current;
+    /// the rest of the studio works without it.
     private func loadLook() async {
-        if let options = try? await MixbaseAPI.shared.filterOptions(projectId: projectId) {
-            lookOptions = options
-        }
+        lookOptions = try? await MixbaseAPI.shared.filterOptions(projectId: projectId)
         lookRevision += 1
     }
 
