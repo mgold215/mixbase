@@ -48,6 +48,7 @@ const SUITES = [
   'artwork-models-test.mjs',
   'film-finish-test.mjs',
   'cassette-studio-test.mjs',
+  'cover-filters-test.mjs',
   'artwork-history-test.mjs',
   'upload-ownership-test.mjs',
   'uuid-storage-key-test.mjs',

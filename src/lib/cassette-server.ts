@@ -13,9 +13,15 @@
 // offers every object in it as a restorable cover. A cut-out cassette or a bare
 // lettering PNG is a tool, not a cover, so it lives in the user's own studio
 // folder. The final images DO go under `<projectId>/` (ai-cassette-<ts>.jpg,
-// cassette-<ts>.jpg, finalized-<ts>.jpg) so they join that history like any
-// other artwork. Account deletion removes `studio/<userId>/` (see
-// removeStudioFolder, called from /api/auth/delete-account).
+// cassette-<ts>.jpg, finalized-<ts>.jpg, and finalized-<fts>-f<code>.jpg — a
+// cover with a "Finish the look" filter, see /api/cassette-studio/filter) so
+// they join that history like any other artwork. Account deletion removes
+// `studio/<userId>/` (see removeStudioFolder, called from
+// /api/auth/delete-account).
+//
+// The studio also READS the artist's other images under `<projectId>/`: the
+// "From mixBase" picker (/api/cassette-studio/photos) lists them and
+// /api/cassette-studio/subject cuts a cassette out of one (parseSourcePath).
 
 import { supabaseAdmin } from '@/lib/supabase'
 import { studioPrefix } from '@/lib/cassette-studio'
@@ -47,6 +53,25 @@ export async function listStudio(userId: string, search?: string): Promise<Studi
     .map(e => ({ path: `${prefix}${e.name}`, url: studioPublicUrl(`${prefix}${e.name}`), createdAt: e.created_at ?? null }))
 }
 
+/**
+ * Is there an object at exactly this mf-artwork key, and how big is it?
+ * One listing of its folder narrowed to the name (Storage's search is a
+ * prefix match, so the exact name is still compared). Null when absent;
+ * throws only when Storage itself fails.
+ */
+export async function findStudioObject(path: string): Promise<{ size: number | null; createdAt: string | null } | null> {
+  const slash = path.lastIndexOf('/')
+  const folder = path.slice(0, slash), name = path.slice(slash + 1)
+  if (slash <= 0 || !name) return null
+  const { data, error } = await supabaseAdmin.storage.from(STUDIO_BUCKET).list(folder, { limit: 100, search: name })
+  if (error) throw new Error(error.message)
+  const entry = (data ?? []).find(e => e.name === name && e.id !== null)
+  if (!entry) return null
+  const size = (entry as { metadata?: { size?: unknown } | null }).metadata?.size
+  return { size: typeof size === 'number' ? size : null, createdAt: entry.created_at ?? null }
+}
+
+/** Download any mf-artwork key (studio files and, for the filter/subject routes, project artwork). */
 export async function downloadStudio(path: string): Promise<Buffer> {
   const { data, error } = await supabaseAdmin.storage.from(STUDIO_BUCKET).download(path)
   if (error || !data) throw new Error(error?.message ?? 'not found')
@@ -208,6 +233,14 @@ export async function fillScene(imageUrl: string, maskUrl: string, prompt: strin
  * 10 MB proxy wall. This cap is the server's own guard on top of that.
  */
 export const MAX_PHOTO_BYTES = 9 * 1024 * 1024
+
+/**
+ * Cap on an image ALREADY in mixBase that /subject cuts a cassette out of
+ * (source_path). Its bytes come from Storage, not the request body, so
+ * Railway's wall does not apply; this bounds one sharp decode. The picker
+ * (/api/cassette-studio/photos) leaves out anything bigger.
+ */
+export const MAX_SOURCE_BYTES = 25 * 1024 * 1024
 
 export async function readPhoto(form: FormData, field: string): Promise<Buffer | string> {
   const file = form.get(field)
