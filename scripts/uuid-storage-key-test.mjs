@@ -347,6 +347,7 @@ const ACCOUNTED = {
   'src/lib/visualizer-store.ts': 'lowercases at the mint itself (keyProjectId, 2026-08-18)',
   'src/lib/visualizer-transcode.ts': 'derives its key from an existing one (mp4TwinPath)',
   'src/app/api/cassette-studio/render/route.ts': 'canonicalUuid at the id; studio inputs keyed by the X-User-Id uid',
+  'src/app/api/cassette-studio/filter/route.ts': 'canonicalUuid at the id; keys built from the owned row\'s id (finalizedCoverKey / filteredCoverKey)',
   'src/lib/cassette-server.ts': 'uploadStudio: keys built by callers from the X-User-Id uid + canonicalUuid project ids',
 }
 

@@ -27,6 +27,7 @@
 
 import sharp from 'sharp'
 import { applyFilmFinish } from './film-finish.ts'
+import { decodeFilter, encodeFilter, type FilterSettings } from './cover-filters.ts'
 
 /** Output edge. 3000×3000 is the DSP-recommended cover size. */
 export const COVER = 3000
@@ -138,11 +139,69 @@ export function cassetteCoverStamp(key: string | null | undefined, projectId: st
   return m ? m[1] : null
 }
 
-/** The stamp of a finalized cover key (<projectId>/finalized-<fts>.jpg), or null. */
-export function finalizedCoverStamp(key: string | null | undefined, projectId: string): string | null {
+// A finalized cover is either plain (<projectId>/finalized-<fts>.jpg — the
+// lettered cover, or /api/finalize-artwork's text lockup) or FILTERED: the
+// same stamp plus the look it was made with (finalized-<fts>-f<code>.jpg, code
+// from cover-filters.ts encodeFilter). The stamp is what links either one back
+// to its unfiltered base and to the moving cover's title-<fts>-*.png.
+const FINALIZED_LEAF = /^finalized-(\d{10,16})(?:-f([0-9a-z]{1,40}))?\.jpg$/
+
+/**
+ * Parse a finalized cover key: its stamp and, when filtered, the look baked
+ * into it. Null for anything else — including a -f code that does not decode
+ * (decodeFilter is strict), so a hand-made name never passes for a filtered cover.
+ */
+export function parseFinalizedCover(key: string | null | undefined, projectId: string): { fts: string; filter: FilterSettings | null } | null {
   const leaf = projectLeaf(key, projectId)
-  const m = leaf === null ? null : /^finalized-(\d{10,16})\.jpg$/.exec(leaf)
+  const m = leaf === null ? null : FINALIZED_LEAF.exec(leaf)
+  if (!m) return null
+  if (m[2] === undefined) return { fts: m[1], filter: null }
+  const filter = decodeFilter(m[2])
+  return filter ? { fts: m[1], filter } : null
+}
+
+/** The stamp of a finalized cover key (<projectId>/finalized-<fts>.jpg or …-f<code>.jpg), or null. */
+export function finalizedCoverStamp(key: string | null | undefined, projectId: string): string | null {
+  return parseFinalizedCover(key, projectId)?.fts ?? null
+}
+
+/** <projectId>/finalized-<fts>.jpg — the plain (unfiltered) finalized cover for a stamp. */
+export const finalizedCoverKey = (projectId: string, fts: string) => `${projectId}/finalized-${fts}.jpg`
+
+/** <projectId>/finalized-<fts>-f<code>.jpg — that cover with a look applied. */
+export const filteredCoverKey = (projectId: string, fts: string, settings: FilterSettings) =>
+  `${projectId}/finalized-${fts}-f${encodeFilter(settings)}.jpg`
+
+/**
+ * The stamp an artwork key under this project carries, for the artwork shapes
+ * the app mints with one: (ai-)cassette-<ts>.jpg (Cassette Studio, the same
+ * stamp as cassetteCoverStamp), ai-<ts>.<ext> (generate-artwork), <ts>.<ext>
+ * (an upload) and a plain finalized-<ts>.jpg restored as the artwork. Null for
+ * anything else (deezer-<id>.jpg, cover.png, other projects, nested keys).
+ */
+export function artworkStamp(key: string | null | undefined, projectId: string): string | null {
+  const leaf = projectLeaf(key, projectId)
+  if (leaf === null) return null
+  const m = /^(?:ai-cassette-|cassette-|ai-)?(\d{10,16})\.(?:jpe?g|png|webp)$/.exec(leaf) ?? /^finalized-(\d{10,16})\.jpg$/.exec(leaf)
   return m ? m[1] : null
+}
+
+// ── Photos already in mixBase ──────────────────────────────────────────────
+// POST /api/cassette-studio/subject { source_path } cuts a cassette out of an
+// image the artist already uploaded to one of their projects instead of a new
+// upload. The path arrives from the client, so its shape is pinned here: a
+// canonical (lowercase) project uuid, then ONE plain file name with an image
+// extension — no '..', no nested folders, no studio/ files, nothing at the
+// bucket root. Ownership of the project is the route's check (mb_projects).
+
+const SOURCE_PATH = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([A-Za-z0-9._-]+\.(?:jpe?g|png|webp))$/
+
+/** Parse `<projectId>/<file>.(jpg|jpeg|png|webp)`, or null for any other shape. */
+export function parseSourcePath(value: unknown): { projectId: string; leaf: string; path: string } | null {
+  if (typeof value !== 'string' || value.length > 255) return null
+  const m = SOURCE_PATH.exec(value)
+  if (!m || m[2].includes('..') || m[2].startsWith('.')) return null
+  return { projectId: m[1], leaf: m[2], path: value }
 }
 
 // ── Subject ────────────────────────────────────────────────────────────────
