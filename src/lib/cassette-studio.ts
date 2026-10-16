@@ -191,14 +191,23 @@ export function artworkStamp(key: string | null | undefined, projectId: string):
 // image the artist already uploaded to one of their projects instead of a new
 // upload. The path arrives from the client, so its shape is pinned here: a
 // canonical (lowercase) project uuid, then ONE plain file name with an image
-// extension — no '..', no nested folders, no studio/ files, nothing at the
-// bucket root. Ownership of the project is the route's check (mb_projects).
+// extension — no '..', no nested folders, no studio/ files. The one bucket-root
+// shape allowed is the iOS app's own artwork upload, <projectId>-<unixSeconds>.jpg
+// (SupabaseService.uploadArtwork writes there, not under the project folder),
+// whose project is its uuid prefix. Ownership of the project is the route's
+// check (mb_projects).
 
 const SOURCE_PATH = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([A-Za-z0-9._-]+\.(?:jpe?g|png|webp))$/
+const ROOT_UPLOAD = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-\d{9,13}\.(?:jpe?g|png|webp)$/
 
-/** Parse `<projectId>/<file>.(jpg|jpeg|png|webp)`, or null for any other shape. */
+/**
+ * Parse `<projectId>/<file>.(jpg|jpeg|png|webp)` or the iOS bucket-root upload
+ * `<projectId>-<unixSeconds>.(jpg|jpeg|png|webp)`, or null for any other shape.
+ */
 export function parseSourcePath(value: unknown): { projectId: string; leaf: string; path: string } | null {
   if (typeof value !== 'string' || value.length > 255) return null
+  const root = ROOT_UPLOAD.exec(value)
+  if (root) return { projectId: root[1], leaf: value, path: value }
   const m = SOURCE_PATH.exec(value)
   if (!m || m[2].includes('..') || m[2].startsWith('.')) return null
   return { projectId: m[1], leaf: m[2], path: value }

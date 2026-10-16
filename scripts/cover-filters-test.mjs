@@ -238,6 +238,23 @@ console.log('\nsource_path ("From mixBase" photos)')
   ]
   for (const [p, label] of bad) check(`refused: ${label}`, parseSourcePath(p) === null, p)
   check('refused: non-strings', parseSourcePath(null) === null && parseSourcePath(42) === null && parseSourcePath({ path: good[0] }) === null)
+
+  // The iOS app uploads artwork to the bucket ROOT as <projectId>-<unixSeconds>.jpg.
+  const root = `${proj}-1791979122.jpg`
+  const r = parseSourcePath(root)
+  check('accepted: an iOS bucket-root upload', r !== null && r.projectId === proj && r.path === root && r.leaf === root)
+  check('accepted: iOS root upload as png/webp/jpeg', [`${proj}-1791979122.png`, `${proj}-1791979122.webp`, `${proj}-1791979122.jpeg`].every(p => parseSourcePath(p)?.projectId === proj))
+  const badRoot = [
+    [`collection-${proj}-1787222896.jpg`, 'a collection cover at the root'],
+    [`${proj}-abc.jpg`, 'a non-numeric suffix'],
+    [`${proj}-12345678.jpg`, 'a too-short stamp'],
+    [`${proj}-17919791220000.jpg`, 'a too-long stamp'],
+    [`${proj.toUpperCase()}-1791979122.jpg`, 'an upper-case root uuid'],
+    [`${proj}-1791979122.gif`, 'a root gif'],
+    [`${proj}-1791979122.jpg/x.jpg`, 'a root name used as a folder'],
+    [`${proj}1791979122.jpg`, 'no separator'],
+  ]
+  for (const [p, label] of badRoot) check(`refused: ${label}`, parseSourcePath(p) === null, p)
 }
 
 // ── Pixels ──────────────────────────────────────────────────────────────────

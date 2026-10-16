@@ -16,23 +16,27 @@ export const runtime = 'nodejs'
 // from the phone again.
 //
 // What is listed: objects directly under mf-artwork/<projectId>/ for projects
-// the CALLER owns (mb_projects.user_id = X-User-Id), images only, in exactly
-// the shape /subject accepts (parseSourcePath), newest first, at most
-// MAX_PHOTOS. Left out: finalized-* (lettered / filtered outputs — the
-// cassette in them is already a composite) and anything over the cut-out's
-// size cap. studio/ is never listed (it is not under a project prefix).
+// the CALLER owns (mb_projects.user_id = X-User-Id), plus the iOS app's own
+// artwork uploads, which land at the bucket ROOT as <projectId>-<unixSeconds>.jpg
+// — images only, in exactly the shapes /subject accepts (parseSourcePath),
+// newest first, at most MAX_PHOTOS. Left out: finalized-* (lettered / filtered
+// outputs — the cassette in them is already a composite) and anything over the
+// cut-out's size cap. studio/ is never listed (it is not under a project prefix).
 // thumb_url is the full image: this project does not use Supabase image
 // transforms anywhere, so the client scales it.
 //
 // Bounded: the MAX_PROJECTS most recently updated projects, listed
-// LIST_CONCURRENCY at a time. A listing that fails is skipped (this is a
-// picker, not a history — a partial grid beats none) unless every one failed.
+// LIST_CONCURRENCY at a time, and at most ROOT_PAGES pages of the bucket root.
+// A listing that fails is skipped (this is a picker, not a history — a partial
+// grid beats none) unless every one failed.
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 
 const MAX_PROJECTS = 60
 const MAX_PHOTOS = 150
 const LIST_CONCURRENCY = 6
+const ROOT_PAGE = 1000
+const ROOT_PAGES = 5
 
 type Photo = {
   path: string
@@ -55,22 +59,58 @@ async function listProjectPhotos(project: { id: string; title: string | null }):
   }
   const photos: Photo[] = []
   for (const e of (data ?? []) as StorageRow[]) {
-    if (!e.name || e.id === null || e.name.startsWith('finalized-')) continue
-    const src = parseSourcePath(`${project.id}/${e.name}`)
-    if (!src || src.projectId !== project.id) continue
-    const size = e.metadata?.size
-    if (typeof size === 'number' && size > MAX_SOURCE_BYTES) continue
-    const url = studioPublicUrl(src.path)
-    photos.push({
-      path: src.path,
-      url,
-      thumb_url: url,
-      project_id: project.id,
-      project_title: project.title ?? '',
-      created_at: e.created_at ?? null,
-    })
+    if (!e.name || e.name.startsWith('finalized-')) continue
+    const photo = toPhoto(`${project.id}/${e.name}`, e, project)
+    if (photo) photos.push(photo)
   }
   return photos
+}
+
+/**
+ * The iOS app's artwork uploads at the bucket root (<projectId>-<unixSeconds>.jpg),
+ * for the caller's projects only. One paginated root listing rather than a call
+ * per project: the root holds a folder per project plus these few files.
+ */
+async function listRootUploads(projects: Map<string, { id: string; title: string | null }>): Promise<Photo[] | null> {
+  const photos: Photo[] = []
+  for (let page = 0; page < ROOT_PAGES; page++) {
+    const { data, error } = await supabaseAdmin.storage
+      .from(ARTWORK_BUCKET)
+      .list('', { limit: ROOT_PAGE, offset: page * ROOT_PAGE, sortBy: { column: 'name', order: 'asc' } })
+    if (error) {
+      console.error('[cassette-studio/photos] root listing failed:', error.message)
+      return page === 0 ? null : photos
+    }
+    const rows = (data ?? []) as StorageRow[]
+    for (const e of rows) {
+      if (!e.name) continue
+      const src = parseSourcePath(e.name)
+      const project = src && !src.path.includes('/') ? projects.get(src.projectId) : undefined
+      if (!project) continue
+      const photo = toPhoto(e.name, e, project)
+      if (photo) photos.push(photo)
+    }
+    if (rows.length < ROOT_PAGE) break
+  }
+  return photos
+}
+
+/** A listed object as a picker entry, or null when it is not a usable photo of this project. */
+function toPhoto(path: string, e: StorageRow, project: { id: string; title: string | null }): Photo | null {
+  if (e.id === null) return null // a folder
+  const src = parseSourcePath(path)
+  if (!src || src.projectId !== project.id) return null
+  const size = e.metadata?.size
+  if (typeof size === 'number' && size > MAX_SOURCE_BYTES) return null
+  const url = studioPublicUrl(src.path)
+  return {
+    path: src.path,
+    url,
+    thumb_url: url,
+    project_id: project.id,
+    project_title: project.title ?? '',
+    created_at: e.created_at ?? null,
+  }
 }
 
 /** Run `fn` over `items`, at most `n` at a time, keeping order. */
@@ -104,10 +144,17 @@ export async function GET(request: NextRequest) {
   }
   const rows = (projects ?? []) as { id: string; title: string | null }[]
 
-  const listings = await mapLimit(rows, LIST_CONCURRENCY, p => listProjectPhotos(p).catch(err => {
-    console.error(`[cassette-studio/photos] listing ${p.id} threw:`, err instanceof Error ? err.message : err)
-    return null
-  }))
+  const [folderListings, rootListing] = await Promise.all([
+    mapLimit(rows, LIST_CONCURRENCY, p => listProjectPhotos(p).catch(err => {
+      console.error(`[cassette-studio/photos] listing ${p.id} threw:`, err instanceof Error ? err.message : err)
+      return null
+    })),
+    rows.length === 0 ? Promise.resolve([]) : listRootUploads(new Map(rows.map(r => [r.id, r]))).catch(err => {
+      console.error('[cassette-studio/photos] root listing threw:', err instanceof Error ? err.message : err)
+      return null
+    }),
+  ])
+  const listings = [...folderListings, rootListing]
   if (rows.length > 0 && listings.every(l => l === null)) {
     return NextResponse.json({ error: 'Could not load your photos. Please try again.' }, { status: 502 })
   }

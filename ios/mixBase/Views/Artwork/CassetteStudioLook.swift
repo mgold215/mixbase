@@ -87,9 +87,13 @@ struct CassetteLookSection: View {
 
     @AppStorage(CassetteLookMemory.keepKey) private var keepLook = true
 
+    /// `initialLook` opens the editor on a look that is NOT on the cover yet
+    /// (the remembered look, after it could not be added automatically), so
+    /// saving it is one tap; nil starts from the cover's own look.
     init(
         projectId: UUID,
         options: MixbaseAPI.FilterOptions,
+        initialLook: MixbaseAPI.FilterSettings? = nil,
         locked: Bool,
         isSaving: Binding<Bool>,
         onSaved: @escaping (MixbaseAPI.FilterSaveResult) -> Void
@@ -105,7 +109,7 @@ struct CassetteLookSection: View {
         self._isSaving = isSaving
         self.onSaved = onSaved
         let start = options.current ?? MixbaseAPI.FilterSettings.original
-        self._look = State(initialValue: start)
+        self._look = State(initialValue: initialLook ?? start)
         self._savedLook = State(initialValue: start)
     }
 
@@ -485,11 +489,7 @@ struct StudioPhotoPickerSheet: View {
             VStack(spacing: 6) {
                 Group {
                     if let url = URL(string: photo.thumbUrl ?? photo.url) {
-                        AsyncImage(url: url) { image in
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            Rectangle().fill(Color(hex: "#1a1a1a"))
-                        }
+                        StudioPhotoThumb(url: url)
                     } else {
                         Rectangle().fill(Color(hex: "#1a1a1a"))
                     }
@@ -523,6 +523,90 @@ struct StudioPhotoPickerSheet: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+}
+
+// MARK: - Grid thumbnails
+// The server hands back full-size originals (often several MB, some much
+// larger). AsyncImage would decode each at full size and keep none of them, so
+// the grid downloads each once, downsamples it off the main thread with ImageIO
+// and keeps the small image for the rest of the session.
+
+private final class StudioThumbCache: @unchecked Sendable {
+    static let shared = StudioThumbCache()
+    private let cache = NSCache<NSString, CGImage>()
+
+    private init() {
+        cache.countLimit = 300
+    }
+
+    func image(for key: String) -> CGImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func store(_ image: CGImage, for key: String) {
+        cache.setObject(image, forKey: key as NSString)
+    }
+}
+
+/// A thumbnail no larger than `maxPixel` on its long side (ImageIO; iOS and macOS alike).
+private func downsampledThumbnail(_ data: Data, maxPixel: CGFloat) -> CGImage? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+}
+
+private struct StudioPhotoThumb: View {
+    let url: URL
+
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: CGImage?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Color(hex: "#1a1a1a"))
+            if let image {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if failed {
+                Image(systemName: "photo")
+                    .foregroundColor(.gray)
+            }
+        }
+        .task(id: url) { await load() }
+    }
+
+    private func load() async {
+        let key = url.absoluteString
+        if let cached = StudioThumbCache.shared.image(for: key) {
+            image = cached
+            return
+        }
+        // A tile is ~104pt tall and cropped to fill, so the long side needs a
+        // little headroom over the tile.
+        let maxPixel = 160 * max(displayScale, 1)
+        do {
+            let data = try await MixbaseAPI.shared.imageData(from: url)
+            let thumb = await Task.detached(priority: .utility) {
+                downsampledThumbnail(data, maxPixel: maxPixel)
+            }.value
+            if Task.isCancelled { return }
+            if let thumb {
+                StudioThumbCache.shared.store(thumb, for: key)
+                image = thumb
+            } else {
+                failed = true
+            }
+        } catch {
+            if !Task.isCancelled { failed = true }
+        }
     }
 }
 

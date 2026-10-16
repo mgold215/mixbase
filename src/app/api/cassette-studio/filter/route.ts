@@ -223,9 +223,15 @@ export async function POST(request: NextRequest) {
       }
       const img = await decodeForFilter(bytes, SAVE_MAX_SIDE)
       let fts = base.fts
+      // A clean artwork can share its stamp with a plain finalized cover — a
+      // Studio render writes cassette-S.jpg AND the lettered finalized-S.jpg,
+      // and restoring the clean one clears finalized. A look keyed by S would
+      // then resolve back to the LETTERED base (and the moving cover would find
+      // title-S-*.png), bringing the handwriting back. Give it its own stamp.
+      if (fts !== null && base.isArtwork && await findStudioObject(finalizedCoverKey(project.id, fts))) fts = null
       if (fts === null) {
-        // No stamp to link a look back to this artwork: write the unfiltered
-        // anchor finalized-<fts>.jpg first, so the next edit finds its base.
+        // No stamp of its own to link a look back to this artwork: write the
+        // unfiltered anchor finalized-<fts>.jpg first, so the next edit finds its base.
         fts = String(Date.now())
         const anchor = await sharpJpeg(img, 95)
         await uploadArtwork(finalizedCoverKey(project.id, fts), anchor)

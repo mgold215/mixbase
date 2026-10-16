@@ -692,11 +692,26 @@ final class MixbaseAPI {
     /// Presets, sliders, the look currently on this project's cover and the
     /// unfiltered image it's applied to.
     func filterOptions(projectId: UUID) async throws -> FilterOptions {
-        let data = try await requestData(
+        let data = try await requestCore(
             path: "/api/cassette-studio/filter?project_id=\(projectId.uuidString.lowercased())",
-            method: "GET"
+            method: "GET",
+            contentType: nil,
+            body: nil,
+            timeout: 20
         )
         return try decoder.decode(FilterOptions.self, from: data)
+    }
+
+    /// The raw bytes behind a public image URL (Supabase storage), for the
+    /// "From mixBase" grid's downsampled tiles. Unauthenticated, short timeout.
+    func imageData(from url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MixbaseAPIError.invalidResponse("Couldn't load that image.")
+        }
+        return data
     }
 
     /// A ≤1080px JPEG of the cover with `settings` applied — raw image bytes.

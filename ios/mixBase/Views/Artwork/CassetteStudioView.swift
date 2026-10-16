@@ -143,6 +143,10 @@ struct CassetteStudioView: View {
     // preview) whenever the cover underneath it changes.
     @State private var lookOptions: MixbaseAPI.FilterOptions?
     @State private var lookRevision = 0
+    @State private var lookLoadSeq = 0
+    // The remembered look that could not be added after a render; section 4
+    // opens on it (unsaved) so adding it is one tap.
+    @State private var pendingLook: MixbaseAPI.FilterSettings?
     @State private var lookSaving = false
     @State private var lookNote: String?
 
@@ -731,10 +735,12 @@ struct CassetteStudioView: View {
             CassetteLookSection(
                 projectId: projectId,
                 options: options,
+                initialLook: pendingLook,
                 locked: busy != nil,
                 isSaving: $lookSaving,
                 onSaved: { result in
                     lookNote = nil
+                    pendingLook = nil
                     applySavedLook(result)
                 }
             )
@@ -901,7 +907,13 @@ struct CassetteStudioView: View {
     /// the web) rather than showing the previous cover's look as current;
     /// the rest of the studio works without it.
     private func loadLook() async {
-        lookOptions = try? await MixbaseAPI.shared.filterOptions(projectId: projectId)
+        // Renders no longer wait on this read, so two can overlap; only the
+        // newest one may replace the section.
+        lookLoadSeq += 1
+        let seq = lookLoadSeq
+        let options = try? await MixbaseAPI.shared.filterOptions(projectId: projectId)
+        guard seq == lookLoadSeq else { return }
+        lookOptions = options
         lookRevision += 1
     }
 
@@ -1044,25 +1056,31 @@ struct CassetteStudioView: View {
                 motionError = nil
                 savedMotion = false
                 await applyRememberedLook()
-                await loadLook()
             } catch {
                 errorMessage = error.localizedDescription
+                busy = nil
+                return
             }
+            // The cover is applied and shown; refresh section 4 without
+            // holding the rest of the studio on that read.
             busy = nil
+            await loadLook()
         }
     }
 
     /// "Keep this look for new covers": every render comes back plain, so put
     /// the last saved look back on it. If that fails the plain cover stays,
-    /// with a note; the look can still be added from section 4.
+    /// with a note, and section 4 opens on that look so adding it is one tap.
     private func applyRememberedLook() async {
+        pendingLook = nil
         guard let remembered = CassetteLookMemory.lookForNewCovers else { return }
         busy = .look
         do {
             let result = try await MixbaseAPI.shared.saveFilter(projectId: projectId, settings: remembered)
             applySavedLook(result)
         } catch {
-            lookNote = "Your saved look wasn't added this time, so this cover is plain. You can add it below."
+            pendingLook = remembered
+            lookNote = "Your saved look wasn't added this time, so this cover is plain. Tap Save look below to add it."
         }
     }
 
