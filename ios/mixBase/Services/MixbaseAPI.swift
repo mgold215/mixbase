@@ -410,6 +410,49 @@ final class MixbaseAPI {
         return try decoder.decode(Response.self, from: data).subject
     }
 
+    /// An image already in one of the owner's songs (mf-artwork/<projectId>/…),
+    /// offered as a cassette photo so it needn't be uploaded again.
+    struct StudioPhoto: Decodable, Identifiable, Equatable {
+        let path: String
+        let url: String
+        let thumbUrl: String?
+        let projectId: String
+        let projectTitle: String?
+        let createdAt: String?
+
+        var id: String { path }
+
+        enum CodingKeys: String, CodingKey {
+            case path
+            case url
+            case thumbUrl = "thumb_url"
+            case projectId = "project_id"
+            case projectTitle = "project_title"
+            case createdAt = "created_at"
+        }
+    }
+
+    /// The owner's images already in mixBase, newest first (the server leaves
+    /// out lettered/filtered covers and the studio's own files).
+    func studioPhotos() async throws -> [StudioPhoto] {
+        struct Response: Decodable { let photos: [StudioPhoto] }
+        let data = try await requestData(path: "/api/cassette-studio/photos", method: "GET")
+        return try decoder.decode(Response.self, from: data).photos
+    }
+
+    /// Cut a cassette out of an image already in mixBase (a `StudioPhoto.path`).
+    /// The server fetches it from storage and runs the same cut-out as an
+    /// upload, so nothing is sent from the device.
+    func uploadSubject(sourcePath: String) async throws -> StudioFile {
+        struct Response: Decodable { let subject: StudioFile }
+        let data = try await requestData(
+            path: "/api/cassette-studio/subject",
+            method: "POST",
+            body: ["source_path": sourcePath]
+        )
+        return try decoder.decode(Response.self, from: data).subject
+    }
+
     /// Lift the artist's handwriting off a photo as this project's lettering.
     func uploadLettering(projectId: UUID, imageData: Data) async throws -> StudioFile {
         struct Response: Decodable { let lettering: StudioFile }
@@ -465,6 +508,241 @@ final class MixbaseAPI {
 
         let data = try await requestMultipart(path: "/api/cassette-studio/render", fields: fields, files: files)
         return try decoder.decode(CassetteRenderResult.self, from: data)
+    }
+
+    // MARK: - Cover looks (owner-only; filters + adjustments on a Studio cover)
+    // The look is applied server-side to the cover's UNFILTERED base, so
+    // re-filtering never stacks. The key carries the look; the server is the
+    // source of truth for presets and clamps whatever is sent.
+
+    /// One look — the exact JSON shape of FilterSettings in
+    /// /api/cassette-studio/filter. `preset` is only a label; the numbers are
+    /// what is applied. Decoding is tolerant (a missing or fractional number
+    /// reads as the nearest whole number, or 0) so one odd field can't hide
+    /// the whole section.
+    struct FilterSettings: Codable, Equatable, Hashable {
+        var preset: String
+        var brightness: Int     // -100…100, 0 = unchanged
+        var contrast: Int       // -100…100
+        var saturation: Int     // -100…100, -100 = fully desaturated
+        var warmth: Int         // -100…100, <0 cooler, >0 warmer
+        var fade: Int           // 0…100
+        var grain: Int          // 0…100
+        var vignette: Int       // 0…100
+        var tone: String        // "color" | "bw" | "sepia"
+
+        enum CodingKeys: String, CodingKey {
+            case preset, brightness, contrast, saturation, warmth, fade, grain, vignette, tone
+        }
+
+        /// "Original": the cover exactly as it was made.
+        static let original = FilterSettings(
+            preset: "original",
+            brightness: 0, contrast: 0, saturation: 0, warmth: 0,
+            fade: 0, grain: 0, vignette: 0,
+            tone: "color"
+        )
+
+        init(
+            preset: String,
+            brightness: Int, contrast: Int, saturation: Int, warmth: Int,
+            fade: Int, grain: Int, vignette: Int,
+            tone: String
+        ) {
+            self.preset = preset
+            self.brightness = brightness
+            self.contrast = contrast
+            self.saturation = saturation
+            self.warmth = warmth
+            self.fade = fade
+            self.grain = grain
+            self.vignette = vignette
+            self.tone = tone
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            preset = (try? container.decode(String.self, forKey: .preset)) ?? "custom"
+            brightness = Self.number(container, .brightness)
+            contrast = Self.number(container, .contrast)
+            saturation = Self.number(container, .saturation)
+            warmth = Self.number(container, .warmth)
+            fade = Self.number(container, .fade)
+            grain = Self.number(container, .grain)
+            vignette = Self.number(container, .vignette)
+            tone = (try? container.decode(String.self, forKey: .tone)) ?? "color"
+        }
+
+        private static func number(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int {
+            if let value = try? container.decode(Int.self, forKey: key) { return value }
+            if let value = try? container.decode(Double.self, forKey: key), value.isFinite {
+                return Int(Swift.min(1000, Swift.max(-1000, value)).rounded())
+            }
+            return 0
+        }
+
+        /// Same picture, whatever the preset label says.
+        func matches(_ other: FilterSettings) -> Bool {
+            brightness == other.brightness && contrast == other.contrast
+                && saturation == other.saturation && warmth == other.warmth
+                && fade == other.fade && grain == other.grain
+                && vignette == other.vignette && tone == other.tone
+        }
+
+        /// No change at all — saving this resets the cover to its plain base.
+        var isOriginal: Bool { matches(.original) }
+
+        /// One slider's value by adjustment id (FilterAdjustment.id).
+        subscript(adjustment id: String) -> Int {
+            get {
+                switch id {
+                case "brightness": return brightness
+                case "contrast": return contrast
+                case "saturation": return saturation
+                case "warmth": return warmth
+                case "fade": return fade
+                case "grain": return grain
+                case "vignette": return vignette
+                default: return 0
+                }
+            }
+            set {
+                switch id {
+                case "brightness": brightness = newValue
+                case "contrast": contrast = newValue
+                case "saturation": saturation = newValue
+                case "warmth": warmth = newValue
+                case "fade": fade = newValue
+                case "grain": grain = newValue
+                case "vignette": vignette = newValue
+                default: break
+                }
+            }
+        }
+    }
+
+    /// A named look (Film, Noir, …) — ids and values come from the server.
+    struct FilterPreset: Decodable, Identifiable, Equatable {
+        let id: String
+        let label: String
+        let settings: FilterSettings
+    }
+
+    /// One slider: brightness, contrast, saturation, warmth, fade, grain or
+    /// vignette, with its range.
+    struct FilterAdjustment: Decodable, Identifiable, Equatable {
+        let id: String
+        let label: String
+        let min: Double
+        let max: Double
+
+        /// The contract's seven sliders, used only if the server sends none.
+        static let fallback: [FilterAdjustment] = [
+            FilterAdjustment(id: "brightness", label: "Brightness", min: -100, max: 100),
+            FilterAdjustment(id: "contrast", label: "Contrast", min: -100, max: 100),
+            FilterAdjustment(id: "saturation", label: "Saturation", min: -100, max: 100),
+            FilterAdjustment(id: "warmth", label: "Warmth", min: -100, max: 100),
+            FilterAdjustment(id: "fade", label: "Fade", min: 0, max: 100),
+            FilterAdjustment(id: "grain", label: "Grain", min: 0, max: 100),
+            FilterAdjustment(id: "vignette", label: "Vignette", min: 0, max: 100),
+        ]
+    }
+
+    struct FilterOptions: Decodable {
+        let presets: [FilterPreset]
+        let adjustments: [FilterAdjustment]
+        /// The look baked into the project's cover now (nil = none).
+        let current: FilterSettings?
+        /// The unfiltered cover the look is applied to; nil = nothing to edit.
+        let baseUrl: String?
+
+        enum CodingKeys: String, CodingKey {
+            case presets
+            case adjustments
+            case current
+            case baseUrl = "base_url"
+        }
+    }
+
+    struct FilterSaveResult: Decodable {
+        let artworkUrl: String?
+        let finalizedArtworkUrl: String?
+        /// The look now on the cover as the server applied it (nil = plain).
+        let filter: FilterSettings?
+
+        enum CodingKeys: String, CodingKey {
+            case artworkUrl = "artwork_url"
+            case finalizedArtworkUrl = "finalized_artwork_url"
+            case filter
+        }
+    }
+
+    private struct FilterRequest: Encodable {
+        let projectId: String
+        let settings: FilterSettings
+        let mode: String
+
+        enum CodingKeys: String, CodingKey {
+            case projectId = "project_id"
+            case settings
+            case mode
+        }
+    }
+
+    /// Presets, sliders, the look currently on this project's cover and the
+    /// unfiltered image it's applied to.
+    func filterOptions(projectId: UUID) async throws -> FilterOptions {
+        let data = try await requestCore(
+            path: "/api/cassette-studio/filter?project_id=\(projectId.uuidString.lowercased())",
+            method: "GET",
+            contentType: nil,
+            body: nil,
+            timeout: 20
+        )
+        return try decoder.decode(FilterOptions.self, from: data)
+    }
+
+    /// The raw bytes behind a public image URL (Supabase storage), for the
+    /// "From mixBase" grid's downsampled tiles. Unauthenticated, short timeout.
+    func imageData(from url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MixbaseAPIError.invalidResponse("Couldn't load that image.")
+        }
+        return data
+    }
+
+    /// A ≤1080px JPEG of the cover with `settings` applied — raw image bytes.
+    /// Nothing is saved. Short timeout: a stale preview is worth nothing, and
+    /// the caller cancels it the moment a newer one starts.
+    func filterPreview(projectId: UUID, settings: FilterSettings) async throws -> Data {
+        let payload = try JSONEncoder().encode(
+            FilterRequest(projectId: projectId.uuidString.lowercased(), settings: settings, mode: "preview")
+        )
+        return try await requestCore(
+            path: "/api/cassette-studio/filter",
+            method: "POST",
+            contentType: "application/json",
+            body: payload,
+            timeout: 20
+        )
+    }
+
+    /// Bake `settings` into the project's cover (Original resets it to the
+    /// plain cover). The server applies the result to the project.
+    func saveFilter(projectId: UUID, settings: FilterSettings) async throws -> FilterSaveResult {
+        let payload = try JSONEncoder().encode(
+            FilterRequest(projectId: projectId.uuidString.lowercased(), settings: settings, mode: "save")
+        )
+        let data = try await requestCore(
+            path: "/api/cassette-studio/filter",
+            method: "POST",
+            contentType: "application/json",
+            body: payload
+        )
+        return try decoder.decode(FilterSaveResult.self, from: data)
     }
 
     // MARK: - Moving cover (owner-only; no AI)
@@ -810,8 +1088,16 @@ final class MixbaseAPI {
 
     /// Perform an authenticated request and return the body of a 2xx
     /// response. Anything else throws the server's own (scrubbed) message.
-    private func requestCore(path: String, method: String, contentType: String?, body: Data?) async throws -> Data {
-        let (status, data) = try await send(path: path, method: method, contentType: contentType, body: body)
+    /// `timeout` (seconds) overrides the session's long idle timeout for
+    /// requests that are only worth waiting a moment for.
+    private func requestCore(
+        path: String,
+        method: String,
+        contentType: String?,
+        body: Data?,
+        timeout: TimeInterval? = nil
+    ) async throws -> Data {
+        let (status, data) = try await send(path: path, method: method, contentType: contentType, body: body, timeout: timeout)
         guard (200...299).contains(status) else {
             throw scrubbedError(statusCode: status, data: data)
         }
@@ -824,13 +1110,22 @@ final class MixbaseAPI {
     /// status, so the few callers that treat a non-2xx as data (409 "already
     /// running", 404 "job gone") can read it; everyone else goes through
     /// requestCore.
-    private func send(path: String, method: String, contentType: String?, body: Data?) async throws -> (Int, Data) {
+    private func send(
+        path: String,
+        method: String,
+        contentType: String?,
+        body: Data?,
+        timeout: TimeInterval? = nil
+    ) async throws -> (Int, Data) {
         func makeRequest(token: String?) throws -> URLRequest {
             guard let url = URL(string: "\(baseURL)\(path)") else {
                 throw MixbaseAPIError.invalidResponse("Bad URL: \(path)")
             }
             var request = URLRequest(url: url)
             request.httpMethod = method
+            if let timeout {
+                request.timeoutInterval = timeout
+            }
             if let token {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }

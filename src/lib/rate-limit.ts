@@ -180,6 +180,15 @@ export const finalizeArtworkLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, ma
 // (checkUserLimit).
 export const cassetteStudioLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// Cassette Studio cover-filter PREVIEWS: 1500 per hour per user. NOT shared
+// with cassetteStudioLimiter (that one still gates "Save look", which writes a
+// full-size cover): a preview writes nothing and is one ≤1080px grade + JPEG
+// encode of a base the route keeps decoded in memory, and the editor fires one
+// per slider pause (debounced ~250ms), so a single minute of dragging can
+// legitimately ask for dozens. Generous on purpose; it exists to bound a
+// runaway client loop, not a person. The owner is exempt (checkUserLimit).
+export const coverFilterPreviewLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 1500 })
+
 // Password change: 10 per hour per user. Every request runs a real
 // signInWithPassword with a caller-supplied current_password, so without a cap
 // the route is an unbounded password-guessing oracle against the account whose

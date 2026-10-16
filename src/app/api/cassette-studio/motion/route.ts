@@ -7,8 +7,9 @@ import { freeRenderLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-
 import { ARTWORK_BUCKET, storagePathFromUrl } from '@/lib/project-assets'
 import { downloadStudio, listStudio } from '@/lib/cassette-server'
 import {
-  cassetteCoverStamp, finalizedCoverStamp, parseStudioMotionKey, type LetteringPosition, type LetteringSize,
+  cassetteCoverStamp, parseFinalizedCover, parseStudioMotionKey, type LetteringPosition, type LetteringSize,
 } from '@/lib/cassette-studio'
+import { gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings } from '@/lib/cover-filters'
 import { prepareMotionAssets } from '@/lib/cassette-motion'
 import { renderCassetteMotion } from '@/lib/cassette-render'
 import { FREE_FORMATS, isFreeFormat } from '@/lib/free-render'
@@ -24,6 +25,13 @@ import { storeVisualizer } from '@/lib/visualizer-store'
 // cassette-studio.ts "Motion layers"), found by the cover's own timestamp:
 //   artwork_url    <projectId>/(ai-)cassette-<ts>.jpg → plate-<ts>.jpg + layer-<ts>-<l>-<t>.png
 //   finalized_url  <projectId>/finalized-<fts>.jpg    → title-<fts>-<position>-<size>.png (optional)
+//
+// When the finalized cover carries a "Finish the look" filter
+// (finalized-<fts>-f<code>.jpg, see /api/cassette-studio/filter) the same
+// per-pixel grade is applied to the plate, the cassette layer (alpha kept) and
+// the title ink before rendering, and the vignette to the plate, so the loop
+// matches the still. The still's grain is not added: the loop already draws
+// fresh grain every frame.
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 //
@@ -47,6 +55,8 @@ type MotionSources =
       left: number
       top: number
       title: { path: string; position: LetteringPosition; size: LetteringSize } | null
+      /** The look baked into the finalized cover, or null (none, or "Original"). */
+      filter: FilterSettings | null
     }
 
 async function loadProject(userId: string, projectId: string): Promise<ProjectRow | null> {
@@ -68,7 +78,9 @@ async function loadProject(userId: string, projectId: string): Promise<ProjectRo
 async function findMotionSources(userId: string, project: ProjectRow): Promise<MotionSources> {
   const ts = cassetteCoverStamp(storagePathFromUrl(project.artwork_url, ARTWORK_BUCKET), project.id)
   if (!ts) return { ok: false, reason: NOT_A_STUDIO_COVER }
-  const fts = finalizedCoverStamp(storagePathFromUrl(project.finalized_artwork_url, ARTWORK_BUCKET), project.id)
+  const finalized = parseFinalizedCover(storagePathFromUrl(project.finalized_artwork_url, ARTWORK_BUCKET), project.id)
+  const fts = finalized?.fts ?? null
+  const filter = finalized?.filter && !isIdentityFilter(finalized.filter) ? finalized.filter : null
 
   const [plates, layers, titles] = await Promise.all([
     listStudio(userId, `plate-${ts}`),
@@ -91,7 +103,7 @@ async function findMotionSources(userId: string, project: ProjectRow): Promise<M
     const k = parseStudioMotionKey(f.path, userId)
     if (k?.kind === 'title' && k.ts === fts) { title = { path: f.path, position: k.position, size: k.size }; break }
   }
-  return { ok: true, platePath: plate.path, layerPath: layer.path, left: layer.left, top: layer.top, title }
+  return { ok: true, platePath: plate.path, layerPath: layer.path, left: layer.left, top: layer.top, title, filter }
 }
 
 // GET /api/cassette-studio/motion?project_id=<uuid>
@@ -158,12 +170,19 @@ export async function POST(request: NextRequest) {
   // storage read or the hub cut-out must not sit on one of the two slots.
   let input: Parameters<typeof renderCassetteMotion>[0]
   try {
-    const [plateJpeg, layerPng, titlePng] = await Promise.all([
+    const [plateRaw, layerPng, titleRaw] = await Promise.all([
       downloadStudio(src.platePath),
       downloadStudio(src.layerPath),
       src.title ? downloadStudio(src.title.path) : Promise.resolve(null),
     ])
     const { data: layer, info } = await sharp(layerPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    // The cover's look, if it has one: same grade on every layer (the
+    // cassette before its hubs are cut, so the spinning sprite matches), the
+    // vignette on the plate only.
+    const { filter } = src
+    const plateJpeg = filter ? await gradeEncoded(plateRaw, filter, { format: 'jpeg', vignette: true }) : plateRaw
+    const titlePng = filter && titleRaw ? await gradeEncoded(titleRaw, filter, { format: 'png' }) : titleRaw
+    if (filter) gradePixels(layer, 4, filter)
     const assets = await prepareMotionAssets(layer, info.width, info.height)
     input = {
       plateJpeg,

@@ -1,9 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
-import { Camera, PenLine, Shuffle, Image as ImageIcon, X, RefreshCw, Film, ExternalLink } from 'lucide-react'
+import { Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink } from 'lucide-react'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
+import CassetteLook, {
+  isOriginalLook, readLookPrefs, saveLook, writeLookPrefs, type FilterSettings, type LookPrefs, type SavedLook,
+} from '@/components/CassetteLook'
 
 // Cassette Studio — the artist's REAL cassette photo, dropped into a new
 // scene, lettered in their own handwriting. One click per cover once the
@@ -11,6 +14,8 @@ import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 // the composite is built and why the cassette's pixels are never generated.
 
 type StudioFile = { path: string; url: string; createdAt: string | null }
+// An image already in one of the owner's songs (GET /api/cassette-studio/photos).
+type MixbasePhoto = { path: string; url: string; thumb_url: string; project_id: string; project_title: string; created_at: string | null }
 type Position = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right'
 type Size = 'small' | 'medium' | 'large'
 type SceneChoice = 'random' | 'custom' | 'photo' | string
@@ -87,7 +92,7 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   const [bgFile, setBgFile] = useState<Blob | null>(null)
   const [bgPreview, setBgPreview] = useState<string | null>(null)
   const [glossy, setGlossy] = useState(false)
-  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'render' | 'reletter'>('load')
+  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'render' | 'reletter' | 'apply-look' | 'save-look'>('load')
   const [error, setError] = useState('')
   const [lastScene, setLastScene] = useState<string | null>(null)
   const [hasRendered, setHasRendered] = useState(false)
@@ -100,6 +105,15 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   // The project's CURRENT cover can already move (a studio cover with its
   // layers saved) — offers the row on open, not only after a new render.
   const [canMove, setCanMove] = useState(false)
+  // "From mixBase": the owner's images already in his songs, loaded on first open.
+  const [photosOpen, setPhotosOpen] = useState(false)
+  const [photos, setPhotos] = useState<MixbasePhoto[] | null>(null)
+  const [photosError, setPhotosError] = useState('')
+  // Finish the look: the "keep this look" toggle + last saved look (this
+  // browser), and a counter that makes the editor re-read the cover.
+  const [lookPrefs, setLookPrefs] = useState<LookPrefs>(readLookPrefs)
+  const [lookRefresh, setLookRefresh] = useState(0)
+  const [lookNote, setLookNote] = useState('')
 
   const load = useCallback(async () => {
     // Best-effort: a failed check only hides the row until the next render.
@@ -126,17 +140,15 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { if (bgPreview) URL.revokeObjectURL(bgPreview) }, [bgPreview])
+  useEffect(() => { writeLookPrefs(lookPrefs) }, [lookPrefs])
 
-  async function addSubject(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  // One cut-out pipeline, two sources: a new photo (multipart) or an image
+  // already in mixBase (JSON source_path). Same response either way.
+  async function cutOutSubject(request: () => Promise<RequestInit>) {
     setBusy('subject')
     setError('')
     try {
-      const form = new FormData()
-      form.append('photo', await downscale(file, 2400), 'cassette.jpg')
-      const res = await fetch('/api/cassette-studio/subject', { method: 'POST', body: form })
+      const res = await fetch('/api/cassette-studio/subject', { method: 'POST', ...(await request()) })
       const data = await readJson(res)
       if (!res.ok || !data?.subject) throw new Error((data?.error as string) ?? 'Could not cut out the cassette.')
       const s = data.subject as StudioFile
@@ -147,6 +159,40 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
     } finally {
       setBusy(null)
     }
+  }
+
+  async function addSubject(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    await cutOutSubject(async () => {
+      const form = new FormData()
+      form.append('photo', await downscale(file, 2400), 'cassette.jpg')
+      return { body: form }
+    })
+  }
+
+  async function togglePhotos() {
+    if (photosOpen) { setPhotosOpen(false); return }
+    setPhotosOpen(true)
+    if (photos) return
+    setPhotosError('')
+    try {
+      const res = await fetch('/api/cassette-studio/photos')
+      const data = await readJson(res)
+      if (!res.ok || !Array.isArray(data?.photos)) throw new Error((data?.error as string) ?? 'Could not load your photos.')
+      setPhotos(data.photos as MixbasePhoto[])
+    } catch (err) {
+      setPhotosError(err instanceof Error ? err.message : 'Could not load your photos.')
+    }
+  }
+
+  function pickPhoto(photo: MixbasePhoto) {
+    setPhotosOpen(false)
+    void cutOutSubject(async () => ({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_path: photo.path }),
+    }))
   }
 
   async function addLettering(e: ChangeEvent<HTMLInputElement>) {
@@ -204,6 +250,7 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   async function render(mode: 'scene' | 'reletter') {
     setBusy(mode === 'scene' ? 'render' : 'reletter')
     setError('')
+    setLookNote('')
     try {
       const form = new FormData()
       form.append('project_id', projectId)
@@ -224,8 +271,41 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       setHasRendered(true)
       setMotionVideo(null)
       setMotionError('')
+      // Keep this look for new covers: every new cover comes back unfiltered,
+      // so the remembered look goes straight back on. A failure keeps the
+      // plain cover.
+      const keep = lookPrefs.keep && lookPrefs.look && !isOriginalLook(lookPrefs.look) ? lookPrefs.look : null
+      if (keep) {
+        setBusy('apply-look')
+        try {
+          const saved = await saveLook(projectId, keep)
+          if (saved.artworkUrl) onRendered(saved.artworkUrl, saved.finalizedUrl)
+        } catch {
+          setLookNote('Your look could not be added this time. The cover is saved without it.')
+        }
+      }
+      setLookRefresh(n => n + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error. Try again.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // "Save look" in Finish the look: bakes the look into the cover and updates
+  // the Artwork tab exactly like a render. Rejections reach the editor, which
+  // shows the message.
+  async function saveLookNow(settings: FilterSettings): Promise<SavedLook> {
+    setBusy('save-look')
+    setLookNote('')
+    try {
+      const saved = await saveLook(projectId, settings)
+      if (saved.artworkUrl) onRendered(saved.artworkUrl, saved.finalizedUrl)
+      setLookPrefs(prev => ({ ...prev, look: saved.filter }))
+      // A clip made before this no longer matches the still.
+      setMotionVideo(null)
+      setMotionError('')
+      return saved
     } finally {
       setBusy(null)
     }
@@ -288,7 +368,41 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
               : <><Camera size={13} />Add photo</>}
             <input type="file" accept="image/*" onChange={addSubject} disabled={working} className="hidden" />
           </label>
+          <button
+            onClick={togglePhotos}
+            disabled={working}
+            className={`shrink-0 w-20 h-14 rounded-lg border border-dashed flex flex-col items-center justify-center gap-0.5 text-[9px] ${photosOpen ? 'border-[#2dd4bf]/60 text-[#2dd4bf]' : 'border-[#333] text-[#777]'} ${working ? 'opacity-50' : 'hover:text-white hover:border-[#555]'}`}
+          >
+            <Images size={13} />From mixBase
+          </button>
         </div>
+        {photosOpen && (
+          <div className="space-y-1.5 rounded-lg border border-[#222] bg-[#0a0a0a] p-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-[#888]">Pick a cassette photo from your songs</p>
+              <button onClick={() => setPhotosOpen(false)} className="text-[#555] hover:text-white" aria-label="Close photos"><X size={12} /></button>
+            </div>
+            {photosError
+              ? <p className="text-red-400 text-[10px]">{photosError}</p>
+              : !photos
+                ? <p className="flex items-center gap-1.5 text-[10px] text-[#666]"><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Loading your photos…</p>
+                : photos.length === 0
+                  ? <p className="text-[10px] text-[#666]">No images in your songs yet.</p>
+                  : (
+                    <div className="grid grid-cols-4 gap-1.5 max-h-72 overflow-y-auto">
+                      {photos.map(p => (
+                        <button key={p.path} onClick={() => pickPhoto(p)} disabled={working} title={p.project_title} className="group min-w-0 text-left disabled:opacity-50">
+                          <span className="block aspect-square rounded-md overflow-hidden bg-[#1a1a1a] border border-transparent group-hover:border-[#2dd4bf]/60">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={p.thumb_url || p.url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                          </span>
+                          <span className="block mt-0.5 truncate text-[9px] text-[#777]">{p.project_title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+          </div>
+        )}
         {subjects.length === 0 && busy !== 'load' && (
           <p className="text-[10px] text-[#666] leading-snug">
             Snap your cassette straight on, at its own height, standing on a table. A plain wall or card behind it gives the cleanest result. We cut it out once and reuse it for every cover. The cassette is never AI-generated.
@@ -398,6 +512,10 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       </section>
 
       {error && <p className="text-red-400 text-xs">{error}</p>}
+      {lookNote && <p className="text-[10px] text-[#888]">{lookNote}</p>}
+      {busy === 'apply-look' && (
+        <p className="flex items-center gap-1.5 text-[10px] text-[#888]"><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Adding your look…</p>
+      )}
       {lastScene && !working && <p className="text-[10px] text-[#666]">Last scene: {lastScene}</p>}
 
       <div className="flex gap-2">
@@ -423,7 +541,19 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       </div>
       {!subject && busy !== 'load' && <p className="text-[10px] text-[#666]">Add a cassette photo to start.</p>}
 
-      {/* 4 — Make it move: the cover just made as a looping clip, no AI. */}
+      {/* 4 — Finish the look: film looks + sliders over the current cover.
+          Renders nothing until the project has a cover to edit. */}
+      <CassetteLook
+        projectId={projectId}
+        refreshKey={lookRefresh}
+        disabled={working}
+        saving={busy === 'save-look'}
+        prefs={lookPrefs}
+        onPrefsChange={setLookPrefs}
+        onSave={saveLookNow}
+      />
+
+      {/* Make it move: the cover just made as a looping clip, no AI. */}
       {(hasRendered || canMove) && (
         <section className="space-y-2 border-t border-[#1e1e1e] pt-3">
           <p className="text-[11px] font-medium text-[#999]">Make it move</p>

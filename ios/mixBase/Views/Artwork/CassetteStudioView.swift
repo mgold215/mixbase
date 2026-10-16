@@ -62,7 +62,9 @@ struct CassetteStudioView: View {
     }
 
     private enum Busy: Equatable {
-        case load, subject, lettering, render, reletter, motion
+        // library: cutting out a photo already in mixBase.
+        // look: putting the remembered look on a fresh render.
+        case load, subject, library, lettering, render, reletter, look, motion
     }
 
     // Mirrors CASSETTE_SCENES in src/lib/cassette-scenes.ts (ids must match
@@ -128,6 +130,7 @@ struct CassetteStudioView: View {
     @State private var subjectPick: PhotosPickerItem?
     @State private var letteringPick: PhotosPickerItem?
     @State private var backgroundPick: PhotosPickerItem?
+    @State private var showLibraryPhotos = false
 
     // Status
     @State private var busy: Busy? = .load
@@ -135,6 +138,17 @@ struct CassetteStudioView: View {
     @State private var lastSceneLabel: String?
     @State private var hasRendered = false
     @State private var coverUrl: String?
+
+    // 4 · Finish the look. lookRevision rebuilds the section (fresh look and
+    // preview) whenever the cover underneath it changes.
+    @State private var lookOptions: MixbaseAPI.FilterOptions?
+    @State private var lookRevision = 0
+    @State private var lookLoadSeq = 0
+    // The remembered look that could not be added after a render; section 4
+    // opens on it (unsaved) so adding it is one tap.
+    @State private var pendingLook: MixbaseAPI.FilterSettings?
+    @State private var lookSaving = false
+    @State private var lookNote: String?
 
     // Make it move
     @State private var motionFormat = "canvas"
@@ -144,11 +158,11 @@ struct CassetteStudioView: View {
     @State private var isSavingMotion = false
     @State private var savedMotion = false
 
-    private var isWorking: Bool { busy != nil }
+    private var isWorking: Bool { busy != nil || lookSaving }
 
     // Leaving mid-upload or mid-render would orphan the request's result.
     private var blocksLeaving: Bool {
-        busy != nil && busy != .load
+        (busy != nil && busy != .load) || lookSaving
     }
 
     private var currentLettering: MixbaseAPI.StudioFile? {
@@ -179,6 +193,7 @@ struct CassetteStudioView: View {
                     handwritingSection
                     sceneSection
                     actionSection
+                    lookSection
 
                     if hasRendered {
                         motionSection
@@ -197,6 +212,12 @@ struct CassetteStudioView: View {
             guard !hasLoaded else { return }
             hasLoaded = true
             await load()
+            await loadLook()
+        }
+        .sheet(isPresented: $showLibraryPhotos) {
+            StudioPhotoPickerSheet { photo in
+                Task { await addSubject(fromLibrary: photo) }
+            }
         }
         .onChange(of: subjectPick) { _, item in
             if let item {
@@ -234,26 +255,19 @@ struct CassetteStudioView: View {
                     }
 
                     PhotosPicker(selection: $subjectPick, matching: .images) {
-                        VStack(spacing: 4) {
-                            if busy == .subject {
-                                ProgressView().tint(Color(hex: "#2dd4bf"))
-                                Text("Cutting out…")
-                            } else {
-                                Image(systemName: "camera")
-                                Text("Add photo")
-                            }
-                        }
-                        .font(.caption2)
-                        .foregroundColor(Color(hex: "#999999"))
-                        .frame(width: 88, height: 64)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(hex: "#333333"), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        )
+                        addCassetteTile(icon: "camera", title: "Add photo", cutting: busy == .subject)
                     }
                     .buttonStyle(.plain)
                     .disabled(isWorking)
                     .opacity(isWorking && busy != .subject ? 0.5 : 1)
+
+                    // A cassette photo already uploaded to one of the songs.
+                    Button(action: { showLibraryPhotos = true }) {
+                        addCassetteTile(icon: "photo.on.rectangle", title: "From mixBase", cutting: busy == .library)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking)
+                    .opacity(isWorking && busy != .library ? 0.5 : 1)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 6)
@@ -263,6 +277,25 @@ struct CassetteStudioView: View {
                 hint("Snap your cassette straight on, at its own height, standing on a table. A plain wall or card behind it gives the cleanest result. We cut it out once and reuse it for every cover. The cassette is never AI-generated.")
             }
         }
+    }
+
+    private func addCassetteTile(icon: String, title: String, cutting: Bool) -> some View {
+        VStack(spacing: 4) {
+            if cutting {
+                ProgressView().tint(Color(hex: "#2dd4bf"))
+                Text("Cutting out…")
+            } else {
+                Image(systemName: icon)
+                Text(title)
+            }
+        }
+        .font(.caption2)
+        .foregroundColor(Color(hex: "#999999"))
+        .frame(width: 88, height: 64)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(hex: "#333333"), style: StrokeStyle(lineWidth: 1, dash: [4]))
+        )
     }
 
     private func subjectTile(_ file: MixbaseAPI.StudioFile) -> some View {
@@ -677,6 +710,41 @@ struct CassetteStudioView: View {
                 }
                 .padding(.horizontal)
             }
+
+            if busy == .look {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .tint(.gray)
+                        .controlSize(.small)
+                    Text("Adding your look…")
+                }
+                .font(.caption)
+                .foregroundColor(.gray)
+                .padding(.horizontal)
+            } else if let lookNote {
+                hint(lookNote)
+            }
+        }
+    }
+
+    // MARK: - 4 · Finish the look
+
+    @ViewBuilder
+    private var lookSection: some View {
+        if let options = lookOptions, options.baseUrl != nil {
+            CassetteLookSection(
+                projectId: projectId,
+                options: options,
+                initialLook: pendingLook,
+                locked: busy != nil,
+                isSaving: $lookSaving,
+                onSaved: { result in
+                    lookNote = nil
+                    pendingLook = nil
+                    applySavedLook(result)
+                }
+            )
+            .id(lookRevision)
         }
     }
 
@@ -834,6 +902,21 @@ struct CassetteStudioView: View {
         if busy == .load { busy = nil }
     }
 
+    /// Section 4's presets, sliders and the look on the cover now. Called on
+    /// open and after every render. A failed read hides the section (as on
+    /// the web) rather than showing the previous cover's look as current;
+    /// the rest of the studio works without it.
+    private func loadLook() async {
+        // Renders no longer wait on this read, so two can overlap; only the
+        // newest one may replace the section.
+        lookLoadSeq += 1
+        let seq = lookLoadSeq
+        let options = try? await MixbaseAPI.shared.filterOptions(projectId: projectId)
+        guard seq == lookLoadSeq else { return }
+        lookOptions = options
+        lookRevision += 1
+    }
+
     private func addSubject(_ item: PhotosPickerItem) async {
         guard busy == nil else {
             subjectPick = nil
@@ -853,6 +936,22 @@ struct CassetteStudioView: View {
         }
         busy = nil
         subjectPick = nil
+    }
+
+    /// Same cut-out as addSubject, from an image already in one of the songs
+    /// (the server fetches it; nothing is uploaded from the device).
+    private func addSubject(fromLibrary photo: MixbaseAPI.StudioPhoto) async {
+        guard !isWorking else { return }
+        busy = .library
+        errorMessage = nil
+        do {
+            let file = try await MixbaseAPI.shared.uploadSubject(sourcePath: photo.path)
+            subjects.insert(file, at: 0)
+            subjectPath = file.path
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        busy = nil
     }
 
     private func addLettering(_ item: PhotosPickerItem) async {
@@ -929,6 +1028,7 @@ struct CassetteStudioView: View {
 
         busy = reletter ? .reletter : .render
         errorMessage = nil
+        lookNote = nil
 
         Task {
             do {
@@ -955,11 +1055,47 @@ struct CassetteStudioView: View {
                 motionUrl = nil
                 motionError = nil
                 savedMotion = false
+                await applyRememberedLook()
             } catch {
                 errorMessage = error.localizedDescription
+                busy = nil
+                return
             }
+            // The cover is applied and shown; refresh section 4 without
+            // holding the rest of the studio on that read.
             busy = nil
+            await loadLook()
         }
+    }
+
+    /// "Keep this look for new covers": every render comes back plain, so put
+    /// the last saved look back on it. If that fails the plain cover stays,
+    /// with a note, and section 4 opens on that look so adding it is one tap.
+    private func applyRememberedLook() async {
+        pendingLook = nil
+        guard let remembered = CassetteLookMemory.lookForNewCovers else { return }
+        busy = .look
+        do {
+            let result = try await MixbaseAPI.shared.saveFilter(projectId: projectId, settings: remembered)
+            applySavedLook(result)
+        } catch {
+            pendingLook = remembered
+            lookNote = "Your saved look wasn't added this time, so this cover is plain. Tap Save look below to add it."
+        }
+    }
+
+    /// A look was baked into the cover server-side: mirror it like a render.
+    private func applySavedLook(_ result: MixbaseAPI.FilterSaveResult) {
+        if let artworkUrl = result.artworkUrl {
+            onRendered(artworkUrl, result.finalizedArtworkUrl)
+        }
+        if let newCover = result.finalizedArtworkUrl ?? result.artworkUrl {
+            coverUrl = newCover
+        }
+        // A moving cover made before the look no longer matches the cover.
+        motionUrl = nil
+        motionError = nil
+        savedMotion = false
     }
 
     private func makeItMove() {
