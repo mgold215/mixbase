@@ -105,13 +105,21 @@ async function renderLine(text: string, pxSize: number, letterSpacingPx: number,
 // anchor the block itself rather than the padded bitmap.
 export type TextOverlay = { png: Buffer; width: number; height: number; margin: number }
 
+// How the text separates from what's behind it.
+//   'outline' — tight contrasting halo hugging the glyphs (finalized artwork).
+//   'soft'    — wide, faint shadow with no visible edge (finished videos:
+//               the tight dark rim read as a black outline around the
+//               flashing title cards).
+export type HaloStyle = 'outline' | 'soft'
+
 export async function buildTextOverlay(
   title: string,
   artist: string,
   width: number,
   size: Size,
   showRule: boolean,
-  color: string = DEFAULT_TEXT_COLOR
+  color: string = DEFAULT_TEXT_COLOR,
+  haloStyle: HaloStyle = 'outline'
 ): Promise<TextOverlay> {
   if (!isHexColor(color)) color = DEFAULT_TEXT_COLOR
   const textRgb = hexToRgb(color)
@@ -189,8 +197,12 @@ export async function buildTextOverlay(
 
   // Soft contrasting halo behind the text so it stays legible on light/busy
   // backgrounds (sky, concrete). Pad the block first so the blurred glow isn't
-  // clipped at the block's edge.
-  const shadowBlur = Math.max(1.5, width * 0.0022)
+  // clipped at the block's edge. The 'soft' style blurs ~7× wider at under a
+  // third of the strength, so it lifts the text off the picture without
+  // tracing an edge around each letter.
+  const soft = haloStyle === 'soft'
+  const shadowBlur = soft ? Math.max(3, width * 0.015) : Math.max(1.5, width * 0.0022)
+  const shadowGain = soft ? 0.25 : 0.9
   const M = Math.ceil(shadowBlur * 3) + 2
   const padded = await sharp(blockNative)
     .extend({ top: M, bottom: M, left: M, right: M, background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -198,7 +210,7 @@ export async function buildTextOverlay(
   const pw = blockW + 2 * M
   const ph = totalH + 2 * M
   const blurredAlpha = await sharp(padded)
-    .ensureAlpha().extractChannel(3).blur(shadowBlur).linear(0.9, 0).toColourspace('b-w')
+    .ensureAlpha().extractChannel(3).blur(shadowBlur).linear(shadowGain, 0).toColourspace('b-w')
     .png().toBuffer()
   const halo = await sharp({ create: { width: pw, height: ph, channels: 3, background: haloRgb } })
     .joinChannel(blurredAlpha)

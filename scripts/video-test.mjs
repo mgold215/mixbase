@@ -12,6 +12,7 @@
 //  - H.264 video + AAC audio streams both present
 //  - the title card is VISIBLE during a scheduled flash window and ABSENT
 //    outside it (frame-differencing against the text overlay's whiteness)
+//  - showText: false renders no title card at all
 //  - flashWindows() schedule is sane across song lengths
 
 import { spawn } from 'child_process'
@@ -162,6 +163,7 @@ try {
   }
 
   // ── 4. Short render (15s clip from the middle of a 100s song) ─────────────
+  let shortCardWhite = 0
   {
     const out = await buildFinalVideo({
       visualizerUrl: `${base}/viz.mp4`,
@@ -185,6 +187,28 @@ try {
 
     const dur = await probeDuration(outFile)
     check('shorts: container duration sane', Math.abs(dur - 15) < 0.75, `${dur.toFixed(2)}s`)
+
+    shortCardWhite = await whiteCountAt(outFile, 4.5, 1080, 1920)
+    check('shorts: title card visible mid-flash', shortCardWhite > 1000, `${shortCardWhite} white px`)
+  }
+
+  // ── 4b. "No text" Short: same inputs, showText false → no card at all ─────
+  {
+    const out = await buildFinalVideo({
+      visualizerUrl: `${base}/viz.mp4`,
+      audioUrl: `${base}/audio100.wav`,
+      title: 'PLAY',
+      artist: 'moodmixformat',
+      format: 'shorts',
+      showText: false,
+      startSec: 30,
+      clipSeconds: 15,
+    })
+    check('no-text shorts: clip length respected', Math.abs(out.durationSec - 15) < 0.75, `${out.durationSec.toFixed(2)}s`)
+    const outFile = join(dir, 'short-notext.mp4')
+    await (await import('fs/promises')).writeFile(outFile, out.bytes)
+    const white = await whiteCountAt(outFile, 4.5, 1080, 1920)
+    check('no-text shorts: no title card where one would flash', white < shortCardWhite / 10, `${white} vs ${shortCardWhite}`)
   }
 
   // ── 5. Duration-less webm visualizer (MediaRecorder shape) ─────────────────

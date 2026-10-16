@@ -112,6 +112,7 @@ struct VisualizerView: View {
     @State private var finishClipSeconds = 30
     @State private var finishStartMode = "hook"
     @State private var finishColor = "#FFFFFF"
+    @State private var finishShowText = true
     @State private var finishJob: MixbaseAPI.FinishedVideoJob?
     @State private var isStartingFinish = false
     @State private var finishError: String?
@@ -508,7 +509,7 @@ struct VisualizerView: View {
     @ViewBuilder
     private var finishedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Finished Video", subtitle: "Your pinned loop, your latest mix and your title, rendered for YouTube or Shorts.")
+            sectionHeader("Finished Video", subtitle: "Your pinned loop and your latest mix — with your title or without — rendered for YouTube or Shorts.")
 
             if pinnedUrl == nil && pinnedWideUrl == nil {
                 Text("Pin a visualizer above first.")
@@ -548,7 +549,7 @@ struct VisualizerView: View {
                     .padding(.horizontal)
                 }
 
-                Text("Text colour")
+                Text("Text")
                     .font(.caption)
                     .foregroundColor(.gray)
                     .padding(.horizontal)
@@ -593,19 +594,27 @@ struct VisualizerView: View {
         }
     }
 
+    // "No text" first, then the colours — picking a colour turns text back on.
     private var finishColorPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
+                chip("No text", selected: !finishShowText) {
+                    finishShowText = false
+                }
                 ForEach(CoverTextColors.all) { option in
-                    Button(action: { finishColor = option.value }) {
+                    let selected = finishShowText && finishColor == option.value
+                    Button(action: {
+                        finishColor = option.value
+                        finishShowText = true
+                    }) {
                         Circle()
                             .fill(Color(hex: option.value))
                             .frame(width: 28, height: 28)
                             .overlay(
                                 Circle()
                                     .stroke(
-                                        finishColor == option.value ? Color(hex: "#2dd4bf") : Color(hex: "#333333"),
-                                        lineWidth: finishColor == option.value ? 3 : 1
+                                        selected ? Color(hex: "#2dd4bf") : Color(hex: "#333333"),
+                                        lineWidth: selected ? 3 : 1
                                     )
                             )
                     }
@@ -1081,6 +1090,7 @@ struct VisualizerView: View {
     private func startFinish() {
         let format = finishFormat
         let color = finishColor
+        let showText = finishShowText
         let clipSeconds = finishClipSeconds
         let startMode = finishStartMode
         isStartingFinish = true
@@ -1092,6 +1102,7 @@ struct VisualizerView: View {
                     projectId: projectId,
                     format: format,
                     color: color,
+                    showText: showText,
                     clipSeconds: format == "shorts" ? clipSeconds : nil,
                     startMode: format == "shorts" ? startMode : nil
                 )

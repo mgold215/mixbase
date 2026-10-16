@@ -278,18 +278,21 @@ final class MixbaseAPI {
 
     /// Start a finished render. format is "youtube" or "shorts"; clipSeconds
     /// (15/30/60) and startMode ("start"/"hook"/"middle") only apply to
-    /// Shorts. A 409 (a render already running for this account) comes back
-    /// as .alreadyRunning — never as a job, since it may not be this request.
+    /// Shorts. showText false renders no title cards at all. A 409 (a render
+    /// already running for this account) comes back as .alreadyRunning —
+    /// never as a job, since it may not be this request.
     func startFinishedVideo(
         projectId: UUID,
         format: String,
         color: String?,
+        showText: Bool = true,
         clipSeconds: Int?,
         startMode: String?
     ) async throws -> FinishedVideoStart {
         var body: [String: Any] = [
             "project_id": projectId.uuidString.lowercased(),
             "format": format,
+            "show_text": showText,
         ]
         if let color { body["color"] = color }
         if format == "shorts" {
