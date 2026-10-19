@@ -91,6 +91,72 @@ final class MixbaseAPI {
         return url
     }
 
+    // MARK: - Finalize Artwork (every account; no AI, no allowance)
+    // The web's Finalize step: the server stamps the artist name (from the
+    // profile) and the song title onto the project's source artwork with the
+    // same Futura renderer the website uses, and saves the result as the
+    // project's finalized cover. The option set is the server's own
+    // (src/lib/finalize-options.ts), fetched so a filter or position added on
+    // the web shows up here without an app update.
+
+    /// One labeled choice (size, filter or text colour) — `value` is what the
+    /// server accepts, `label` is what to show.
+    struct FinalizeChoice: Decodable, Identifiable, Hashable {
+        let value: String
+        let label: String
+        var id: String { value }
+    }
+
+    struct FinalizeOptions: Decodable {
+        struct Defaults: Decodable {
+            let position: String
+            let size: String
+            let filter: String
+            let color: String
+            let showRule: Bool
+        }
+        /// `vertical-horizontal` anchors, 3×3 in reading order.
+        let positions: [String]
+        let sizes: [FinalizeChoice]
+        let filters: [FinalizeChoice]
+        let colors: [FinalizeChoice]
+        let defaults: Defaults
+    }
+
+    struct FinalizeSettings: Equatable {
+        var position: String
+        var size: String
+        var filter: String
+        /// #RRGGBB
+        var color: String
+        var showRule: Bool
+    }
+
+    func finalizeOptions() async throws -> FinalizeOptions {
+        let data = try await requestData(path: "/api/finalize-artwork", method: "GET")
+        return try decoder.decode(FinalizeOptions.self, from: data)
+    }
+
+    /// Render the lettered cover. The server always works from the project's
+    /// source artwork (never a previous finalized render, so re-finalizing
+    /// never stacks text) and saves the result as `finalized_artwork_url`.
+    /// Returns the new finalized cover's URL.
+    func finalizeArtwork(projectId: UUID, settings: FinalizeSettings) async throws -> String {
+        let body: [String: Any] = [
+            "project_id": projectId.uuidString.lowercased(),
+            "position": settings.position,
+            "size": settings.size,
+            "filter": settings.filter,
+            "color": settings.color,
+            "showRule": settings.showRule,
+        ]
+        let json = try await requestJSON(path: "/api/finalize-artwork", method: "POST", body: body)
+        guard let url = json["finalized_artwork_url"] as? String else {
+            throw MixbaseAPIError.invalidResponse("No finalized artwork URL in response")
+        }
+        return url
+    }
+
     // MARK: - Visualizers
     // The free generator (no AI) and finished YouTube/Shorts renders are open
     // to every account. AI video (Runway) and moving covers are owner-only:

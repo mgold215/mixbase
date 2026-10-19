@@ -6,6 +6,7 @@ import SwiftUI
 // 2. Pick an image model (FLUX Ultra, Seedream, Imagen, Recraft, ...)
 // 3. Optionally toggle "Vary the look" for a randomized photographic treatment
 // 4. Generate — the server creates the image AND applies it to the project
+// 5. Optionally Finalize — artist name + title lettered onto it (same as web)
 // Generation counts against the monthly allowance server-side; a limit error
 // surfaces as neutral, purchase-free copy (there are no paid plans).
 
@@ -16,6 +17,9 @@ struct ArtworkGeneratorView: View {
 
     // Lets the presenting screen update its artwork immediately on success
     var onGenerated: ((String) -> Void)? = nil
+
+    // Same, for a lettered cover made from the new artwork via Finalize
+    var onFinalized: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -198,6 +202,27 @@ struct ArtworkGeneratorView: View {
                                     .overlay(ProgressView().tint(.gray))
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .padding(.horizontal)
+
+                            // Generating cleared any old lettered cover
+                            // server-side, so the new one starts unfinalized.
+                            NavigationLink(destination: FinalizeArtworkView(
+                                projectId: projectId,
+                                sourceUrl: urlString,
+                                finalizedUrl: nil,
+                                onFinalized: onFinalized
+                            )) {
+                                HStack {
+                                    Image(systemName: "wand.and.stars")
+                                    Text("Finalize Artwork")
+                                }
+                                .font(.headline)
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Color(hex: "#2dd4bf").opacity(0.15))
+                                .cornerRadius(12)
+                            }
                             .padding(.horizontal)
 
                             Button(action: { dismiss() }) {

@@ -6,33 +6,14 @@ import Image from 'next/image'
 import { downloadImage } from '@/lib/download'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { IMAGE_MODELS } from '@/lib/artwork-models'
+// Finalize's controls come from the same list the server validates against and
+// serves to the native app (GET /api/finalize-artwork) — one option set.
+import { FILTER_OPTIONS, FINALIZE_DEFAULTS, POSITIONS, SIZE_OPTIONS, type Filter, type Position, type Size } from '@/lib/finalize-options'
 import CassetteStudio from '@/components/CassetteStudio'
 // Type-only: erased at compile time, so the client bundle never pulls in
 // artwork-history.ts's server-side dependency chain.
 import type { ArtworkHistoryItem } from '@/lib/artwork-history'
 
-type Position =
-  | 'top-left' | 'top-center' | 'top-right'
-  | 'middle-left' | 'middle-center' | 'middle-right'
-  | 'bottom-left' | 'bottom-center' | 'bottom-right'
-type Size = 'small' | 'medium' | 'large'
-type Filter = 'none' | 'warm' | 'golden' | 'sepia' | 'cool' | 'icy' | 'vivid' | 'mono'
-const FILTER_LABELS: { value: Filter; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'warm', label: 'Warm' },
-  { value: 'golden', label: 'Golden' },
-  { value: 'sepia', label: 'Sepia' },
-  { value: 'cool', label: 'Cool' },
-  { value: 'icy', label: 'Icy' },
-  { value: 'vivid', label: 'Vivid' },
-  { value: 'mono', label: 'B&W' },
-]
-
-const POSITION_GRID: Position[] = [
-  'top-left', 'top-center', 'top-right',
-  'middle-left', 'middle-center', 'middle-right',
-  'bottom-left', 'bottom-center', 'bottom-right',
-]
 
 // The moodmixformat house style. This is the OWNER's personal aesthetic — it
 // pre-fills the prompt only on the owner account (profiles.is_owner); every
@@ -93,11 +74,11 @@ export default function ArtworkGenerator({
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [finalizing, setFinalizing] = useState(false)
-  const [position, setPosition] = useState<Position>('top-left')
-  const [size, setSize] = useState<Size>('medium')
-  const [showRule, setShowRule] = useState(true)
-  const [filter, setFilter] = useState<Filter>('none')
-  const [color, setColor] = useState('#FFFFFF')
+  const [position, setPosition] = useState<Position>(FINALIZE_DEFAULTS.position)
+  const [size, setSize] = useState<Size>(FINALIZE_DEFAULTS.size)
+  const [showRule, setShowRule] = useState(FINALIZE_DEFAULTS.showRule)
+  const [filter, setFilter] = useState<Filter>(FINALIZE_DEFAULTS.filter)
+  const [color, setColor] = useState(FINALIZE_DEFAULTS.color)
   // Artwork History. Deliberately a separate error slot from `error` above:
   // that one is shared by generate / upload / finalize and is rendered in two
   // places, so a failed history load would have surfaced as a spurious
@@ -450,7 +431,7 @@ export default function ArtworkGenerator({
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text placement</p>
             <div className="grid grid-cols-3 gap-1 w-28">
-              {POSITION_GRID.map(pos => {
+              {POSITIONS.map(pos => {
                 const active = position === pos
                 const [v, h] = pos.split('-')
                 const justify = h === 'left' ? 'justify-start' : h === 'right' ? 'justify-end' : 'justify-center'
@@ -475,15 +456,15 @@ export default function ArtworkGenerator({
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Size</p>
             <div className="flex gap-1 p-0.5 bg-[#0f0f0f] border border-[#222] rounded-xl">
-              {(['small', 'medium', 'large'] as Size[]).map(s => (
+              {SIZE_OPTIONS.map(s => (
                 <button
-                  key={s}
-                  onClick={() => setSize(s)}
-                  className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg capitalize transition-colors ${
-                    size === s ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
+                  key={s.value}
+                  onClick={() => setSize(s.value)}
+                  className={`flex-1 py-1.5 text-[10px] font-medium rounded-lg transition-colors ${
+                    size === s.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'text-[#555] hover:text-[#888]'
                   }`}
                 >
-                  {s}
+                  {s.label}
                 </button>
               ))}
             </div>
@@ -493,7 +474,7 @@ export default function ArtworkGenerator({
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Filter</p>
             <div className="grid grid-cols-4 gap-1">
-              {FILTER_LABELS.map(f => (
+              {FILTER_OPTIONS.map(f => (
                 <button
                   key={f.value}
                   onClick={() => setFilter(f.value)}
