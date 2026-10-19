@@ -471,6 +471,15 @@ final class MixbaseAPI {
     struct LatestFinishedVideos: Decodable {
         let youtube: Visualizer?
         let shorts: Visualizer?
+        /// The server's title-text suggestion for the next render: false when a
+        /// pinned loop was made from the finished cover, which usually already
+        /// shows the title. nil from servers that predate it.
+        let suggestShowText: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case youtube, shorts
+            case suggestShowText = "suggest_show_text"
+        }
     }
 
     /// What POST /api/finalize-video answered.

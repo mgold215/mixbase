@@ -107,6 +107,7 @@ struct ProjectDetailView: View {
                             projectId: project.id,
                             projectTitle: project.title,
                             artworkUrl: project.artworkUrl,
+                            coverUrl: project.displayArtworkUrl,
                             pinnedUrl: project.visualizerUrl,
                             pinnedWideUrl: project.visualizerWideUrl,
                             onPinChanged: { url in self.project?.visualizerUrl = url },

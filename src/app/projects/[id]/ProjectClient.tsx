@@ -1350,6 +1350,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
             projectId={project.id}
             projectTitle={project.title}
             artworkUrl={artwork}
+            coverUrl={finalizedArtwork ?? artwork}
             visualizerUrl={visualizer}
             onVisualizerUpdated={handleVisualizerUpdated}
             wideVisualizerUrl={visualizerWide}

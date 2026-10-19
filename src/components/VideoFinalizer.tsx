@@ -47,6 +47,15 @@ export default function VideoFinalizer({
   const [errors, setErrors] = useState<Partial<Record<VideoFormat, string>>>({})
   const [color, setColor] = useState('#FFFFFF')
   const [showText, setShowText] = useState(true)
+  // The server's suggestion: false when a pinned loop was made from the
+  // finished cover, which usually already shows the title. Applied until the
+  // artist picks a text option themselves.
+  const [loopShowsCover, setLoopShowsCover] = useState(false)
+  const textTouched = useRef(false)
+  function chooseText(on: boolean) {
+    textTouched.current = true
+    setShowText(on)
+  }
   const [shortLen, setShortLen] = useState<15 | 30 | 60>(30)
   const [shortStart, setShortStart] = useState<'start' | 'hook' | 'middle'>('hook')
   const pollTimers = useRef<Partial<Record<VideoFormat, ReturnType<typeof setInterval>>>>({})
@@ -57,7 +66,11 @@ export default function VideoFinalizer({
     fetch(`/api/finalize-video?project_id=${projectId}`)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (!cancelled && data) setSaved({ youtube: data.youtube ?? null, shorts: data.shorts ?? null })
+        if (cancelled || !data) return
+        setSaved({ youtube: data.youtube ?? null, shorts: data.shorts ?? null })
+        const coverLoop = data.suggest_show_text === false
+        setLoopShowsCover(coverLoop)
+        if (!textTouched.current) setShowText(!coverLoop)
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -208,7 +221,7 @@ export default function VideoFinalizer({
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
-            onClick={() => setShowText(false)}
+            onClick={() => chooseText(false)}
             aria-pressed={!showText}
             className={`h-7 px-3 text-[10px] font-medium rounded-full border-2 transition-colors ${
               !showText ? 'border-[#2dd4bf] bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'border-[#333] text-[#888] hover:border-[#555]'
@@ -219,7 +232,7 @@ export default function VideoFinalizer({
           {TEXT_COLORS.map(c => (
             <button
               key={c.value}
-              onClick={() => { setColor(c.value); setShowText(true) }}
+              onClick={() => { setColor(c.value); chooseText(true) }}
               title={c.label}
               aria-label={`Text color ${c.label}`}
               className={`w-7 h-7 rounded-full border-2 transition-all ${
@@ -229,6 +242,11 @@ export default function VideoFinalizer({
             />
           ))}
         </div>
+        {loopShowsCover && (
+          <p className="text-[10px] text-[#777] mt-1.5">
+            Your pinned visualizer was made from your finished cover, so text starts off — the cover usually shows the title already.
+          </p>
+        )}
       </div>
 
       <FormatCard
