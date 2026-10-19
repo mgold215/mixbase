@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
-import { buildFinalized, isHexColor, DEFAULT_TEXT_COLOR, POSITIONS, FILTERS, type Position, type Size, type Filter } from '@/lib/finalize-render'
+import { buildFinalized, isHexColor } from '@/lib/finalize-render'
+import { FILTERS, FINALIZE_DEFAULTS, POSITIONS, SIZES, finalizeOptionsPayload, type Filter, type Position, type Size } from '@/lib/finalize-options'
 import { finalizeArtworkLimiter, rateLimitHeaders, checkUserLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+
+// ── GET /api/finalize-artwork ───────────────────────────────────────────────
+// The option set (text positions, sizes, filters, text colours, defaults). The
+// native app builds its Finalize controls from this rather than a copy of its
+// own, so both clients always offer exactly what POST below accepts.
+export async function GET(request: NextRequest) {
+  if (!request.headers.get('X-User-Id')) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+  return NextResponse.json(finalizeOptionsPayload())
+}
 
 // ── POST /api/finalize-artwork ──────────────────────────────────────────────
 // Always renders against the immutable source (mb_projects.artwork_url) and
@@ -42,12 +54,12 @@ export async function POST(request: NextRequest) {
   const artist = (profile?.artist_name?.trim() || 'mixBase')
 
   // Deterministic, user-chosen layout — no Vision guesswork.
-  const position: Position = POSITIONS.includes(body.position) ? body.position : 'top-left'
-  const size: Size = ['small', 'medium', 'large'].includes(body.size) ? body.size : 'medium'
+  const position: Position = POSITIONS.includes(body.position) ? body.position : FINALIZE_DEFAULTS.position
+  const size: Size = SIZES.includes(body.size) ? body.size : FINALIZE_DEFAULTS.size
   // Divider line on by default — omit only when the client explicitly says false.
   const showRule: boolean = body.showRule !== false
-  const filter: Filter = FILTERS.includes(body.filter) ? body.filter : 'none'
-  const color: string = isHexColor(body.color) ? body.color : DEFAULT_TEXT_COLOR
+  const filter: Filter = FILTERS.includes(body.filter) ? body.filter : FINALIZE_DEFAULTS.filter
+  const color: string = isHexColor(body.color) ? body.color : FINALIZE_DEFAULTS.color
 
   const { data: project, error: projectError } = await supabaseAdmin
     .from('mb_projects')

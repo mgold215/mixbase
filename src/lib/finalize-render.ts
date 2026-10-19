@@ -3,6 +3,12 @@
 // longer resolves under `moduleResolution: bundler`).
 import sharp, { type OverlayOptions, type Sharp } from 'sharp'
 import { join } from 'path'
+// The option set (positions, sizes, filters, default colour) is defined once in
+// finalize-options.ts — shared with the web controls and served to the native
+// app — and re-exported here so the renderer's existing importers are unchanged.
+import { DEFAULT_TEXT_COLOR, FILTERS, POSITIONS, type Filter, type Position, type Size } from './finalize-options.ts'
+export { DEFAULT_TEXT_COLOR, FILTERS, POSITIONS }
+export type { Filter, Position, Size }
 
 // Real Futura Bold, passed straight to libvips' Pango text rasteriser via
 // `fontfile` (no system fontconfig install needed). The .ttf is bundled into the
@@ -12,10 +18,6 @@ const FONT_DESC = 'Futura Bold'
 
 export type Align = 'left' | 'center' | 'right'
 export type Vertical = 'top' | 'middle' | 'bottom'
-export type Size = 'small' | 'medium' | 'large'
-
-// Text color is any #RRGGBB hex; white unless the user picks otherwise.
-export const DEFAULT_TEXT_COLOR = '#FFFFFF'
 
 // Decode ceiling for user-supplied artwork (~6300² — well past a 3000×3000
 // master cover, well short of a decompression bomb). See buildFinalized.
@@ -30,9 +32,6 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     b: parseInt(hex.slice(5, 7), 16),
   }
 }
-export type Filter = 'none' | 'warm' | 'golden' | 'sepia' | 'cool' | 'icy' | 'vivid' | 'mono'
-export const FILTERS: Filter[] = ['none', 'warm', 'golden', 'sepia', 'cool', 'icy', 'vivid', 'mono']
-
 // Whole-image color grade. recomb scales the RGB channels (diagonal matrix) for
 // warm/cool casts that keep the photo's own colors; modulate boosts saturation;
 // grayscale for B&W; sepia uses the classic recomb matrix.
@@ -53,14 +52,6 @@ function applyFilter(img: Sharp, filter: Filter): Sharp {
     default:       return img
   }
 }
-
-// `${vertical}-${horizontal}` — a 3×3 anchor grid the user picks from.
-export const POSITIONS = [
-  'top-left', 'top-center', 'top-right',
-  'middle-left', 'middle-center', 'middle-right',
-  'bottom-left', 'bottom-center', 'bottom-right',
-] as const
-export type Position = (typeof POSITIONS)[number]
 
 // Supersample factor for the text rasters — render glyphs at R× the final size
 // and downscale, so edges stay crisp at the small album-overlay sizes.

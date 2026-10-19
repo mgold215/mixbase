@@ -71,6 +71,9 @@ struct ProjectDetailView: View {
                         // MARK: - Artwork with upload/generate options
                         artworkSection(project: project)
 
+                        // MARK: - Finalize Artwork (artist name + title on the cover)
+                        finalizeArtworkLink(project: project)
+
                         // MARK: - Editable Project Info
                         projectInfoSection(project: project)
 
@@ -351,6 +354,8 @@ struct ProjectDetailView: View {
                 NavigationLink(destination: ArtworkGeneratorView(projectId: projectId, onGenerated: { url in
                     self.project?.artworkUrl = url
                     self.project?.finalizedArtworkUrl = nil
+                }, onFinalized: { url in
+                    self.project?.finalizedArtworkUrl = url
                 })) {
                     HStack(spacing: 4) {
                         Image(systemName: "paintbrush")
@@ -381,6 +386,46 @@ struct ProjectDetailView: View {
                     )
                     .padding(.horizontal)
             }
+        }
+    }
+
+    // MARK: - Finalize Artwork link
+    // The web Artwork tab's Finalize step: the server letters the clean
+    // source artwork, so it needs one (artwork_url) to work from.
+    @ViewBuilder
+    private func finalizeArtworkLink(project: Project) -> some View {
+        if let sourceUrl = project.artworkUrl {
+            NavigationLink(destination: FinalizeArtworkView(
+                projectId: project.id,
+                sourceUrl: sourceUrl,
+                finalizedUrl: project.finalizedArtworkUrl,
+                onFinalized: { url in self.project?.finalizedArtworkUrl = url }
+            )) {
+                HStack {
+                    Image(systemName: "wand.and.stars")
+                    Text("Finalize Artwork")
+                    Spacer()
+                    if project.finalizedArtworkUrl != nil {
+                        HStack(spacing: 3) {
+                            Image(systemName: "checkmark")
+                            Text("Finalized")
+                        }
+                        .font(.caption)
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(hex: "#111111"))
+                .cornerRadius(10)
+            }
+            .padding(.horizontal)
         }
     }
 
