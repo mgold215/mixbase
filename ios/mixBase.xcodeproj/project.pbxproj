@@ -61,6 +61,7 @@
 
 		/* Views - Feed */
 		A1000000F0 /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000F0; };
+		A1000000F1 /* MixSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000F1; };
 
 		/* Models - Curator */
 		A100000016 /* Curator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000016; };
@@ -145,6 +146,7 @@
 		B100000084 /* FinalizeArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalizeArtworkView.swift; sourceTree = "<group>"; };
 		B1000000E0 /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
 		B1000000F0 /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
+		B1000000F1 /* MixSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixSessionView.swift; sourceTree = "<group>"; };
 		B100000090 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B1000000D0 /* SubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubmitView.swift; sourceTree = "<group>"; };
 		B1000000A1 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
@@ -302,6 +304,7 @@
 				E100000024 /* Artwork */,
 				E100000029 /* Visualizer */,
 				E10000002A /* Feed */,
+				E10000002B /* Session */,
 				E100000025 /* Settings */,
 				E100000028 /* Submit */,
 				E100000026 /* Components */,
@@ -388,6 +391,15 @@
 				B1000000F0 /* FeedView.swift */,
 			);
 			path = Feed;
+			sourceTree = "<group>";
+		};
+
+		E10000002B /* Session */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000F1 /* MixSessionView.swift */,
+			);
+			path = Session;
 			sourceTree = "<group>";
 		};
 
@@ -590,6 +602,7 @@
 				A100000084 /* FinalizeArtworkView.swift in Sources */,
 				A100000072 /* ReleasedLibraryView.swift in Sources */,
 				A1000000F0 /* FeedView.swift in Sources */,
+				A1000000F1 /* MixSessionView.swift in Sources */,
 				A100000092 /* NowPlayingStore.swift in Sources */,
 				A100000093 /* PlayPauseWidgetIntent.swift in Sources */,
 			);

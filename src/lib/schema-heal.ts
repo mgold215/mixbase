@@ -114,6 +114,34 @@ export function isMissingInFeedColumn(error: { message?: string } | null): boole
   return !!error?.message && /in_feed/.test(error.message)
 }
 
+// ── mb_feedback.resolved_at (migration 041) ─────────────────────────────────────
+// The Mix Session's done tick on a note. GET /api/mix-session reads it and
+// PATCH /api/mix-session/notes/[id] writes it; both catch the missing-column
+// error, heal, and retry, so a deploy that beats the migration can't blank the
+// session list or fail a tick.
+
+const FEEDBACK_RESOLVED_SQL =
+  "alter table public.mb_feedback add column if not exists resolved_at timestamptz; notify pgrst, 'reload schema';"
+
+let feedbackResolvedEnsured: Promise<boolean> | null = null
+
+export function ensureFeedbackResolvedColumn(): Promise<boolean> {
+  if (!feedbackResolvedEnsured) {
+    feedbackResolvedEnsured = runQuery(FEEDBACK_RESOLVED_SQL, 'mb_feedback.resolved_at column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) feedbackResolvedEnsured = null
+        return ok
+      })
+  }
+  return feedbackResolvedEnsured
+}
+
+/** True when a PostgREST error is the missing resolved_at column failure. */
+export function isMissingFeedbackResolvedColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /resolved_at/.test(error.message)
+}
+
 // ── mb_visualizers.settings (migration 031) ─────────────────────────────────
 // The FX-engine recipe persisted with each saved clip. A deploy that beats the
 // migration would fail every insert that includes `settings`; the write paths

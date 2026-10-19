@@ -157,6 +157,149 @@ final class MixbaseAPI {
         return url
     }
 
+    // MARK: - Mix Session (every account)
+    // The open notes on each song's CURRENT mix as one worklist, ticked off as
+    // you work, plus the AI session assistant. The server builds all of it
+    // (src/lib/mix-session.ts — current mix, note order, the shareable text,
+    // the session order); this app and the web /session page only render it.
+
+    struct MixSession: Decodable {
+        var songs: [SessionSong]
+        /// false only while the server's done-tick column is still being added.
+        let doneSupported: Bool
+        /// The open notes as plain text, ready to copy or share.
+        let text: String
+
+        enum CodingKeys: String, CodingKey {
+            case songs, text
+            case doneSupported = "done_supported"
+        }
+    }
+
+    struct SessionSong: Decodable, Identifiable {
+        let projectId: UUID
+        let title: String
+        let artworkUrl: String?
+        let visualizerUrl: String?
+        /// The current mix — decoded as the app's own Version, so it plays like any other.
+        let version: Version
+        /// What every screen calls this mix ("MASTER 2"), from the server.
+        let versionLabel: String
+        var notes: [SessionNote]
+
+        var id: UUID { projectId }
+        var openCount: Int { notes.filter { !$0.done }.count }
+        var doneCount: Int { notes.count - openCount }
+
+        enum CodingKeys: String, CodingKey {
+            case projectId = "project_id"
+            case title
+            case artworkUrl = "artwork_url"
+            case visualizerUrl = "visualizer_url"
+            case version, notes
+        }
+
+        private struct Label: Decodable {
+            let displayLabel: String
+            enum CodingKeys: String, CodingKey { case displayLabel = "display_label" }
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            projectId = try c.decode(UUID.self, forKey: .projectId)
+            title = try c.decode(String.self, forKey: .title)
+            artworkUrl = try c.decodeIfPresent(String.self, forKey: .artworkUrl)
+            visualizerUrl = try c.decodeIfPresent(String.self, forKey: .visualizerUrl)
+            version = try c.decode(Version.self, forKey: .version)
+            versionLabel = try c.decode(Label.self, forKey: .version).displayLabel
+            notes = try c.decode([SessionNote].self, forKey: .notes)
+        }
+    }
+
+    struct SessionNote: Decodable, Identifiable {
+        let id: UUID
+        let comment: String
+        /// Pinned moment in whole seconds; nil = a note on the whole mix.
+        let atSeconds: Int?
+        let reviewer: String
+        /// The artist's own mix note (vs. listener feedback).
+        let own: Bool
+        let rating: Int?
+        var done: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case id, comment, reviewer, own, rating, done
+            case atSeconds = "at_seconds"
+        }
+    }
+
+    struct SessionPlan: Decodable {
+        let overview: String
+        let songs: [PlanSong]
+    }
+
+    struct PlanSong: Decodable, Identifiable {
+        let projectId: UUID
+        let title: String
+        let focus: String
+        let steps: [PlanStep]
+        let conflicts: [String]
+
+        var id: UUID { projectId }
+
+        enum CodingKeys: String, CodingKey {
+            case projectId = "project_id"
+            case title, focus, steps, conflicts
+        }
+    }
+
+    struct PlanStep: Decodable {
+        let action: String
+        /// high | medium | low — drives the colour.
+        let priority: String
+        let priorityLabel: String
+        let areaLabel: String
+        let noteIds: [UUID]
+        /// Earliest pinned moment among the step's notes.
+        let atSeconds: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case action, priority
+            case priorityLabel = "priority_label"
+            case areaLabel = "area_label"
+            case noteIds = "note_ids"
+            case atSeconds = "at_seconds"
+        }
+    }
+
+    func mixSession() async throws -> MixSession {
+        let data = try await requestData(path: "/api/mix-session", method: "GET")
+        return try decoder.decode(MixSession.self, from: data)
+    }
+
+    /// Tick a note off (or back on). Any note on one of your current mixes —
+    /// your own or a listener's.
+    func setNoteDone(noteId: UUID, done: Bool) async throws {
+        _ = try await requestData(
+            path: "/api/mix-session/notes/\(noteId.uuidString.lowercased())",
+            method: "PATCH",
+            body: ["done": done]
+        )
+    }
+
+    /// The session assistant: the open notes organized into an ordered session
+    /// (merged fixes, engineer's order, listener disagreements flagged). Pass
+    /// project ids to organize just those songs. Can take up to a minute.
+    func organizeSession(projectIds: [UUID]? = nil) async throws -> SessionPlan {
+        var body: [String: Any] = [:]
+        if let projectIds {
+            body["project_ids"] = projectIds.map { $0.uuidString.lowercased() }
+        }
+        struct Response: Decodable { let plan: SessionPlan }
+        let data = try await requestData(path: "/api/mix-session/plan", method: "POST", body: body)
+        return try decoder.decode(Response.self, from: data).plan
+    }
+
     // MARK: - Visualizers
     // The free generator (no AI) and finished YouTube/Shorts renders are open
     // to every account. AI video (Runway) and moving covers are owner-only:

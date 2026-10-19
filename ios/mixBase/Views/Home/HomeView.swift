@@ -24,6 +24,9 @@ struct HomeView: View {
     // Latest versions per project — powers the quick-play carousel + activity rows
     @State private var latestVersions: [UUID: Version] = [:]
 
+    // Open notes across your current mixes (Mix Session); nil until loaded
+    @State private var openNotes: Int?
+
     // Map project IDs to projects for activity rows
     private var projectMap: [UUID: Project] {
         Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
@@ -78,6 +81,9 @@ struct HomeView: View {
 
                         // (No Now Playing card here — the floating mini player
                         // above the tab bar already covers it on every tab.)
+
+                        // MARK: - Mix Session (open notes on current mixes)
+                        mixSessionLink
 
                         // MARK: - Your Tracks (quick-play carousel)
                         if !recentTracks.isEmpty {
@@ -436,6 +442,53 @@ struct HomeView: View {
     }
 
     // MARK: - Data Loading
+    // MARK: - Mix Session link
+    private var mixSessionLink: some View {
+        NavigationLink(destination: MixSessionView(onOpenCountChange: { openNotes = $0 })) {
+            HStack(spacing: 12) {
+                Image(systemName: "checklist")
+                    .font(.title3)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mix Session")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                    Text(mixSessionSubtitle)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                Spacer()
+                if let openNotes, openNotes > 0 {
+                    Text("\(openNotes)")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(Color(hex: "#080808"))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color(hex: "#2dd4bf"))
+                        .clipShape(Capsule())
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            .padding(14)
+            .background(Color(hex: "#111111"))
+            .cornerRadius(12)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal)
+    }
+
+    private var mixSessionSubtitle: String {
+        switch openNotes {
+        case nil: return "Open notes on your current mixes"
+        case 0?: return "No open notes — all caught up"
+        case 1?: return "1 open note to work through"
+        case let n?: return "\(n) open notes to work through"
+        }
+    }
+
     private func loadDashboardData() async {
         isLoading = true
 
@@ -444,6 +497,14 @@ struct HomeView: View {
         // flight; awaiting here (refreshes are coalesced in AuthService) means
         // the requests below never race a stale token.
         await AuthService.shared.ensureFreshToken()
+
+        // Mix Session count — independent of the rest; a failure just leaves
+        // the row without a number.
+        Task {
+            if let session = try? await MixbaseAPI.shared.mixSession() {
+                openNotes = session.songs.reduce(0) { $0 + $1.openCount }
+            }
+        }
 
         do {
             async let fetchedProjects = SupabaseService.shared.fetchProjects()
