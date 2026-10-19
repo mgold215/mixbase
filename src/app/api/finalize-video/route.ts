@@ -6,6 +6,7 @@ import { finalVideoLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate
 import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
 import { startVideoJob, getVideoJob } from '@/lib/video-jobs'
 import { SHORTS_LENGTHS, MAX_SONG_SECONDS, type VideoFormat } from '@/lib/video-render'
+import { isFinishedCoverUrl, pinForFormat } from '@/lib/visualizer-source'
 
 export const runtime = 'nodejs'
 
@@ -16,6 +17,27 @@ export const runtime = 'nodejs'
 // at scheduled points. Renders run as in-process jobs (minutes long); POST
 // starts one, GET polls it. Outputs land in mf-video + mb_visualizers with
 // kind 'youtube' | 'shorts', so they show up in Media like other renders.
+
+// The project's pins (+ title), owner-scoped. visualizer_wide_url can predate
+// migration 020 on prod: heal + retry, and if the heal can't run (no Mgmt
+// token) fall back to selecting only the vertical pin so finalize keeps working.
+type ProjectPins = { title: string | null; visualizer_url: string | null; visualizer_wide_url?: string | null }
+async function loadProjectPins(projectId: string, userId: string) {
+  const select = async (withWide: boolean) => {
+    const { data, error } = await supabaseAdmin
+      .from('mb_projects')
+      .select(`title, visualizer_url${withWide ? ', visualizer_wide_url' : ''}`)
+      .eq('id', projectId)
+      .eq('user_id', userId)
+      .single()
+    return { data: data as ProjectPins | null, error }
+  }
+  let result = await select(true)
+  if (result.error && isMissingVisualizerColumn(result.error)) {
+    result = await select(await ensureProjectVisualizerColumn())
+  }
+  return result
+}
 
 function jobPayload(job: NonNullable<ReturnType<typeof getVideoJob>>) {
   return {
@@ -69,36 +91,15 @@ export async function POST(request: NextRequest) {
       ? body.start_mode : undefined
 
   // Everything renders from server-side state, never client-supplied URLs —
-  // same rule as finalize-artwork. visualizer_wide_url can predate migration
-  // 020 on prod: heal + retry, and if the heal can't run (no Mgmt token) fall
-  // back to selecting only the vertical pin so finalize keeps working.
-  type ProjectPins = { title: string | null; visualizer_url: string | null; visualizer_wide_url?: string | null }
-  const selectProject = async (withWide: boolean) => {
-    const { data, error } = await supabaseAdmin
-      .from('mb_projects')
-      .select(`title, visualizer_url${withWide ? ', visualizer_wide_url' : ''}`)
-      .eq('id', project_id)
-      .eq('user_id', userId)
-      .single()
-    return { data: data as ProjectPins | null, error }
-  }
-  let { data: project, error: projectError } = await selectProject(true)
-  if (projectError && isMissingVisualizerColumn(projectError)) {
-    if (await ensureProjectVisualizerColumn()) {
-      ({ data: project, error: projectError } = await selectProject(true))
-    } else {
-      ({ data: project, error: projectError } = await selectProject(false))
-    }
-  }
+  // same rule as finalize-artwork.
+  const { data: project, error: projectError } = await loadProjectPins(project_id, userId)
   if (projectError || !project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
   // Each output renders from the pin in its own orientation — horizontal for
   // the full-length 16:9, vertical for the Short — falling back to the other
   // pin (cover-cropped by the renderer) so projects with one pin still work.
-  const vertical = project.visualizer_url ?? null
-  const wide = project.visualizer_wide_url ?? null
-  const sourceUrl = format === 'youtube' ? (wide ?? vertical) : (vertical ?? wide)
+  const sourceUrl = pinForFormat(format, project.visualizer_url ?? null, project.visualizer_wide_url ?? null)
   if (!sourceUrl) {
     return NextResponse.json({ error: 'Pin a visualizer to this project first (Visualizer tab)' }, { status: 400 })
   }
@@ -174,6 +175,7 @@ export async function POST(request: NextRequest) {
 
 // GET ?job=<id>            → job progress/status
 // GET ?project_id=<uuid>   → latest saved finals for the project (both formats)
+//                            + suggest_show_text (false when a pinned loop was made from the finished cover)
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -207,5 +209,32 @@ export async function GET(request: NextRequest) {
   for (const row of data ?? []) {
     if (latest[row.kind] === null) latest[row.kind] = row
   }
-  return NextResponse.json(latest)
+
+  // Title-text suggestion for the next render. A pinned loop made from the
+  // finished cover (src/lib/visualizer-source.ts) usually already shows the
+  // title, so the renderer's own title flash would print it twice — both
+  // clients start on "No text" when this is false. Best effort: a failed
+  // lookup keeps the old default (text on) rather than failing the GET.
+  let suggestShowText = true
+  try {
+    const { data: project } = await loadProjectPins(projectId, userId)
+    if (project) {
+      const vertical = project.visualizer_url ?? null
+      const wide = project.visualizer_wide_url ?? null
+      const loops = [...new Set([pinForFormat('youtube', vertical, wide), pinForFormat('shorts', vertical, wide)])]
+        .filter((u): u is string => !!u)
+      if (loops.length) {
+        const { data: sources } = await supabaseAdmin
+          .from('mb_visualizers')
+          .select('source_image_url')
+          .eq('user_id', userId)
+          .in('video_url', loops)
+        if ((sources ?? []).some(s => isFinishedCoverUrl(s.source_image_url, projectId))) suggestShowText = false
+      }
+    }
+  } catch (err) {
+    console.error('[finalize-video] text suggestion lookup failed:', err instanceof Error ? err.message : err)
+  }
+
+  return NextResponse.json({ ...latest, suggest_show_text: suggestShowText })
 }

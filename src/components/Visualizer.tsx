@@ -12,7 +12,15 @@ import AiGeneratorCard from './visualizer/AiGeneratorCard'
 
 type Props = {
   projectTitle: string
+  // The clean source image (mb_projects.artwork_url) — or, in the Media modal,
+  // the library image being animated.
   artworkUrl: string | null
+  // The finished cover the artist sees everywhere (finalized ?? artwork), wired
+  // on the project page. When it differs from artworkUrl the generators
+  // animate IT by default — animating only the clean source made the pinned
+  // loop look like the wrong album art in the player — with "Clean artwork"
+  // one tap away (see src/lib/visualizer-source.ts).
+  coverUrl?: string | null
   onSwitchToArtwork: () => void
   // When set, generated videos are persisted to the Media library against this
   // project. Omitted in contexts with no backing project (none currently).
@@ -42,11 +50,16 @@ type Props = {
 // them) but not destructured — the studio starts consuming them in the
 // audio-reactivity phase.
 export default function Visualizer({
-  projectTitle, artworkUrl, onSwitchToArtwork, projectId,
+  projectTitle, artworkUrl, coverUrl, onSwitchToArtwork, projectId,
   visualizerUrl, onVisualizerUpdated, wideVisualizerUrl, onWideVisualizerUpdated,
   projectBpm,
 }: Props) {
   const { recipe, dispatch } = useVizRecipe(projectId, projectBpm)
+  // Which picture to animate: the finished cover unless the artist picks the
+  // clean artwork. Only a choice when the two actually differ.
+  const [animateClean, setAnimateClean] = useState(false)
+  const hasChoice = !!coverUrl && !!artworkUrl && coverUrl !== artworkUrl
+  const sourceUrl = hasChoice && animateClean ? artworkUrl : (coverUrl ?? artworkUrl)
   const [downloadErr, setDownloadErr] = useState<string | null>(null)
   // iOS second-tap share: holds the re-share closure for already-fetched bytes.
   const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
@@ -203,7 +216,7 @@ export default function Visualizer({
     />
   ) : null
 
-  if (!artworkUrl) {
+  if (!sourceUrl) {
     return (
       <div className="max-w-4xl space-y-6">
         {projectVizSection}
@@ -226,14 +239,42 @@ export default function Visualizer({
     <div className="max-w-4xl space-y-6">
       {projectVizSection}
 
-      {/* Artwork preview */}
+      {/* Artwork preview — and, when the finished cover differs from the
+          clean artwork, which of the two the loop animates. */}
       <div className="flex items-center gap-4">
         <div className="relative w-20 h-20 rounded-xl overflow-hidden flex-shrink-0" style={{ backgroundColor: 'var(--surface)' }}>
-          <Image src={artworkUrl} alt="Artwork" fill className="object-cover" unoptimized />
+          <Image src={sourceUrl} alt="Artwork" fill className="object-cover" unoptimized />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="font-semibold" style={{ color: 'var(--text)' }}>{projectTitle}</p>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Animate this artwork into a video loop</p>
+          {hasChoice && (
+            <div className="mt-2">
+              <div className="inline-flex gap-1 p-0.5 rounded-xl" style={{ backgroundColor: 'var(--surface)' }} role="group" aria-label="Picture to animate">
+                {([
+                  { clean: false, label: 'Your cover' },
+                  { clean: true, label: 'Clean artwork' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.label}
+                    onClick={() => setAnimateClean(opt.clean)}
+                    aria-pressed={animateClean === opt.clean}
+                    className="px-3 py-1 text-xs font-medium rounded-lg transition-colors"
+                    style={animateClean === opt.clean
+                      ? { backgroundColor: 'var(--accent)', color: 'var(--bg-page)' }
+                      : { color: 'var(--text-muted)' }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                {animateClean
+                  ? 'The image without lettering or a look — best for AI video, which can warp text.'
+                  : 'The cover you see everywhere, so the loop matches it in the player.'}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -243,7 +284,7 @@ export default function Visualizer({
       <FreeStudio
         key={recipe.format}
         projectId={projectId}
-        artworkUrl={artworkUrl}
+        artworkUrl={sourceUrl}
         recipe={recipe}
         dispatch={dispatch}
         onSelectFormat={(f: Format) => dispatch({ type: 'format', format: f })}
@@ -255,7 +296,7 @@ export default function Visualizer({
       />
 
       <AiGeneratorCard
-        artworkUrl={artworkUrl}
+        artworkUrl={sourceUrl}
         projectId={projectId}
         pinButton={pinButton}
         download={download}

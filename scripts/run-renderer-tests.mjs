@@ -49,6 +49,7 @@ const SUITES = [
   'finalize-options-test.mjs',
   'ios-parity-test.mjs',
   'mix-session-test.mjs',
+  'visualizer-source-test.mjs',
   'film-finish-test.mjs',
   'cassette-studio-test.mjs',
   'cover-filters-test.mjs',

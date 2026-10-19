@@ -20,9 +20,20 @@ struct VisualizerView: View {
 
     let projectId: UUID
     let projectTitle: String
-    // Source image for the generators — the clean artwork, never the
-    // lettered (finalized) cover.
+    // The clean source image (artwork_url) — or, from the Artwork library, the
+    // library image being animated.
     let artworkUrl: String?
+
+    // The finished cover the artist sees everywhere (finalized ?? artwork),
+    // passed by the project screen. When it differs from artworkUrl the
+    // generators animate IT by default — animating only the clean source made
+    // the pinned loop look like the wrong album art in the player — with
+    // "Clean artwork" one tap away. Same rule as the web Visualizer tab.
+    let coverUrl: String?
+
+    // Which picture to animate: the finished cover unless the artist picks
+    // the clean artwork. Only a choice when the two actually differ.
+    @State private var animateClean = false
 
     // The project's pins: visualizer_url (vertical — the player loop and the
     // Shorts source) and visualizer_wide_url (16:9 — the YouTube source).
@@ -39,6 +50,7 @@ struct VisualizerView: View {
         projectId: UUID,
         projectTitle: String,
         artworkUrl: String?,
+        coverUrl: String? = nil,
         pinnedUrl: String?,
         pinnedWideUrl: String? = nil,
         onPinChanged: ((String?) -> Void)? = nil,
@@ -47,6 +59,7 @@ struct VisualizerView: View {
         self.projectId = projectId
         self.projectTitle = projectTitle
         self.artworkUrl = artworkUrl
+        self.coverUrl = coverUrl
         self._pinnedUrl = State(initialValue: pinnedUrl)
         self._pinnedWideUrl = State(initialValue: pinnedWideUrl)
         self.onPinChanged = onPinChanged
@@ -113,6 +126,10 @@ struct VisualizerView: View {
     @State private var finishStartMode = "hook"
     @State private var finishColor = "#FFFFFF"
     @State private var finishShowText = true
+    // Set once the artist picks a text option; until then the server's
+    // suggestion (off when a pinned loop was made from the finished cover)
+    // decides.
+    @State private var finishTextTouched = false
     @State private var finishJob: MixbaseAPI.FinishedVideoJob?
     @State private var isStartingFinish = false
     @State private var finishError: String?
@@ -168,7 +185,11 @@ struct VisualizerView: View {
                     // Server-side render of the artwork into a seamless loop by
                     // the web generator's own effect engine — the web records a
                     // browser canvas, which this platform doesn't have.
-                    if let artworkUrl, !artworkUrl.isEmpty {
+                    if hasSourceChoice {
+                        sourcePicker
+                    }
+
+                    if let sourceImageUrl, !sourceImageUrl.isEmpty {
                         freeGeneratorSection
                     }
 
@@ -292,6 +313,61 @@ struct VisualizerView: View {
 
     // MARK: - Free generator section
     @ViewBuilder
+    // MARK: - Picture to animate
+
+    private var hasSourceChoice: Bool {
+        guard let coverUrl, let artworkUrl, !coverUrl.isEmpty, !artworkUrl.isEmpty else { return false }
+        return coverUrl != artworkUrl
+    }
+
+    /// The image every generator on this screen animates.
+    private var sourceImageUrl: String? {
+        if hasSourceChoice && animateClean { return artworkUrl }
+        return coverUrl ?? artworkUrl
+    }
+
+    private var sourcePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Picture to animate", subtitle: animateClean
+                ? "The image without lettering or a look — best for AI video, which can warp text."
+                : "The cover you see everywhere, so the loop matches it in the player.")
+
+            HStack(spacing: 12) {
+                sourceOption(url: coverUrl, label: "Your cover", selected: !animateClean) { animateClean = false }
+                sourceOption(url: artworkUrl, label: "Clean artwork", selected: animateClean) { animateClean = true }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private func sourceOption(url: String?, label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                AsyncImage(url: url.flatMap { URL(string: $0) }) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Color(hex: "#1a1a1a")
+                }
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(selected ? Color(hex: "#2dd4bf") : Color(hex: "#333333"), lineWidth: selected ? 3 : 1)
+                )
+                Text(label)
+                    .font(.caption)
+                    .fontWeight(selected ? .semibold : .regular)
+                    .foregroundColor(selected ? Color(hex: "#2dd4bf") : .gray)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     private var freeGeneratorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader("Free Generator", subtitle: "Animates your artwork into a seamless loop. No AI involved.")
@@ -400,7 +476,7 @@ struct VisualizerView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader("AI Video", subtitle: "Turns your artwork into a short AI-animated clip.")
 
-            if artworkUrl?.isEmpty == false {
+            if sourceImageUrl?.isEmpty == false {
                 if aiModels.isEmpty {
                     if isLoadingAIModels {
                         HStack {
@@ -556,6 +632,13 @@ struct VisualizerView: View {
 
                 finishColorPicker
 
+                if latestFinished?.suggestShowText == false {
+                    Text("Your pinned visualizer was made from your finished cover, so text starts off — the cover usually shows the title already.")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .padding(.horizontal)
+                }
+
                 if let job = finishJob {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: min(max(job.progress ?? 0, 0), 100), total: 100)
@@ -599,12 +682,14 @@ struct VisualizerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 chip("No text", selected: !finishShowText) {
+                    finishTextTouched = true
                     finishShowText = false
                 }
                 ForEach(CoverTextColors.all) { option in
                     let selected = finishShowText && finishColor == option.value
                     Button(action: {
                         finishColor = option.value
+                        finishTextTouched = true
                         finishShowText = true
                     }) {
                         Circle()
@@ -939,7 +1024,7 @@ struct VisualizerView: View {
     }
 
     private func generateFree() {
-        guard let artworkUrl else { return }
+        guard let imageUrl = sourceImageUrl else { return }
         let format = freeFormat
         isFreeGenerating = true
         errorMessage = nil
@@ -948,7 +1033,7 @@ struct VisualizerView: View {
             do {
                 let url = try await MixbaseAPI.shared.generateFreeVisualizer(
                     projectId: projectId,
-                    imageUrl: artworkUrl,
+                    imageUrl: imageUrl,
                     format: format,
                     effect: freeEffect,
                     bpm: selectedFreeEffect?.beatSynced == true ? Int(freeBpm) : nil
@@ -1036,7 +1121,7 @@ struct VisualizerView: View {
     }
 
     private func generateAI() {
-        guard let imageUrl = artworkUrl, !imageUrl.isEmpty, let model = selectedAIModel else { return }
+        guard let imageUrl = sourceImageUrl, !imageUrl.isEmpty, let model = selectedAIModel else { return }
         let duration = aiDuration
         let ratio = aiRatio
         let prompt = aiPrompt
@@ -1081,7 +1166,11 @@ struct VisualizerView: View {
 
     private func loadLatestFinished() async {
         do {
-            latestFinished = try await MixbaseAPI.shared.latestFinishedVideos(projectId: projectId)
+            let latest = try await MixbaseAPI.shared.latestFinishedVideos(projectId: projectId)
+            latestFinished = latest
+            if !finishTextTouched, let suggested = latest.suggestShowText {
+                finishShowText = suggested
+            }
         } catch {
             print("VisualizerView: failed to load finished videos — \(error.localizedDescription)")
         }
@@ -1301,6 +1390,8 @@ struct VisualizerView: View {
                 pinnedUrl = url
                 onPinChanged?(url)
             }
+            // A different loop can change the title-text suggestion.
+            await loadLatestFinished()
         } catch {
             errorMessage = error.localizedDescription
         }
