@@ -130,6 +130,13 @@ export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 // any real session; the cap bounds a runaway client loop, not spend.
 export const mixNoteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
 
+// Mix Session ticks (PATCH /api/mix-session/notes/[id]): 300 per hour per
+// user. Its own bucket, not mixNoteLimiter — ticking off a long list (and
+// un-ticking a slip) during one sitting would burn the note-writing budget,
+// and vice versa. One cheap owner-scoped UPDATE each; the cap only bounds a
+// runaway client loop.
+export const mixSessionLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 300 })
+
 // Feed comments: 30 per hour per user — every comment is visible to all
 // artists, so this stops a runaway client or spammy account from flooding the
 // community feed.

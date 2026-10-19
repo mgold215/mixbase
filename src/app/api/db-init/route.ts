@@ -160,6 +160,10 @@ alter table mb_projects
 alter table public.mb_versions
   add column if not exists in_feed boolean not null default true;
 
+-- Migration 041: Mix Session — a note's done tick (NULL = open)
+alter table public.mb_feedback
+  add column if not exists resolved_at timestamptz;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

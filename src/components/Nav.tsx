@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, ListMusic, Images, Sun, Moon, UserCircle, Send, Rss, MoreHorizontal, Bell, MessageSquare, Star } from 'lucide-react'
+import { LogOut, LayoutGrid, PlayCircle, ClipboardList, Library, ListMusic, Images, Sun, Moon, UserCircle, Send, Rss, MoreHorizontal, Bell, MessageSquare, Star, ListChecks } from 'lucide-react'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { timeAgo } from '@/lib/time'
@@ -76,6 +76,7 @@ export default function Nav() {
   // Desktop top-nav links
   const links = [
     { href: '/dashboard', label: 'Projects' },
+    { href: '/session', label: 'Session' },
     { href: '/feed', label: 'Feed' },
     { href: '/collections', label: 'Collections' },
     { href: '/media', label: 'Artwork' },
@@ -97,6 +98,7 @@ export default function Nav() {
 
   // Mobile top-bar overflow menu (the tabs we pulled off the bottom bar)
   const menuItems = [
+    { href: '/session',  label: 'Mix Session', icon: ListChecks },
     { href: '/pipeline', label: 'Pipeline', icon: ClipboardList },
     { href: '/library',  label: 'Released', icon: ListMusic },
     { href: '/submit',   label: 'Submit',   icon: Send },
