@@ -47,6 +47,7 @@ const SUITES = [
   'admin-identity-test.mjs',
   'artwork-models-test.mjs',
   'finalize-options-test.mjs',
+  'ios-parity-test.mjs',
   'film-finish-test.mjs',
   'cassette-studio-test.mjs',
   'cover-filters-test.mjs',
