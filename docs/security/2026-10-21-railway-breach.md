@@ -11,6 +11,22 @@ variables, including any API keys, stored in Railway"* and *"Review logs for
 those services for unusual activity."* Railway also invalidated every Railway
 API token, and told the AI providers to revoke keys they saw in the dump.
 
+Railway's follow-up (2026-10-23, with its preliminary report) narrowed it:
+the attacker searched for environments holding **AI API keys or cloud
+provider API keys**, **our workspace contains variables matching that
+pattern**, and Railway cannot confirm whether ours were decrypted. It asks for
+the same three things: rotate, update Railway variables and redeploy, and
+review provider activity — especially AI keys — plus GitHub and any image
+registry (Docker Hub etc.). mixBase builds from source (nixpacks), so it has
+no registry credentials; check the trading bot and any other service.
+
+The same day, CI flagged two new **critical** advisories in the web server's
+own dependencies — unauthenticated remote code execution in Next.js ≤16.4.0
+and a middleware (auth) bypass in `@sentry/nextjs` ≤10.75.1 via the tunnel
+route this app uses. Either would let an attacker read the NEW keys straight
+from the running server, so both were patched (Next 16.4.3, Sentry 10.76.2)
+in the same change, before rotating.
+
 **Rule from now on: every value that has ever been stored in a Railway
 variable is considered public. Never put an old value back.**
 
