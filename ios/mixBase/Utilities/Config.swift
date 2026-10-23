@@ -12,8 +12,12 @@ struct Config {
     // Supabase project URL (public, not a secret)
     static let supabaseURL: String = "https://mdefkqaawrusoaojstpq.supabase.co"
 
-    // Supabase anon key — public key safe to embed in client apps
-    static let supabaseAnonKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU"
+    // Supabase publishable key — public key safe to embed in client apps.
+    // Replaced the legacy JWT `anon` key after the 2026-10-21 Railway breach:
+    // the leaked legacy service_role key and JWT secret can only be revoked
+    // together with that anon key, so no shipped build may depend on it.
+    // Send it in `apikey` only — Supabase rejects sb_ keys as a Bearer token.
+    static let supabasePublishableKey: String = "sb_publishable_z4qhiUQPNegRhalC-p-YKg_-Ubu_qpD"
 
     // The web app — hosts the authenticated API routes for AI generation
     // (/api/generate-artwork, /api/visualizer/*) and public share pages.

@@ -20,11 +20,16 @@
 - Verification is governed by the `preflight-checks` skill — it maps each changed area to the smoke test that must pass before any commit, push, or "done" report.
 
 ## Environment Variables (full list in `.env.example`)
-- `SUPABASE_SERVICE_ROLE_KEY` — **required**: admin DB access, auth, bypasses RLS/storage limits
-- `SUPABASE_JWT_SECRET` — **required on staging+prod**: middleware verifies access-token HS256 signatures locally; without it tokens are decoded UNVERIFIED (auth-bypass risk)
+- `SUPABASE_SERVICE_ROLE_KEY` — **required**: admin DB access, auth, bypasses RLS/storage limits. Holds a **secret key (`sb_secret_…`)**, not the legacy JWT `service_role` key. Raw `fetch()` calls must authenticate via `serviceKeyHeaders()` (`src/lib/service-key.ts`) — an `sb_` key sent as `Authorization: Bearer` is rejected.
+- `SUPABASE_JWT_SECRET` — **legacy**: verifies HS256 access tokens locally. Once the project signs with JWT signing keys (ES256, verified via the public JWKS), delete it from Railway; unset in prod, HS256 tokens fall back to a cached `getUser()` check, never to unverified decoding.
+
+## Security incident — Railway env-var breach (2026-10-21)
+- Railway disclosed that an intruder may have decrypted customer env vars. **Treat every value ever stored in Railway as leaked**; never put one back. Full checklist + status: `docs/security/2026-10-21-railway-breach.md`. Forensics on 10-23 (Supabase edge/auth/storage logs since 10-20, GitHub) found no misuse.
+- Clients (web, iOS/macOS, CI seed script) use the **publishable** key (`sb_publishable_…`); `scripts/supabase-keys-test.mjs` fails the build if a legacy JWT key or a Bearer-sent key comes back. The legacy anon/service_role keys + JWT secret can only be retired together, once no installed app version still sends the legacy anon key.
+- The same Supabase project serves a separate **trading bot** on Railway (`python-requests`, daily 21:00 UTC, `trading_*` tables) — it also needs the new secret key before legacy keys are disabled.
 
 ## Auth
-- Middleware (`src/proxy.ts`) verifies the `sb-access-token` cookie via `verifyAccessToken()` against `SUPABASE_JWT_SECRET` (no Supabase round-trip), refreshes if expired, injects `X-User-Id`. Routes read identity from `X-User-Id` only — **never trust the request body for user ID**.
+- Middleware (`src/proxy.ts`) verifies the `sb-access-token` cookie via `verifyAccessToken()` — ES256/RS256 against the project JWKS, legacy HS256 against `SUPABASE_JWT_SECRET` (no Supabase round-trip either way) — refreshes if expired, injects `X-User-Id`. Routes read identity from `X-User-Id` only — **never trust the request body for user ID**.
 
 ## Database (Supabase `mdefkqaawrusoaojstpq`, migrations in `supabase/migrations/`)
 - Tables: `profiles` (artist name, informational tier, legacy Stripe/Apple columns — unused), `mb_projects`, `mb_versions`, `mb_feedback`, `mb_releases`, `mb_collections`, `mb_collection_items`, `mb_usage` (per-user monthly artwork/video counts, keyed YYYY-MM), `mb_feed_comments` (community-feed comments, migration 022), `mb_library_tracks` (released-track library — ISRC/UPC/dates synced from Spotify/Deezer, migration 027). Owner-only RLS throughout (migration 005), but **not all of them carry a `user_id` column** — verified 2026-08-30: `mb_versions`, `mb_feedback` and `mb_collection_items` have none, and `profiles` keys on `id`. They scope TRANSITIVELY and correctly (e.g. `mb_versions.users_own_versions` = `project_id in (select id from mb_projects where user_id = auth.uid())`). Check the actual column list before writing a policy or a filter against one of those. `mb_feed_comments` is deliberately cross-user (any signed-in user reads all rows, insert/delete own only). Server uses `supabaseAdmin`.

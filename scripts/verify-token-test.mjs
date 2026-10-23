@@ -14,7 +14,7 @@
 //
 // Run: node scripts/verify-token-test.mjs
 
-import { SignJWT, jwtVerify, decodeJwt, errors as joseErrors } from 'jose'
+import { SignJWT, jwtVerify, decodeJwt, errors as joseErrors, generateKeyPair, exportJWK, createLocalJWKSet } from 'jose'
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -134,6 +134,35 @@ try {
   const expTok = await sign(enc.encode(REAL_SECRET), '-1h')
   const re = await verifyAccessToken(expTok, good)
   check('correctly-signed EXPIRED token → expired + verified + sub (refreshable)', re.reason === 'expired' && re.verified === true && re.userId === USER)
+
+  // ── 6. Asymmetric (ES256) tokens via JWKS, with NO shared secret ───────────
+  // After the 2026-10-21 Railway breach exposed SUPABASE_JWT_SECRET, the
+  // project rotates to Supabase JWT signing keys: access tokens become ES256,
+  // verified against the project's PUBLIC key set, and the secret is deleted
+  // from Railway. That path had no test. getJwks() memoises its resolver on
+  // globalThis, so a local key set stands in for the remote one — offline.
+  console.log('\nReal-module ES256 / JWKS (post-rotation, no SUPABASE_JWT_SECRET):')
+  const kid = 'test-signing-key'
+  const { publicKey, privateKey } = await generateKeyPair('ES256')
+  globalThis.__mb_jwks__ = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid, alg: 'ES256' }] })
+  const signEs = (key, keyId, expiresIn) =>
+    new SignJWT({ sub: USER, role: 'authenticated' })
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: keyId })
+      .setIssuedAt()
+      .setExpirationTime(expiresIn)
+      .sign(key)
+  const noSecret = makeJwtKey(undefined)
+  const esValid = await verifyAccessToken(await signEs(privateKey, kid, '1h'), noSecret)
+  check('ES256 token from the published key → valid + verified + sub', esValid.reason === 'valid' && esValid.verified === true && esValid.userId === USER)
+  const esExpired = await verifyAccessToken(await signEs(privateKey, kid, '-1h'), noSecret)
+  check('ES256 EXPIRED token → expired + verified (refreshable)', esExpired.reason === 'expired' && esExpired.verified === true && esExpired.userId === USER)
+  const attacker = await generateKeyPair('ES256')
+  const esForged = await verifyAccessToken(await signEs(attacker.privateKey, kid, '1h'), noSecret)
+  check('ES256 token forged under the real kid → rejected, sub NOT trusted', esForged.reason === 'malformed' && esForged.userId === null)
+  const esUnknownKid = await verifyAccessToken(await signEs(attacker.privateKey, 'not-published', '1h'), noSecret)
+  check('ES256 token with an unknown kid → never valid/verified (network check decides)', esUnknownKid.reason === 'unverifiable' && esUnknownKid.verified === false)
+  const leakedLegacy = await verifyAccessToken(await sign(enc.encode(REAL_SECRET), '1h'), noSecret)
+  check('HS256 token minted with a leaked legacy secret → not trusted once the secret is removed', leakedLegacy.reason === 'unverifiable' && leakedLegacy.verified === false)
 } finally {
   try { unlinkSync(tmpPath) } catch {}
 }

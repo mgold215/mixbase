@@ -6,19 +6,22 @@ import { makeJwtKey, verifyAccessToken } from '@/lib/verifyToken'
 import { isTransientAuthError } from '@/lib/auth-errors'
 import { isAdminIdentity } from '@/lib/admin-identity'
 
-// Shared HS256 key used to verify access-token signatures locally (no network
-// call). Built once at module load. If SUPABASE_JWT_SECRET is unset we fall
-// back to UNVERIFIED decoding (legacy behaviour) and warn loudly — that path
-// trusts the token's claims without checking the signature, which is an
-// auth-bypass risk. Set SUPABASE_JWT_SECRET (Supabase → Settings → API → JWT
-// Secret) on every deployment to close it.
+// Shared HS256 key used to verify LEGACY access-token signatures locally (no
+// network call). Built once at module load. Tokens signed with Supabase's
+// asymmetric JWT signing keys (ES256/RS256) are verified against the project's
+// public JWKS instead and need no secret at all — once the project has rotated
+// to signing keys (the response to the 2026-10-21 Railway breach, which
+// exposed this secret), SUPABASE_JWT_SECRET is deleted from Railway. Without it,
+// an HS256 token falls back to a cached Supabase getUser() check in prod, and
+// to UNVERIFIED decoding in dev only (auth-bypass risk — dev never holds data).
 const JWT_KEY = makeJwtKey(process.env.SUPABASE_JWT_SECRET)
 const IS_PROD = process.env.NODE_ENV === 'production'
 if (!JWT_KEY) {
   console.warn(
-    '[proxy] SUPABASE_JWT_SECRET is not set — access tokens cannot be signature-verified locally. ' +
+    '[proxy] SUPABASE_JWT_SECRET is not set — legacy HS256 access tokens cannot be signature-verified locally. ' +
       (IS_PROD
-        ? 'Falling back to a Supabase getUser() round-trip per request (slower). Set this env var to close the gap.'
+        ? 'They fall back to a cached Supabase getUser() check; ES256/RS256 tokens from JWT signing keys verify via JWKS and are unaffected. ' +
+          'Expected once the project has rotated to JWT signing keys — do not re-add the legacy secret.'
         : 'Dev fallback: tokens are decoded WITHOUT signature verification (auth-bypass risk). Set this env var.'),
   )
 }

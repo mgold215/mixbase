@@ -2,9 +2,14 @@ import { createClient } from '@supabase/supabase-js'
 import { decodeJwt } from 'jose'
 import { MIX_STATUSES, type MixStatus } from './mix-status'
 
-// Hardcoded as fallbacks — these are public keys, safe to expose in client code
+// Hardcoded as fallbacks — these are public keys, safe to expose in client code.
+// The fallback is the PUBLISHABLE key (sb_publishable_...), not the legacy JWT
+// `anon` key: the legacy anon/service_role keys and the JWT secret that signs
+// them sat in Railway env vars during the 2026-10-21 Railway breach, and they
+// can only be retired together, once no client sends the legacy anon key.
+// (The variable keeps its historical ANON name — it's what Railway sets.)
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'
-export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU'
+export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'sb_publishable_z4qhiUQPNegRhalC-p-YKg_-Ubu_qpD'
 
 // Extract the `role` claim from a Supabase JWT-style API key without verifying
 // it (we only need to know what PostgREST will treat it as). jose's decodeJwt

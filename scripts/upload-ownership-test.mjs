@@ -184,7 +184,7 @@ for (const method of ['PATCH', 'HEAD']) {
   check(`${method} validates BEFORE building the upstream URL`,
     guardAt > -1 && urlAt > -1 && guardAt < urlAt, `guard@${guardAt} url@${urlAt}`)
   check(`${method} still attaches the service-role key (test is anchored)`,
-    /serviceKey\s*\(/.test(body))
+    /serviceKeyHeaders\s*\(/.test(body))
 
   // 2026-08-04: the traversal guard proved the id is SHAPED safely, never that
   // it belongs to the caller. Both handlers forward with the service-role key,

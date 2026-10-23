@@ -2,9 +2,15 @@
 
 [allowlist]
 description = "Global allowlist"
-# Supabase anon key is public by design (embedded in frontend)
+# Supabase anon/publishable keys are public by design (embedded in frontend and
+# apps). The legacy JWT anon key stays listed because it remains in history; the
+# publishable key (sb_publishable_) replaced it after the 2026-10-21 Railway
+# breach. Secret keys (sb_secret_) are NOT allowlisted.
 regexTarget = "match"
-regexes = ['''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIi''']
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIi''',
+  '''sb_publishable_[A-Za-z0-9_-]+''',
+]
 paths = ['''ios/.*\.xcodeproj/.*''', '''ios/.*\.xcworkspace/.*''']
 
 # Custom rule: catch plaintext passwords in docs/config/metadata files

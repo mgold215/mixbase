@@ -2,16 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { isSafeUploadId, projectIdFromUploadId } from '@/lib/validators'
 import { ownsProject } from '@/lib/ownership'
+import { serviceKeyHeaders } from '@/lib/service-key'
 
 export const maxDuration = 300
 
 const SUPABASE_TUS_BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqaawrusoaojstpq.supabase.co'}/storage/v1/upload/resumable`
-
-function serviceKey() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY not set')
-  return key
-}
 
 type Ctx = { params: Promise<{ uploadId: string }> }
 
@@ -63,7 +58,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const url = `${SUPABASE_TUS_BASE}/${uploadId}`
 
   const forwardHeaders: Record<string, string> = {
-    Authorization: `Bearer ${serviceKey()}`,
+    ...serviceKeyHeaders(),
     'Tus-Resumable': req.headers.get('tus-resumable') ?? '1.0.0',
     'Content-Type': req.headers.get('content-type') ?? 'application/offset+octet-stream',
   }
@@ -103,7 +98,7 @@ export async function HEAD(req: NextRequest, ctx: Ctx) {
   const upstream = await fetch(url, {
     method: 'HEAD',
     headers: {
-      Authorization: `Bearer ${serviceKey()}`,
+      ...serviceKeyHeaders(),
       'Tus-Resumable': '1.0.0',
     },
   })
