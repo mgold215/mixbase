@@ -11,8 +11,8 @@
 import { demoLogin, findApp } from "./listing-asc.mjs";
 
 const SUPABASE = "https://mdefkqaawrusoaojstpq.supabase.co";
-// Public anon key — the same one compiled into the iOS app (Config.swift).
-const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kZWZrcWFhd3J1c29hb2pzdHBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MDc3OTUsImV4cCI6MjA4ODM4Mzc5NX0.NVv98cob57ldDHeND1gRUZs8IUt9-XmuTcdOwDSvteU";
+// Public publishable key — the same one compiled into the iOS app (Config.swift).
+const ANON = "sb_publishable_z4qhiUQPNegRhalC-p-YKg_-Ubu_qpD";
 // Project title -> Deezer album id of the released single/album.
 const COVERS = { "KICK IT W/U": 631765241, "LIVE IT UP": 671410151, "TAKE TIME": 828993961 };
 

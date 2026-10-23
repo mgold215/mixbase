@@ -25,7 +25,7 @@ class AuthService: ObservableObject {
     @Published var ownerTools = false
 
     private let supabaseURL = Config.supabaseURL
-    private let supabaseAnonKey = Config.supabaseAnonKey
+    private let supabasePublishableKey = Config.supabasePublishableKey
 
     // Coalesces concurrent refreshes (launch + foreground + a 401 retry) into one
     // network call. Callers AWAIT the in-flight refresh rather than skipping it —
@@ -185,7 +185,7 @@ class AuthService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(supabasePublishableKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["email": email, "password": password])
 
@@ -216,7 +216,7 @@ class AuthService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(supabasePublishableKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["email": email, "password": password])
 
@@ -246,7 +246,7 @@ class AuthService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(supabasePublishableKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "provider": "apple",
@@ -324,7 +324,7 @@ class AuthService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(supabasePublishableKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
 

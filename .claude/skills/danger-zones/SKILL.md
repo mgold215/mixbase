@@ -21,7 +21,8 @@ Each entry: the file or area, the trap, and why it's shaped the way it is.
 ## Auth & identity in API routes
 
 - Routes read the user from the **`X-User-Id` header** injected by `src/proxy.ts` — **never from the request body**. A route trusting `body.userId` is an account-takeover bug.
-- The middleware verifies `sb-access-token` locally against `SUPABASE_JWT_SECRET` (HS256, no Supabase round-trip) and also accepts `Authorization: Bearer <token>` for the iOS app. Without `SUPABASE_JWT_SECRET` set, tokens are decoded UNVERIFIED — it's required on staging and prod.
+- The middleware verifies `sb-access-token` locally — ES256/RS256 tokens against the project's public JWKS, legacy HS256 tokens against `SUPABASE_JWT_SECRET` — and also accepts `Authorization: Bearer <token>` for the iOS app. With the secret unset, prod confirms HS256 tokens via a cached `getUser()` call (only dev decodes them unverified). The secret leaked in the 2026-10-21 Railway breach: after the rotation to JWT signing keys it is deleted from Railway on purpose — don't "fix" its absence by re-adding it.
+- Supabase keys: clients use the publishable key (`sb_publishable_…`), the server a secret key (`sb_secret_…`). An `sb_` key goes in the `apikey` header only — never `Authorization: Bearer` (rejected). For raw `fetch()` to Supabase use `serviceKeyHeaders()` from `src/lib/service-key.ts`; `scripts/supabase-keys-test.mjs` guards this.
 
 ## Rate limits
 

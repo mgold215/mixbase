@@ -100,7 +100,7 @@ class SupabaseService {
     // Base URL for your Supabase project
     private let supabaseURL: String
 
-    // The anon key used to authenticate API requests
+    // The publishable key used to authenticate API requests
     private let supabaseKey: String
 
     // The authenticated user's JWT access token (set by AuthService after sign-in)
@@ -127,7 +127,7 @@ class SupabaseService {
     // Private init so nobody can create a second instance
     private init() {
         self.supabaseURL = Config.supabaseURL
-        self.supabaseKey = Config.supabaseAnonKey
+        self.supabaseKey = Config.supabasePublishableKey
 
         // -- Configure the JSON decoder --
         self.decoder = JSONDecoder()
@@ -194,9 +194,12 @@ class SupabaseService {
 
         // Required headers for Supabase REST API
         request.setValue(supabaseKey, forHTTPHeaderField: "apikey")
-        // Use the user's JWT when available so RLS policies apply; fall back to anon key
-        let bearerToken = accessToken ?? supabaseKey
-        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        // Use the user's JWT when available so RLS policies apply. Signed out,
+        // send no Authorization at all: the gateway treats an apikey-only request
+        // as anon, and a publishable key sent as a Bearer token is rejected.
+        if let accessToken {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // For POST/PATCH, tell Supabase to return the created/updated row

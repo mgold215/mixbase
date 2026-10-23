@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { uploadLimiter, rateLimitHeaders , checkUserLimit } from '@/lib/rate-limit'
 import { ownsProject } from '@/lib/ownership'
 import { canonicalUuid } from '@/lib/validators'
+import { serviceKeyHeaders } from '@/lib/service-key'
 
 // Disable body parsing — we stream the body straight through to Supabase
 export const maxDuration = 300
@@ -13,12 +14,6 @@ const SUPABASE_TUS = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://mdefkqa
 // bucket, so this is an explicit allow-list.
 const ALLOWED_BUCKET = 'mf-audio'
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024 // 2 GB — matches the mf-audio bucket limit
-
-function serviceKey() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY not set')
-  return key
-}
 
 // Parse a TUS `Upload-Metadata` header: comma-separated `key <base64value>`
 // pairs (value omitted for valueless keys). Returns a plain object of decoded
@@ -131,7 +126,7 @@ export async function POST(req: NextRequest) {
   }
 
   const forwardHeaders: Record<string, string> = {
-    Authorization: `Bearer ${serviceKey()}`,
+    ...serviceKeyHeaders(),
     'Tus-Resumable': req.headers.get('tus-resumable') ?? '1.0.0',
     'x-upsert': 'true',
   }
