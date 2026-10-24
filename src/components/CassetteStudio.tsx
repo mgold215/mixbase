@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
-import { Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink, Keyboard, GraduationCap, Pin } from 'lucide-react'
+import { Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink, Keyboard, GraduationCap, Pin, Palette, Sparkles } from 'lucide-react'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 import CassetteLook, {
@@ -19,8 +19,25 @@ type MixbasePhoto = { path: string; url: string; thumb_url: string; project_id: 
 type Position = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right'
 type Size = 'small' | 'medium' | 'large'
 type SceneChoice = 'random' | 'custom' | 'photo' | string
-// A moving cover the owner rendered on any song (GET /api/cassette-studio/motion → clips).
-type Clip = { id: string; video_url: string; format: MotionFormat; wide: boolean; has_title: boolean; title: string | null; project_id: string | null; created_at: string | null }
+// A moving cover just rendered (POST /api/cassette-studio/motion).
+type Clip = { id: string; video_url: string; format: MotionFormat; wide: boolean; has_title: boolean }
+// The owner's theme — the recipe every release is rendered in (GET /api/cassette-studio/theme).
+type ThemeLettering = 'title' | 'artist-title' | 'existing' | 'none'
+type Theme = {
+  subject: string
+  place_x: number | null; place_y: number | null; place_scale: number | null
+  lettering: ThemeLettering; align: 'left' | 'center' | 'right'
+  color: string; position: Position; size: Size
+  filter: unknown | null
+  formats: MotionFormat[]; clip_title: boolean
+  saved_at: string
+}
+const THEME_LETTERINGS: { value: ThemeLettering; label: string; hint: string }[] = [
+  { value: 'title', label: 'Song title, typed', hint: "each song's title set from your taught letters" },
+  { value: 'artist-title', label: 'Artist + title, typed', hint: 'your artist name over the title, from your taught letters' },
+  { value: 'existing', label: "The song's own handwriting", hint: 'whatever handwriting photo that song already has' },
+  { value: 'none', label: 'No handwriting', hint: 'the cassette and the scene only' },
+]
 
 // Moving cover formats — the ids and sizes of FREE_FORMATS in
 // src/lib/free-render.ts (POST /api/cassette-studio/motion validates them).
@@ -141,11 +158,16 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
   // The project's CURRENT cover can already move (a studio cover with its
   // layers saved) — offers the row on open, not only after a new render.
   const [canMove, setCanMove] = useState(false)
-  // Every moving cover the owner has, on any song — pin one here or everywhere.
-  const [clips, setClips] = useState<Clip[]>([])
-  const [clipsOpen, setClipsOpen] = useState(false)
-  const [pinBusy, setPinBusy] = useState<string | null>(null)
+  const [pinBusy, setPinBusy] = useState(false)
   const [pinNote, setPinNote] = useState('')
+  // My theme: the recipe every release is rendered in. undefined = not loaded yet.
+  const [theme, setTheme] = useState<Theme | null | undefined>(undefined)
+  const [themeLettering, setThemeLettering] = useState<ThemeLettering>('title')
+  const [themeFormats, setThemeFormats] = useState<MotionFormat[]>(['canvas', 'youtube'])
+  const [themeBusy, setThemeBusy] = useState<null | 'save' | 'apply' | 'forget'>(null)
+  const [themeStep, setThemeStep] = useState('')
+  const [themeError, setThemeError] = useState('')
+  const [themeNote, setThemeNote] = useState('')
   // "From mixBase": the owner's images already in his songs, loaded on first open.
   const [photosOpen, setPhotosOpen] = useState(false)
   const [photos, setPhotos] = useState<MixbasePhoto[] | null>(null)
@@ -162,12 +184,24 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
       const res = await fetch(`/api/cassette-studio/motion?project_id=${projectId}`)
       const d = res.ok ? await readJson(res) : null
       setCanMove(d?.available === true)
-      setClips(Array.isArray(d?.clips) ? (d.clips as Clip[]) : [])
     } catch { /* leave the row as it was */ }
   }, [projectId])
 
+  const loadTheme = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cassette-studio/theme')
+      const d = res.ok ? await readJson(res) : null
+      const t = d && d.theme && typeof d.theme === 'object' ? (d.theme as Theme) : null
+      setTheme(t)
+      if (t) { setThemeLettering(t.lettering); setThemeFormats(t.formats) }
+    } catch {
+      setTheme(null)
+    }
+  }, [])
+
   const load = useCallback(async () => {
     void loadMotion()
+    void loadTheme()
     try {
       const res = await fetch(`/api/cassette-studio?project_id=${projectId}`)
       const data = await readJson(res)
@@ -183,7 +217,7 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
     } finally {
       setBusy(null)
     }
-  }, [projectId, loadMotion])
+  }, [projectId, loadMotion, loadTheme])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { if (bgPreview) URL.revokeObjectURL(bgPreview) }, [bgPreview])
@@ -480,9 +514,7 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
       })
       const data = await readJson(res)
       if (!res.ok || typeof data?.video_url !== 'string' || typeof data?.id !== 'string') throw new Error((data?.error as string) ?? 'Could not render the moving cover.')
-      const clip: Clip = { id: data.id, video_url: data.video_url, format, wide: format === 'youtube', has_title: data.has_title !== false, title: null, project_id: projectId, created_at: new Date().toISOString() }
-      setMotionVideo(clip)
-      setClips(prev => [clip, ...prev])
+      setMotionVideo({ id: data.id, video_url: data.video_url, format, wide: format === 'youtube', has_title: data.has_title !== false })
     } catch (err) {
       setMotionError(err instanceof Error ? err.message : 'Network error. Try again.')
     } finally {
@@ -490,40 +522,151 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
     }
   }
 
-  // Pin a clip as this song's visualizer, or as EVERY song's (the owner's
-  // "cassette playing" loop). The clip's format picks the slot server-side.
-  async function pinClip(clip: Clip, scope: 'project' | 'all') {
-    if (scope === 'all' && !window.confirm('Use this clip as the visualizer on every one of your songs? Each song keeps its other (vertical or wide) clip.')) return
-    setPinBusy(`${clip.id}:${scope}`)
+  // Pin a clip as this song's visualizer — landscape into the wide slot,
+  // everything else into the vertical one (PATCH /api/projects/[id], the
+  // same route every other pin goes through).
+  async function pinHere(url: string, wide: boolean): Promise<void> {
+    const res = await fetch(`/api/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [wide ? 'visualizer_wide_url' : 'visualizer_url']: url }),
+    })
+    const data = await readJson(res)
+    if (!res.ok) throw new Error((data?.error as string) ?? 'Could not pin the clip.')
+    onVisualizerPinned?.(url, wide)
+  }
+
+  async function pinClip(clip: Clip) {
+    setPinBusy(true)
     setPinNote('')
     setMotionError('')
     try {
-      const res = await fetch('/api/cassette-studio/motion/pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clip_id: clip.id, scope, project_id: projectId }),
-      })
-      const data = await readJson(res)
-      if (!res.ok || !data?.ok) throw new Error((data?.error as string) ?? 'Could not pin the clip.')
-      const n = typeof data.pinned === 'number' ? data.pinned : 0
-      onVisualizerPinned?.(clip.video_url, clip.wide)
-      setPinNote(scope === 'all'
-        ? `Pinned as the ${clip.wide ? 'wide' : 'vertical'} visualizer on ${n} song${n === 1 ? '' : 's'}.`
-        : `Pinned as this song's ${clip.wide ? 'wide' : 'vertical'} visualizer.`)
+      await pinHere(clip.video_url, clip.wide)
+      setPinNote(`Pinned as this song's ${clip.wide ? 'wide' : 'vertical'} visualizer.`)
     } catch (err) {
       setMotionError(err instanceof Error ? err.message : 'Could not pin the clip.')
     } finally {
-      setPinBusy(null)
+      setPinBusy(false)
+    }
+  }
+
+  // ── My theme ──────────────────────────────────────────────────────────────
+  // Save what is set up on this screen right now as THE recipe: this cassette,
+  // its placement, how the handwriting is lettered, the ink colour/position/
+  // size, this song's current look, and which clips to make. The scene is
+  // the one thing a theme leaves open.
+  async function saveTheme() {
+    if (!subject) { setThemeError('Pick the cassette your theme uses first.'); return }
+    setThemeBusy('save')
+    setThemeError('')
+    setThemeNote('')
+    try {
+      const body: Record<string, unknown> = {
+        subject, lettering: themeLettering, align: typedAlign, color, position, size,
+        formats: themeFormats, clip_title: motionTitle, project_id: projectId,
+      }
+      if (spot !== 'auto') { const [x, y] = spot.split(','); body.place_x = Number(x); body.place_y = Number(y) }
+      if (cassetteSize !== 'auto') body.place_scale = cassetteSize
+      const res = await fetch('/api/cassette-studio/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const data = await readJson(res)
+      if (!res.ok || !data?.theme) throw new Error((data?.error as string) ?? 'Could not save your theme.')
+      setTheme(data.theme as Theme)
+      setThemeNote('Theme saved. Every song you make in it will share this cassette, framing, handwriting treatment and look, in a scene of its own.')
+    } catch (err) {
+      setThemeError(err instanceof Error ? err.message : 'Could not save your theme.')
+    } finally {
+      setThemeBusy(null)
+    }
+  }
+
+  async function forgetTheme() {
+    if (!window.confirm('Forget your theme? Songs already made in it are untouched.')) return
+    setThemeBusy('forget')
+    setThemeError('')
+    try {
+      const res = await fetch('/api/cassette-studio/theme', { method: 'DELETE' })
+      if (!res.ok) throw new Error('Could not remove your theme.')
+      setTheme(null)
+      setThemeNote('')
+    } catch (err) {
+      setThemeError(err instanceof Error ? err.message : 'Could not remove your theme.')
+    } finally {
+      setThemeBusy(null)
+    }
+  }
+
+  // One tap: this song in the theme. The server letters the title, builds the
+  // cover in a scene and adds the look; the theme's clips are then rendered
+  // through the same route "Make it move" uses, and pinned.
+  async function applyTheme() {
+    if (!theme) return
+    setThemeBusy('apply')
+    setThemeError('')
+    setThemeNote('')
+    setLookNote('')
+    try {
+      setThemeStep(scene === 'random' || scene === 'custom' || scene === 'photo' ? 'Lettering the title and building a scene (~40s)…' : 'Lettering the title and building the scene (~40s)…')
+      const chosen = scene === 'custom' || scene === 'photo' ? 'random' : scene
+      const res = await fetch('/api/cassette-studio/theme/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, scene: chosen }),
+      })
+      const data = await readJson(res)
+      if (!res.ok || typeof data?.artwork_url !== 'string') {
+        if (Array.isArray(data?.missing) && data.missing.length) { setTeachOpen(true); void loadGlyphs() }
+        throw new Error((data?.error as string) ?? 'Could not make the cover.')
+      }
+      onRendered(data.artwork_url, (data.finalized_artwork_url as string | null) ?? null)
+      if (data.lettering && typeof data.lettering === 'object') acceptLettering(data.lettering as StudioFile)
+      setLastScene((data.scene_label as string | null) ?? null)
+      setHasRendered(true)
+      setCanMove(true)
+      setMotionVideo(null)
+      setMotionError('')
+      setLookRefresh(n => n + 1)
+      if (typeof data.look_error === 'string' && data.look_error) setLookNote(data.look_error)
+      const formats = Array.isArray(data.formats) ? (data.formats as MotionFormat[]) : []
+      const withTitle = data.clip_title !== false
+      const made: string[] = []
+      for (const format of formats) {
+        const label = MOTION_FORMATS.find(f => f.value === format)?.label ?? format
+        setThemeStep(`Rendering the ${label} clip${format === 'youtube' ? ' (~1 min)' : ''}…`)
+        const r = await fetch('/api/cassette-studio/motion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: projectId, format, title: withTitle }),
+        })
+        const d = await readJson(r)
+        if (!r.ok || typeof d?.video_url !== 'string' || typeof d?.id !== 'string') throw new Error((d?.error as string) ?? `Could not render the ${label} clip.`)
+        const clip: Clip = { id: d.id, video_url: d.video_url, format, wide: format === 'youtube', has_title: withTitle }
+        setMotionVideo(clip)
+        setThemeStep(`Pinning the ${label} clip…`)
+        await pinHere(clip.video_url, clip.wide)
+        made.push(label)
+      }
+      setThemeNote(made.length
+        ? `Done: cover${data.look_applied ? ' with your look' : ''} in “${data.scene_label ?? 'a new scene'}”, and ${made.join(' + ')} pinned as this song's visualizer${made.length > 1 ? 's' : ''}.`
+        : `Done: cover${data.look_applied ? ' with your look' : ''} in “${data.scene_label ?? 'a new scene'}”.`)
+    } catch (err) {
+      setThemeError(err instanceof Error ? err.message : 'Could not make this song in your theme.')
+    } finally {
+      setThemeBusy(null)
+      setThemeStep('')
     }
   }
 
   // A moving-cover render reads the CURRENT cover's layers server-side, so a
   // new cover must not replace it mid-render.
-  const working = busy !== null || motionBusy
+  const working = busy !== null || motionBusy || themeBusy !== null
   const canRender = !!subject && !working && (scene !== 'custom' || setting.trim().length > 0) && (scene !== 'photo' || !!bgFile)
   const currentLettering = lettering.find(l => l.path === letterPath) ?? null
   const knownLetters = glyphCounts ? Object.values(glyphCounts).filter(n => n > 0).length : 0
-  const clipLabel = (c: Clip) => `${MOTION_FORMATS.find(f => f.value === c.format)?.label ?? c.format} · ${c.has_title ? 'with title' : 'no title'}${c.project_id === projectId ? ' · this song' : ''}`
+  const themeSummary = (t: Theme) => {
+    const l = THEME_LETTERINGS.find(x => x.value === t.lettering)?.label ?? t.lettering
+    const clips = t.formats.map(f => MOTION_FORMATS.find(m => m.value === f)?.label ?? f).join(' + ')
+    return `${l} · ${t.color === 'auto' ? 'auto ink' : t.color} · ${t.position.replace('-', ' ')} ${t.size}${t.filter ? ' · with look' : ''}${clips ? ` · clips: ${clips}${t.clip_title ? '' : ' (no title)'}` : ' · no clips'}`
+  }
 
   return (
     <div className="space-y-4 rounded-xl border border-[#222] bg-[#0f0f0f] p-3">
@@ -872,7 +1015,7 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
       />
 
       {/* Make it move: the cover just made as a looping clip, no AI. */}
-      {(hasRendered || canMove || clips.length > 0) && (
+      {(hasRendered || canMove) && (
         <section className="space-y-2 border-t border-[#1e1e1e] pt-3">
           <p className="text-[11px] font-medium text-[#999]">Make it move</p>
           {(hasRendered || canMove) && (
@@ -897,9 +1040,9 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
                 <span className={`w-7 h-3.5 rounded-full relative transition-colors ${!motionTitle ? 'bg-[#2dd4bf]' : 'bg-[#2a2a2a]'}`}>
                   <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${!motionTitle ? 'left-4' : 'left-0.5'}`} />
                 </span>
-                Without the title — a &ldquo;cassette playing&rdquo; loop that fits every song
+                Without the title (the cassette and the scene only)
               </button>
-              <p className="text-[10px] text-[#666] leading-snug">The reels turn, the camera drifts and the film grain moves. Built from this cover itself, with no AI. Saved to your visualizers; pin it on this song or on all of them below.</p>
+              <p className="text-[10px] text-[#666] leading-snug">The reels turn, the camera drifts and the film grain moves. Built from this cover itself, with no AI. Saved to your visualizers.</p>
             </>
           )}
           {motionError && <p className="text-red-400 text-xs">{motionError}</p>}
@@ -916,11 +1059,8 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
                 className={`rounded-lg bg-black ${motionVideo.format === 'youtube' ? 'w-full aspect-video' : motionVideo.format === 'square' ? 'w-48 aspect-square' : 'w-32 aspect-[9/16]'}`}
               />
               <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => pinClip(motionVideo, 'project')} disabled={pinBusy !== null} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#1a1a1a] text-[#ccc] hover:text-white disabled:opacity-50">
-                  <Pin size={10} />{pinBusy === `${motionVideo.id}:project` ? 'Pinning…' : 'Use on this song'}
-                </button>
-                <button onClick={() => pinClip(motionVideo, 'all')} disabled={pinBusy !== null} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
-                  <Pin size={10} />{pinBusy === `${motionVideo.id}:all` ? 'Pinning…' : 'Use on every song'}
+                <button onClick={() => pinClip(motionVideo)} disabled={pinBusy} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
+                  <Pin size={10} />{pinBusy ? 'Pinning…' : 'Use as this song\'s visualizer'}
                 </button>
                 <a href={motionVideo.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
                   <ExternalLink size={10} />Open the clip
@@ -928,31 +1068,80 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
               </div>
             </div>
           )}
-          {clips.length > 0 && (
-            <div className="space-y-1">
-              <button onClick={() => setClipsOpen(v => !v)} className="text-[10px] text-[#888] hover:text-white">
-                {clipsOpen ? 'Hide' : 'Show'} your cassette clips ({clips.length})
-              </button>
-              {clipsOpen && (
-                <ul className="space-y-1 max-h-60 overflow-y-auto">
-                  {clips.map(c => (
-                    <li key={c.id} className="flex items-center gap-2 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] p-1.5">
-                      <video src={c.video_url} muted loop playsInline preload="metadata" className={`rounded bg-black shrink-0 ${c.wide ? 'w-16 aspect-video' : c.format === 'square' ? 'w-9 aspect-square' : 'w-6 aspect-[9/16]'}`} />
-                      <span className="flex-1 min-w-0 truncate text-[10px] text-[#aaa]">{clipLabel(c)}</span>
-                      <button onClick={() => pinClip(c, 'project')} disabled={pinBusy !== null} className="px-1.5 py-1 rounded text-[10px] bg-[#1a1a1a] text-[#ccc] hover:text-white disabled:opacity-50">
-                        {pinBusy === `${c.id}:project` ? '…' : 'This song'}
-                      </button>
-                      <button onClick={() => pinClip(c, 'all')} disabled={pinBusy !== null} className="px-1.5 py-1 rounded text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] disabled:opacity-50">
-                        {pinBusy === `${c.id}:all` ? '…' : 'Every song'}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
         </section>
       )}
+
+      {/* My theme: one recipe every release is rendered in — same cassette,
+          framing, handwriting treatment, look and clips; a new scene each time. */}
+      <section className="space-y-2 border-t border-[#1e1e1e] pt-3">
+        <p className="flex items-center gap-1 text-[11px] font-medium text-[#999]"><Palette size={11} />My theme</p>
+        {theme === undefined ? (
+          <p className="flex items-center gap-1.5 text-[10px] text-[#666]">{SPINNER}Loading your theme…</p>
+        ) : theme ? (
+          <>
+            <p className="text-[10px] text-[#888] leading-snug">{themeSummary(theme)}</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                onClick={applyTheme}
+                disabled={working}
+                className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-lg hover:bg-[#14b8a6] disabled:opacity-40 transition-colors"
+              >
+                {themeBusy === 'apply' ? <><span className="w-3 h-3 border border-black/30 border-t-black rounded-full animate-spin" />Making…</> : <><Sparkles size={12} />Make this song in my theme</>}
+              </button>
+              <span className="text-[10px] text-[#666]">Scene: {scene === 'random' || scene === 'custom' || scene === 'photo' ? 'a surprise (pick one in section 3 to choose)' : (CASSETTE_SCENES.find(s => s.id === scene)?.label ?? scene)}</span>
+            </div>
+            {themeStep && <p className="flex items-center gap-1.5 text-[10px] text-[#888]">{SPINNER}{themeStep}</p>}
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={saveTheme} disabled={working} className="text-[10px] text-[#888] hover:text-white disabled:opacity-50">
+                {themeBusy === 'save' ? 'Saving…' : 'Update the theme from the settings above'}
+              </button>
+              <button onClick={forgetTheme} disabled={working} className="text-[10px] text-[#666] hover:text-red-400 disabled:opacity-50">
+                {themeBusy === 'forget' ? 'Removing…' : 'Forget theme'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="text-[10px] text-[#666] leading-snug">
+            Set up a cover you like above (cassette, placement, handwriting colour/position/size, look), then save it as your theme. From then on any song is one tap: same cassette and treatment, a scene of its own.
+          </p>
+        )}
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="space-y-1">
+            <p className="text-[10px] text-[#666]">Handwriting in the theme</p>
+            <div className="flex flex-wrap gap-1">
+              {THEME_LETTERINGS.map(o => (
+                <button key={o.value} onClick={() => setThemeLettering(o.value)} title={o.hint} className={chip(themeLettering === o.value)}>{o.label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] text-[#666]">Clips to make</p>
+            <div className="flex flex-wrap gap-1">
+              {MOTION_FORMATS.map(f => (
+                <button
+                  key={f.value}
+                  onClick={() => setThemeFormats(prev => (prev.includes(f.value) ? prev.filter(v => v !== f.value) : [...prev, f.value]))}
+                  className={chip(themeFormats.includes(f.value))}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {!theme && theme !== undefined && (
+          <button
+            onClick={saveTheme}
+            disabled={working || !subject}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+          >
+            {themeBusy === 'save' ? <>{SPINNER}Saving…</> : <><Palette size={12} />Save this setup as my theme</>}
+          </button>
+        )}
+        <p className="text-[10px] text-[#666] leading-snug">The theme takes the cassette, placement, ink colour/position/size and clip-title setting from the controls above, the look from this song&rsquo;s current cover, and the handwriting and clip choices here.</p>
+        {themeError && <p className="text-red-400 text-xs">{themeError}</p>}
+        {themeNote && <p className="text-[10px] text-[#2dd4bf]">{themeNote}</p>}
+      </section>
     </div>
   )
 }

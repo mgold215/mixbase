@@ -6,6 +6,8 @@
 //   studio/<userId>/lettering-<projectId>-<ts>.png one handwriting lockup for one project
 //   studio/<userId>/glyph-<cp>-<unit>-<base>-<ts>.png one letter of the owner's hand (the glyph
 //                                                  bank behind "type in my handwriting")
+//   studio/<userId>/theme-<ts>-….png               the owner's theme — the recipe every release
+//                                                  is rendered in (src/lib/cassette-theme.ts)
 //   studio/<userId>/tmp-<ts>-*.{jpg,png}           FLUX/cut-out inputs, deleted after each call
 //   studio/<userId>/plate-<ts>.jpg                 a cover's scene plate        ┐ moving-cover inputs,
 //   studio/<userId>/layer-<ts>-<left>-<top>.png    its finished cassette layer  │ written by every render
@@ -28,7 +30,7 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { studioPrefix } from '@/lib/cassette-studio'
 import { GLYPH_CHARS, parseGlyphKey, type GlyphSample } from '@/lib/handwriting-glyphs'
-import { isFreeFormat, type FreeFormatId } from '@/lib/free-render'
+import { parseThemeKey, type StudioTheme } from '@/lib/cassette-theme'
 
 export { studioPrefix, isOwnStudioKey } from '@/lib/cassette-studio'
 
@@ -136,6 +138,19 @@ export async function loadGlyphBank(userId: string, text: string): Promise<Glyph
   return files.map((f, i) => ({ char: f.char, unit: f.unit, base: f.base, png: pngs[i] }))
 }
 
+// ── Theme ───────────────────────────────────────────────────────────────────
+
+/** The owner's newest saved theme, or null. Throws only when Storage itself fails. */
+export async function loadTheme(userId: string): Promise<{ theme: StudioTheme; path: string } | null> {
+  const files = await listStudio(userId, 'theme-')
+  let best: { theme: StudioTheme; path: string } | null = null
+  for (const f of files) {
+    const theme = parseThemeKey(f.path, userId)
+    if (theme && (!best || Number(theme.ts) > Number(best.theme.ts))) best = { theme, path: f.path }
+  }
+  return best
+}
+
 export async function removeStudio(paths: string[]): Promise<void> {
   if (paths.length === 0) return
   const { error } = await supabaseAdmin.storage.from(STUDIO_BUCKET).remove(paths)
@@ -161,75 +176,6 @@ export async function removeStudioFolder(userId: string): Promise<void> {
   } catch (err) {
     console.error('[cassette-studio] studio cleanup threw:', err instanceof Error ? err.message : err)
   }
-}
-
-// ── Cassette clips ──────────────────────────────────────────────────────────
-// A moving cover is an mb_visualizers row of kind 'free' whose settings say
-// source 'cassette-motion' (and format, and whether it carries the title).
-// Rendered against one project, pinnable on any of the owner's projects —
-// PATCH /api/projects/[id] already accepts any visualizer the caller owns —
-// so one title-free "cassette playing" loop can be every song's visualizer
-// (/api/cassette-studio/motion/pin).
-
-export type CassetteClip = {
-  id: string
-  video_url: string
-  format: FreeFormatId
-  /** Landscape (YouTube) clips pin into visualizer_wide_url; everything else into visualizer_url. */
-  wide: boolean
-  /** False for a loop rendered without the handwritten title — the reusable "cassette playing" kind. */
-  has_title: boolean
-  title: string | null
-  project_id: string | null
-  created_at: string | null
-}
-
-type ClipRow = { id: string; video_url: string; title: string | null; project_id: string | null; created_at: string | null; settings: unknown }
-
-function clipOf(row: ClipRow): CassetteClip | null {
-  const s = row.settings
-  if (!s || typeof s !== 'object' || (s as { source?: unknown }).source !== 'cassette-motion') return null
-  const fmt = (s as { format?: unknown }).format
-  const format: FreeFormatId = isFreeFormat(fmt) ? fmt : 'canvas'
-  return {
-    id: row.id,
-    video_url: row.video_url,
-    format,
-    wide: format === 'youtube',
-    has_title: (s as { title?: unknown }).title !== false,
-    title: row.title,
-    project_id: row.project_id,
-    created_at: row.created_at,
-  }
-}
-
-/** The caller's moving covers across all their projects, newest first. Empty (not an error) when none, or when the settings column is not there yet. */
-export async function listCassetteClips(userId: string, limit = 40): Promise<CassetteClip[]> {
-  const { data, error } = await supabaseAdmin
-    .from('mb_visualizers')
-    .select('id, video_url, title, project_id, created_at, settings')
-    .eq('user_id', userId)
-    .eq('kind', 'free')
-    .eq('settings->>source', 'cassette-motion')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  if (error) {
-    console.error('[cassette-studio] clip listing failed:', error.message)
-    return []
-  }
-  return ((data ?? []) as ClipRow[]).map(clipOf).filter((c): c is CassetteClip => c !== null)
-}
-
-/** One of the caller's own moving covers by id, or null. */
-export async function findCassetteClip(userId: string, clipId: string): Promise<CassetteClip | null> {
-  const { data, error } = await supabaseAdmin
-    .from('mb_visualizers')
-    .select('id, video_url, title, project_id, created_at, settings')
-    .eq('user_id', userId)
-    .eq('id', clipId)
-    .maybeSingle()
-  if (error || !data) return null
-  return clipOf(data as ClipRow)
 }
 
 // ── Replicate ───────────────────────────────────────────────────────────────

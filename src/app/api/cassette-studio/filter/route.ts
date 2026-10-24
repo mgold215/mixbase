@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import sharp from 'sharp'
-import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { cassetteStudioLimiter, coverFilterPreviewLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
-import { ARTWORK_BUCKET, storagePathFromUrl } from '@/lib/project-assets'
-import { downloadStudio, findStudioObject, studioPublicUrl } from '@/lib/cassette-server'
+import { downloadStudio, studioPublicUrl } from '@/lib/cassette-server'
 import {
-  artworkStamp, filteredCoverKey, finalizedCoverKey, parseFinalizedCover, parseSourcePath,
-} from '@/lib/cassette-studio'
+  CoverError, LOAD_FAILED, NO_COVER, loadCoverProject, resolveCoverBase, saveLookOnProject, type CoverBase,
+} from '@/lib/cassette-pipeline'
 import {
-  FILTER_ADJUSTMENTS, FILTER_PRESETS, decodeForFilter, filterRawToJpeg, isIdentityFilter, normalizeFilter,
-  type FilterSettings, type RawImage,
+  FILTER_ADJUSTMENTS, FILTER_PRESETS, decodeForFilter, filterRawToJpeg, normalizeFilter, type RawImage,
 } from '@/lib/cover-filters'
 
 export const runtime = 'nodejs'
@@ -38,58 +34,11 @@ export const maxDuration = 60
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 
-type ProjectRow = { id: string; artwork_url: string | null; finalized_artwork_url: string | null }
-
-type CoverBase = {
-  /** mf-artwork key of the unfiltered image a look is applied to. */
-  key: string
-  /** The stamp a filtered cover is keyed by; null → save mints an anchor first. */
-  fts: string | null
-  /** The base is the project's clean artwork: a reset clears finalized_artwork_url. */
-  isArtwork: boolean
-}
+// The base resolution and the save itself live in src/lib/cassette-pipeline.ts
+// (resolveCoverBase / saveLookOnProject), shared with the theme route.
 
 const PREVIEW_MAX_SIDE = 1080
-const SAVE_MAX_SIDE = 3000
-const NO_COVER = 'Make a cover first.'
-const LOAD_FAILED = 'Could not load the cover. Please try again.'
 const APPLY_FAILED = 'Could not apply the look. Please try again.'
-
-async function loadProject(userId: string, projectId: string): Promise<ProjectRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from('mb_projects')
-    .select('id, artwork_url, finalized_artwork_url')
-    .eq('id', projectId)
-    .eq('user_id', userId)
-    .single()
-  return error || !data ? null : (data as ProjectRow)
-}
-
-/**
- * The base a look is applied to, and the look the current cover carries.
- * Every candidate key is derived from the row with storagePathFromUrl (our
- * Supabase host + mf-artwork only — any other URL is refused) and re-parsed
- * against THIS project's id, so nothing outside `<projectId>/` can become a
- * base. Throws only when Storage itself fails.
- */
-async function resolveBase(project: ProjectRow): Promise<{ base: CoverBase | null; current: FilterSettings | null }> {
-  const artKey = storagePathFromUrl(project.artwork_url, ARTWORK_BUCKET)
-  if (project.finalized_artwork_url) {
-    const finKey = storagePathFromUrl(project.finalized_artwork_url, ARTWORK_BUCKET)
-    const fin = parseFinalizedCover(finKey, project.id)
-    // A finalized cover this tool did not make and cannot parse: leave it be.
-    if (!finKey || !fin) return { base: null, current: null }
-    if (!fin.filter) return { base: { key: finKey, fts: fin.fts, isArtwork: false }, current: null }
-    const plain = finalizedCoverKey(project.id, fin.fts)
-    if (await findStudioObject(plain)) return { base: { key: plain, fts: fin.fts, isArtwork: false }, current: fin.filter }
-    if (artKey && artworkStamp(artKey, project.id) === fin.fts) {
-      return { base: { key: artKey, fts: fin.fts, isArtwork: true }, current: fin.filter }
-    }
-    return { base: null, current: fin.filter }
-  }
-  if (!artKey || parseSourcePath(artKey)?.projectId !== project.id) return { base: null, current: null }
-  return { base: { key: artKey, fts: artworkStamp(artKey, project.id), isArtwork: true }, current: null }
-}
 
 // ── Preview cache ───────────────────────────────────────────────────────────
 // The downsized, decoded base per (user, base key): every slider pause is a
@@ -128,11 +77,11 @@ export async function GET(request: NextRequest) {
 
   const projectId = canonicalUuid(request.nextUrl.searchParams.get('project_id'))
   if (!projectId) return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
-  const project = await loadProject(userId, projectId)
+  const project = await loadCoverProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   try {
-    const { base, current } = await resolveBase(project)
+    const { base, current } = await resolveCoverBase(project)
     return NextResponse.json({
       presets: FILTER_PRESETS,
       adjustments: FILTER_ADJUSTMENTS,
@@ -170,12 +119,12 @@ export async function POST(request: NextRequest) {
   const settings = normalizeFilter(body.settings)
   if (!settings) return NextResponse.json({ error: 'Those filter settings are not valid.' }, { status: 400 })
 
-  const project = await loadProject(userId, projectId)
+  const project = await loadCoverProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   let base: CoverBase | null
   try {
-    base = (await resolveBase(project)).base
+    base = (await resolveCoverBase(project)).base
   } catch (err) {
     console.error('[cassette-studio/filter] lookup failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: LOAD_FAILED }, { status: 502 })
@@ -207,66 +156,10 @@ export async function POST(request: NextRequest) {
 
   // ── Save ──────────────────────────────────────────────────────────────────
   try {
-    let finalizedUrl: string | null
-    let filter: FilterSettings | null
-    if (isIdentityFilter(settings)) {
-      // "Original": back to the base itself — nothing to render.
-      finalizedUrl = base.isArtwork ? null : studioPublicUrl(base.key)
-      filter = null
-    } else {
-      let bytes: Buffer
-      try {
-        bytes = await downloadStudio(base.key)
-      } catch (err) {
-        console.error('[cassette-studio/filter] base download failed:', err instanceof Error ? err.message : err)
-        return NextResponse.json({ error: LOAD_FAILED }, { status: 502 })
-      }
-      const img = await decodeForFilter(bytes, SAVE_MAX_SIDE)
-      let fts = base.fts
-      // A clean artwork can share its stamp with a plain finalized cover — a
-      // Studio render writes cassette-S.jpg AND the lettered finalized-S.jpg,
-      // and restoring the clean one clears finalized. A look keyed by S would
-      // then resolve back to the LETTERED base (and the moving cover would find
-      // title-S-*.png), bringing the handwriting back. Give it its own stamp.
-      if (fts !== null && base.isArtwork && await findStudioObject(finalizedCoverKey(project.id, fts))) fts = null
-      if (fts === null) {
-        // No stamp of its own to link a look back to this artwork: write the
-        // unfiltered anchor finalized-<fts>.jpg first, so the next edit finds its base.
-        fts = String(Date.now())
-        const anchor = await sharpJpeg(img, 95)
-        await uploadArtwork(finalizedCoverKey(project.id, fts), anchor)
-      }
-      const jpeg = await filterRawToJpeg(img, settings, { quality: 92 })
-      finalizedUrl = await uploadArtwork(filteredCoverKey(project.id, fts, settings), jpeg)
-      filter = settings
-    }
-
-    const { error: dbError } = await supabaseAdmin
-      .from('mb_projects')
-      .update({ finalized_artwork_url: finalizedUrl, updated_at: new Date().toISOString() })
-      .eq('id', project.id)
-      .eq('user_id', userId)
-    if (dbError) throw new Error(`db update: ${dbError.message}`)
-
-    return NextResponse.json({ artwork_url: project.artwork_url, finalized_artwork_url: finalizedUrl, filter })
+    return NextResponse.json(await saveLookOnProject(userId, project, settings))
   } catch (err) {
+    if (err instanceof CoverError) return NextResponse.json({ error: err.message }, { status: err.status })
     console.error('[cassette-studio/filter] save failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: 'Could not save the look. Please try again.' }, { status: 502 })
   }
-}
-
-async function sharpJpeg(img: RawImage, quality: number): Promise<Buffer> {
-  return sharp(img.data, { raw: { width: img.width, height: img.height, channels: 3 } }).jpeg({ quality }).toBuffer()
-}
-
-/**
- * Write a cover under the project. upsert:false like every studio write; the
- * one expected collision is the SAME look saved twice on the same cover — the
- * key is derived from (stamp, look) and the render is deterministic, so the
- * object already there is exactly this image and is reused.
- */
-async function uploadArtwork(path: string, bytes: Buffer): Promise<string> {
-  const { error } = await supabaseAdmin.storage.from(ARTWORK_BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false })
-  if (error && !(await findStudioObject(path))) throw new Error(`upload ${path}: ${error.message}`)
-  return studioPublicUrl(path)
 }

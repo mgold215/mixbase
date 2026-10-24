@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { canonicalUuid, isSupabaseStorageUrl } from '@/lib/validators'
+import { canonicalUuid } from '@/lib/validators'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
-import { checkAndIncrementUsage, refundUsage } from '@/lib/tier'
 import { isAdminIdentity } from '@/lib/admin-identity'
-import {
-  downloadStudio, fillScene, isOwnStudioKey, readPhoto, removeStudio, studioPrefix, uploadStudio, StudioUnavailable,
-} from '@/lib/cassette-server'
-import {
-  applyLettering, buildFillRequest, composeLayers, finishCover, layerKey, motionLayerFiles, parsePlacement, placeSubject, plateKey,
-  tintLettering, titleKey, LETTERING_POSITIONS, LETTERING_SIZES, type CoverLayers, type LetteringPosition, type LetteringSize,
-} from '@/lib/cassette-studio'
-import { CASSETTE_SCENES, isSceneId, MAX_CUSTOM_SETTING, scenePrompt } from '@/lib/cassette-scenes'
-import sharp from 'sharp'
+import { isOwnStudioKey, readPhoto, StudioUnavailable } from '@/lib/cassette-server'
+import { parsePlacement, LETTERING_POSITIONS, LETTERING_SIZES, type LetteringPosition, type LetteringSize } from '@/lib/cassette-studio'
+import { isSceneId, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
+import { CoverError, loadCoverProject, makeStudioCover, randomSceneId } from '@/lib/cassette-pipeline'
 
 export const runtime = 'nodejs'
 export const maxDuration = 180
@@ -33,20 +26,10 @@ export const maxDuration = 180
 //   place_y      the surface line it stands on, 0.3–0.97 down the cover        │ any left out
 //   place_scale  its width as a fraction of the cover, 0.2–0.8                 ┘ falls to the default
 //
-// Writes the clean composite as the project's artwork_url and, when lettering
-// is given, the lettered version as finalized_artwork_url — the same
-// source/finalized split the rest of the Artwork tab uses. scene=keep skips the
-// scene entirely and re-letters the CURRENT artwork (change colour or position
-// without paying for a new scene).
-//
-// Alongside the still it keeps what a moving cover is rebuilt from
-// (/api/cassette-studio/motion): the scene plate and the finished cassette
-// layer, and the coloured title whenever lettering is applied — key shapes in
-// cassette-studio.ts "Motion layers". Best-effort: a failed save is logged
-// and the cover is delivered anyway (it just can't be made to move).
-//
-// Only the AI scene path (preset/random/custom) counts against the monthly
-// artwork allowance; the reservation is refunded on any failure.
+// Validates the request, then builds the cover through makeStudioCover
+// (src/lib/cassette-pipeline.ts — what it writes and why is documented there;
+// the theme route runs the same function). Only the AI scene path
+// (preset/random/custom) counts against the monthly artwork allowance.
 // Owner-only (404 otherwise) — see src/app/api/cassette-studio/route.ts.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
@@ -63,12 +46,11 @@ export async function POST(request: NextRequest) {
 
   const projectId = canonicalUuid(str('project_id'))
   if (!projectId) return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
-  const { data: project } = await supabaseAdmin
-    .from('mb_projects').select('id, artwork_url').eq('id', projectId).eq('user_id', userId).single()
+  const project = await loadCoverProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   let scene = str('scene') || 'random'
-  if (scene === 'random') scene = CASSETTE_SCENES[Math.floor(Math.random() * CASSETTE_SCENES.length)].id
+  if (scene === 'random') scene = randomSceneId()
   const isAiScene = isSceneId(scene) || scene === 'custom'
   if (!isAiScene && scene !== 'photo' && scene !== 'keep') {
     return NextResponse.json({ error: 'Unknown scene' }, { status: 400 })
@@ -97,184 +79,19 @@ export async function POST(request: NextRequest) {
     background = photo
   }
 
-  const seed = (Math.random() * 2147483647) >>> 0
-  const ts = Date.now()
-  // The stamp shared by this render's cover keys and its motion-layer keys —
-  // the ONLY link between them (mf-artwork takes no JSON sidecar).
-  const stamp = String(ts)
-  const tmp: string[] = []
-  // Motion layers written by THIS request; removed again if the render fails,
-  // so a cover that never landed leaves nothing behind. `motionPending` is
-  // drained before that cleanup so a save still in flight can't land after it.
-  const motionSaved: string[] = []
-  const motionPending: Promise<void>[] = []
-  let delivered = false
-  let refund: (() => Promise<unknown>) | null = null
-  let prompt: string | null = null
-
   try {
-    // ── 1. The clean composite (artwork_url) ────────────────────────────────
-    let art: Buffer
-    let artPath: string
-    let layers: CoverLayers | null = null
-    if (scene === 'keep') {
-      if (!project.artwork_url || !isSupabaseStorageUrl(project.artwork_url)) {
-        return NextResponse.json({ error: 'Make a cover first.' }, { status: 400 })
-      }
-      const res = await fetch(project.artwork_url, { signal: AbortSignal.timeout(30_000) })
-      if (!res.ok) return NextResponse.json({ error: 'Could not load the current artwork.' }, { status: 400 })
-      art = Buffer.from(await res.arrayBuffer())
-      artPath = ''
-    } else {
-      const subject = await downloadStudio(subjectPath)
-      const meta = await sharp(subject).metadata()
-      const box = placeSubject(meta.width ?? 1, meta.height ?? 1, seed, placement)
-
-      if (isAiScene) {
-        const gate = await checkAndIncrementUsage(userId, 'artwork')
-        if (gate.error) return NextResponse.json({ error: 'Could not reserve a generation slot. Please try again.' }, { status: 503 })
-        if (!gate.allowed) {
-          return NextResponse.json(
-            { error: `Monthly artwork limit reached (${gate.used}/${gate.limit}). Your allowance resets at the start of next month. You can still use your own background photo.` },
-            { status: 403 },
-          )
-        }
-        refund = () => refundUsage(userId, 'artwork', gate.month)
-
-        const sceneSetting = scene === 'custom' ? setting : CASSETTE_SCENES.find(s => s.id === scene)!.setting
-        prompt = scenePrompt(sceneSetting)
-        const fill = await buildFillRequest(subject, box)
-        const imgPath = `${studioPrefix(userId)}tmp-${ts}-fill.jpg`
-        const maskPath = `${studioPrefix(userId)}tmp-${ts}-mask.png`
-        tmp.push(imgPath, maskPath)
-        const [imgUrl, maskUrl] = await Promise.all([
-          uploadStudio(imgPath, fill.image, 'image/jpeg'),
-          uploadStudio(maskPath, fill.mask, 'image/png'),
-        ])
-        background = await fillScene(imgUrl, maskUrl, prompt, seed)
-      }
-
-      layers = await composeLayers({
-        background: background!,
-        subject,
-        box,
-        kind: isAiScene ? 'scene' : 'photo',
-        seed,
-        reflection: str('reflection') === '1' ? 0.6 : 0,
-      })
-      art = await finishCover(layers, seed)
-      // ai- prefix → Artwork History files it as 'generated'; an own-photo
-      // composite has no AI in it and files as an upload.
-      artPath = `${projectId}/${isAiScene ? 'ai-cassette' : 'cassette'}-${stamp}.jpg`
-    }
-
-    // The moving cover's plate + cassette layer, saved while the still is
-    // lettered and uploaded (best-effort: never throws — see saveMotionFile).
-    if (layers) motionPending.push(saveMotionLayers(userId, stamp, layers, motionSaved))
-
-    // ── 2. The lettered cover (finalized_artwork_url) ───────────────────────
-    let finalized: Buffer | null = null
-    let usedColor: string | null = null
-    if (letteringPath) {
-      const lettering = await downloadStudio(letteringPath)
-      const out = await applyLettering(art, lettering, { color, position, size })
-      finalized = out.jpeg
-      usedColor = out.color
-      // The same ink in the same resolved colour ('auto' included), at the
-      // lettering's native size: the moving cover's title card. Keyed by the
-      // FINALIZED stamp, which on scene=keep differs from the cover's.
-      motionPending.push(saveTitle(userId, stamp, lettering, out.color, position, size, motionSaved))
-    }
-
-    // ── 3. Save + point the project at it ───────────────────────────────────
-    const artworkUrl = artPath ? await uploadArtwork(artPath, art) : project.artwork_url!
-    const finalizedUrl = finalized ? await uploadArtwork(`${projectId}/finalized-${stamp}.jpg`, finalized) : null
-    // Before the project points at the new cover, so a client that asks
-    // /api/cassette-studio/motion right after this response finds the layers.
-    await Promise.all(motionPending)
-    const { error: dbError } = await supabaseAdmin
-      .from('mb_projects')
-      .update({ artwork_url: artworkUrl, finalized_artwork_url: finalizedUrl, updated_at: new Date().toISOString() })
-      .eq('id', projectId)
-      .eq('user_id', userId)
-    if (dbError) throw new Error(`db update: ${dbError.message}`)
-
-    refund = null // delivered — the slot is spent
-    delivered = true
-    return NextResponse.json({
-      artwork_url: artworkUrl,
-      finalized_artwork_url: finalizedUrl,
-      scene,
-      scene_label: CASSETTE_SCENES.find(s => s.id === scene)?.label ?? (scene === 'custom' ? setting : scene === 'photo' ? 'Your photo' : null),
-      prompt_used: prompt,
-      color: usedColor,
+    const result = await makeStudioCover({
+      userId, project, scene, setting, subjectPath, background, letteringPath, color, position, size,
+      reflection: str('reflection') === '1', placement,
     })
+    return NextResponse.json(result)
   } catch (err) {
+    if (err instanceof CoverError) return NextResponse.json({ error: err.message }, { status: err.status })
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[cassette-studio] render failed:', msg)
     if (err instanceof StudioUnavailable) {
       return NextResponse.json({ error: 'Scene generation is temporarily unavailable. You can still use your own background photo.' }, { status: 503 })
     }
     return NextResponse.json({ error: 'Could not make the cover. Please try again.' }, { status: 502 })
-  } finally {
-    if (refund) await refund()
-    if (!delivered) await Promise.allSettled(motionPending)
-    await removeStudio(delivered ? tmp : [...tmp, ...motionSaved])
-  }
-}
-
-async function uploadArtwork(path: string, bytes: Buffer): Promise<string> {
-  const { data, error } = await supabaseAdmin.storage.from('mf-artwork').upload(path, bytes, { contentType: 'image/jpeg', upsert: false })
-  if (error || !data) throw new Error(`upload ${path}: ${error?.message}`)
-  return supabaseAdmin.storage.from('mf-artwork').getPublicUrl(data.path).data.publicUrl
-}
-
-/** Best-effort studio write for a motion layer: logs and returns on failure, never throws. */
-async function saveMotionFile(path: string, bytes: Buffer, contentType: string, saved: string[]): Promise<boolean> {
-  try {
-    await uploadStudio(path, bytes, contentType)
-    saved.push(path)
-    return true
-  } catch (err) {
-    console.error('[cassette-studio] motion layer not saved:', path.slice(path.lastIndexOf('/') + 1), err instanceof Error ? err.message : err)
-    return false
-  }
-}
-
-/** The coloured title card for a finalized stamp. Never throws. */
-async function saveTitle(
-  userId: string, fstamp: string, lettering: Buffer, color: string,
-  position: LetteringPosition, size: LetteringSize, saved: string[],
-): Promise<void> {
-  try {
-    const png = await tintLettering(lettering, color)
-    await saveMotionFile(titleKey(userId, fstamp, position, size), png, 'image/png', saved)
-  } catch (err) {
-    console.error('[cassette-studio] title layer not saved:', err instanceof Error ? err.message : err)
-  }
-}
-
-/**
- * Plate (q90 JPEG) + finished cassette (RGBA PNG at its placed size) for this
- * stamp. Both or neither: the motion route needs the pair, so a lone survivor
- * is removed rather than left to look like half a cover. Never throws.
- */
-async function saveMotionLayers(userId: string, stamp: string, layers: CoverLayers, saved: string[]): Promise<void> {
-  try {
-    const files = await motionLayerFiles(layers)
-    if (!files) return
-    const plate = plateKey(userId, stamp)
-    const layer = layerKey(userId, stamp, files.left, files.top)
-    const [okPlate, okLayer] = await Promise.all([
-      saveMotionFile(plate, files.plateJpeg, 'image/jpeg', saved),
-      saveMotionFile(layer, files.layerPng, 'image/png', saved),
-    ])
-    if (okPlate !== okLayer) {
-      const lone = okPlate ? plate : layer
-      await removeStudio([lone])
-      saved.splice(saved.indexOf(lone), 1)
-    }
-  } catch (err) {
-    console.error('[cassette-studio] motion layers not saved:', err instanceof Error ? err.message : err)
   }
 }
