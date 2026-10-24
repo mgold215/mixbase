@@ -65,8 +65,8 @@ struct CassetteStudioView: View {
         // library: cutting out a photo already in mixBase.
         // look: putting the remembered look on a fresh render.
         // typing: setting a typed title from the glyph bank.
-        // teaching: learning letters from a photo. pinning: pinning a clip.
-        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, pinning
+        // teaching: learning letters from a photo. theme: saving/applying the theme.
+        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, theme
     }
 
     // Mirrors CASSETTE_SCENES in src/lib/cassette-scenes.ts (ids must match
@@ -195,14 +195,18 @@ struct CassetteStudioView: View {
     @State private var motionError: String?
     @State private var isSavingMotion = false
     @State private var savedMotion = false
-    // The project's CURRENT cover can already move (its layers were saved),
-    // every moving cover the owner has on any song, and the one just made.
+    // The project's CURRENT cover can already move (its layers were saved).
     @State private var canMove = false
-    @State private var clips: [MixbaseAPI.CassetteClip] = []
-    @State private var clipsOpen = false
-    @State private var lastClip: MixbaseAPI.CassetteClip?
-    @State private var pinNote: String?
-    @State private var pinAllCandidate: MixbaseAPI.CassetteClip?
+
+    // My theme: the recipe every release is rendered in.
+    @State private var theme: MixbaseAPI.StudioTheme?
+    @State private var themeLoaded = false
+    @State private var themeLettering = "title"
+    @State private var themeFormats: Set<String> = ["canvas", "youtube"]
+    @State private var themeStep: String?
+    @State private var themeError: String?
+    @State private var themeNote: String?
+    @State private var confirmForgetTheme = false
 
     private var isWorking: Bool { busy != nil || lookSaving }
 
@@ -241,9 +245,11 @@ struct CassetteStudioView: View {
                     actionSection
                     lookSection
 
-                    if hasRendered || canMove || !clips.isEmpty {
+                    if hasRendered || canMove {
                         motionSection
                     }
+
+                    themeSection
 
                     Spacer(minLength: 80)
                 }
@@ -281,19 +287,14 @@ struct CassetteStudioView: View {
             }
         }
         .confirmationDialog(
-            "Use this clip on every song?",
-            isPresented: Binding(get: { pinAllCandidate != nil }, set: { if !$0 { pinAllCandidate = nil } }),
+            "Forget your theme?",
+            isPresented: $confirmForgetTheme,
             titleVisibility: .visible
         ) {
-            Button("Use on every song") {
-                if let clip = pinAllCandidate {
-                    pinAllCandidate = nil
-                    Task { await pin(clip, scope: "all") }
-                }
-            }
-            Button("Cancel", role: .cancel) { pinAllCandidate = nil }
+            Button("Forget theme", role: .destructive) { forgetTheme() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("It becomes the visualizer on all of your songs. Each song keeps its other (vertical or wide) clip.")
+            Text("Songs already made in it are untouched.")
         }
         .confirmationDialog(
             "Forget this letter?",
@@ -1125,7 +1126,7 @@ struct CassetteStudioView: View {
             sectionTitle("Make it move")
 
             if hasRendered || canMove {
-                hint("Turns this cover into a loop: the reels turn, the camera drifts. No AI. It's saved to Your Videos and pinned as this song's visualizer — or on every song, below.")
+                hint("Turns this cover into a loop: the reels turn, the camera drifts. No AI. It's saved to Your Videos and pinned as this song's visualizer.")
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -1139,7 +1140,7 @@ struct CassetteStudioView: View {
                 }
 
                 Toggle(isOn: Binding(get: { !motionWithTitle }, set: { motionWithTitle = !$0 })) {
-                    Text("Without the title — a \"cassette playing\" loop that fits every song")
+                    Text("Without the title (the cassette and the scene only)")
                         .font(.caption)
                         .foregroundColor(Color(hex: "#f0f0f0"))
                 }
@@ -1177,20 +1178,9 @@ struct CassetteStudioView: View {
                     .padding(.horizontal)
             }
 
-            if let pinNote {
-                Text(pinNote)
-                    .font(.caption)
-                    .foregroundColor(Color(hex: "#2dd4bf"))
-                    .padding(.horizontal)
-            }
-
             if let motionUrl, let url = URL(string: motionUrl) {
                 VStack(alignment: .leading, spacing: 8) {
                     motionPreview(url: url)
-
-                    if let clip = lastClip {
-                        pinButtons(for: clip)
-                    }
 
                     if isSavingMotion {
                         ProgressView().tint(Color(hex: "#2dd4bf"))
@@ -1217,97 +1207,188 @@ struct CassetteStudioView: View {
                 }
                 .padding(.horizontal)
             }
-
-            if !clips.isEmpty {
-                clipsList
-            }
         }
     }
 
-    /// Pin a clip on this song, or on every song (confirmed first).
-    private func pinButtons(for clip: MixbaseAPI.CassetteClip) -> some View {
-        HStack(spacing: 8) {
-            Button(action: { Task { await pin(clip, scope: "project") } }) {
-                Label("Use on this song", systemImage: "pin")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(Color(hex: "#f0f0f0"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color(hex: "#222222"))
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
+    // MARK: - My theme
+    // One recipe every release is rendered in: this cassette, its placement,
+    // the handwriting treatment, the ink colour/position/size, this song's
+    // look and which clips to make. The scene is the one thing left open.
 
-            Button(action: { pinAllCandidate = clip }) {
-                Label("Use on every song", systemImage: "pin.fill")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(Color(hex: "#080808"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color(hex: "#2dd4bf"))
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
-        }
-    }
+    private static let themeLetterings: [(id: String, label: String)] = [
+        ("title", "Song title, typed"),
+        ("artist-title", "Artist + title, typed"),
+        ("existing", "The song's own handwriting"),
+        ("none", "No handwriting"),
+    ]
 
-    /// Every moving cover the owner has, on any song: pin any of them here
-    /// or everywhere without rendering again.
     @ViewBuilder
-    private var clipsList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: { clipsOpen.toggle() }) {
-                HStack(spacing: 4) {
-                    Image(systemName: clipsOpen ? "chevron.down" : "chevron.right")
-                    Text("Your cassette clips (\(clips.count))")
+    private var themeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("My theme")
+
+            if !themeLoaded {
+                HStack(spacing: 6) {
+                    ProgressView().tint(.gray).controlSize(.small)
+                    Text("Loading your theme…")
                 }
                 .font(.caption)
-                .foregroundColor(Color(hex: "#999999"))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal)
+                .foregroundColor(.gray)
+                .padding(.horizontal)
+            } else if let theme {
+                hint(themeSummary(theme))
 
-            if clipsOpen {
-                ForEach(clips) { clip in
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(clipLabel(clip))
-                                .font(.caption)
-                                .foregroundColor(Color(hex: "#f0f0f0"))
-                                .lineLimit(1)
-                            Text(clip.projectId == projectId.postgresString ? "This song" : "Another song")
-                                .font(.caption2)
-                                .foregroundColor(.gray)
+                Button(action: applyTheme) {
+                    HStack {
+                        if busy == .theme && themeStep != nil {
+                            ProgressView().tint(Color(hex: "#080808"))
+                            Text("Making…")
+                        } else {
+                            Image(systemName: "sparkles")
+                            Text("Make this song in my theme")
                         }
-                        Spacer(minLength: 4)
-                        Button("This song") { Task { await pin(clip, scope: "project") } }
-                            .font(.caption2)
-                            .buttonStyle(.bordered)
-                            .tint(Color(hex: "#999999"))
-                            .disabled(isWorking)
-                        Button("Every song") { pinAllCandidate = clip }
-                            .font(.caption2)
-                            .buttonStyle(.borderedProminent)
-                            .tint(Color(hex: "#2dd4bf"))
-                            .disabled(isWorking)
                     }
-                    .padding(10)
-                    .background(Color(hex: "#0a0a0a"))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#222222"), lineWidth: 1))
-                    .cornerRadius(10)
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#080808"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(isWorking && busy != .theme ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .padding(.horizontal)
+
+                hint("Scene: \(themeSceneLabel)")
+
+                if let themeStep {
+                    HStack(spacing: 6) {
+                        ProgressView().tint(.gray).controlSize(.small)
+                        Text(themeStep)
+                    }
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal)
+                }
+
+                HStack(spacing: 16) {
+                    Button(action: saveTheme) {
+                        Text("Update the theme from the settings above")
+                            .font(.caption)
+                            .foregroundColor(Color(hex: "#999999"))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking)
+
+                    Button(action: { confirmForgetTheme = true }) {
+                        Text("Forget theme")
+                            .font(.caption)
+                            .foregroundColor(Color(hex: "#777777"))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking)
+                }
+                .padding(.horizontal)
+            } else {
+                hint("Set up a cover you like above (cassette, placement, handwriting colour/position/size, look), then save it as your theme. From then on any song is one tap: same cassette and treatment, a scene of its own.")
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Handwriting in the theme")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.themeLetterings, id: \.id) { option in
+                            smallChip(option.label, selected: themeLettering == option.id) {
+                                themeLettering = option.id
+                            }
+                        }
+                    }
                     .padding(.horizontal)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Clips to make")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.motionFormats, id: \.id) { option in
+                            smallChip(option.label, selected: themeFormats.contains(option.id)) {
+                                if themeFormats.contains(option.id) {
+                                    themeFormats.remove(option.id)
+                                } else {
+                                    themeFormats.insert(option.id)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+
+            if themeLoaded && theme == nil {
+                Button(action: saveTheme) {
+                    HStack {
+                        if busy == .theme {
+                            ProgressView().tint(Color(hex: "#f0f0f0"))
+                            Text("Saving…")
+                        } else {
+                            Image(systemName: "paintpalette")
+                            Text("Save this setup as my theme")
+                        }
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(hex: "#111111"))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#333333"), lineWidth: 1))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking || subjectPath == nil)
+                .padding(.horizontal)
+            }
+
+            hint("The theme takes the cassette, placement, ink colour/position/size and clip-title setting from the controls above, the look from this song's current cover, and the handwriting and clip choices here.")
+
+            if let themeError {
+                Text(themeError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+            }
+            if let themeNote {
+                Text(themeNote)
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+            }
         }
     }
 
-    private func clipLabel(_ clip: MixbaseAPI.CassetteClip) -> String {
-        let format = Self.motionFormats.first { $0.id == clip.format }?.label ?? clip.format
-        return "\(format) · \(clip.hasTitle ? "with title" : "no title")"
+    private var themeSceneLabel: String {
+        if scene == "random" || scene == "custom" || scene == "photo" {
+            return "a surprise (pick one in section 3 to choose)"
+        }
+        return Self.scenes.first { $0.id == scene }?.label ?? scene
+    }
+
+    private func themeSummary(_ t: MixbaseAPI.StudioTheme) -> String {
+        let lettering = Self.themeLetterings.first { $0.id == t.lettering }?.label ?? t.lettering
+        let clips = t.formats.compactMap { f in Self.motionFormats.first { $0.id == f }?.label }.joined(separator: " + ")
+        var parts = [lettering, t.color == "auto" ? "auto ink" : t.color, "\(t.position.replacingOccurrences(of: "-", with: " ")) \(t.size)"]
+        if t.filter != nil { parts.append("with look") }
+        parts.append(clips.isEmpty ? "no clips" : "clips: \(clips)\(t.clipTitle ? "" : " (no title)")")
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -1383,14 +1464,135 @@ struct CassetteStudioView: View {
         }
         if busy == .load { busy = nil }
         await loadMotion()
+        await loadThemeState()
     }
 
-    /// Whether the current cover can move, and the owner's existing clips.
-    /// Best-effort: a failed read only hides the row until the next render.
+    /// Whether the current cover can move. Best-effort: a failed read only
+    /// hides the row until the next render.
     private func loadMotion() async {
         guard let availability = try? await MixbaseAPI.shared.cassetteMotionAvailability(projectId: projectId) else { return }
         canMove = availability.available
-        clips = availability.clips ?? []
+    }
+
+    // MARK: Theme
+
+    private func loadThemeState() async {
+        do {
+            let loaded = try await MixbaseAPI.shared.loadTheme()
+            theme = loaded
+            if let loaded {
+                themeLettering = loaded.lettering
+                themeFormats = Set(loaded.formats)
+            }
+        } catch {
+            // No theme row is not an error; a failed read just shows the
+            // "save a theme" state until the next open.
+        }
+        themeLoaded = true
+    }
+
+    private func saveTheme() {
+        guard busy == nil else { return }
+        guard let subject = subjectPath else {
+            themeError = "Pick the cassette your theme uses first."
+            return
+        }
+        let chosenPlacement = placement
+        let formats = Self.motionFormats.map { $0.id }.filter { themeFormats.contains($0) }
+        busy = .theme
+        themeError = nil
+        themeNote = nil
+        Task {
+            do {
+                theme = try await MixbaseAPI.shared.saveTheme(
+                    subject: subject,
+                    placement: chosenPlacement,
+                    lettering: themeLettering,
+                    align: typedAlign,
+                    color: color,
+                    position: position,
+                    size: size,
+                    formats: formats,
+                    clipTitle: motionWithTitle,
+                    lookFromProject: projectId
+                )
+                themeNote = "Theme saved. Every song you make in it will share this cassette, framing, handwriting treatment and look, in a scene of its own."
+            } catch {
+                themeError = error.localizedDescription
+            }
+            busy = nil
+        }
+    }
+
+    private func forgetTheme() {
+        guard busy == nil else { return }
+        busy = .theme
+        themeError = nil
+        Task {
+            do {
+                try await MixbaseAPI.shared.deleteTheme()
+                theme = nil
+                themeNote = nil
+            } catch {
+                themeError = error.localizedDescription
+            }
+            busy = nil
+        }
+    }
+
+    /// One tap: this song in the theme. The server letters the title, builds
+    /// the cover in a scene and adds the look; the theme's clips are then
+    /// rendered through the same route "Make it move" uses, and pinned.
+    private func applyTheme() {
+        guard busy == nil, theme != nil else { return }
+        let chosenScene = (scene == "random" || scene == "custom" || scene == "photo") ? "random" : scene
+        busy = .theme
+        themeError = nil
+        themeNote = nil
+        lookNote = nil
+        themeStep = "Lettering the title and building the scene (~40s)…"
+        Task {
+            do {
+                let result = try await MixbaseAPI.shared.applyTheme(projectId: projectId, scene: chosenScene)
+                onRendered(result.artworkUrl, result.finalizedArtworkUrl)
+                coverUrl = result.finalizedArtworkUrl ?? result.artworkUrl
+                if let file = result.lettering {
+                    lettering.insert(file, at: 0)
+                    letteringPath = file.path
+                    useLettering = true
+                }
+                lastSceneLabel = result.sceneLabel
+                hasRendered = true
+                canMove = true
+                motionUrl = nil
+                motionError = nil
+                savedMotion = false
+                if let lookError = result.lookError {
+                    lookNote = lookError
+                }
+                var made: [String] = []
+                for format in result.formats {
+                    let label = Self.motionFormats.first { $0.id == format }?.label ?? format
+                    themeStep = "Rendering the \(label) clip\(format == "youtube" ? " (~1 min)" : "")…"
+                    let clip = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format, withTitle: result.clipTitle)
+                    motionUrl = clip.videoUrl
+                    motionUrlFormat = format
+                    themeStep = "Pinning the \(label) clip…"
+                    try await MixbaseAPI.shared.pinVisualizer(projectId: projectId, videoUrl: clip.videoUrl, wide: clip.wide)
+                    onVisualizerPinned?(clip.videoUrl, clip.wide)
+                    made.append(label)
+                }
+                let sceneName = result.sceneLabel ?? "a new scene"
+                themeNote = made.isEmpty
+                    ? "Done: cover in \(sceneName)."
+                    : "Done: cover in \(sceneName), and \(made.joined(separator: " + ")) pinned as this song's visualizer\(made.count > 1 ? "s" : "")."
+            } catch {
+                themeError = error.localizedDescription
+            }
+            themeStep = nil
+            busy = nil
+            await loadLook()
+        }
     }
 
     // MARK: Type it / teach it
@@ -1486,27 +1688,6 @@ struct CassetteStudioView: View {
         } catch {
             teachError = "Could not remove that letter."
         }
-    }
-
-    // MARK: Pinning
-
-    /// Pin a clip as this song's visualizer ("project") or every song's ("all").
-    private func pin(_ clip: MixbaseAPI.CassetteClip, scope: String) async {
-        guard busy == nil else { return }
-        busy = .pinning
-        motionError = nil
-        pinNote = nil
-        do {
-            let result = try await MixbaseAPI.shared.pinCassetteClip(clipId: clip.id, scope: scope, projectId: projectId)
-            onVisualizerPinned?(result.videoUrl, clip.wide)
-            let slot = result.slot == "wide" ? "wide" : "vertical"
-            pinNote = scope == "all"
-                ? "Pinned as the \(slot) visualizer on \(result.pinned) song\(result.pinned == 1 ? "" : "s")."
-                : "Pinned as this song's \(slot) visualizer."
-        } catch {
-            motionError = error.localizedDescription
-        }
-        busy = nil
     }
 
     /// Section 4's presets, sliders and the look on the cover now. Called on
@@ -1662,9 +1843,7 @@ struct CassetteStudioView: View {
                 // The cover changed, so a moving cover made from the old one
                 // no longer matches it.
                 motionUrl = nil
-                lastClip = nil
                 motionError = nil
-                pinNote = nil
                 savedMotion = false
                 await applyRememberedLook()
             } catch {
@@ -1705,7 +1884,6 @@ struct CassetteStudioView: View {
         }
         // A moving cover made before the look no longer matches the cover.
         motionUrl = nil
-        lastClip = nil
         motionError = nil
         savedMotion = false
     }
@@ -1717,7 +1895,6 @@ struct CassetteStudioView: View {
         let withTitle = motionWithTitle
         busy = .motion
         motionError = nil
-        pinNote = nil
         savedMotion = false
 
         Task {
@@ -1725,8 +1902,6 @@ struct CassetteStudioView: View {
                 let clip = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format, withTitle: withTitle)
                 motionUrl = clip.videoUrl
                 motionUrlFormat = format
-                lastClip = clip
-                clips.insert(clip, at: 0)
                 do {
                     // Landscape (YouTube) output pins as the 16:9 visualizer,
                     // everything else as the vertical one.

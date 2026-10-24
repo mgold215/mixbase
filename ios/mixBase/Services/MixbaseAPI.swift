@@ -1057,10 +1057,9 @@ final class MixbaseAPI {
 
     // MARK: - Moving cover (owner-only; no AI)
 
-    /// A moving cover the owner rendered, on any song. `wide` clips
-    /// (YouTube) pin into the 16:9 slot, the rest into the vertical one;
-    /// `hasTitle` is false for a "cassette playing" loop rendered without the
-    /// handwritten title — the one that fits every song.
+    /// A moving cover just rendered. `wide` clips (YouTube) pin into the
+    /// 16:9 slot, the rest into the vertical one; `hasTitle` is false for a
+    /// loop rendered without the handwritten title.
     struct CassetteClip: Decodable, Identifiable, Equatable {
         let id: String
         let videoUrl: String
@@ -1086,13 +1085,10 @@ final class MixbaseAPI {
     struct MotionAvailability: Decodable {
         let available: Bool
         let reason: String?
-        /// Every moving cover the owner has, newest first (absent on older servers).
-        let clips: [CassetteClip]?
     }
 
     /// Whether this project's current cover was made in Cassette Studio with
-    /// its layers saved (only those covers can move), plus the owner's
-    /// existing clips.
+    /// its layers saved (only those covers can move).
     func cassetteMotionAvailability(projectId: UUID) async throws -> MotionAvailability {
         let data = try await requestData(
             path: "/api/cassette-studio/motion?project_id=\(projectId.postgresString)",
@@ -1126,28 +1122,122 @@ final class MixbaseAPI {
         )
     }
 
-    struct ClipPinResult: Decodable {
-        let slot: String
-        let pinned: Int
-        let videoUrl: String
+    // MARK: - Theme (owner-only)
+    // The one recipe every release is rendered in — same cassette, framing,
+    // handwriting treatment, look and clips, a new scene each time
+    // (src/lib/cassette-theme.ts; the server stores and applies it).
+
+    struct StudioTheme: Decodable {
+        let subject: String
+        let placeX: Double?
+        let placeY: Double?
+        let placeScale: Double?
+        /// "title" | "artist-title" | "existing" | "none"
+        let lettering: String
+        let align: String
+        let color: String
+        let position: String
+        let size: String
+        let filter: FilterSettings?
+        let formats: [String]
+        let clipTitle: Bool
+        let savedAt: String?
 
         enum CodingKeys: String, CodingKey {
-            case slot
-            case pinned
-            case videoUrl = "video_url"
+            case subject
+            case placeX = "place_x"
+            case placeY = "place_y"
+            case placeScale = "place_scale"
+            case lettering
+            case align
+            case color
+            case position
+            case size
+            case filter
+            case formats
+            case clipTitle = "clip_title"
+            case savedAt = "saved_at"
         }
     }
 
-    /// Pin a clip as a song's visualizer (`scope` "project") or as EVERY
-    /// song's (`scope` "all"). The server picks the slot from the clip's
-    /// format and leaves the other slot alone.
-    func pinCassetteClip(clipId: String, scope: String, projectId: UUID) async throws -> ClipPinResult {
+    /// The saved theme, or nil when none has been saved.
+    func loadTheme() async throws -> StudioTheme? {
+        struct Response: Decodable { let theme: StudioTheme? }
+        let data = try await requestData(path: "/api/cassette-studio/theme", method: "GET")
+        return try decoder.decode(Response.self, from: data).theme
+    }
+
+    /// Save (replace) the theme. The look is taken from `lookFromProject`'s
+    /// current cover server-side; nil placement fields keep the default framing.
+    func saveTheme(
+        subject: String,
+        placement: CassettePlacement,
+        lettering: String,
+        align: String,
+        color: String,
+        position: String,
+        size: String,
+        formats: [String],
+        clipTitle: Bool,
+        lookFromProject projectId: UUID
+    ) async throws -> StudioTheme {
+        struct Response: Decodable { let theme: StudioTheme }
+        var body: [String: Any] = [
+            "subject": subject,
+            "lettering": lettering,
+            "align": align,
+            "color": color,
+            "position": position,
+            "size": size,
+            "formats": formats,
+            "clip_title": clipTitle,
+            "project_id": projectId.postgresString,
+        ]
+        if let x = placement.x { body["place_x"] = x }
+        if let y = placement.y { body["place_y"] = y }
+        if let scale = placement.scale { body["place_scale"] = scale }
+        let data = try await requestData(path: "/api/cassette-studio/theme", method: "POST", body: body)
+        return try decoder.decode(Response.self, from: data).theme
+    }
+
+    func deleteTheme() async throws {
+        _ = try await requestData(path: "/api/cassette-studio/theme", method: "DELETE")
+    }
+
+    /// What one tap in the theme produced for a song: the cover (applied
+    /// server-side), the lettering it was given, and which clips the theme
+    /// says to render next (through renderCassetteMotion) and pin.
+    struct ThemeApplyResult: Decodable {
+        let artworkUrl: String
+        let finalizedArtworkUrl: String?
+        let sceneLabel: String?
+        let lettering: StudioFile?
+        let formats: [String]
+        let clipTitle: Bool
+        let lookApplied: Bool
+        let lookError: String?
+
+        enum CodingKeys: String, CodingKey {
+            case artworkUrl = "artwork_url"
+            case finalizedArtworkUrl = "finalized_artwork_url"
+            case sceneLabel = "scene_label"
+            case lettering
+            case formats
+            case clipTitle = "clip_title"
+            case lookApplied = "look_applied"
+            case lookError = "look_error"
+        }
+    }
+
+    /// Render this song in the theme: lettering + cover + look, in `scene`
+    /// (a preset id, or "random" for a fresh one).
+    func applyTheme(projectId: UUID, scene: String) async throws -> ThemeApplyResult {
         let data = try await requestData(
-            path: "/api/cassette-studio/motion/pin",
+            path: "/api/cassette-studio/theme/apply",
             method: "POST",
-            body: ["clip_id": clipId, "scope": scope, "project_id": projectId.postgresString]
+            body: ["project_id": projectId.postgresString, "scene": scene]
         )
-        return try decoder.decode(ClipPinResult.self, from: data)
+        return try decoder.decode(ThemeApplyResult.self, from: data)
     }
 
     // MARK: - Instrumental slot
