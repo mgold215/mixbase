@@ -17,7 +17,7 @@ import sharp from 'sharp'
 import { extractHandwriting } from '../src/lib/handwriting.ts'
 import {
   COVER, FILL_SIZE, applyLettering, buildFillRequest, composeCover, composeLayers, finishCover, flattenLayers, isOwnStudioKey,
-  placeSubject, seeThrough, studioPrefix, trimSubject,
+  parsePlacement, placeSubject, seeThrough, studioPrefix, trimSubject,
   tintLettering, resolveLetteringColor, letteringPlacement, motionLayerFiles,
   plateKey, layerKey, titleKey, parseStudioMotionKey, cassetteCoverStamp, finalizedCoverStamp,
 } from '../src/lib/cassette-studio.ts'
@@ -74,6 +74,43 @@ console.log('handwriting: lifts the ink, drops the dust')
   check('a blank page is refused, not returned as empty lettering', threw)
 }
 
+console.log('\nhandwriting: repairs holes and breaks, keeps counters open')
+{
+  // A fat marker 'm' (70px strokes — wider than a paper-map cell, the case
+  // that used to hollow out thick letters), glare holes punched through its
+  // strokes, an 'o' whose counter must stay open, a stroke that fades to a
+  // hairline where the pen lifted, an i with its dot, and dust far away.
+  const page = await svg(1600, 900, `
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eceef0"/><stop offset="1" stop-color="#b0b4b8"/></linearGradient></defs>
+    <rect width="1600" height="900" fill="url(#g)"/>
+    <path d="M150 650 L150 350 M150 380 Q230 300 300 380 L300 650 M300 380 Q380 300 450 380 L450 650" stroke="#1a1a1a" stroke-width="70" fill="none" stroke-linecap="round"/>
+    <circle cx="150" cy="500" r="16" fill="#d8dadc"/>
+    <circle cx="300" cy="560" r="14" fill="#d8dadc"/>
+    <rect x="430" y="440" width="30" height="22" fill="#d8dadc"/>
+    <circle cx="650" cy="520" r="110" stroke="#1a1a1a" stroke-width="60" fill="none"/>
+    <path d="M850 650 L950 350" stroke="#1a1a1a" stroke-width="40" stroke-linecap="round"/>
+    <path d="M950 350 L1050 650" stroke="#1a1a1a" stroke-width="40" stroke-linecap="round"/>
+    <path d="M900 500 L1000 500" stroke="#8a8c8e" stroke-width="6"/>
+    <circle cx="1200" cy="320" r="24" fill="#1a1a1a"/>
+    <path d="M1200 400 L1200 650" stroke="#1a1a1a" stroke-width="50" stroke-linecap="round"/>
+    <circle cx="60" cy="860" r="3" fill="#333"/><circle cx="1500" cy="80" r="3" fill="#333"/><circle cx="1400" cy="850" r="2" fill="#222"/>
+  `).jpeg({ quality: 88 }).toBuffer()
+  const l = await extractHandwriting(page)
+  const r = await rawOf(l.png)
+  // The crop's first ink is the m's left edge (x 115) and the i-dot's top (y 296).
+  let left = -1, top = -1
+  for (let y = 0; y < r.info.height && top < 0; y++) for (let x = 0; x < r.info.width; x++) if (px(r, x, y)[3] > 128) { top = y; break }
+  for (let x = 0; x < r.info.width && left < 0; x++) for (let y = 0; y < r.info.height; y++) if (px(r, x, y)[3] > 128) { left = x; break }
+  const at = (X, Y) => px(r, X - (115 - left), Y - (296 - top))[3]
+  check('stroke width measured from the ink (≈50–70px)', l.strokeWidth > 40 && l.strokeWidth < 80, String(l.strokeWidth))
+  check('glare holes inside strokes are filled', at(150, 500) > 240 && at(300, 560) > 240 && at(445, 451) > 240, [at(150, 500), at(300, 560), at(445, 451)].join(','))
+  check('the inside of a fat letter is solid (paper map not poisoned)', at(150, 450) > 240 && at(300, 450) > 240 && at(225, 340) > 240)
+  check("the paper between the m's legs stays empty", at(225, 560) === 0 && at(375, 600) === 0, [at(225, 560), at(375, 600)].join(','))
+  check("the o's counter stays open", at(650, 520) === 0, String(at(650, 520)))
+  check('a stroke that fades to a hairline is kept whole', at(950, 500) > 200, String(at(950, 500)))
+  check('i-dot kept', at(1200, 320) > 240)
+}
+
 // ── See-through ─────────────────────────────────────────────────────────────
 console.log('\nsee-through: clear shell turns clear, label stays solid')
 // A face-on "cassette" 640×408 (aspect 1.57) on a light backdrop: the frame
@@ -122,6 +159,22 @@ check('cassette ~40% of the width', box.width > COVER * 0.36 && box.width < COVE
 check('stands ~70% down the frame', Math.abs((box.top + box.height) / COVER - 0.7) < 0.03)
 check('aspect preserved', Math.abs(box.width / box.height - CW / CH) < 0.02)
 check('same seed → same placement', JSON.stringify(placeSubject(subj.width, subj.height, 42)) === JSON.stringify(box))
+{
+  // The artist's own placement: centre, surface line and width as fractions.
+  const b = placeSubject(subj.width, subj.height, 42, { x: 0.3, y: 0.88, scale: 0.4 })
+  check('placed: width follows scale', Math.abs(b.width / COVER - 0.4) < 0.005, String(b.width))
+  check('placed: centre follows x', Math.abs((b.left + b.width / 2) / COVER - 0.3) < 0.005, String(b.left + b.width / 2))
+  check('placed: base follows y', Math.abs((b.top + b.height) / COVER - 0.88) < 0.005)
+  const wide = placeSubject(subj.width, subj.height, 42, { x: 0.3, scale: 0.6 })
+  check('placed: a wide cassette asked for off-centre is kept in frame', wide.left >= COVER * 0.02 - 1 && Math.abs(wide.width / COVER - 0.6) < 0.005, JSON.stringify(wide))
+  const edge = placeSubject(subj.width, subj.height, 42, { x: 0.15, y: 0.3, scale: 0.8 })
+  check('placed: a cassette pushed to the edge stays inside the cover', edge.left >= 0 && edge.top >= 0 && edge.left + edge.width <= COVER && edge.top + edge.height <= COVER, JSON.stringify(edge))
+  const partial = placeSubject(subj.width, subj.height, 42, { scale: 0.5 })
+  check('placed: a field left out keeps its default (with jitter)', Math.abs(partial.width / COVER - 0.5) < 0.005 && Math.abs((partial.top + partial.height) / COVER - 0.7) < 0.03)
+  const parsed = parsePlacement('0.3', '2', 'junk')
+  check('parsePlacement clamps and ignores junk', parsed.x === 0.3 && parsed.y === 0.97 && parsed.scale === undefined, JSON.stringify(parsed))
+  check('parsePlacement: nothing given → defaults', Object.keys(parsePlacement('', undefined, null)).length === 0)
+}
 {
   const { image, mask } = await buildFillRequest(subj.png, box)
   const im = await sharp(image).metadata()

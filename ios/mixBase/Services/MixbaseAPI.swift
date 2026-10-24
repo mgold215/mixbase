@@ -683,6 +683,94 @@ final class MixbaseAPI {
         return try decoder.decode(Response.self, from: data).lettering
     }
 
+    /// Set a typed title in the artist's own handwriting — laid out from the
+    /// letters the glyph bank has learned (no font, no AI) and saved as this
+    /// project's lettering, exactly like a photographed one. `align` is
+    /// "left", "center" or "right". A letter the bank has no sample of is
+    /// refused by the server with the list of missing letters (`missing`).
+    func typeLettering(projectId: UUID, text: String, align: String) async throws -> StudioFile {
+        struct Response: Decodable { let lettering: StudioFile }
+        let data = try await requestData(
+            path: "/api/cassette-studio/lettering",
+            method: "POST",
+            body: ["project_id": projectId.postgresString, "text": text, "align": align]
+        )
+        return try decoder.decode(Response.self, from: data).lettering
+    }
+
+    // MARK: - Handwriting glyph bank (owner-only)
+    // One PNG per letter the artist wrote, labelled from the text they typed
+    // with the photo (studio/<userId>/glyph-…png; the server owns the key).
+
+    struct GlyphFile: Decodable, Identifiable, Equatable {
+        let path: String
+        let url: String
+        let char: String
+        let unit: Int
+        let base: Int
+        let createdAt: String?
+
+        var id: String { path }
+    }
+
+    /// The bank: every sample, how many the bank holds per teachable
+    /// character, and the characters that can be taught (server-defined).
+    struct GlyphBank: Decodable {
+        let glyphs: [GlyphFile]
+        let counts: [String: Int]
+        let chars: String
+    }
+
+    func listGlyphs() async throws -> GlyphBank {
+        let data = try await requestData(path: "/api/cassette-studio/glyphs", method: "GET")
+        return try decoder.decode(GlyphBank.self, from: data)
+    }
+
+    struct GlyphTeachResult: Decodable {
+        let added: [GlyphFile]
+        let counts: [String: Int]
+    }
+
+    /// Teach from a photo of separated letters and the text it says (one
+    /// line per line of writing). Re-encoded as a ≤2400px JPEG here.
+    func teachGlyphs(imageData: Data, text: String) async throws -> GlyphTeachResult {
+        let jpeg = try Self.uploadableJPEG(imageData, maxEdge: 2400)
+        let data = try await requestMultipart(
+            path: "/api/cassette-studio/glyphs",
+            fields: [MultipartField(name: "text", value: text)],
+            files: [MultipartFile(name: "photo", filename: "letters.jpg", data: jpeg)]
+        )
+        return try decoder.decode(GlyphTeachResult.self, from: data)
+    }
+
+    /// Teach from a lettering already in the studio (a `StudioFile.path`) and
+    /// the text it says — nothing is uploaded.
+    func teachGlyphs(letteringPath: String, text: String) async throws -> GlyphTeachResult {
+        let data = try await requestData(
+            path: "/api/cassette-studio/glyphs",
+            method: "POST",
+            body: ["lettering": letteringPath, "text": text]
+        )
+        return try decoder.decode(GlyphTeachResult.self, from: data)
+    }
+
+    /// Forget every sample of one character.
+    func forgetGlyphs(char: String) async throws {
+        let encoded = char.addingPercentEncoding(withAllowedCharacters: Self.queryValueAllowed) ?? char
+        _ = try await requestData(path: "/api/cassette-studio/glyphs?char=\(encoded)", method: "DELETE")
+    }
+
+    /// Where the cassette goes on the cover, as fractions of it: `x` its
+    /// centre across, `y` the surface line it stands on down, `scale` its
+    /// width. nil leaves that field to the server's own framing.
+    struct CassettePlacement: Equatable {
+        var x: Double?
+        var y: Double?
+        var scale: Double?
+
+        static let auto = CassettePlacement()
+    }
+
     /// Build a cover. scene is a preset id, "random", "custom" (with
     /// `setting`), "photo" (with `background` image data) or "keep" (re-letter
     /// the current cover). The server applies the result to the project.
@@ -696,12 +784,16 @@ final class MixbaseAPI {
         color: String,
         position: String,
         size: String,
-        reflection: Bool
+        reflection: Bool,
+        placement: CassettePlacement = .auto
     ) async throws -> CassetteRenderResult {
         var fields: [MultipartField] = [
             MultipartField(name: "project_id", value: projectId.uuidString.lowercased()),
             MultipartField(name: "scene", value: scene),
         ]
+        if let x = placement.x { fields.append(MultipartField(name: "place_x", value: String(x))) }
+        if let y = placement.y { fields.append(MultipartField(name: "place_y", value: String(y))) }
+        if let scale = placement.scale { fields.append(MultipartField(name: "place_scale", value: String(scale))) }
         if let subject, !subject.isEmpty {
             fields.append(MultipartField(name: "subject", value: subject))
         }
@@ -965,34 +1057,97 @@ final class MixbaseAPI {
 
     // MARK: - Moving cover (owner-only; no AI)
 
+    /// A moving cover the owner rendered, on any song. `wide` clips
+    /// (YouTube) pin into the 16:9 slot, the rest into the vertical one;
+    /// `hasTitle` is false for a "cassette playing" loop rendered without the
+    /// handwritten title — the one that fits every song.
+    struct CassetteClip: Decodable, Identifiable, Equatable {
+        let id: String
+        let videoUrl: String
+        let format: String
+        let wide: Bool
+        let hasTitle: Bool
+        let title: String?
+        let projectId: String?
+        let createdAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case videoUrl = "video_url"
+            case format
+            case wide
+            case hasTitle = "has_title"
+            case title
+            case projectId = "project_id"
+            case createdAt = "created_at"
+        }
+    }
+
     struct MotionAvailability: Decodable {
         let available: Bool
         let reason: String?
+        /// Every moving cover the owner has, newest first (absent on older servers).
+        let clips: [CassetteClip]?
     }
 
     /// Whether this project's current cover was made in Cassette Studio with
-    /// its layers saved (only those covers can move).
+    /// its layers saved (only those covers can move), plus the owner's
+    /// existing clips.
     func cassetteMotionAvailability(projectId: UUID) async throws -> MotionAvailability {
         let data = try await requestData(
-            path: "/api/cassette-studio/motion?project_id=\(projectId.uuidString.lowercased())",
+            path: "/api/cassette-studio/motion?project_id=\(projectId.postgresString)",
             method: "GET"
         )
         return try decoder.decode(MotionAvailability.self, from: data)
     }
 
     /// Render the moving cover in one of the free formats (canvas, square,
-    /// youtube, story). Saved to the visualizer library server-side; returns
-    /// the stored video URL.
-    func renderCassetteMotion(projectId: UUID, format: String) async throws -> String {
+    /// youtube, story), with or without the handwritten title. Saved to the
+    /// visualizer library server-side; returns the stored clip.
+    func renderCassetteMotion(projectId: UUID, format: String, withTitle: Bool = true) async throws -> CassetteClip {
         let body: [String: Any] = [
-            "project_id": projectId.uuidString.lowercased(),
+            "project_id": projectId.postgresString,
             "format": format,
+            "title": withTitle,
         ]
         let json = try await requestJSON(path: "/api/cassette-studio/motion", method: "POST", body: body)
-        guard let url = json["video_url"] as? String, !url.isEmpty else {
+        guard let url = json["video_url"] as? String, !url.isEmpty, let id = json["id"] as? String else {
             throw MixbaseAPIError.invalidResponse("No video URL in response")
         }
-        return url
+        return CassetteClip(
+            id: id,
+            videoUrl: url,
+            format: format,
+            wide: format == "youtube",
+            hasTitle: (json["has_title"] as? Bool) ?? withTitle,
+            title: nil,
+            projectId: projectId.postgresString,
+            createdAt: nil
+        )
+    }
+
+    struct ClipPinResult: Decodable {
+        let slot: String
+        let pinned: Int
+        let videoUrl: String
+
+        enum CodingKeys: String, CodingKey {
+            case slot
+            case pinned
+            case videoUrl = "video_url"
+        }
+    }
+
+    /// Pin a clip as a song's visualizer (`scope` "project") or as EVERY
+    /// song's (`scope` "all"). The server picks the slot from the clip's
+    /// format and leaves the other slot alone.
+    func pinCassetteClip(clipId: String, scope: String, projectId: UUID) async throws -> ClipPinResult {
+        let data = try await requestData(
+            path: "/api/cassette-studio/motion/pin",
+            method: "POST",
+            body: ["clip_id": clipId, "scope": scope, "project_id": projectId.postgresString]
+        )
+        return try decoder.decode(ClipPinResult.self, from: data)
     }
 
     // MARK: - Instrumental slot

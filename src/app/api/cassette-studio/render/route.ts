@@ -8,7 +8,7 @@ import {
   downloadStudio, fillScene, isOwnStudioKey, readPhoto, removeStudio, studioPrefix, uploadStudio, StudioUnavailable,
 } from '@/lib/cassette-server'
 import {
-  applyLettering, buildFillRequest, composeLayers, finishCover, layerKey, motionLayerFiles, placeSubject, plateKey,
+  applyLettering, buildFillRequest, composeLayers, finishCover, layerKey, motionLayerFiles, parsePlacement, placeSubject, plateKey,
   tintLettering, titleKey, LETTERING_POSITIONS, LETTERING_SIZES, type CoverLayers, type LetteringPosition, type LetteringSize,
 } from '@/lib/cassette-studio'
 import { CASSETTE_SCENES, isSceneId, MAX_CUSTOM_SETTING, scenePrompt } from '@/lib/cassette-scenes'
@@ -29,6 +29,9 @@ export const maxDuration = 180
 //   position     one of LETTERING_POSITIONS
 //   size         small | medium | large
 //   reflection   '1' for a glossy surface (photo mode)
+//   place_x      where the cassette's centre sits across the cover, 0.15–0.85  ┐ optional —
+//   place_y      the surface line it stands on, 0.3–0.97 down the cover        │ any left out
+//   place_scale  its width as a fraction of the cover, 0.2–0.8                 ┘ falls to the default
 //
 // Writes the clean composite as the project's artwork_url and, when lettering
 // is given, the lettered version as finalized_artwork_url — the same
@@ -85,6 +88,7 @@ export async function POST(request: NextRequest) {
   const position: LetteringPosition = (LETTERING_POSITIONS as readonly string[]).includes(str('position')) ? str('position') as LetteringPosition : 'bottom-left'
   const size: LetteringSize = (LETTERING_SIZES as readonly string[]).includes(str('size')) ? str('size') as LetteringSize : 'medium'
   const color = /^#[0-9a-f]{6}$/i.test(str('color')) ? str('color') : 'auto'
+  const placement = parsePlacement(str('place_x'), str('place_y'), str('place_scale'))
 
   let background: Buffer | null = null
   if (scene === 'photo') {
@@ -124,7 +128,7 @@ export async function POST(request: NextRequest) {
     } else {
       const subject = await downloadStudio(subjectPath)
       const meta = await sharp(subject).metadata()
-      const box = placeSubject(meta.width ?? 1, meta.height ?? 1, seed)
+      const box = placeSubject(meta.width ?? 1, meta.height ?? 1, seed, placement)
 
       if (isAiScene) {
         const gate = await checkAndIncrementUsage(userId, 'artwork')

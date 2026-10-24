@@ -5,7 +5,7 @@ import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { freeRenderLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { ARTWORK_BUCKET, storagePathFromUrl } from '@/lib/project-assets'
-import { downloadStudio, listStudio } from '@/lib/cassette-server'
+import { downloadStudio, listCassetteClips, listStudio } from '@/lib/cassette-server'
 import {
   cassetteCoverStamp, parseFinalizedCover, parseStudioMotionKey, type LetteringPosition, type LetteringSize,
 } from '@/lib/cassette-studio'
@@ -107,8 +107,11 @@ async function findMotionSources(userId: string, project: ProjectRow): Promise<M
 }
 
 // GET /api/cassette-studio/motion?project_id=<uuid>
-// → { available: boolean, reason: string | null } — whether the project's
-//   current cover can be made to move, and if not, what to tell the artist.
+// → { available: boolean, reason: string | null, clips: CassetteClip[] }
+//   whether the project's current cover can be made to move (and if not, what
+//   to tell the artist), plus every moving cover the owner has rendered, on any
+//   song, newest first — any of them can be pinned here or on every song
+//   through /api/cassette-studio/motion/pin without rendering again.
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -120,20 +123,23 @@ export async function GET(request: NextRequest) {
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   try {
-    const src = await findMotionSources(userId, project)
-    return NextResponse.json({ available: src.ok, reason: src.ok ? null : src.reason })
+    const [src, clips] = await Promise.all([findMotionSources(userId, project), listCassetteClips(userId)])
+    return NextResponse.json({ available: src.ok, reason: src.ok ? null : src.reason, clips })
   } catch (err) {
     console.error('[cassette-studio/motion] lookup failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: 'Could not check this cover. Please try again.' }, { status: 500 })
   }
 }
 
-// POST /api/cassette-studio/motion   JSON { project_id, format }
+// POST /api/cassette-studio/motion   JSON { project_id, format, title? }
 //   format: 'canvas' | 'square' | 'youtube' | 'story' (FREE_FORMATS — same
 //   sizes, lengths and 30 fps as the free generator)
-// → { id, video_url, saved: true, format } — saved to the visualizer library
-//   as a free (no-AI) clip. Pin it like any clip: landscape (youtube) into
-//   visualizer_wide_url, everything else into visualizer_url.
+//   title:  false renders the loop WITHOUT the handwritten title — a plain
+//           "cassette playing" clip that fits every song (default true)
+// → { id, video_url, saved: true, format, has_title } — saved to the
+//   visualizer library as a free (no-AI) clip. Pin it like any clip: landscape
+//   (youtube) into visualizer_wide_url, everything else into visualizer_url —
+//   on this song or all of them via /api/cassette-studio/motion/pin.
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -153,6 +159,7 @@ export async function POST(request: NextRequest) {
   if (!projectId) return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   const format = body.format
   if (!isFreeFormat(format)) return NextResponse.json({ error: 'Unknown format' }, { status: 400 })
+  const withTitle = body.title !== false
 
   const project = await loadProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
@@ -188,7 +195,7 @@ export async function POST(request: NextRequest) {
       plateJpeg,
       assets,
       box: { left: src.left, top: src.top, width: info.width, height: info.height },
-      title: src.title && titlePng ? { png: titlePng, position: src.title.position, size: src.title.size } : null,
+      title: withTitle && src.title && titlePng ? { png: titlePng, position: src.title.position, size: src.title.size } : null,
       format,
     }
   } catch (err) {
@@ -219,11 +226,11 @@ export async function POST(request: NextRequest) {
     bytes,
     contentType: 'video/mp4',
     kind: 'free',
-    title: `Moving cover · ${FREE_FORMATS[format].label}`,
-    sourceImageUrl: project.finalized_artwork_url ?? project.artwork_url,
-    settings: { source: 'cassette-motion', format },
+    title: `${withTitle ? 'Moving cover' : 'Cassette playing'} · ${FREE_FORMATS[format].label}`,
+    sourceImageUrl: withTitle ? (project.finalized_artwork_url ?? project.artwork_url) : project.artwork_url,
+    settings: { source: 'cassette-motion', format, title: withTitle },
   })
   if (!stored) return NextResponse.json({ error: 'Rendered fine but saving failed — try again.' }, { status: 500 })
 
-  return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, format })
+  return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, format, has_title: withTitle })
 }

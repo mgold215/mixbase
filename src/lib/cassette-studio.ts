@@ -395,19 +395,47 @@ function pushPull(rgb: Buffer, known: Float32Array, W: number, H: number): Float
 }
 
 /**
- * Where the cassette sits in the 3000px frame: centred-ish, standing on a
- * surface about 70% of the way down — the composition of a real "object on a
- * ledge" photo, with the lower-left third free for the handwriting. A little
- * seeded jitter so a batch doesn't look stamped from one template.
+ * Where the artist wants the cassette, as fractions of the cover: `x` its
+ * centre across the frame, `y` the surface line it stands on down the frame,
+ * `scale` its width. Any of the three may be left to the default — centred,
+ * standing about 70% of the way down, 40% wide: the composition of a real
+ * "object on a ledge" photo, with the lower-left third free for the
+ * handwriting — which gets a little seeded jitter so a batch doesn't look
+ * stamped from one template. parsePlacement pins the ranges.
  */
-export function placeSubject(sw: number, sh: number, seed: number): Box {
+export type Placement = { x?: number; y?: number; scale?: number }
+
+export const PLACEMENT_RANGE = { x: [0.15, 0.85], y: [0.3, 0.97], scale: [0.2, 0.8] } as const
+
+/** Read a placement from client fields (strings or numbers); out-of-range values are clamped, junk is left to the default. */
+export function parsePlacement(x: unknown, y: unknown, scale: unknown): Placement {
+  const read = (v: unknown, [lo, hi]: readonly [number, number]): number | undefined => {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
+    return Number.isFinite(n) ? clamp(n, lo, hi) : undefined
+  }
+  const out: Placement = {}
+  const px = read(x, PLACEMENT_RANGE.x), py = read(y, PLACEMENT_RANGE.y), ps = read(scale, PLACEMENT_RANGE.scale)
+  if (px !== undefined) out.x = px
+  if (py !== undefined) out.y = py
+  if (ps !== undefined) out.scale = ps
+  return out
+}
+
+/** The cassette's box in the 3000px frame (see Placement). Always fully inside the cover. */
+export function placeSubject(sw: number, sh: number, seed: number, place: Placement = {}): Box {
   const r = rng(seed ^ 0x5bd1e995)
-  let width = COVER * (0.40 + (r() - 0.5) * 0.06)
+  const jitter = (v: number, spread: number) => v + (r() - 0.5) * spread
+  const scale = place.scale ?? jitter(0.40, 0.06)
+  const xc = place.x ?? jitter(0.5, 0.06)
+  const yb = place.y ?? jitter(0.70, 0.04)
+  let width = COVER * scale
   let height = width * (sh / sw)
   // Portrait subjects (a cassette stood on its end, a case) cap on height.
-  if (height > COVER * 0.5) { height = COVER * 0.5; width = height * (sw / sh) }
-  const cx = COVER * (0.5 + (r() - 0.5) * 0.06)
-  const base = COVER * (0.70 + (r() - 0.5) * 0.04)
+  const maxH = COVER * (place.scale === undefined ? 0.5 : 0.9)
+  if (height > maxH) { height = maxH; width = height * (sw / sh) }
+  const margin = COVER * 0.02
+  const cx = clamp(COVER * xc, margin + width / 2, COVER - margin - width / 2)
+  const base = clamp(COVER * yb, margin + height, COVER - margin)
   return {
     left: Math.round(cx - width / 2),
     top: Math.round(base - height),

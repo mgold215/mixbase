@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react'
-import { Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink } from 'lucide-react'
+import { Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink, Keyboard, GraduationCap, Pin } from 'lucide-react'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 import CassetteLook, {
@@ -19,6 +19,8 @@ type MixbasePhoto = { path: string; url: string; thumb_url: string; project_id: 
 type Position = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right'
 type Size = 'small' | 'medium' | 'large'
 type SceneChoice = 'random' | 'custom' | 'photo' | string
+// A moving cover the owner rendered on any song (GET /api/cassette-studio/motion → clips).
+type Clip = { id: string; video_url: string; format: MotionFormat; wide: boolean; has_title: boolean; title: string | null; project_id: string | null; created_at: string | null }
 
 // Moving cover formats — the ids and sizes of FREE_FORMATS in
 // src/lib/free-render.ts (POST /api/cassette-studio/motion validates them).
@@ -33,6 +35,18 @@ const MOTION_FORMATS: { value: MotionFormat; label: string }[] = [
 const POSITIONS: { value: Position; label: string }[] = [
   { value: 'top-left', label: '↖' }, { value: 'top-center', label: '↑' }, { value: 'top-right', label: '↗' },
   { value: 'bottom-left', label: '↙' }, { value: 'bottom-center', label: '↓' }, { value: 'bottom-right', label: '↘' },
+]
+
+// Where the cassette goes (place_x / place_y / place_scale on /render — see
+// placeSubject in src/lib/cassette-studio.ts): a 3×3 grid of centre × surface
+// line, and a width. 'auto' leaves the field to the server's own framing.
+const CASSETTE_SPOTS: { x: number; y: number; label: string }[] = [
+  { x: 0.3, y: 0.5, label: '↖' }, { x: 0.5, y: 0.5, label: '↑' }, { x: 0.7, y: 0.5, label: '↗' },
+  { x: 0.3, y: 0.7, label: '←' }, { x: 0.5, y: 0.7, label: '·' }, { x: 0.7, y: 0.7, label: '→' },
+  { x: 0.3, y: 0.88, label: '↙' }, { x: 0.5, y: 0.88, label: '↓' }, { x: 0.7, y: 0.88, label: '↘' },
+]
+const CASSETTE_SIZES: { value: number; label: string }[] = [
+  { value: 0.3, label: 'S' }, { value: 0.4, label: 'M' }, { value: 0.52, label: 'L' }, { value: 0.66, label: 'XL' },
 ]
 
 // Photos are resized IN THE BROWSER before upload: phone photos are 3–12 MB
@@ -72,13 +86,18 @@ const CHECKER = {
   backgroundPosition: '0 0,6px 6px',
 }
 
+const chip = (on: boolean) => `px-2 py-1 rounded-md text-[10px] ${on ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`
+const SPINNER = <span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
+
 type Props = {
   projectId: string
   onRendered: (artworkUrl: string, finalizedUrl: string | null) => void
+  /** A clip was pinned on THIS song (url, into the wide slot?) — mirror it on the page. */
+  onVisualizerPinned?: (url: string, wide: boolean) => void
   onClose: () => void
 }
 
-export default function CassetteStudio({ projectId, onRendered, onClose }: Props) {
+export default function CassetteStudio({ projectId, onRendered, onVisualizerPinned, onClose }: Props) {
   const [subjects, setSubjects] = useState<StudioFile[]>([])
   const [lettering, setLettering] = useState<StudioFile[]>([])
   const [subject, setSubject] = useState<string | null>(null)
@@ -92,19 +111,41 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   const [bgFile, setBgFile] = useState<Blob | null>(null)
   const [bgPreview, setBgPreview] = useState<string | null>(null)
   const [glossy, setGlossy] = useState(false)
-  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'render' | 'reletter' | 'apply-look' | 'save-look'>('load')
+  // Cassette placement: 'auto' or one of CASSETTE_SPOTS (as "x,y"); width 'auto' or a fraction.
+  const [spot, setSpot] = useState<'auto' | string>('auto')
+  const [cassetteSize, setCassetteSize] = useState<'auto' | number>('auto')
+  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'typing' | 'teaching' | 'render' | 'reletter' | 'apply-look' | 'save-look'>('load')
   const [error, setError] = useState('')
   const [lastScene, setLastScene] = useState<string | null>(null)
   const [hasRendered, setHasRendered] = useState(false)
+  // Type in my handwriting: the title to set from the glyph bank.
+  const [typedText, setTypedText] = useState('')
+  const [typedAlign, setTypedAlign] = useState<'left' | 'center' | 'right'>('center')
+  const [typeNote, setTypeNote] = useState('')
+  // Teach my handwriting: a photo (or the current lettering) + what it says,
+  // and which letters the bank already knows (GET /api/cassette-studio/glyphs).
+  const [teachOpen, setTeachOpen] = useState(false)
+  const [teachText, setTeachText] = useState('')
+  const [teachFile, setTeachFile] = useState<Blob | null>(null)
+  const [teachNote, setTeachNote] = useState('')
+  const [teachError, setTeachError] = useState('')
+  const [glyphCounts, setGlyphCounts] = useState<Record<string, number> | null>(null)
+  const [glyphChars, setGlyphChars] = useState('')
   // Moving cover (no AI): the cover just made, animated — reels turning,
   // camera drift, live grain. Reset whenever a new cover replaces it.
   const [motionFormat, setMotionFormat] = useState<MotionFormat>('canvas')
+  const [motionTitle, setMotionTitle] = useState(true)
   const [motionBusy, setMotionBusy] = useState(false)
   const [motionError, setMotionError] = useState('')
-  const [motionVideo, setMotionVideo] = useState<{ url: string; format: MotionFormat } | null>(null)
+  const [motionVideo, setMotionVideo] = useState<Clip | null>(null)
   // The project's CURRENT cover can already move (a studio cover with its
   // layers saved) — offers the row on open, not only after a new render.
   const [canMove, setCanMove] = useState(false)
+  // Every moving cover the owner has, on any song — pin one here or everywhere.
+  const [clips, setClips] = useState<Clip[]>([])
+  const [clipsOpen, setClipsOpen] = useState(false)
+  const [pinBusy, setPinBusy] = useState<string | null>(null)
+  const [pinNote, setPinNote] = useState('')
   // "From mixBase": the owner's images already in his songs, loaded on first open.
   const [photosOpen, setPhotosOpen] = useState(false)
   const [photos, setPhotos] = useState<MixbasePhoto[] | null>(null)
@@ -115,12 +156,18 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   const [lookRefresh, setLookRefresh] = useState(0)
   const [lookNote, setLookNote] = useState('')
 
-  const load = useCallback(async () => {
+  const loadMotion = useCallback(async () => {
     // Best-effort: a failed check only hides the row until the next render.
-    fetch(`/api/cassette-studio/motion?project_id=${projectId}`)
-      .then(r => (r.ok ? readJson(r) : null))
-      .then(d => setCanMove(d?.available === true))
-      .catch(() => {})
+    try {
+      const res = await fetch(`/api/cassette-studio/motion?project_id=${projectId}`)
+      const d = res.ok ? await readJson(res) : null
+      setCanMove(d?.available === true)
+      setClips(Array.isArray(d?.clips) ? (d.clips as Clip[]) : [])
+    } catch { /* leave the row as it was */ }
+  }, [projectId])
+
+  const load = useCallback(async () => {
+    void loadMotion()
     try {
       const res = await fetch(`/api/cassette-studio?project_id=${projectId}`)
       const data = await readJson(res)
@@ -136,7 +183,7 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
     } finally {
       setBusy(null)
     }
-  }, [projectId])
+  }, [projectId, loadMotion])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { if (bgPreview) URL.revokeObjectURL(bgPreview) }, [bgPreview])
@@ -195,6 +242,12 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
     }))
   }
 
+  function acceptLettering(l: StudioFile) {
+    setLettering(prev => [l, ...prev])
+    setLetterPath(l.path)
+    setUseLettering(true)
+  }
+
   async function addLettering(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -208,15 +261,112 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       const res = await fetch('/api/cassette-studio/lettering', { method: 'POST', body: form })
       const data = await readJson(res)
       if (!res.ok || !data?.lettering) throw new Error((data?.error as string) ?? 'Could not read your handwriting.')
-      const l = data.lettering as StudioFile
-      setLettering(prev => [l, ...prev])
-      setLetterPath(l.path)
-      setUseLettering(true)
+      acceptLettering(data.lettering as StudioFile)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read your handwriting.')
     } finally {
       setBusy(null)
     }
+  }
+
+  // "Type it": the title set from the letters the bank has learned — the
+  // server lays the artist's own samples out (no font, no AI) and saves the
+  // result as this song's lettering, like a photographed one.
+  async function typeLettering() {
+    if (!typedText.trim()) return
+    setBusy('typing')
+    setError('')
+    setTypeNote('')
+    try {
+      const res = await fetch('/api/cassette-studio/lettering', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, text: typedText, align: typedAlign }),
+      })
+      const data = await readJson(res)
+      if (!res.ok || !data?.lettering) {
+        const missing = Array.isArray(data?.missing) ? (data.missing as string[]) : []
+        if (missing.length) { setTeachOpen(true); void loadGlyphs() }
+        throw new Error((data?.error as string) ?? 'Could not set your title.')
+      }
+      acceptLettering(data.lettering as StudioFile)
+      setTypeNote('Set in your handwriting. Not quite right? Type it again for another take, or teach more samples of a letter.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not set your title.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const loadGlyphs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cassette-studio/glyphs')
+      const data = await readJson(res)
+      if (!res.ok || !data) throw new Error((data?.error as string) ?? 'Could not load your handwriting.')
+      setGlyphCounts((data.counts as Record<string, number>) ?? {})
+      setGlyphChars(typeof data.chars === 'string' ? data.chars : '')
+    } catch (err) {
+      setTeachError(err instanceof Error ? err.message : 'Could not load your handwriting.')
+    }
+  }, [])
+
+  function toggleTeach() {
+    const open = !teachOpen
+    setTeachOpen(open)
+    if (open && !glyphCounts) void loadGlyphs()
+  }
+
+  async function chooseTeachPhoto(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setTeachError('')
+    try {
+      setTeachFile(await downscale(file, 2400))
+    } catch (err) {
+      setTeachError(err instanceof Error ? err.message : 'Could not read that image.')
+    }
+  }
+
+  // Teach: a photo of separated letters (or the handwriting already lifted
+  // for this song) and what it says — one sample per letter joins the bank.
+  async function teach(from: 'photo' | 'lettering') {
+    if (!teachText.trim()) { setTeachError('Type what the writing says, line by line.'); return }
+    setBusy('teaching')
+    setTeachError('')
+    setTeachNote('')
+    try {
+      let init: RequestInit
+      if (from === 'photo') {
+        if (!teachFile) { setTeachError('Add a photo of your letters first.'); return }
+        const form = new FormData()
+        form.append('photo', teachFile, 'letters.jpg')
+        form.append('text', teachText)
+        init = { method: 'POST', body: form }
+      } else {
+        if (!letterPath) return
+        init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lettering: letterPath, text: teachText }) }
+      }
+      const res = await fetch('/api/cassette-studio/glyphs', init)
+      const data = await readJson(res)
+      if (!res.ok || !data) throw new Error((data?.error as string) ?? 'Could not learn from that.')
+      const added = Array.isArray(data.added) ? data.added.length : 0
+      setGlyphCounts((data.counts as Record<string, number>) ?? null)
+      setTeachNote(`Learned ${added} letter${added === 1 ? '' : 's'}. Teach the same letters again from another photo for more variety.`)
+      setTeachFile(null)
+      setTeachText('')
+    } catch (err) {
+      setTeachError(err instanceof Error ? err.message : 'Could not learn from that.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function forgetLetter(c: string) {
+    setTeachError('')
+    const res = await fetch(`/api/cassette-studio/glyphs?char=${encodeURIComponent(c)}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { setTeachError('Could not remove that letter.'); return }
+    setGlyphCounts(prev => (prev ? { ...prev, [c]: 0 } : prev))
   }
 
   async function removeFile(path: string, kind: 'subject' | 'lettering') {
@@ -263,6 +413,12 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       form.append('position', position)
       form.append('size', size)
       if (glossy) form.append('reflection', '1')
+      if (spot !== 'auto') {
+        const [x, y] = spot.split(',')
+        form.append('place_x', x)
+        form.append('place_y', y)
+      }
+      if (cassetteSize !== 'auto') form.append('place_scale', String(cassetteSize))
       const res = await fetch('/api/cassette-studio/render', { method: 'POST', body: form })
       const data = await readJson(res)
       if (!res.ok || !data?.artwork_url) throw new Error((data?.error as string) ?? 'Could not make the cover.')
@@ -314,20 +470,50 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   async function makeItMove() {
     setMotionBusy(true)
     setMotionError('')
+    setPinNote('')
     try {
       const format = motionFormat
       const res = await fetch('/api/cassette-studio/motion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, format }),
+        body: JSON.stringify({ project_id: projectId, format, title: motionTitle }),
       })
       const data = await readJson(res)
-      if (!res.ok || typeof data?.video_url !== 'string') throw new Error((data?.error as string) ?? 'Could not render the moving cover.')
-      setMotionVideo({ url: data.video_url, format })
+      if (!res.ok || typeof data?.video_url !== 'string' || typeof data?.id !== 'string') throw new Error((data?.error as string) ?? 'Could not render the moving cover.')
+      const clip: Clip = { id: data.id, video_url: data.video_url, format, wide: format === 'youtube', has_title: data.has_title !== false, title: null, project_id: projectId, created_at: new Date().toISOString() }
+      setMotionVideo(clip)
+      setClips(prev => [clip, ...prev])
     } catch (err) {
       setMotionError(err instanceof Error ? err.message : 'Network error. Try again.')
     } finally {
       setMotionBusy(false)
+    }
+  }
+
+  // Pin a clip as this song's visualizer, or as EVERY song's (the owner's
+  // "cassette playing" loop). The clip's format picks the slot server-side.
+  async function pinClip(clip: Clip, scope: 'project' | 'all') {
+    if (scope === 'all' && !window.confirm('Use this clip as the visualizer on every one of your songs? Each song keeps its other (vertical or wide) clip.')) return
+    setPinBusy(`${clip.id}:${scope}`)
+    setPinNote('')
+    setMotionError('')
+    try {
+      const res = await fetch('/api/cassette-studio/motion/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clip_id: clip.id, scope, project_id: projectId }),
+      })
+      const data = await readJson(res)
+      if (!res.ok || !data?.ok) throw new Error((data?.error as string) ?? 'Could not pin the clip.')
+      const n = typeof data.pinned === 'number' ? data.pinned : 0
+      onVisualizerPinned?.(clip.video_url, clip.wide)
+      setPinNote(scope === 'all'
+        ? `Pinned as the ${clip.wide ? 'wide' : 'vertical'} visualizer on ${n} song${n === 1 ? '' : 's'}.`
+        : `Pinned as this song's ${clip.wide ? 'wide' : 'vertical'} visualizer.`)
+    } catch (err) {
+      setMotionError(err instanceof Error ? err.message : 'Could not pin the clip.')
+    } finally {
+      setPinBusy(null)
     }
   }
 
@@ -336,6 +522,8 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
   const working = busy !== null || motionBusy
   const canRender = !!subject && !working && (scene !== 'custom' || setting.trim().length > 0) && (scene !== 'photo' || !!bgFile)
   const currentLettering = lettering.find(l => l.path === letterPath) ?? null
+  const knownLetters = glyphCounts ? Object.values(glyphCounts).filter(n => n > 0).length : 0
+  const clipLabel = (c: Clip) => `${MOTION_FORMATS.find(f => f.value === c.format)?.label ?? c.format} · ${c.has_title ? 'with title' : 'no title'}${c.project_id === projectId ? ' · this song' : ''}`
 
   return (
     <div className="space-y-4 rounded-xl border border-[#222] bg-[#0f0f0f] p-3">
@@ -364,7 +552,7 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
           ))}
           <label className={`shrink-0 w-20 h-14 rounded-lg border border-dashed border-[#333] flex flex-col items-center justify-center gap-0.5 text-[9px] text-[#777] ${working ? 'opacity-50' : 'cursor-pointer hover:text-white hover:border-[#555]'}`}>
             {busy === 'subject'
-              ? <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Cutting out…</>
+              ? <>{SPINNER}Cutting out…</>
               : <><Camera size={13} />Add photo</>}
             <input type="file" accept="image/*" onChange={addSubject} disabled={working} className="hidden" />
           </label>
@@ -385,7 +573,7 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
             {photosError
               ? <p className="text-red-400 text-[10px]">{photosError}</p>
               : !photos
-                ? <p className="flex items-center gap-1.5 text-[10px] text-[#666]"><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Loading your photos…</p>
+                ? <p className="flex items-center gap-1.5 text-[10px] text-[#666]">{SPINNER}Loading your photos…</p>
                 : photos.length === 0
                   ? <p className="text-[10px] text-[#666]">No images in your songs yet.</p>
                   : (
@@ -433,14 +621,115 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
           )}
           <label className={`${currentLettering ? 'w-20' : 'flex-1'} h-16 rounded-lg border border-dashed border-[#333] flex flex-col items-center justify-center gap-0.5 text-[9px] text-[#777] text-center px-1 ${working ? 'opacity-50' : 'cursor-pointer hover:text-white hover:border-[#555]'}`}>
             {busy === 'lettering'
-              ? <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Reading…</>
+              ? <>{SPINNER}Reading…</>
               : <><PenLine size={13} />{currentLettering ? 'Replace' : 'Add a photo of your handwriting'}</>}
             <input type="file" accept="image/*" onChange={addLettering} disabled={working} className="hidden" />
           </label>
         </div>
         {!currentLettering && busy !== 'load' && (
-          <p className="text-[10px] text-[#666] leading-snug">Write the artist name and song title with a marker on plain paper and photograph it flat. Your exact strokes are lifted off the paper, with no font and no AI.</p>
+          <p className="text-[10px] text-[#666] leading-snug">Write the artist name and song title with a marker on plain paper and photograph it flat. Your exact strokes are lifted off the paper, with no font and no AI. Holes and breaks in a stroke are mended; the letters stay yours.</p>
         )}
+
+        {/* Type it: set a title from the letters the bank has learned. */}
+        <div className="space-y-1.5 rounded-lg border border-[#222] bg-[#0a0a0a] p-2">
+          <div className="flex items-center justify-between">
+            <p className="flex items-center gap-1 text-[10px] text-[#888]"><Keyboard size={11} />Or type it in your handwriting</p>
+            <button onClick={toggleTeach} className={`flex items-center gap-1 text-[10px] ${teachOpen ? 'text-[#2dd4bf]' : 'text-[#888] hover:text-white'}`}>
+              <GraduationCap size={11} />{teachOpen ? 'Close teaching' : 'Teach it my letters'}
+            </button>
+          </div>
+          <div className="flex gap-1.5 items-start">
+            <textarea
+              value={typedText}
+              onChange={e => setTypedText(e.target.value.slice(0, 80))}
+              rows={2}
+              placeholder={'artist name\nsong title'}
+              className="flex-1 bg-[#0f0f0f] border border-[#222] rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
+            />
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-0.5">
+                {(['left', 'center', 'right'] as const).map(a => (
+                  <button key={a} onClick={() => setTypedAlign(a)} aria-label={`Align ${a}`} className={`w-6 h-5 rounded text-[10px] ${typedAlign === a ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#666]'}`}>
+                    {a === 'left' ? '⇤' : a === 'center' ? '↔' : '⇥'}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={typeLettering}
+                disabled={working || !typedText.trim()}
+                className="flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40"
+              >
+                {busy === 'typing' ? <>{SPINNER}Setting…</> : 'Set it'}
+              </button>
+            </div>
+          </div>
+          {typeNote && <p className="text-[10px] text-[#888]">{typeNote}</p>}
+          {teachOpen && (
+            <div className="space-y-2 border-t border-[#1e1e1e] pt-2">
+              <p className="text-[10px] text-[#666] leading-snug">
+                Write letters on plain paper with clear space between every letter — no joined-up writing, dots close to their i and j — in a few lines (for example your alphabet in capitals, then lower case, then digits). Photograph it flat, then type exactly what each line says. Every letter becomes a sample; teach a letter several times and your typed titles will vary the way your writing does.
+              </p>
+              <div className="flex gap-1.5 items-start">
+                <label className={`shrink-0 w-20 h-14 rounded-lg border border-dashed border-[#333] flex flex-col items-center justify-center gap-0.5 text-[9px] text-[#777] text-center px-1 ${working ? 'opacity-50' : 'cursor-pointer hover:text-white hover:border-[#555]'}`}>
+                  <Camera size={13} />{teachFile ? 'Photo ready' : 'Photo of letters'}
+                  <input type="file" accept="image/*" onChange={chooseTeachPhoto} disabled={working} className="hidden" />
+                </label>
+                <textarea
+                  value={teachText}
+                  onChange={e => setTeachText(e.target.value.slice(0, 160))}
+                  rows={3}
+                  placeholder={'What the photo says, one line per line of writing, e.g.\nABCDEFGHIJKLM\nNOPQRSTUVWXYZ'}
+                  className="flex-1 bg-[#0f0f0f] border border-[#222] rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-[#444] focus:outline-none focus:border-[#2dd4bf]/40 resize-none"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => teach('photo')}
+                  disabled={working || !teachFile || !teachText.trim()}
+                  className="flex items-center gap-1 px-2 py-1.5 text-[10px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40"
+                >
+                  {busy === 'teaching' ? <>{SPINNER}Learning…</> : <><GraduationCap size={11} />Learn from the photo</>}
+                </button>
+                {currentLettering && (
+                  <button
+                    onClick={() => teach('lettering')}
+                    disabled={working || !teachText.trim()}
+                    title="Teach from the handwriting shown above: type what it says"
+                    className="px-2 py-1.5 text-[10px] font-medium bg-[#1e1e1e] border border-[#333] text-[#ccc] rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40"
+                  >
+                    Learn from the handwriting above
+                  </button>
+                )}
+              </div>
+              {teachError && <p className="text-red-400 text-[10px]">{teachError}</p>}
+              {teachNote && <p className="text-[10px] text-[#888]">{teachNote}</p>}
+              {glyphCounts && (
+                <div className="space-y-1">
+                  <p className="text-[10px] text-[#666]">
+                    {knownLetters === 0 ? 'No letters learned yet.' : `${knownLetters} letters learned — click one to forget its samples.`}
+                  </p>
+                  <div className="flex flex-wrap gap-0.5">
+                    {[...glyphChars].map(c => {
+                      const n = glyphCounts[c] ?? 0
+                      return (
+                        <button
+                          key={c}
+                          onClick={() => n > 0 && forgetLetter(c)}
+                          disabled={n === 0 || working}
+                          title={n > 0 ? `${n} sample${n === 1 ? '' : 's'} — click to forget` : 'Not learned yet'}
+                          className={`w-5 h-5 rounded text-[10px] font-mono ${n > 0 ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#161616] text-[#444]'}`}
+                        >
+                          {c}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {currentLettering && useLettering && (
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex gap-1">
@@ -470,18 +759,18 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       <section className="space-y-2">
         <p className="text-[11px] font-medium text-[#999]">3 · Scene</p>
         <div className="flex flex-wrap gap-1">
-          <button onClick={() => setScene('random')} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] ${scene === 'random' ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`}>
+          <button onClick={() => setScene('random')} className={`flex items-center gap-1 ${chip(scene === 'random')}`}>
             <Shuffle size={10} />Surprise me
           </button>
           {CASSETTE_SCENES.map(s => (
-            <button key={s.id} onClick={() => setScene(s.id)} className={`px-2 py-1 rounded-md text-[10px] ${scene === s.id ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`}>
+            <button key={s.id} onClick={() => setScene(s.id)} className={chip(scene === s.id)}>
               {s.label}
             </button>
           ))}
-          <button onClick={() => setScene('custom')} className={`px-2 py-1 rounded-md text-[10px] ${scene === 'custom' ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`}>
+          <button onClick={() => setScene('custom')} className={chip(scene === 'custom')}>
             Describe my own…
           </button>
-          <label className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] cursor-pointer ${scene === 'photo' ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`}>
+          <label className={`flex items-center gap-1 cursor-pointer ${chip(scene === 'photo')}`}>
             <ImageIcon size={10} />My own photo (no AI)
             <input type="file" accept="image/*" onChange={chooseBackground} className="hidden" />
           </label>
@@ -509,12 +798,41 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
             </div>
           </div>
         )}
+
+        {/* Where the cassette goes. */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="space-y-1">
+            <p className="text-[10px] text-[#666]">Cassette position</p>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setSpot('auto')} className={`px-2 h-6 rounded-md text-[10px] ${spot === 'auto' ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#777]'}`}>Auto</button>
+              <div className="grid grid-cols-3 gap-0.5">
+                {CASSETTE_SPOTS.map(s => {
+                  const v = `${s.x},${s.y}`
+                  return (
+                    <button key={v} onClick={() => setSpot(v)} aria-label={`Cassette ${s.label}`}
+                      className={`w-6 h-5 rounded text-[10px] ${spot === v ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#666]'}`}>{s.label}</button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] text-[#666]">Cassette size</p>
+            <div className="flex gap-0.5">
+              <button onClick={() => setCassetteSize('auto')} className={`px-2 h-6 rounded-md text-[10px] ${cassetteSize === 'auto' ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#777]'}`}>Auto</button>
+              {CASSETTE_SIZES.map(s => (
+                <button key={s.value} onClick={() => setCassetteSize(s.value)}
+                  className={`min-w-6 px-1 h-6 rounded text-[10px] ${cassetteSize === s.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#666]'}`}>{s.label}</button>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
 
       {error && <p className="text-red-400 text-xs">{error}</p>}
       {lookNote && <p className="text-[10px] text-[#888]">{lookNote}</p>}
       {busy === 'apply-look' && (
-        <p className="flex items-center gap-1.5 text-[10px] text-[#888]"><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />Adding your look…</p>
+        <p className="flex items-center gap-1.5 text-[10px] text-[#888]">{SPINNER}Adding your look…</p>
       )}
       {lastScene && !working && <p className="text-[10px] text-[#666]">Last scene: {lastScene}</p>}
 
@@ -554,46 +872,83 @@ export default function CassetteStudio({ projectId, onRendered, onClose }: Props
       />
 
       {/* Make it move: the cover just made as a looping clip, no AI. */}
-      {(hasRendered || canMove) && (
+      {(hasRendered || canMove || clips.length > 0) && (
         <section className="space-y-2 border-t border-[#1e1e1e] pt-3">
           <p className="text-[11px] font-medium text-[#999]">Make it move</p>
-          <div className="flex flex-wrap items-center gap-1">
-            {MOTION_FORMATS.map(f => (
-              <button
-                key={f.value}
-                onClick={() => setMotionFormat(f.value)}
-                disabled={motionBusy}
-                className={`px-2 py-1 rounded-md text-[10px] ${motionFormat === f.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'} disabled:opacity-50`}
-              >
-                {f.label}
+          {(hasRendered || canMove) && (
+            <>
+              <div className="flex flex-wrap items-center gap-1">
+                {MOTION_FORMATS.map(f => (
+                  <button key={f.value} onClick={() => setMotionFormat(f.value)} disabled={motionBusy} className={`${chip(motionFormat === f.value)} disabled:opacity-50`}>
+                    {f.label}
+                  </button>
+                ))}
+                <button
+                  onClick={makeItMove}
+                  disabled={working}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+                >
+                  {motionBusy
+                    ? <>{SPINNER}{motionFormat === 'youtube' ? 'Rendering (~1 min)…' : 'Rendering…'}</>
+                    : <><Film size={12} />Make it move</>}
+                </button>
+              </div>
+              <button onClick={() => setMotionTitle(v => !v)} disabled={motionBusy} className="flex items-center gap-1.5 text-[10px] text-[#888] hover:text-white">
+                <span className={`w-7 h-3.5 rounded-full relative transition-colors ${!motionTitle ? 'bg-[#2dd4bf]' : 'bg-[#2a2a2a]'}`}>
+                  <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${!motionTitle ? 'left-4' : 'left-0.5'}`} />
+                </span>
+                Without the title — a &ldquo;cassette playing&rdquo; loop that fits every song
               </button>
-            ))}
-            <button
-              onClick={makeItMove}
-              disabled={working}
-              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-[#1e1e1e] border border-[#333] text-white rounded-lg hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
-            >
-              {motionBusy
-                ? <><span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />{motionFormat === 'youtube' ? 'Rendering (~1 min)…' : 'Rendering…'}</>
-                : <><Film size={12} />Make it move</>}
-            </button>
-          </div>
-          <p className="text-[10px] text-[#666] leading-snug">The reels turn, the camera drifts and the film grain moves. Built from this cover itself, with no AI. Saved to your visualizers.</p>
+              <p className="text-[10px] text-[#666] leading-snug">The reels turn, the camera drifts and the film grain moves. Built from this cover itself, with no AI. Saved to your visualizers; pin it on this song or on all of them below.</p>
+            </>
+          )}
           {motionError && <p className="text-red-400 text-xs">{motionError}</p>}
+          {pinNote && <p className="text-[10px] text-[#2dd4bf]">{pinNote}</p>}
           {motionVideo && (
             <div className="space-y-1.5">
               <video
-                key={motionVideo.url}
-                src={motionVideo.url}
+                key={motionVideo.video_url}
+                src={motionVideo.video_url}
                 muted
                 loop
                 autoPlay
                 playsInline
                 className={`rounded-lg bg-black ${motionVideo.format === 'youtube' ? 'w-full aspect-video' : motionVideo.format === 'square' ? 'w-48 aspect-square' : 'w-32 aspect-[9/16]'}`}
               />
-              <a href={motionVideo.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
-                <ExternalLink size={10} />Open the clip
-              </a>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button onClick={() => pinClip(motionVideo, 'project')} disabled={pinBusy !== null} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#1a1a1a] text-[#ccc] hover:text-white disabled:opacity-50">
+                  <Pin size={10} />{pinBusy === `${motionVideo.id}:project` ? 'Pinning…' : 'Use on this song'}
+                </button>
+                <button onClick={() => pinClip(motionVideo, 'all')} disabled={pinBusy !== null} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
+                  <Pin size={10} />{pinBusy === `${motionVideo.id}:all` ? 'Pinning…' : 'Use on every song'}
+                </button>
+                <a href={motionVideo.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
+                  <ExternalLink size={10} />Open the clip
+                </a>
+              </div>
+            </div>
+          )}
+          {clips.length > 0 && (
+            <div className="space-y-1">
+              <button onClick={() => setClipsOpen(v => !v)} className="text-[10px] text-[#888] hover:text-white">
+                {clipsOpen ? 'Hide' : 'Show'} your cassette clips ({clips.length})
+              </button>
+              {clipsOpen && (
+                <ul className="space-y-1 max-h-60 overflow-y-auto">
+                  {clips.map(c => (
+                    <li key={c.id} className="flex items-center gap-2 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] p-1.5">
+                      <video src={c.video_url} muted loop playsInline preload="metadata" className={`rounded bg-black shrink-0 ${c.wide ? 'w-16 aspect-video' : c.format === 'square' ? 'w-9 aspect-square' : 'w-6 aspect-[9/16]'}`} />
+                      <span className="flex-1 min-w-0 truncate text-[10px] text-[#aaa]">{clipLabel(c)}</span>
+                      <button onClick={() => pinClip(c, 'project')} disabled={pinBusy !== null} className="px-1.5 py-1 rounded text-[10px] bg-[#1a1a1a] text-[#ccc] hover:text-white disabled:opacity-50">
+                        {pinBusy === `${c.id}:project` ? '…' : 'This song'}
+                      </button>
+                      <button onClick={() => pinClip(c, 'all')} disabled={pinBusy !== null} className="px-1.5 py-1 rounded text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] disabled:opacity-50">
+                        {pinBusy === `${c.id}:all` ? '…' : 'Every song'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </section>
