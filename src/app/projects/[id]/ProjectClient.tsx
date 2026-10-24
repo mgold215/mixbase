@@ -952,6 +952,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               showActions={false}
               ownerDefaults={ownerDefaults}
               ownerTools={ownerTools}
+              onVisualizerPinned={(url, wide) => (wide ? handleWideVisualizerUpdated(url) : handleVisualizerUpdated(url))}
             />
           </div>
 
@@ -1340,6 +1341,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
               onFinalizedUpdated={handleFinalizedUpdated}
               ownerDefaults={ownerDefaults}
               ownerTools={ownerTools}
+              onVisualizerPinned={(url, wide) => (wide ? handleWideVisualizerUpdated(url) : handleVisualizerUpdated(url))}
             />
           </div>
         )}

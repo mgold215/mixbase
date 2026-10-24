@@ -64,7 +64,9 @@ struct CassetteStudioView: View {
     private enum Busy: Equatable {
         // library: cutting out a photo already in mixBase.
         // look: putting the remembered look on a fresh render.
-        case load, subject, library, lettering, render, reletter, look, motion
+        // typing: setting a typed title from the glyph bank.
+        // teaching: learning letters from a photo. pinning: pinning a clip.
+        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, pinning
     }
 
     // Mirrors CASSETTE_SCENES in src/lib/cassette-scenes.ts (ids must match
@@ -104,6 +106,23 @@ struct CassetteStudioView: View {
 
     private static let motionFormats: [(id: String, label: String)] = [
         ("canvas", "9:16 Canvas"), ("square", "1:1 Square"), ("youtube", "16:9 YouTube"), ("story", "9:16 Story"),
+    ]
+
+    // Where the cassette goes (place_x / place_y / place_scale on /render):
+    // a 3 × 3 grid of centre × surface line, and a width. "auto" leaves the
+    // field to the server's own framing.
+    private static let cassetteSpots: [(id: String, x: Double, y: Double, symbol: String)] = [
+        ("tl", 0.3, 0.5, "arrow.up.left"), ("t", 0.5, 0.5, "arrow.up"), ("tr", 0.7, 0.5, "arrow.up.right"),
+        ("l", 0.3, 0.7, "arrow.left"), ("c", 0.5, 0.7, "circle.fill"), ("r", 0.7, 0.7, "arrow.right"),
+        ("bl", 0.3, 0.88, "arrow.down.left"), ("b", 0.5, 0.88, "arrow.down"), ("br", 0.7, 0.88, "arrow.down.right"),
+    ]
+
+    private static let cassetteSizes: [(id: String, scale: Double, label: String)] = [
+        ("s", 0.3, "S"), ("m", 0.4, "M"), ("l", 0.52, "L"), ("xl", 0.66, "XL"),
+    ]
+
+    private static let alignments: [(id: String, symbol: String)] = [
+        ("left", "text.alignleft"), ("center", "text.aligncenter"), ("right", "text.alignright"),
     ]
 
     // Library
@@ -150,13 +169,40 @@ struct CassetteStudioView: View {
     @State private var lookSaving = false
     @State private var lookNote: String?
 
+    // Type it in my handwriting (the glyph bank, /api/cassette-studio/glyphs)
+    @State private var typedText = ""
+    @State private var typedAlign = "center"
+    @State private var typeNote: String?
+    @State private var teachOpen = false
+    @State private var teachText = ""
+    @State private var teachData: Data?
+    @State private var teachPick: PhotosPickerItem?
+    @State private var teachError: String?
+    @State private var teachNote: String?
+    @State private var glyphCounts: [String: Int]?
+    @State private var glyphChars = ""
+    @State private var forgetCandidate: String?
+
+    // Cassette placement: "auto" or a cassetteSpots id; "auto" or a cassetteSizes id.
+    @State private var spot = "auto"
+    @State private var cassetteSize = "auto"
+
     // Make it move
     @State private var motionFormat = "canvas"
+    @State private var motionWithTitle = true
     @State private var motionUrl: String?
     @State private var motionUrlFormat = "canvas"
     @State private var motionError: String?
     @State private var isSavingMotion = false
     @State private var savedMotion = false
+    // The project's CURRENT cover can already move (its layers were saved),
+    // every moving cover the owner has on any song, and the one just made.
+    @State private var canMove = false
+    @State private var clips: [MixbaseAPI.CassetteClip] = []
+    @State private var clipsOpen = false
+    @State private var lastClip: MixbaseAPI.CassetteClip?
+    @State private var pinNote: String?
+    @State private var pinAllCandidate: MixbaseAPI.CassetteClip?
 
     private var isWorking: Bool { busy != nil || lookSaving }
 
@@ -195,7 +241,7 @@ struct CassetteStudioView: View {
                     actionSection
                     lookSection
 
-                    if hasRendered {
+                    if hasRendered || canMove || !clips.isEmpty {
                         motionSection
                     }
 
@@ -228,6 +274,39 @@ struct CassetteStudioView: View {
             if let item {
                 Task { await addLettering(item) }
             }
+        }
+        .onChange(of: teachPick) { _, item in
+            if let item {
+                Task { await chooseTeachPhoto(item) }
+            }
+        }
+        .confirmationDialog(
+            "Use this clip on every song?",
+            isPresented: Binding(get: { pinAllCandidate != nil }, set: { if !$0 { pinAllCandidate = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Use on every song") {
+                if let clip = pinAllCandidate {
+                    pinAllCandidate = nil
+                    Task { await pin(clip, scope: "all") }
+                }
+            }
+            Button("Cancel", role: .cancel) { pinAllCandidate = nil }
+        } message: {
+            Text("It becomes the visualizer on all of your songs. Each song keeps its other (vertical or wide) clip.")
+        }
+        .confirmationDialog(
+            "Forget this letter?",
+            isPresented: Binding(get: { forgetCandidate != nil }, set: { if !$0 { forgetCandidate = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Forget every sample of \(forgetCandidate ?? "")", role: .destructive) {
+                if let c = forgetCandidate {
+                    forgetCandidate = nil
+                    Task { await forget(c) }
+                }
+            }
+            Button("Cancel", role: .cancel) { forgetCandidate = nil }
         }
         .onChange(of: backgroundPick) { _, item in
             if let item {
@@ -422,11 +501,224 @@ struct CassetteStudioView: View {
             .padding(.horizontal)
 
             if currentLettering == nil && busy != .load {
-                hint("Write the artist name and song title with a marker on plain paper and photograph it flat. Your exact strokes are lifted off the paper, with no font and no AI.")
+                hint("Write the artist name and song title with a marker on plain paper and photograph it flat. Your exact strokes are lifted off the paper, with no font and no AI. Holes and breaks in a stroke are mended; the letters stay yours.")
             }
+
+            typeItBlock
 
             if currentLettering != nil && useLettering {
                 letteringControls
+            }
+        }
+    }
+
+    // MARK: - Type it in my handwriting
+
+    /// A title set from the letters the bank has learned (the server lays
+    /// the artist's own samples out — no font, no AI) plus the teaching box
+    /// that fills the bank.
+    @ViewBuilder
+    private var typeItBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Or type it in your handwriting", systemImage: "keyboard")
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#999999"))
+                Spacer()
+                Button(action: {
+                    teachOpen.toggle()
+                    if teachOpen && glyphCounts == nil {
+                        Task { await loadGlyphs() }
+                    }
+                }) {
+                    Label(teachOpen ? "Close teaching" : "Teach it my letters", systemImage: "graduationcap")
+                        .font(.caption)
+                        .foregroundColor(teachOpen ? Color(hex: "#2dd4bf") : Color(hex: "#999999"))
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+            }
+
+            TextField("artist name, then the song title on a new line", text: $typedText, axis: .vertical)
+                .font(.subheadline)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+                .lineLimit(2...3)
+                .padding(10)
+                .background(Color(hex: "#161616"))
+                .cornerRadius(10)
+                .disabled(isWorking)
+
+            HStack(spacing: 8) {
+                ForEach(Self.alignments, id: \.id) { option in
+                    Button(action: { typedAlign = option.id }) {
+                        Image(systemName: option.symbol)
+                            .font(.caption)
+                            .foregroundColor(typedAlign == option.id ? Color(hex: "#080808") : Color(hex: "#999999"))
+                            .frame(width: 34, height: 28)
+                            .background(typedAlign == option.id ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking)
+                    .accessibilityLabel(Text("Align \(option.id)"))
+                }
+
+                Spacer()
+
+                Button(action: typeIt) {
+                    HStack(spacing: 6) {
+                        if busy == .typing {
+                            ProgressView().tint(Color(hex: "#f0f0f0")).controlSize(.small)
+                            Text("Setting…")
+                        } else {
+                            Image(systemName: "signature")
+                            Text("Set it")
+                        }
+                    }
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color(hex: "#111111"))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#333333"), lineWidth: 1))
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking || typedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if let typeNote {
+                Text(typeNote)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if teachOpen {
+                teachBlock
+            }
+        }
+        .padding(12)
+        .background(Color(hex: "#0a0a0a"))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#222222"), lineWidth: 1))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    private var teachBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider().background(Color(hex: "#222222"))
+
+            Text("Write letters on plain paper with clear space between every letter — no joined-up writing, dots close to their i and j — in a few lines (your alphabet in capitals, then lower case, then digits). Photograph it flat, then type exactly what each line says. Every letter becomes a sample; teach a letter several times and your typed titles will vary the way your writing does.")
+                .font(.caption)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .top, spacing: 10) {
+                PhotosPicker(selection: $teachPick, matching: .images) {
+                    VStack(spacing: 4) {
+                        Image(systemName: teachData == nil ? "camera" : "checkmark.circle.fill")
+                        Text(teachData == nil ? "Photo of letters" : "Photo ready")
+                            .multilineTextAlignment(.center)
+                    }
+                    .font(.caption2)
+                    .foregroundColor(teachData == nil ? Color(hex: "#999999") : Color(hex: "#2dd4bf"))
+                    .padding(.horizontal, 6)
+                    .frame(width: 88, height: 72)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color(hex: "#333333"), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+
+                TextField("What the photo says, one line per line of writing", text: $teachText, axis: .vertical)
+                    .font(.subheadline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .lineLimit(3...6)
+                    .padding(10)
+                    .background(Color(hex: "#161616"))
+                    .cornerRadius(10)
+                    .disabled(isWorking)
+            }
+
+            HStack(spacing: 8) {
+                Button(action: { Task { await teach(fromPhoto: true) } }) {
+                    HStack(spacing: 6) {
+                        if busy == .teaching {
+                            ProgressView().tint(Color(hex: "#f0f0f0")).controlSize(.small)
+                            Text("Learning…")
+                        } else {
+                            Image(systemName: "graduationcap")
+                            Text("Learn from the photo")
+                        }
+                    }
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(Color(hex: "#111111"))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#333333"), lineWidth: 1))
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking || teachData == nil || teachText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if currentLettering != nil {
+                    Button(action: { Task { await teach(fromPhoto: false) } }) {
+                        Text("Learn from the handwriting above")
+                            .font(.caption)
+                            .foregroundColor(Color(hex: "#cccccc"))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(Color(hex: "#111111"))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#333333"), lineWidth: 1))
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking || teachText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            if let teachError {
+                Text(teachError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let teachNote {
+                Text(teachNote)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let glyphCounts {
+                let known = glyphCounts.values.filter { $0 > 0 }.count
+                Text(known == 0 ? "No letters learned yet." : "\(known) letters learned — tap one to forget its samples.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                let letters = glyphChars.map { String($0) }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 24), spacing: 4)], spacing: 4) {
+                    ForEach(letters, id: \.self) { letter in
+                        let n = glyphCounts[letter] ?? 0
+                        Button(action: { if n > 0 { forgetCandidate = letter } }) {
+                            Text(letter)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(n > 0 ? Color(hex: "#2dd4bf") : Color(hex: "#444444"))
+                                .frame(width: 24, height: 24)
+                                .background(n > 0 ? Color(hex: "#2dd4bf").opacity(0.2) : Color(hex: "#161616"))
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(n == 0 || isWorking)
+                        .accessibilityLabel(Text(n > 0 ? "\(letter), \(n) samples" : "\(letter), not learned"))
+                    }
+                }
             }
         }
     }
@@ -584,7 +876,84 @@ struct CassetteStudioView: View {
                 }
                 .padding(.horizontal)
             }
+
+            placementControls
         }
+    }
+
+    /// Where the cassette goes: Auto (the server's own framing) or a spot on
+    /// a 3 × 3 grid, and its size.
+    @ViewBuilder
+    private var placementControls: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cassette position")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                HStack(alignment: .top, spacing: 6) {
+                    smallChip("Auto", selected: spot == "auto") { spot = "auto" }
+                    VStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { row in
+                            HStack(spacing: 4) {
+                                ForEach(Array(Self.cassetteSpots[(row * 3)..<(row * 3 + 3)]), id: \.id) { option in
+                                    Button(action: { spot = option.id }) {
+                                        Image(systemName: option.symbol)
+                                            .font(.caption2)
+                                            .foregroundColor(spot == option.id ? Color(hex: "#080808") : Color(hex: "#999999"))
+                                            .frame(width: 30, height: 24)
+                                            .background(spot == option.id ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(isWorking)
+                                    .accessibilityLabel(Text("Cassette \(option.id)"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cassette size")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                HStack(spacing: 4) {
+                    smallChip("Auto", selected: cassetteSize == "auto") { cassetteSize = "auto" }
+                    ForEach(Self.cassetteSizes, id: \.id) { option in
+                        Button(action: { cassetteSize = option.id }) {
+                            Text(option.label)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(cassetteSize == option.id ? Color(hex: "#080808") : Color(hex: "#f0f0f0"))
+                                .frame(minWidth: 30)
+                                .frame(height: 30)
+                                .padding(.horizontal, 4)
+                                .background(cassetteSize == option.id ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isWorking)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal)
+    }
+
+    /// The placement to send with a render (nil fields → the server's default).
+    private var placement: MixbaseAPI.CassettePlacement {
+        var p = MixbaseAPI.CassettePlacement.auto
+        if let s = Self.cassetteSpots.first(where: { $0.id == spot }) {
+            p.x = s.x
+            p.y = s.y
+        }
+        if let z = Self.cassetteSizes.first(where: { $0.id == cassetteSize }) {
+            p.scale = z.scale
+        }
+        return p
     }
 
     private func sceneChip(id: String, label: String, icon: String?) -> some View {
@@ -755,39 +1124,51 @@ struct CassetteStudioView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("Make it move")
 
-            hint("Turns this cover into a loop: the reels turn, the camera drifts. No AI. It's saved to Your Videos and pinned as this song's visualizer.")
+            if hasRendered || canMove {
+                hint("Turns this cover into a loop: the reels turn, the camera drifts. No AI. It's saved to Your Videos and pinned as this song's visualizer — or on every song, below.")
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Self.motionFormats, id: \.id) { option in
-                        smallChip(option.label, selected: motionFormat == option.id) {
-                            motionFormat = option.id
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.motionFormats, id: \.id) { option in
+                            smallChip(option.label, selected: motionFormat == option.id) {
+                                motionFormat = option.id
+                            }
                         }
                     }
+                    .padding(.horizontal)
                 }
+
+                Toggle(isOn: Binding(get: { !motionWithTitle }, set: { motionWithTitle = !$0 })) {
+                    Text("Without the title — a \"cassette playing\" loop that fits every song")
+                        .font(.caption)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                }
+                .toggleStyle(.switch)
+                .tint(Color(hex: "#2dd4bf"))
+                .disabled(isWorking)
+                .padding(.horizontal)
+
+                Button(action: makeItMove) {
+                    HStack {
+                        if busy == .motion {
+                            ProgressView().tint(Color(hex: "#080808"))
+                            Text("Rendering…")
+                        } else {
+                            Image(systemName: "play.rectangle")
+                            Text("Make it move")
+                        }
+                    }
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#080808"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(isWorking && busy != .motion ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
                 .padding(.horizontal)
             }
-
-            Button(action: makeItMove) {
-                HStack {
-                    if busy == .motion {
-                        ProgressView().tint(Color(hex: "#080808"))
-                        Text("Rendering…")
-                    } else {
-                        Image(systemName: "play.rectangle")
-                        Text("Make it move")
-                    }
-                }
-                .font(.headline)
-                .foregroundColor(Color(hex: "#080808"))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(isWorking && busy != .motion ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
-                .cornerRadius(12)
-            }
-            .buttonStyle(.plain)
-            .disabled(isWorking)
-            .padding(.horizontal)
 
             if let motionError {
                 Text(motionError)
@@ -796,9 +1177,20 @@ struct CassetteStudioView: View {
                     .padding(.horizontal)
             }
 
+            if let pinNote {
+                Text(pinNote)
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                    .padding(.horizontal)
+            }
+
             if let motionUrl, let url = URL(string: motionUrl) {
                 VStack(alignment: .leading, spacing: 8) {
                     motionPreview(url: url)
+
+                    if let clip = lastClip {
+                        pinButtons(for: clip)
+                    }
 
                     if isSavingMotion {
                         ProgressView().tint(Color(hex: "#2dd4bf"))
@@ -825,7 +1217,97 @@ struct CassetteStudioView: View {
                 }
                 .padding(.horizontal)
             }
+
+            if !clips.isEmpty {
+                clipsList
+            }
         }
+    }
+
+    /// Pin a clip on this song, or on every song (confirmed first).
+    private func pinButtons(for clip: MixbaseAPI.CassetteClip) -> some View {
+        HStack(spacing: 8) {
+            Button(action: { Task { await pin(clip, scope: "project") } }) {
+                Label("Use on this song", systemImage: "pin")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color(hex: "#222222"))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+
+            Button(action: { pinAllCandidate = clip }) {
+                Label("Use on every song", systemImage: "pin.fill")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(Color(hex: "#080808"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color(hex: "#2dd4bf"))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+        }
+    }
+
+    /// Every moving cover the owner has, on any song: pin any of them here
+    /// or everywhere without rendering again.
+    @ViewBuilder
+    private var clipsList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { clipsOpen.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: clipsOpen ? "chevron.down" : "chevron.right")
+                    Text("Your cassette clips (\(clips.count))")
+                }
+                .font(.caption)
+                .foregroundColor(Color(hex: "#999999"))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+
+            if clipsOpen {
+                ForEach(clips) { clip in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(clipLabel(clip))
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .lineLimit(1)
+                            Text(clip.projectId == projectId.postgresString ? "This song" : "Another song")
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                        Spacer(minLength: 4)
+                        Button("This song") { Task { await pin(clip, scope: "project") } }
+                            .font(.caption2)
+                            .buttonStyle(.bordered)
+                            .tint(Color(hex: "#999999"))
+                            .disabled(isWorking)
+                        Button("Every song") { pinAllCandidate = clip }
+                            .font(.caption2)
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(hex: "#2dd4bf"))
+                            .disabled(isWorking)
+                    }
+                    .padding(10)
+                    .background(Color(hex: "#0a0a0a"))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "#222222"), lineWidth: 1))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+            }
+        }
+    }
+
+    private func clipLabel(_ clip: MixbaseAPI.CassetteClip) -> String {
+        let format = Self.motionFormats.first { $0.id == clip.format }?.label ?? clip.format
+        return "\(format) · \(clip.hasTitle ? "with title" : "no title")"
     }
 
     @ViewBuilder
@@ -900,6 +1382,131 @@ struct CassetteStudioView: View {
             errorMessage = error.localizedDescription
         }
         if busy == .load { busy = nil }
+        await loadMotion()
+    }
+
+    /// Whether the current cover can move, and the owner's existing clips.
+    /// Best-effort: a failed read only hides the row until the next render.
+    private func loadMotion() async {
+        guard let availability = try? await MixbaseAPI.shared.cassetteMotionAvailability(projectId: projectId) else { return }
+        canMove = availability.available
+        clips = availability.clips ?? []
+    }
+
+    // MARK: Type it / teach it
+
+    private func typeIt() {
+        guard busy == nil else { return }
+        let text = typedText
+        let align = typedAlign
+        busy = .typing
+        errorMessage = nil
+        typeNote = nil
+        Task {
+            do {
+                let file = try await MixbaseAPI.shared.typeLettering(projectId: projectId, text: text, align: align)
+                lettering.insert(file, at: 0)
+                letteringPath = file.path
+                useLettering = true
+                typeNote = "Set in your handwriting. Not quite right? Set it again for another take, or teach more samples of a letter."
+            } catch {
+                errorMessage = error.localizedDescription
+                // The usual reason: a letter the bank has not learned yet.
+                teachOpen = true
+                if glyphCounts == nil { await loadGlyphs() }
+            }
+            busy = nil
+        }
+    }
+
+    private func loadGlyphs() async {
+        do {
+            let bank = try await MixbaseAPI.shared.listGlyphs()
+            glyphCounts = bank.counts
+            glyphChars = bank.chars
+        } catch {
+            teachError = error.localizedDescription
+        }
+    }
+
+    private func chooseTeachPhoto(_ item: PhotosPickerItem) async {
+        teachError = nil
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw MixbaseAPIError.serverError("Could not read that image.")
+            }
+            teachData = data
+        } catch {
+            teachError = error.localizedDescription
+        }
+        teachPick = nil
+    }
+
+    /// Teach from the picked photo, or from the handwriting already lifted
+    /// for this song, and the text it says.
+    private func teach(fromPhoto: Bool) async {
+        guard busy == nil else { return }
+        let text = teachText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            teachError = "Type what the writing says, line by line."
+            return
+        }
+        busy = .teaching
+        teachError = nil
+        teachNote = nil
+        do {
+            let result: MixbaseAPI.GlyphTeachResult
+            if fromPhoto {
+                guard let teachData else {
+                    throw MixbaseAPIError.serverError("Add a photo of your letters first.")
+                }
+                result = try await MixbaseAPI.shared.teachGlyphs(imageData: teachData, text: text)
+            } else {
+                guard let path = letteringPath else {
+                    throw MixbaseAPIError.serverError("Add your handwriting first.")
+                }
+                result = try await MixbaseAPI.shared.teachGlyphs(letteringPath: path, text: text)
+            }
+            glyphCounts = result.counts
+            let n = result.added.count
+            teachNote = "Learned \(n) letter\(n == 1 ? "" : "s"). Teach the same letters again from another photo for more variety."
+            teachData = nil
+            teachText = ""
+        } catch {
+            teachError = error.localizedDescription
+        }
+        busy = nil
+    }
+
+    private func forget(_ letter: String) async {
+        teachError = nil
+        do {
+            try await MixbaseAPI.shared.forgetGlyphs(char: letter)
+            glyphCounts?[letter] = 0
+        } catch {
+            teachError = "Could not remove that letter."
+        }
+    }
+
+    // MARK: Pinning
+
+    /// Pin a clip as this song's visualizer ("project") or every song's ("all").
+    private func pin(_ clip: MixbaseAPI.CassetteClip, scope: String) async {
+        guard busy == nil else { return }
+        busy = .pinning
+        motionError = nil
+        pinNote = nil
+        do {
+            let result = try await MixbaseAPI.shared.pinCassetteClip(clipId: clip.id, scope: scope, projectId: projectId)
+            onVisualizerPinned?(result.videoUrl, clip.wide)
+            let slot = result.slot == "wide" ? "wide" : "vertical"
+            pinNote = scope == "all"
+                ? "Pinned as the \(slot) visualizer on \(result.pinned) song\(result.pinned == 1 ? "" : "s")."
+                : "Pinned as this song's \(slot) visualizer."
+        } catch {
+            motionError = error.localizedDescription
+        }
+        busy = nil
     }
 
     /// Section 4's presets, sliders and the look on the cover now. Called on
@@ -1025,6 +1632,7 @@ struct CassetteStudioView: View {
         let chosenPosition = position
         let chosenSize = size
         let reflection = glossy
+        let chosenPlacement = placement
 
         busy = reletter ? .reletter : .render
         errorMessage = nil
@@ -1042,7 +1650,8 @@ struct CassetteStudioView: View {
                     color: chosenColor,
                     position: chosenPosition,
                     size: chosenSize,
-                    reflection: reflection
+                    reflection: reflection,
+                    placement: chosenPlacement
                 )
                 onRendered(result.artworkUrl, result.finalizedArtworkUrl)
                 coverUrl = result.finalizedArtworkUrl ?? result.artworkUrl
@@ -1053,7 +1662,9 @@ struct CassetteStudioView: View {
                 // The cover changed, so a moving cover made from the old one
                 // no longer matches it.
                 motionUrl = nil
+                lastClip = nil
                 motionError = nil
+                pinNote = nil
                 savedMotion = false
                 await applyRememberedLook()
             } catch {
@@ -1094,6 +1705,7 @@ struct CassetteStudioView: View {
         }
         // A moving cover made before the look no longer matches the cover.
         motionUrl = nil
+        lastClip = nil
         motionError = nil
         savedMotion = false
     }
@@ -1102,20 +1714,24 @@ struct CassetteStudioView: View {
         guard busy == nil else { return }
         let format = motionFormat
         let wide = format == "youtube"
+        let withTitle = motionWithTitle
         busy = .motion
         motionError = nil
+        pinNote = nil
         savedMotion = false
 
         Task {
             do {
-                let url = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format)
-                motionUrl = url
+                let clip = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format, withTitle: withTitle)
+                motionUrl = clip.videoUrl
                 motionUrlFormat = format
+                lastClip = clip
+                clips.insert(clip, at: 0)
                 do {
                     // Landscape (YouTube) output pins as the 16:9 visualizer,
                     // everything else as the vertical one.
-                    try await MixbaseAPI.shared.pinVisualizer(projectId: projectId, videoUrl: url, wide: wide)
-                    onVisualizerPinned?(url, wide)
+                    try await MixbaseAPI.shared.pinVisualizer(projectId: projectId, videoUrl: clip.videoUrl, wide: wide)
+                    onVisualizerPinned?(clip.videoUrl, wide)
                 } catch {
                     motionError = "Saved to Your Videos, but pinning it failed: \(error.localizedDescription)"
                 }

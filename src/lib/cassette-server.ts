@@ -4,6 +4,8 @@
 // ── STORAGE LAYOUT (mf-artwork) ─────────────────────────────────────────────
 //   studio/<userId>/subject-<ts>.png               a cut-out cassette (reused across projects)
 //   studio/<userId>/lettering-<projectId>-<ts>.png one handwriting lockup for one project
+//   studio/<userId>/glyph-<cp>-<unit>-<base>-<ts>.png one letter of the owner's hand (the glyph
+//                                                  bank behind "type in my handwriting")
 //   studio/<userId>/tmp-<ts>-*.{jpg,png}           FLUX/cut-out inputs, deleted after each call
 //   studio/<userId>/plate-<ts>.jpg                 a cover's scene plate        ┐ moving-cover inputs,
 //   studio/<userId>/layer-<ts>-<left>-<top>.png    its finished cassette layer  │ written by every render
@@ -25,6 +27,8 @@
 
 import { supabaseAdmin } from '@/lib/supabase'
 import { studioPrefix } from '@/lib/cassette-studio'
+import { GLYPH_CHARS, parseGlyphKey, type GlyphSample } from '@/lib/handwriting-glyphs'
+import { isFreeFormat, type FreeFormatId } from '@/lib/free-render'
 
 export { studioPrefix, isOwnStudioKey } from '@/lib/cassette-studio'
 
@@ -84,6 +88,54 @@ export async function uploadStudio(path: string, bytes: Buffer, contentType: str
   return studioPublicUrl(path)
 }
 
+// ── Glyph bank ──────────────────────────────────────────────────────────────
+
+export type GlyphFile = { path: string; url: string; char: string; unit: number; base: number; createdAt: string | null }
+
+/** The caller's handwriting samples, newest first (keys parsed strictly). */
+export async function listGlyphs(userId: string): Promise<GlyphFile[]> {
+  const files = await listStudio(userId, 'glyph-')
+  const out: GlyphFile[] = []
+  for (const f of files) {
+    const k = parseGlyphKey(f.path, userId)
+    if (k) out.push({ path: f.path, url: f.url, char: k.char, unit: k.unit, base: k.base, createdAt: f.createdAt })
+  }
+  return out
+}
+
+/** How many samples the bank holds per character, for every teachable character. */
+export function glyphCoverage(glyphs: GlyphFile[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const c of GLYPH_CHARS) counts[c] = 0
+  for (const g of glyphs) counts[g.char] = (counts[g.char] ?? 0) + 1
+  return counts
+}
+
+/** At most this many samples of one letter are fetched for a composition (the newest). */
+const SAMPLES_PER_CHAR = 6
+
+/**
+ * Download the samples a text needs — each of its characters and, as the
+ * fallback composeHandwriting uses, the other case of each — newest first.
+ */
+export async function loadGlyphBank(userId: string, text: string): Promise<GlyphSample[]> {
+  const wanted = new Set<string>()
+  for (const c of text) {
+    if (c === ' ' || c === '\n' || c === '\r') continue
+    wanted.add(c)
+    wanted.add(c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())
+  }
+  const perChar = new Map<string, GlyphFile[]>()
+  for (const g of await listGlyphs(userId)) {
+    if (!wanted.has(g.char)) continue
+    const list = perChar.get(g.char) ?? []
+    if (list.length < SAMPLES_PER_CHAR) { list.push(g); perChar.set(g.char, list) }
+  }
+  const files = [...perChar.values()].flat()
+  const pngs = await Promise.all(files.map(f => downloadStudio(f.path)))
+  return files.map((f, i) => ({ char: f.char, unit: f.unit, base: f.base, png: pngs[i] }))
+}
+
 export async function removeStudio(paths: string[]): Promise<void> {
   if (paths.length === 0) return
   const { error } = await supabaseAdmin.storage.from(STUDIO_BUCKET).remove(paths)
@@ -109,6 +161,75 @@ export async function removeStudioFolder(userId: string): Promise<void> {
   } catch (err) {
     console.error('[cassette-studio] studio cleanup threw:', err instanceof Error ? err.message : err)
   }
+}
+
+// ── Cassette clips ──────────────────────────────────────────────────────────
+// A moving cover is an mb_visualizers row of kind 'free' whose settings say
+// source 'cassette-motion' (and format, and whether it carries the title).
+// Rendered against one project, pinnable on any of the owner's projects —
+// PATCH /api/projects/[id] already accepts any visualizer the caller owns —
+// so one title-free "cassette playing" loop can be every song's visualizer
+// (/api/cassette-studio/motion/pin).
+
+export type CassetteClip = {
+  id: string
+  video_url: string
+  format: FreeFormatId
+  /** Landscape (YouTube) clips pin into visualizer_wide_url; everything else into visualizer_url. */
+  wide: boolean
+  /** False for a loop rendered without the handwritten title — the reusable "cassette playing" kind. */
+  has_title: boolean
+  title: string | null
+  project_id: string | null
+  created_at: string | null
+}
+
+type ClipRow = { id: string; video_url: string; title: string | null; project_id: string | null; created_at: string | null; settings: unknown }
+
+function clipOf(row: ClipRow): CassetteClip | null {
+  const s = row.settings
+  if (!s || typeof s !== 'object' || (s as { source?: unknown }).source !== 'cassette-motion') return null
+  const fmt = (s as { format?: unknown }).format
+  const format: FreeFormatId = isFreeFormat(fmt) ? fmt : 'canvas'
+  return {
+    id: row.id,
+    video_url: row.video_url,
+    format,
+    wide: format === 'youtube',
+    has_title: (s as { title?: unknown }).title !== false,
+    title: row.title,
+    project_id: row.project_id,
+    created_at: row.created_at,
+  }
+}
+
+/** The caller's moving covers across all their projects, newest first. Empty (not an error) when none, or when the settings column is not there yet. */
+export async function listCassetteClips(userId: string, limit = 40): Promise<CassetteClip[]> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_visualizers')
+    .select('id, video_url, title, project_id, created_at, settings')
+    .eq('user_id', userId)
+    .eq('kind', 'free')
+    .eq('settings->>source', 'cassette-motion')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    console.error('[cassette-studio] clip listing failed:', error.message)
+    return []
+  }
+  return ((data ?? []) as ClipRow[]).map(clipOf).filter((c): c is CassetteClip => c !== null)
+}
+
+/** One of the caller's own moving covers by id, or null. */
+export async function findCassetteClip(userId: string, clipId: string): Promise<CassetteClip | null> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_visualizers')
+    .select('id, video_url, title, project_id, created_at, settings')
+    .eq('user_id', userId)
+    .eq('id', clipId)
+    .maybeSingle()
+  if (error || !data) return null
+  return clipOf(data as ClipRow)
 }
 
 // ── Replicate ───────────────────────────────────────────────────────────────

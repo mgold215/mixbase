@@ -1078,8 +1078,8 @@ struct VisualizerView: View {
 
         Task {
             do {
-                let url = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format)
-                await pin(url, wide: format == "youtube")
+                let clip = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format)
+                await pin(clip.videoUrl, wide: format == "youtube")
                 await loadLibrary()
             } catch {
                 motionError = error.localizedDescription

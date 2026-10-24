@@ -43,6 +43,8 @@ type Props = {
   ownerDefaults?: boolean
   /** Platform owner's own tools — Cassette Studio renders ONLY when true. */
   ownerTools?: boolean
+  /** Cassette Studio pinned a clip on this song (url, into the wide slot?). */
+  onVisualizerPinned?: (url: string, wide: boolean) => void
 }
 
 export default function ArtworkGenerator({
@@ -53,6 +55,7 @@ export default function ArtworkGenerator({
   showActions = true,
   ownerDefaults = false,
   ownerTools = false,
+  onVisualizerPinned,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload' | 'cassette'>('idle')
   // Subject only — the photographic treatment (lens, light, weather, mood) is
@@ -566,6 +569,7 @@ export default function ArtworkGenerator({
         <CassetteStudio
           projectId={projectId}
           onRendered={(art, finalized) => { onArtworkUpdated(art); onFinalizedUpdated(finalized) }}
+          onVisualizerPinned={onVisualizerPinned}
           onClose={() => setMode('idle')}
         />
       )}
