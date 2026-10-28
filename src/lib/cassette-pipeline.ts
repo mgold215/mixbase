@@ -1,11 +1,12 @@
 // Cassette Studio — the server-side pipeline the routes share: build a cover
-// (scene + cassette + handwriting) for a project, and finish a project's cover
-// with a look. /api/cassette-studio/render and /filter are thin wrappers that
-// validate the request and call in here; /api/cassette-studio/theme/apply
-// runs the same two steps from the owner's saved theme, so a release made by
-// hand and one made from the theme go through exactly one implementation.
+// (scene + cassette + handwriting) for a project, finish a project's cover
+// with a look, and render its moving cover. /api/cassette-studio/render,
+// /filter and /motion are thin wrappers that validate the request and call in
+// here; the one-click flow (src/lib/cassette-quick.ts) runs the same
+// functions, so a release made by hand and one made in one click go through
+// exactly one implementation.
 //
-// Server-only (Supabase, Replicate). Inputs arrive VALIDATED: a route has
+// Server-only (Supabase, Replicate). Inputs arrive VALIDATED: a caller has
 // already pinned the project to the caller, the subject/lettering keys to the
 // caller's studio folder (isOwnStudioKey) and the scene to a known id.
 
@@ -18,12 +19,21 @@ import {
   downloadStudio, fillScene, findStudioObject, removeStudio, studioPrefix, studioPublicUrl, uploadStudio,
 } from '@/lib/cassette-server'
 import {
-  applyLettering, artworkStamp, buildFillRequest, composeLayers, filteredCoverKey, finalizedCoverKey, finishCover,
-  layerKey, motionLayerFiles, parseFinalizedCover, parseSourcePath, placeSubject, plateKey, tintLettering, titleKey,
-  type CoverLayers, type LetteringPosition, type LetteringSize, type Placement,
+  applyLettering, artworkStamp, buildFillRequest, cassetteCoverStamp, composeLayers, filteredCoverKey, finalizedCoverKey, finishCover,
+  layerKey, motionLayerFiles, parseFinalizedCover, parseSourcePath, parseStudioMotionKey, pickLetteringPosition, placeSubject, plateKey,
+  tintLettering, titleKey,
+  type Box, type CoverLayers, type LetteringPosition, type LetteringSize, type Placement,
 } from '@/lib/cassette-studio'
 import { CASSETTE_SCENES, scenePrompt } from '@/lib/cassette-scenes'
-import { decodeForFilter, filterRawToJpeg, isIdentityFilter, type FilterSettings, type RawImage } from '@/lib/cover-filters'
+import {
+  decodeForFilter, filterRawToJpeg, gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings, type RawImage,
+} from '@/lib/cover-filters'
+import { listStudio } from '@/lib/cassette-server'
+import { prepareMotionAssets } from '@/lib/cassette-motion'
+import { renderCassetteMotion } from '@/lib/cassette-render'
+import { FREE_FORMATS, type FreeFormatId } from '@/lib/free-render'
+import { tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
+import { storeVisualizer } from '@/lib/visualizer-store'
 
 /** A failure the artist should see as it is, with the HTTP status it maps to. */
 export class CoverError extends Error {
@@ -61,11 +71,14 @@ export type CoverJob = {
   letteringPath: string
   /** '#rrggbb' or 'auto'. */
   color: string
-  position: LetteringPosition
+  /** 'auto' = the calmest spot clear of the cassette (pickLetteringPosition). */
+  position: LetteringPosition | 'auto'
   size: LetteringSize
   /** A glossy surface (photo mode): mirror the cassette in it. */
   reflection: boolean
   placement: Placement
+  /** The full FLUX Fill prompt for an AI scene, used as is (otherwise built from the scene/setting). */
+  prompt?: string
 }
 
 export type CoverResult = {
@@ -75,6 +88,8 @@ export type CoverResult = {
   scene_label: string | null
   prompt_used: string | null
   color: string | null
+  /** Where the handwriting went (resolved when 'auto' was asked for). */
+  position: LetteringPosition | null
 }
 
 /** Pick a random preset scene id. */
@@ -97,7 +112,9 @@ export function randomSceneId(): string {
  * not configured, and anything else for a failure the route reports generically.
  */
 export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
-  const { userId, project, scene, setting, letteringPath, color, position, size, placement } = job
+  const { userId, project, scene, setting, letteringPath, color, size, placement } = job
+  let position: LetteringPosition = job.position === 'auto' ? 'bottom-left' : job.position
+  let coverBox: Box | null = null
   const projectId = project.id
   const isAiScene = scene !== 'photo' && scene !== 'keep'
   let background = job.background
@@ -145,7 +162,7 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
         refund = () => refundUsage(userId, 'artwork', gate.month)
 
         const sceneSetting = scene === 'custom' ? setting : CASSETTE_SCENES.find(s => s.id === scene)!.setting
-        prompt = scenePrompt(sceneSetting)
+        prompt = job.prompt?.trim() ? job.prompt.trim() : scenePrompt(sceneSetting)
         const fill = await buildFillRequest(subject, box)
         const imgPath = `${studioPrefix(userId)}tmp-${ts}-fill.jpg`
         const maskPath = `${studioPrefix(userId)}tmp-${ts}-mask.png`
@@ -166,6 +183,7 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
         reflection: job.reflection ? 0.6 : 0,
       })
       art = await finishCover(layers, seed)
+      coverBox = box
       // ai- prefix → Artwork History files it as 'generated'; an own-photo
       // composite has no AI in it and files as an upload.
       artPath = `${projectId}/${isAiScene ? 'ai-cassette' : 'cassette'}-${stamp}.jpg`
@@ -180,6 +198,10 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
     let usedColor: string | null = null
     if (letteringPath) {
       const lettering = await downloadStudio(letteringPath)
+      if (job.position === 'auto') {
+        const lm = await sharp(lettering).metadata()
+        position = await pickLetteringPosition(art, coverBox, lm.width ?? 1, lm.height ?? 1, size)
+      }
       const out = await applyLettering(art, lettering, { color, position, size })
       finalized = out.jpeg
       usedColor = out.color
@@ -211,6 +233,7 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
       scene_label: CASSETTE_SCENES.find(s => s.id === scene)?.label ?? (scene === 'custom' ? setting : scene === 'photo' ? 'Your photo' : null),
       prompt_used: prompt,
       color: usedColor,
+      position: letteringPath ? position : null,
     }
   } finally {
     if (refund) await refund()
@@ -407,4 +430,139 @@ async function uploadLookFile(path: string, bytes: Buffer): Promise<string> {
   const { error } = await supabaseAdmin.storage.from(ARTWORK_BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false })
   if (error && !(await findStudioObject(path))) throw new Error(`upload ${path}: ${error.message}`)
   return studioPublicUrl(path)
+}
+
+// ── Moving cover (no AI) ────────────────────────────────────────────────────
+// The project's current Studio cover as a looping clip: reels turning, camera
+// drift, live grain (engine: cassette-motion*.ts; render: cassette-render.ts).
+// Built from the layers every render keeps beside the still, found by the
+// cover's own timestamp:
+//   artwork_url    <projectId>/(ai-)cassette-<ts>.jpg → plate-<ts>.jpg + layer-<ts>-<l>-<t>.png
+//   finalized_url  <projectId>/finalized-<fts>.jpg    → title-<fts>-<position>-<size>.png (optional)
+// When the finalized cover carries a look (finalized-<fts>-f<code>.jpg) the
+// same grade goes on the plate, the cassette layer and the title, and the
+// vignette on the plate, so the loop matches the still.
+
+export const NOT_A_STUDIO_COVER = 'Make a cover in Cassette Studio first.'
+export const MADE_BEFORE_MOTION = 'This cover was made before moving covers existed — make a new one in Cassette Studio.'
+export const MOTION_FAILED = 'Could not render the moving cover. Please try again.'
+
+export type MotionSources =
+  | { ok: false; reason: string }
+  | {
+      ok: true
+      platePath: string
+      layerPath: string
+      left: number
+      top: number
+      title: { path: string; position: LetteringPosition; size: LetteringSize } | null
+      /** The look baked into the finalized cover, or null (none, or "Original"). */
+      filter: FilterSettings | null
+    }
+
+/**
+ * Find this cover's motion layers in the caller's own studio folder. Each
+ * listing is narrowed to one stamp with Storage's `search`, and every name it
+ * returns is still parsed strictly (parseStudioMotionKey) and matched on the
+ * exact stamp before it is used. Throws only when Storage itself fails.
+ */
+export async function findMotionSources(userId: string, project: CoverProject): Promise<MotionSources> {
+  const ts = cassetteCoverStamp(storagePathFromUrl(project.artwork_url, ARTWORK_BUCKET), project.id)
+  if (!ts) return { ok: false, reason: NOT_A_STUDIO_COVER }
+  const finalized = parseFinalizedCover(storagePathFromUrl(project.finalized_artwork_url, ARTWORK_BUCKET), project.id)
+  const fts = finalized?.fts ?? null
+  const filter = finalized?.filter && !isIdentityFilter(finalized.filter) ? finalized.filter : null
+
+  const [plates, layers, titles] = await Promise.all([
+    listStudio(userId, `plate-${ts}`),
+    listStudio(userId, `layer-${ts}-`),
+    fts ? listStudio(userId, `title-${fts}-`) : Promise.resolve([]),
+  ])
+  const plate = plates.find(f => {
+    const k = parseStudioMotionKey(f.path, userId)
+    return k?.kind === 'plate' && k.ts === ts
+  })
+  let layer: { path: string; left: number; top: number } | null = null
+  for (const f of layers) {
+    const k = parseStudioMotionKey(f.path, userId)
+    if (k?.kind === 'layer' && k.ts === ts) { layer = { path: f.path, left: k.left, top: k.top }; break }
+  }
+  if (!plate || !layer) return { ok: false, reason: MADE_BEFORE_MOTION }
+
+  let title: { path: string; position: LetteringPosition; size: LetteringSize } | null = null
+  for (const f of titles) {
+    const k = parseStudioMotionKey(f.path, userId)
+    if (k?.kind === 'title' && k.ts === fts) { title = { path: f.path, position: k.position, size: k.size }; break }
+  }
+  return { ok: true, platePath: plate.path, layerPath: layer.path, left: layer.left, top: layer.top, title, filter }
+}
+
+/**
+ * Render the project's current cover as a moving cover in `format` and save
+ * it to the visualizer library (kind 'free'). Throws CoverError with what the
+ * artist should read (400 not a Studio cover, 503 encoder busy, 502 failed).
+ */
+export async function makeMovingCover(
+  userId: string, project: CoverProject, format: FreeFormatId, withTitle: boolean, source = 'cassette-motion',
+): Promise<{ id: string; video_url: string }> {
+  let src: MotionSources
+  try {
+    src = await findMotionSources(userId, project)
+  } catch (err) {
+    console.error('[cassette-studio/motion] lookup failed:', err instanceof Error ? err.message : err)
+    throw new CoverError(MOTION_FAILED, 502)
+  }
+  if (!src.ok) throw new CoverError(src.reason, 400)
+
+  // Fetch and prepare everything BEFORE taking an encoder slot — a slow
+  // storage read or the hub cut-out must not sit on one of the two slots.
+  let input: Parameters<typeof renderCassetteMotion>[0]
+  try {
+    const [plateRaw, layerPng, titleRaw] = await Promise.all([
+      downloadStudio(src.platePath),
+      downloadStudio(src.layerPath),
+      withTitle && src.title ? downloadStudio(src.title.path) : Promise.resolve(null),
+    ])
+    const { data: layer, info } = await sharp(layerPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    const { filter } = src
+    const plateJpeg = filter ? await gradeEncoded(plateRaw, filter, { format: 'jpeg', vignette: true }) : plateRaw
+    const titlePng = filter && titleRaw ? await gradeEncoded(titleRaw, filter, { format: 'png' }) : titleRaw
+    if (filter) gradePixels(layer, 4, filter)
+    const assets = await prepareMotionAssets(layer, info.width, info.height)
+    input = {
+      plateJpeg,
+      assets,
+      box: { left: src.left, top: src.top, width: info.width, height: info.height },
+      title: src.title && titlePng ? { png: titlePng, position: src.title.position, size: src.title.size } : null,
+      format,
+    }
+  } catch (err) {
+    console.error('[cassette-studio/motion] prepare failed:', err instanceof Error ? err.message : err)
+    throw new CoverError(MOTION_FAILED, 502)
+  }
+
+  // Same 2-slot encoder gate as every other request-path render.
+  if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
+  let bytes: Buffer
+  try {
+    bytes = await renderCassetteMotion(input)
+  } catch (err) {
+    console.error('[cassette-studio/motion] render failed:', err instanceof Error ? err.message : err)
+    throw new CoverError(MOTION_FAILED, 502)
+  } finally {
+    releaseTranscodeSlot()
+  }
+
+  const stored = await storeVisualizer({
+    userId,
+    projectId: project.id,
+    bytes,
+    contentType: 'video/mp4',
+    kind: 'free',
+    title: `${withTitle ? 'Moving cover' : 'Cassette playing'} · ${FREE_FORMATS[format].label}`,
+    sourceImageUrl: withTitle ? (project.finalized_artwork_url ?? project.artwork_url) : project.artwork_url,
+    settings: { source, format, title: withTitle },
+  })
+  if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
+  return stored
 }

@@ -6,8 +6,8 @@
 //   studio/<userId>/lettering-<projectId>-<ts>.png one handwriting lockup for one project
 //   studio/<userId>/glyph-<cp>-<unit>-<base>-<ts>.png one letter of the owner's hand (the glyph
 //                                                  bank behind "type in my handwriting")
-//   studio/<userId>/theme-<ts>-….png               the owner's theme — the recipe every release
-//                                                  is rendered in (src/lib/cassette-theme.ts)
+//   studio/<userId>/signature-<ts>.png             the artist's name in their own hand, one image
+//                                                  (line 1 of the handwriting sheet, handwriting-sheet.ts)
 //   studio/<userId>/tmp-<ts>-*.{jpg,png}           FLUX/cut-out inputs, deleted after each call
 //   studio/<userId>/plate-<ts>.jpg                 a cover's scene plate        ┐ moving-cover inputs,
 //   studio/<userId>/layer-<ts>-<left>-<top>.png    its finished cassette layer  │ written by every render
@@ -28,9 +28,9 @@
 // /api/cassette-studio/subject cuts a cassette out of one (parseSourcePath).
 
 import { supabaseAdmin } from '@/lib/supabase'
-import { studioPrefix } from '@/lib/cassette-studio'
+import { isOwnStudioKey as isOwnKey, signatureKey, studioPrefix } from '@/lib/cassette-studio'
 import { GLYPH_CHARS, parseGlyphKey, type GlyphSample } from '@/lib/handwriting-glyphs'
-import { parseThemeKey, type StudioTheme } from '@/lib/cassette-theme'
+import { signatureFromLettering } from '@/lib/handwriting-sheet'
 
 export { studioPrefix, isOwnStudioKey } from '@/lib/cassette-studio'
 
@@ -138,17 +138,33 @@ export async function loadGlyphBank(userId: string, text: string): Promise<Glyph
   return files.map((f, i) => ({ char: f.char, unit: f.unit, base: f.base, png: pngs[i] }))
 }
 
-// ── Theme ───────────────────────────────────────────────────────────────────
+// ── Signature ───────────────────────────────────────────────────────────────
 
-/** The owner's newest saved theme, or null. Throws only when Storage itself fails. */
-export async function loadTheme(userId: string): Promise<{ theme: StudioTheme; path: string } | null> {
-  const files = await listStudio(userId, 'theme-')
-  let best: { theme: StudioTheme; path: string } | null = null
-  for (const f of files) {
-    const theme = parseThemeKey(f.path, userId)
-    if (theme && (!best || Number(theme.ts) > Number(best.theme.ts))) best = { theme, path: f.path }
+export type SignatureFile = StudioFile & { png: Buffer; source: 'saved' | 'lettering' }
+
+/**
+ * The artist's handwritten name: the newest saved signature, or — the first
+ * time it is needed and none was ever saved — the first line of the newest
+ * lettering photo that has two lines (a name over a title, the way the
+ * Studio asks for it), saved as the signature from then on. Null when there
+ * is neither. Throws only when Storage itself fails.
+ */
+export async function loadSignature(userId: string): Promise<SignatureFile | null> {
+  const saved = (await listStudio(userId, 'signature-')).filter(f => isOwnKey(f.path, userId, 'signature'))
+  if (saved[0]) return { ...saved[0], png: await downloadStudio(saved[0].path), source: 'saved' }
+  const letterings = (await listStudio(userId, 'lettering-')).filter(f => isOwnKey(f.path, userId, 'lettering')).slice(0, 5)
+  for (const f of letterings) {
+    try {
+      const sig = await signatureFromLettering(await downloadStudio(f.path))
+      if (!sig) continue
+      const path = signatureKey(userId, Date.now())
+      const url = await uploadStudio(path, sig.png, 'image/png')
+      return { path, url, createdAt: new Date().toISOString(), png: sig.png, source: 'lettering' }
+    } catch (err) {
+      console.error('[cassette-studio] signature from lettering failed:', err instanceof Error ? err.message : err)
+    }
   }
-  return best
+  return null
 }
 
 export async function removeStudio(paths: string[]): Promise<void> {

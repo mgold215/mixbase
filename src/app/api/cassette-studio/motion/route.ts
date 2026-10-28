@@ -1,37 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import sharp from 'sharp'
-import { supabaseAdmin } from '@/lib/supabase'
 import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { freeRenderLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
-import { ARTWORK_BUCKET, storagePathFromUrl } from '@/lib/project-assets'
-import { downloadStudio, listStudio } from '@/lib/cassette-server'
-import {
-  cassetteCoverStamp, parseFinalizedCover, parseStudioMotionKey, type LetteringPosition, type LetteringSize,
-} from '@/lib/cassette-studio'
-import { gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings } from '@/lib/cover-filters'
-import { prepareMotionAssets } from '@/lib/cassette-motion'
-import { renderCassetteMotion } from '@/lib/cassette-render'
-import { FREE_FORMATS, isFreeFormat } from '@/lib/free-render'
-import { tryAcquireTranscodeSlot, releaseTranscodeSlot } from '@/lib/visualizer-encode'
-import { storeVisualizer } from '@/lib/visualizer-store'
+import { isFreeFormat } from '@/lib/free-render'
+import { CoverError, findMotionSources, loadCoverProject, makeMovingCover } from '@/lib/cassette-pipeline'
 
 // Cassette Studio — moving cover. A no-AI animated loop of the project's
 // current Cassette Studio cover: the reels turn, the camera drifts with
 // two-plane parallax, the film grain is alive, the handwritten title sits on
-// top (engine: src/lib/cassette-motion*.ts; render: src/lib/cassette-render.ts).
-//
-// Built from the layers every render keeps beside the still (key shapes in
-// cassette-studio.ts "Motion layers"), found by the cover's own timestamp:
-//   artwork_url    <projectId>/(ai-)cassette-<ts>.jpg → plate-<ts>.jpg + layer-<ts>-<l>-<t>.png
-//   finalized_url  <projectId>/finalized-<fts>.jpg    → title-<fts>-<position>-<size>.png (optional)
-//
-// When the finalized cover carries a "Finish the look" filter
-// (finalized-<fts>-f<code>.jpg, see /api/cassette-studio/filter) the same
-// per-pixel grade is applied to the plate, the cassette layer (alpha kept) and
-// the title ink before rendering, and the vignette to the plate, so the loop
-// matches the still. The still's grain is not added: the loop already draws
-// fresh grain every frame.
+// top. What it is built from and how: makeMovingCover in
+// src/lib/cassette-pipeline.ts (the one-click flow uses the same function as
+// its fallback when a cinematic clip cannot be filmed).
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 //
@@ -39,72 +18,6 @@ import { storeVisualizer } from '@/lib/visualizer-store'
 // routes: a 30s 1080p loop is tens of seconds of sliced worker rendering.
 export const runtime = 'nodejs'
 export const maxDuration = 300
-
-const NOT_A_STUDIO_COVER = 'Make a cover in Cassette Studio first.'
-const MADE_BEFORE_MOTION = 'This cover was made before moving covers existed — make a new one in Cassette Studio.'
-const RENDER_FAILED = 'Could not render the moving cover. Please try again.'
-
-type ProjectRow = { id: string; user_id: string; artwork_url: string | null; finalized_artwork_url: string | null }
-
-type MotionSources =
-  | { ok: false; reason: string }
-  | {
-      ok: true
-      platePath: string
-      layerPath: string
-      left: number
-      top: number
-      title: { path: string; position: LetteringPosition; size: LetteringSize } | null
-      /** The look baked into the finalized cover, or null (none, or "Original"). */
-      filter: FilterSettings | null
-    }
-
-async function loadProject(userId: string, projectId: string): Promise<ProjectRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from('mb_projects')
-    .select('id, user_id, artwork_url, finalized_artwork_url')
-    .eq('id', projectId)
-    .eq('user_id', userId)
-    .single()
-  return error || !data ? null : (data as ProjectRow)
-}
-
-/**
- * Find this cover's motion layers in the caller's own studio folder. Each
- * listing is narrowed to one stamp with Storage's `search`, and every name it
- * returns is still parsed strictly (parseStudioMotionKey) and matched on the
- * exact stamp before it is used. Throws only when Storage itself fails.
- */
-async function findMotionSources(userId: string, project: ProjectRow): Promise<MotionSources> {
-  const ts = cassetteCoverStamp(storagePathFromUrl(project.artwork_url, ARTWORK_BUCKET), project.id)
-  if (!ts) return { ok: false, reason: NOT_A_STUDIO_COVER }
-  const finalized = parseFinalizedCover(storagePathFromUrl(project.finalized_artwork_url, ARTWORK_BUCKET), project.id)
-  const fts = finalized?.fts ?? null
-  const filter = finalized?.filter && !isIdentityFilter(finalized.filter) ? finalized.filter : null
-
-  const [plates, layers, titles] = await Promise.all([
-    listStudio(userId, `plate-${ts}`),
-    listStudio(userId, `layer-${ts}-`),
-    fts ? listStudio(userId, `title-${fts}-`) : Promise.resolve([]),
-  ])
-  const plate = plates.find(f => {
-    const k = parseStudioMotionKey(f.path, userId)
-    return k?.kind === 'plate' && k.ts === ts
-  })
-  let layer: { path: string; left: number; top: number } | null = null
-  for (const f of layers) {
-    const k = parseStudioMotionKey(f.path, userId)
-    if (k?.kind === 'layer' && k.ts === ts) { layer = { path: f.path, left: k.left, top: k.top }; break }
-  }
-  if (!plate || !layer) return { ok: false, reason: MADE_BEFORE_MOTION }
-
-  let title: { path: string; position: LetteringPosition; size: LetteringSize } | null = null
-  for (const f of titles) {
-    const k = parseStudioMotionKey(f.path, userId)
-    if (k?.kind === 'title' && k.ts === fts) { title = { path: f.path, position: k.position, size: k.size }; break }
-  }
-  return { ok: true, platePath: plate.path, layerPath: layer.path, left: layer.left, top: layer.top, title, filter }
-}
 
 // GET /api/cassette-studio/motion?project_id=<uuid>
 // → { available: boolean, reason: string | null } — whether the project's
@@ -116,7 +29,7 @@ export async function GET(request: NextRequest) {
 
   const projectId = canonicalUuid(request.nextUrl.searchParams.get('project_id'))
   if (!projectId) return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
-  const project = await loadProject(userId, projectId)
+  const project = await loadCoverProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   try {
@@ -131,8 +44,7 @@ export async function GET(request: NextRequest) {
 // POST /api/cassette-studio/motion   JSON { project_id, format, title? }
 //   format: 'canvas' | 'square' | 'youtube' | 'story' (FREE_FORMATS — same
 //   sizes, lengths and 30 fps as the free generator)
-//   title:  false renders the loop WITHOUT the handwritten title — the plain
-//           "cassette playing" clip (default true)
+//   title:  false renders the loop WITHOUT the handwritten title (default true)
 // → { id, video_url, saved: true, format, has_title } — saved to the
 //   visualizer library as a free (no-AI) clip. Pin it like any clip: landscape
 //   (youtube) into visualizer_wide_url, everything else into visualizer_url
@@ -158,76 +70,20 @@ export async function POST(request: NextRequest) {
   if (!isFreeFormat(format)) return NextResponse.json({ error: 'Unknown format' }, { status: 400 })
   const withTitle = body.title !== false
 
-  const project = await loadProject(userId, projectId)
+  const project = await loadCoverProject(userId, projectId)
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
-  let src: MotionSources
   try {
-    src = await findMotionSources(userId, project)
+    const stored = await makeMovingCover(userId, project, format, withTitle)
+    return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, format, has_title: withTitle })
   } catch (err) {
-    console.error('[cassette-studio/motion] lookup failed:', err instanceof Error ? err.message : err)
-    return NextResponse.json({ error: RENDER_FAILED }, { status: 502 })
-  }
-  if (!src.ok) return NextResponse.json({ error: src.reason }, { status: 400 })
-
-  // Fetch and prepare everything BEFORE taking an encoder slot — a slow
-  // storage read or the hub cut-out must not sit on one of the two slots.
-  let input: Parameters<typeof renderCassetteMotion>[0]
-  try {
-    const [plateRaw, layerPng, titleRaw] = await Promise.all([
-      downloadStudio(src.platePath),
-      downloadStudio(src.layerPath),
-      src.title ? downloadStudio(src.title.path) : Promise.resolve(null),
-    ])
-    const { data: layer, info } = await sharp(layerPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-    // The cover's look, if it has one: same grade on every layer (the
-    // cassette before its hubs are cut, so the spinning sprite matches), the
-    // vignette on the plate only.
-    const { filter } = src
-    const plateJpeg = filter ? await gradeEncoded(plateRaw, filter, { format: 'jpeg', vignette: true }) : plateRaw
-    const titlePng = filter && titleRaw ? await gradeEncoded(titleRaw, filter, { format: 'png' }) : titleRaw
-    if (filter) gradePixels(layer, 4, filter)
-    const assets = await prepareMotionAssets(layer, info.width, info.height)
-    input = {
-      plateJpeg,
-      assets,
-      box: { left: src.left, top: src.top, width: info.width, height: info.height },
-      title: withTitle && src.title && titlePng ? { png: titlePng, position: src.title.position, size: src.title.size } : null,
-      format,
+    if (err instanceof CoverError) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: err.status, ...(err.status === 503 ? { headers: { 'Retry-After': '30' } } : {}) },
+      )
     }
-  } catch (err) {
-    console.error('[cassette-studio/motion] prepare failed:', err instanceof Error ? err.message : err)
-    return NextResponse.json({ error: RENDER_FAILED }, { status: 502 })
+    console.error('[cassette-studio/motion] failed:', err instanceof Error ? err.message : err)
+    return NextResponse.json({ error: 'Could not render the moving cover. Please try again.' }, { status: 502 })
   }
-
-  // Same 2-slot encoder gate as every other request-path render.
-  if (!tryAcquireTranscodeSlot()) {
-    return NextResponse.json(
-      { error: 'Server is busy rendering other videos — try again in a minute' },
-      { status: 503, headers: { 'Retry-After': '30' } },
-    )
-  }
-  let bytes: Buffer
-  try {
-    bytes = await renderCassetteMotion(input)
-  } catch (err) {
-    console.error('[cassette-studio/motion] render failed:', err instanceof Error ? err.message : err)
-    return NextResponse.json({ error: RENDER_FAILED }, { status: 502 })
-  } finally {
-    releaseTranscodeSlot()
-  }
-
-  const stored = await storeVisualizer({
-    userId,
-    projectId: project.id,
-    bytes,
-    contentType: 'video/mp4',
-    kind: 'free',
-    title: `${withTitle ? 'Moving cover' : 'Cassette playing'} · ${FREE_FORMATS[format].label}`,
-    sourceImageUrl: withTitle ? (project.finalized_artwork_url ?? project.artwork_url) : project.artwork_url,
-    settings: { source: 'cassette-motion', format, title: withTitle },
-  })
-  if (!stored) return NextResponse.json({ error: 'Rendered fine but saving failed — try again.' }, { status: 500 })
-
-  return NextResponse.json({ id: stored.id, video_url: stored.video_url, saved: true, format, has_title: withTitle })
 }

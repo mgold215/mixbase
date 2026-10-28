@@ -60,15 +60,18 @@ export const studioPrefix = (userId: string) => `studio/${userId}/`
  * ownership check: the prefix pins the user, the leaf regex pins the shape
  * (no '..', no nested folders, no other user's id).
  */
-export function isOwnStudioKey(key: unknown, userId: string, kind: 'subject' | 'lettering'): key is string {
+export function isOwnStudioKey(key: unknown, userId: string, kind: 'subject' | 'lettering' | 'signature'): key is string {
   if (typeof key !== 'string') return false
   const prefix = studioPrefix(userId)
   if (!key.startsWith(prefix)) return false
   const leaf = key.slice(prefix.length)
-  return kind === 'subject'
-    ? /^subject-\d{10,16}\.png$/.test(leaf)
-    : /^lettering-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{10,16}\.png$/.test(leaf)
+  if (kind === 'subject') return /^subject-\d{10,16}\.png$/.test(leaf)
+  if (kind === 'signature') return /^signature-\d{10,16}\.png$/.test(leaf)
+  return /^lettering-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{10,16}\.png$/.test(leaf)
 }
+
+/** studio/<userId>/signature-<ts>.png — the artist's name in their own hand, one image (handwriting-sheet.ts). */
+export const signatureKey = (userId: string, ts: string | number) => `${studioPrefix(userId)}signature-${ts}.png`
 
 // ── Motion layers ──────────────────────────────────────────────────────────
 // Every render also keeps the two layers the still was flattened from (the
@@ -814,6 +817,132 @@ export async function applyLettering(
   const overlay = await tintLettering(lettering, color, { width: place.width, height: place.height })
   const jpeg = await sharp(art).composite([{ input: overlay, left: place.left, top: place.top }]).jpeg({ quality: 92, chromaSubsampling: '4:2:0' }).toBuffer()
   return { jpeg, color }
+}
+
+// ── Automatic lettering spot ───────────────────────────────────────────────
+
+/**
+ * Where the handwriting reads best on THIS cover: of the six lettering
+ * positions, the one whose patch is calmest (lowest brightness variation —
+ * sky, a wall, an out-of-focus background, never a busy street sign) and
+ * clear of the cassette. Ties go to the order a designer would try them:
+ * bottom-left, top-left, bottom-right, top-right, then the centres.
+ */
+export async function pickLetteringPosition(
+  art: Buffer, avoid: Box | null, nativeW: number, nativeH: number, size: LetteringSize = 'medium',
+): Promise<LetteringPosition> {
+  const meta = await sharp(art).metadata()
+  const W = meta.width ?? COVER, H = meta.height ?? COVER
+  const SMALL = 300
+  const k = SMALL / Math.max(W, H)
+  const sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k))
+  const small = await sharp(art).resize(sw, sh, { fit: 'fill' }).greyscale().raw().toBuffer()
+  const order: LetteringPosition[] = ['bottom-left', 'top-left', 'bottom-right', 'top-right', 'bottom-center', 'top-center']
+  const pad = W * 0.02
+  let best: LetteringPosition = 'bottom-left'
+  let bestScore = Infinity
+  order.forEach((pos, rank) => {
+    const r = letteringPlacement(W, H, nativeW, nativeH, pos, size)
+    let overlap = 0
+    if (avoid) {
+      const ox = Math.max(0, Math.min(r.left + r.width, avoid.left + avoid.width + pad) - Math.max(r.left, avoid.left - pad))
+      const oy = Math.max(0, Math.min(r.top + r.height, avoid.top + avoid.height + pad) - Math.max(r.top, avoid.top - pad))
+      overlap = (ox * oy) / Math.max(1, r.width * r.height)
+    }
+    const x0 = Math.floor(r.left * k), y0 = Math.floor(r.top * k)
+    const x1 = Math.min(sw, Math.ceil((r.left + r.width) * k)), y1 = Math.min(sh, Math.ceil((r.top + r.height) * k))
+    let n = 0, sum = 0, sq = 0
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = small[y * sw + x]; sum += v; sq += v * v; n++ }
+    const mean = n ? sum / n : 0
+    const sd = n ? Math.sqrt(Math.max(0, sq / n - mean * mean)) : 0
+    // Overlapping the cassette is all but disqualifying; rank breaks near-ties.
+    const score = sd + overlap * 400 + rank * 1.5
+    if (score < bestScore) { bestScore = score; best = pos }
+  })
+  return best
+}
+
+// ── Wider and taller framings of the cover (for the moving scenes) ─────────
+// The square cover, extended by FLUX Fill into a 9:16 (Canvas) or 16:9
+// (YouTube) frame of the SAME scene: the square sits in the middle untouched
+// and the model paints only the new bands above/below or left/right of it.
+
+export type FrameShape = 'portrait' | 'landscape'
+/** Fill request sizes: multiples of 32, ≈1.2 MP, ≈9:16 and ≈16:9. */
+export const OUTPAINT_SIZES: Record<FrameShape, { width: number; height: number }> = {
+  portrait: { width: 832, height: 1472 },
+  landscape: { width: 1472, height: 832 },
+}
+/** How far the model may paint INTO the square, so the seam blends (px at fill size). */
+const OUTPAINT_OVERLAP = 28
+
+export type OutpaintRequest = {
+  image: Buffer
+  mask: Buffer
+  width: number
+  height: number
+  /** Where the square cover sits in the frame (fill-size px). */
+  inner: { left: number; top: number; size: number }
+}
+
+/**
+ * The FLUX Fill request that extends a square cover to `shape`: the cover in
+ * the middle, the new bands pre-filled with a blurred stretch of the cover's
+ * own edges (so the model starts from the right colours and light), and a
+ * mask that is WHITE over the bands plus a thin overlap into the square,
+ * BLACK over the rest of it. Returns JPEG image + PNG mask.
+ */
+export async function buildOutpaintRequest(cover: Buffer, shape: FrameShape): Promise<OutpaintRequest> {
+  const { width, height } = OUTPAINT_SIZES[shape]
+  const size = Math.min(width, height)
+  const inner = { left: Math.round((width - size) / 2), top: Math.round((height - size) / 2), size }
+  const square = await sharp(cover).resize(size, size, { fit: 'cover' }).removeAlpha().jpeg({ quality: 95 }).toBuffer()
+  const backdrop = await sharp(cover).resize(width, height, { fit: 'fill' }).removeAlpha().blur(24).jpeg({ quality: 90 }).toBuffer()
+  const image = await sharp(backdrop).composite([{ input: square, left: inner.left, top: inner.top }]).jpeg({ quality: 95 }).toBuffer()
+  const mask = Buffer.alloc(width * height, 255)
+  const o = OUTPAINT_OVERLAP
+  for (let y = inner.top; y < inner.top + size; y++) {
+    for (let x = inner.left; x < inner.left + size; x++) {
+      // Keep the square except a thin overlap along the edges that face a band.
+      const nearTop = shape === 'portrait' && y < inner.top + o
+      const nearBottom = shape === 'portrait' && y >= inner.top + size - o
+      const nearLeft = shape === 'landscape' && x < inner.left + o
+      const nearRight = shape === 'landscape' && x >= inner.left + size - o
+      if (!nearTop && !nearBottom && !nearLeft && !nearRight) mask[y * width + x] = 0
+    }
+  }
+  return {
+    image,
+    mask: await sharp(mask, { raw: { width, height, channels: 1 } }).png().toBuffer(),
+    width, height, inner,
+  }
+}
+
+/**
+ * Put the real cover back over the model's extension, at `outWidth` wide:
+ * whatever the model did inside the square, the frame's middle is the
+ * cover's own pixels (cassette included), with a soft seam over the overlap.
+ * Returns JPEG.
+ */
+export async function finishOutpaint(filled: Buffer, cover: Buffer, req: OutpaintRequest, outWidth: number): Promise<Buffer> {
+  const k = outWidth / req.width
+  const W = outWidth, H = Math.round(req.height * k)
+  const size = Math.round(req.inner.size * k)
+  const left = Math.round(req.inner.left * k), top = Math.round(req.inner.top * k)
+  const base = await sharp(filled).resize(W, H, { fit: 'fill', kernel: 'lanczos3' }).removeAlpha().jpeg({ quality: 95 }).toBuffer()
+  const sq = await sharp(cover).resize(size, size, { fit: 'cover', kernel: 'lanczos3' }).removeAlpha().raw().toBuffer()
+  const feather = Math.max(2, Math.round(OUTPAINT_OVERLAP * k))
+  const rgba = Buffer.alloc(size * size * 4)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = W > H ? Math.min(x, size - 1 - x) : Math.min(y, size - 1 - y)
+      const a = d >= feather ? 1 : smooth(d / feather)
+      const i = (y * size + x) * 3, o = (y * size + x) * 4
+      rgba[o] = sq[i]; rgba[o + 1] = sq[i + 1]; rgba[o + 2] = sq[i + 2]; rgba[o + 3] = Math.round(a * 255)
+    }
+  }
+  const overlay = await sharp(rgba, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer()
+  return sharp(base).composite([{ input: overlay, left, top }]).jpeg({ quality: 93 }).toBuffer()
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
