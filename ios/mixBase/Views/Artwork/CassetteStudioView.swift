@@ -65,9 +65,25 @@ struct CassetteStudioView: View {
         // library: cutting out a photo already in mixBase.
         // look: putting the remembered look on a fresh render.
         // typing: setting a typed title from the glyph bank.
-        // teaching: learning letters from a photo. theme: saving/applying the theme.
-        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, theme
+        // teaching: learning letters from a photo. sheet: reading the handwriting sheet.
+        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, sheet
     }
+
+    // One click: example scenes (tap fills the box) and the steps shown while it runs.
+    private static let quickIdeas = [
+        "Rainy rooftop in Tokyo at night, neon signs",
+        "Desert motel at dusk, pink sky",
+        "Diner counter at 3am, red neon outside",
+        "Snowy windowsill, warm lamp light",
+        "Car dashboard on a night highway",
+    ]
+
+    private static let quickSteps: [(id: String, label: String)] = [
+        ("brief", "Writing the shot"),
+        ("cover", "Cover, with your handwriting"),
+        ("canvas", "Canvas (9:16)"),
+        ("youtube", "YouTube (16:9)"),
+    ]
 
     // Mirrors CASSETTE_SCENES in src/lib/cassette-scenes.ts (ids must match
     // the server; the server owns the prompts).
@@ -198,17 +214,30 @@ struct CassetteStudioView: View {
     // The project's CURRENT cover can already move (its layers were saved).
     @State private var canMove = false
 
-    // My theme: the recipe every release is rendered in.
-    @State private var theme: MixbaseAPI.StudioTheme?
-    @State private var themeLoaded = false
-    @State private var themeLettering = "title"
-    @State private var themeFormats: Set<String> = ["canvas", "youtube"]
-    @State private var themeStep: String?
-    @State private var themeError: String?
-    @State private var themeNote: String?
-    @State private var confirmForgetTheme = false
+    // One click: the description, the run being polled, what it will use.
+    @State private var quickText = ""
+    @State private var quickJob: MixbaseAPI.QuickJob?
+    @State private var quickError: String?
+    @State private var setupInfo: MixbaseAPI.StudioSetup?
+    @State private var sheetPick: PhotosPickerItem?
+    @State private var sheetError: String?
+    @State private var manualOpen = false
+    @State private var pollToken = 0
+    // The cover and clips already handed to the song screen, so polling
+    // announces each once.
+    @State private var announcedCover: String?
+    @State private var announcedClips: Set<String> = []
 
-    private var isWorking: Bool { busy != nil || lookSaving }
+    private var quickRunning: Bool { quickJob?.isRunning ?? false }
+
+    private var isWorking: Bool { busy != nil || lookSaving || quickRunning }
+
+    private var quickReady: Bool { setupInfo?.cassette != nil || !subjects.isEmpty }
+
+    private var needsSheet: Bool {
+        guard let setupInfo else { return false }
+        return setupInfo.signature == nil || setupInfo.letters.known < setupInfo.letters.total
+    }
 
     // Leaving mid-upload or mid-render would orphan the request's result.
     private var blocksLeaving: Bool {
@@ -234,22 +263,31 @@ struct CassetteStudioView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Your real cassette, dropped into a new scene and lettered in your own handwriting.")
+                    quickSection
+                    setupSection
+
+                    Button(action: { manualOpen.toggle() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: manualOpen ? "chevron.down" : "chevron.right")
+                            Text("Manual studio (every control)")
+                        }
                         .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .padding(.horizontal)
-
-                    cassetteSection
-                    handwritingSection
-                    sceneSection
-                    actionSection
-                    lookSection
-
-                    if hasRendered || canMove {
-                        motionSection
+                        .foregroundColor(Color(hex: "#999999"))
                     }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal)
 
-                    themeSection
+                    if manualOpen {
+                        cassetteSection
+                        handwritingSection
+                        sceneSection
+                        actionSection
+                        lookSection
+
+                        if hasRendered || canMove {
+                            motionSection
+                        }
+                    }
 
                     Spacer(minLength: 80)
                 }
@@ -281,20 +319,16 @@ struct CassetteStudioView: View {
                 Task { await addLettering(item) }
             }
         }
+        .onChange(of: sheetPick) { _, item in
+            if let item {
+                Task { await uploadSheet(item) }
+            }
+        }
+        .onDisappear { pollToken += 1 }
         .onChange(of: teachPick) { _, item in
             if let item {
                 Task { await chooseTeachPhoto(item) }
             }
-        }
-        .confirmationDialog(
-            "Forget your theme?",
-            isPresented: $confirmForgetTheme,
-            titleVisibility: .visible
-        ) {
-            Button("Forget theme", role: .destructive) { forgetTheme() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Songs already made in it are untouched.")
         }
         .confirmationDialog(
             "Forget this letter?",
@@ -1210,185 +1244,278 @@ struct CassetteStudioView: View {
         }
     }
 
-    // MARK: - My theme
-    // One recipe every release is rendered in: this cassette, its placement,
-    // the handwriting treatment, the ink colour/position/size, this song's
-    // look and which clips to make. The scene is the one thing left open.
-
-    private static let themeLetterings: [(id: String, label: String)] = [
-        ("title", "Song title, typed"),
-        ("artist-title", "Artist + title, typed"),
-        ("existing", "The song's own handwriting"),
-        ("none", "No handwriting"),
-    ]
+    // MARK: - One click
 
     @ViewBuilder
-    private var themeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("My theme")
+    private var quickSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundColor(Color(hex: "#2dd4bf"))
+                Text("Describe the scene")
+                    .font(.headline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+            }
 
-            if !themeLoaded {
-                HStack(spacing: 6) {
-                    ProgressView().tint(.gray).controlSize(.small)
-                    Text("Loading your theme…")
+            TextField("e.g. rainy rooftop in Tokyo at night, neon signs reflecting in puddles", text: $quickText, axis: .vertical)
+                .font(.subheadline)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+                .lineLimit(2...4)
+                .padding(10)
+                .background(Color(hex: "#161616"))
+                .cornerRadius(10)
+                .disabled(quickRunning)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Self.quickIdeas, id: \.self) { idea in
+                        smallChip(idea, selected: quickText == idea) { quickText = idea }
+                    }
                 }
+            }
+
+            Button(action: makeIt) {
+                HStack {
+                    if quickRunning {
+                        ProgressView().tint(Color(hex: "#080808"))
+                        Text("Making it…")
+                    } else {
+                        Image(systemName: "sparkles")
+                        Text(quickJob?.status == "done" ? "Make another" : "Make it")
+                    }
+                }
+                .font(.headline)
+                .foregroundColor(Color(hex: "#080808"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canMakeIt || quickRunning ? Color(hex: "#2dd4bf") : Color.gray.opacity(0.4))
+                .cornerRadius(12)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canMakeIt)
+
+            Text("Your real cassette in that scene, with moodmixformat and the title in your handwriting, then the same scene filmed as Canvas and YouTube clips of the cassette playing. Everything is applied to this song. Takes about 3–5 minutes.")
                 .font(.caption)
                 .foregroundColor(.gray)
-                .padding(.horizontal)
-            } else if let theme {
-                hint(themeSummary(theme))
+                .fixedSize(horizontal: false, vertical: true)
 
-                Button(action: applyTheme) {
-                    HStack {
-                        if busy == .theme && themeStep != nil {
-                            ProgressView().tint(Color(hex: "#080808"))
-                            Text("Making…")
-                        } else {
-                            Image(systemName: "sparkles")
-                            Text("Make this song in my theme")
-                        }
-                    }
-                    .font(.headline)
-                    .foregroundColor(Color(hex: "#080808"))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(isWorking && busy != .theme ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
-                    .cornerRadius(12)
-                }
-                .buttonStyle(.plain)
-                .disabled(isWorking)
-                .padding(.horizontal)
-
-                hint("Scene: \(themeSceneLabel)")
-
-                if let themeStep {
-                    HStack(spacing: 6) {
-                        ProgressView().tint(.gray).controlSize(.small)
-                        Text(themeStep)
-                    }
+            if let quickError {
+                Text(quickError)
                     .font(.caption)
-                    .foregroundColor(.gray)
-                    .padding(.horizontal)
-                }
-
-                HStack(spacing: 16) {
-                    Button(action: saveTheme) {
-                        Text("Update the theme from the settings above")
-                            .font(.caption)
-                            .foregroundColor(Color(hex: "#999999"))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isWorking)
-
-                    Button(action: { confirmForgetTheme = true }) {
-                        Text("Forget theme")
-                            .font(.caption)
-                            .foregroundColor(Color(hex: "#777777"))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isWorking)
-                }
-                .padding(.horizontal)
-            } else {
-                hint("Set up a cover you like above (cassette, placement, handwriting colour/position/size, look), then save it as your theme. From then on any song is one tap: same cassette and treatment, a scene of its own.")
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Handwriting in the theme")
+            if let job = quickJob {
+                quickProgress(job)
+            }
+        }
+        .padding(14)
+        .background(Color(hex: "#081414"))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color(hex: "#2dd4bf").opacity(0.3), lineWidth: 1)
+        )
+        .cornerRadius(14)
+        .padding(.horizontal)
+    }
+
+    private var canMakeIt: Bool {
+        !isWorking && quickReady && quickText.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3
+    }
+
+    private func quickProgress(_ job: MixbaseAPI.QuickJob) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Self.quickSteps, id: \.id) { step in
+                let state = job.steps[step.id] ?? "pending"
+                HStack(spacing: 8) {
+                    stepIcon(state)
+                    Text(step.label)
+                        .font(.caption)
+                        .foregroundColor(state == "pending" ? Color(hex: "#555555") : Color(hex: "#cccccc"))
+                    if step.id == "brief", let label = job.sceneLabel {
+                        Text("· \(label)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            if job.isRunning {
+                Text(job.stage)
                     .font(.caption2)
                     .foregroundColor(.gray)
-                    .padding(.horizontal)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.themeLetterings, id: \.id) { option in
-                            smallChip(option.label, selected: themeLettering == option.id) {
-                                themeLettering = option.id
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
+            }
+            if job.status == "error", let err = job.error {
+                Text(err)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Clips to make")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                    .padding(.horizontal)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.motionFormats, id: \.id) { option in
-                            smallChip(option.label, selected: themeFormats.contains(option.id)) {
-                                if themeFormats.contains(option.id) {
-                                    themeFormats.remove(option.id)
-                                } else {
-                                    themeFormats.insert(option.id)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
+            if let cover = job.finalizedArtworkUrl ?? job.artworkUrl, let url = URL(string: cover) {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(1, contentMode: .fill)
+                } placeholder: {
+                    Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
                 }
+                .frame(width: 160, height: 160)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
-            if themeLoaded && theme == nil {
-                Button(action: saveTheme) {
-                    HStack {
-                        if busy == .theme {
-                            ProgressView().tint(Color(hex: "#f0f0f0"))
-                            Text("Saving…")
+            ForEach(job.clips, id: \.videoUrl) { clip in
+                VStack(alignment: .leading, spacing: 4) {
+                    if let url = URL(string: clip.videoUrl) {
+                        if clip.format == "youtube" {
+                            LoopingVideoPlayer(url: url)
+                                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
                         } else {
-                            Image(systemName: "paintpalette")
-                            Text("Save this setup as my theme")
+                            LoopingVideoPlayer(url: url)
+                                .frame(width: 135, height: 240)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(Color(hex: "#f0f0f0"))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color(hex: "#111111"))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(hex: "#333333"), lineWidth: 1))
-                    .cornerRadius(12)
+                    Text("\(clip.format == "youtube" ? "YouTube" : "Canvas") · \(clip.kind == "cinematic" ? (clip.model ?? "cinematic") : "cassette loop")")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
                 }
-                .buttonStyle(.plain)
-                .disabled(isWorking || subjectPath == nil)
-                .padding(.horizontal)
             }
 
-            hint("The theme takes the cassette, placement, ink colour/position/size and clip-title setting from the controls above, the look from this song's current cover, and the handwriting and clip choices here.")
+            ForEach(job.notes, id: \.self) { note in
+                Text("· \(note)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hex: "#0a0a0a"))
+        .cornerRadius(10)
+    }
 
-            if let themeError {
-                Text(themeError)
+    @ViewBuilder
+    private func stepIcon(_ state: String) -> some View {
+        switch state {
+        case "done":
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundColor(Color(hex: "#2dd4bf"))
+        case "running":
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.gray)
+        case "failed":
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.caption)
+                .foregroundColor(.red)
+        default:
+            Image(systemName: "circle")
+                .font(.caption)
+                .foregroundColor(Color(hex: "#444444"))
+        }
+    }
+
+    // MARK: - Setup
+
+    @ViewBuilder
+    private var setupSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Setup")
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        StudioCheckerboard()
+                        if let cassette = setupInfo?.cassette?.url ?? subjects.first?.url, let url = URL(string: cassette) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().aspectRatio(contentMode: .fit)
+                            } placeholder: {
+                                ProgressView().tint(.gray)
+                            }
+                            .padding(3)
+                        }
+                    }
+                    .frame(width: 64, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: quickReady ? "checkmark.circle.fill" : "exclamationmark.circle")
+                                .foregroundColor(quickReady ? Color(hex: "#2dd4bf") : .orange)
+                            Text("Cassette")
+                                .foregroundColor(Color(hex: "#cccccc"))
+                        }
+                        .font(.caption)
+
+                        PhotosPicker(selection: $subjectPick, matching: .images) {
+                            Text(busy == .subject ? "Cutting out…" : (quickReady ? "New photo" : "Add a photo"))
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isWorking)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    ZStack {
+                        Color(hex: "#2a3340")
+                        if let signature = setupInfo?.signature, let url = URL(string: signature.url) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().aspectRatio(contentMode: .fit)
+                            } placeholder: {
+                                ProgressView().tint(.gray)
+                            }
+                            .padding(4)
+                        }
+                    }
+                    .frame(width: 96, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: needsSheet || setupInfo == nil ? "exclamationmark.circle" : "checkmark.circle.fill")
+                                .foregroundColor(needsSheet || setupInfo == nil ? .orange : Color(hex: "#2dd4bf"))
+                            Text(setupInfo.map { "Handwriting · \($0.letters.known)/\($0.letters.total) letters" } ?? "Handwriting")
+                                .foregroundColor(Color(hex: "#cccccc"))
+                        }
+                        .font(.caption)
+
+                        PhotosPicker(selection: $sheetPick, matching: .images) {
+                            Text(busy == .sheet ? "Reading your sheet…" : ((setupInfo?.letters.known ?? 0) > 0 ? "New handwriting sheet" : "Add your handwriting sheet"))
+                                .font(.caption)
+                                .foregroundColor(Color(hex: "#2dd4bf"))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isWorking)
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            if needsSheet {
+                hint("Handwriting sheet, once: on plain paper write moodmixformat on the first line, then A–Z and 0–9 in capitals on the lines below with a gap between every letter. Photograph it flat. After that every song title is written in your hand automatically.")
+            }
+
+            if let title = setupInfo?.title, !title.missing.isEmpty, !needsSheet {
+                Text("This title uses \(title.missing.joined(separator: " ")), which your sheet doesn't have.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .padding(.horizontal)
+            }
+
+            if let sheetError {
+                Text(sheetError)
                     .font(.caption)
                     .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal)
             }
-            if let themeNote {
-                Text(themeNote)
-                    .font(.caption)
-                    .foregroundColor(Color(hex: "#2dd4bf"))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal)
-            }
         }
-    }
-
-    private var themeSceneLabel: String {
-        if scene == "random" || scene == "custom" || scene == "photo" {
-            return "a surprise (pick one in section 3 to choose)"
-        }
-        return Self.scenes.first { $0.id == scene }?.label ?? scene
-    }
-
-    private func themeSummary(_ t: MixbaseAPI.StudioTheme) -> String {
-        let lettering = Self.themeLetterings.first { $0.id == t.lettering }?.label ?? t.lettering
-        let clips = t.formats.compactMap { f in Self.motionFormats.first { $0.id == f }?.label }.joined(separator: " + ")
-        var parts = [lettering, t.color == "auto" ? "auto ink" : t.color, "\(t.position.replacingOccurrences(of: "-", with: " ")) \(t.size)"]
-        if t.filter != nil { parts.append("with look") }
-        parts.append(clips.isEmpty ? "no clips" : "clips: \(clips)\(t.clipTitle ? "" : " (no title)")")
-        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -1464,7 +1591,8 @@ struct CassetteStudioView: View {
         }
         if busy == .load { busy = nil }
         await loadMotion()
-        await loadThemeState()
+        await loadSetupInfo()
+        await resumeQuick()
     }
 
     /// Whether the current cover can move. Best-effort: a failed read only
@@ -1474,125 +1602,107 @@ struct CassetteStudioView: View {
         canMove = availability.available
     }
 
-    // MARK: Theme
+    // MARK: One click
 
-    private func loadThemeState() async {
-        do {
-            let loaded = try await MixbaseAPI.shared.loadTheme()
-            theme = loaded
-            if let loaded {
-                themeLettering = loaded.lettering
-                themeFormats = Set(loaded.formats)
-            }
-        } catch {
-            // No theme row is not an error; a failed read just shows the
-            // "save a theme" state until the next open.
+    private func loadSetupInfo() async {
+        if let info = try? await MixbaseAPI.shared.studioSetup(projectId: projectId) {
+            setupInfo = info
         }
-        themeLoaded = true
     }
 
-    private func saveTheme() {
-        guard busy == nil else { return }
-        guard let subject = subjectPath else {
-            themeError = "Pick the cassette your theme uses first."
-            return
+    /// A run already going (or just finished) for this song: show it, and
+    /// keep polling if it is still going. What it already applied is not
+    /// announced again.
+    private func resumeQuick() async {
+        guard let job = try? await MixbaseAPI.shared.latestQuickJob(projectId: projectId) else { return }
+        announcedCover = job.finalizedArtworkUrl ?? job.artworkUrl
+        announcedClips = Set(job.clips.map { $0.videoUrl })
+        quickJob = job
+        if job.isRunning {
+            await pollQuick(job.id)
         }
-        let chosenPlacement = placement
-        let formats = Self.motionFormats.map { $0.id }.filter { themeFormats.contains($0) }
-        busy = .theme
-        themeError = nil
-        themeNote = nil
+    }
+
+    private func makeIt() {
+        let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 3, !quickRunning else { return }
+        quickError = nil
         Task {
             do {
-                theme = try await MixbaseAPI.shared.saveTheme(
-                    subject: subject,
-                    placement: chosenPlacement,
-                    lettering: themeLettering,
-                    align: typedAlign,
-                    color: color,
-                    position: position,
-                    size: size,
-                    formats: formats,
-                    clipTitle: motionWithTitle,
-                    lookFromProject: projectId
-                )
-                themeNote = "Theme saved. Every song you make in it will share this cassette, framing, handwriting treatment and look, in a scene of its own."
+                let job = try await MixbaseAPI.shared.startQuick(projectId: projectId, description: text)
+                applyQuick(job)
+                await pollQuick(job.id)
             } catch {
-                themeError = error.localizedDescription
-            }
-            busy = nil
-        }
-    }
-
-    private func forgetTheme() {
-        guard busy == nil else { return }
-        busy = .theme
-        themeError = nil
-        Task {
-            do {
-                try await MixbaseAPI.shared.deleteTheme()
-                theme = nil
-                themeNote = nil
-            } catch {
-                themeError = error.localizedDescription
-            }
-            busy = nil
-        }
-    }
-
-    /// One tap: this song in the theme. The server letters the title, builds
-    /// the cover in a scene and adds the look; the theme's clips are then
-    /// rendered through the same route "Make it move" uses, and pinned.
-    private func applyTheme() {
-        guard busy == nil, theme != nil else { return }
-        let chosenScene = (scene == "random" || scene == "custom" || scene == "photo") ? "random" : scene
-        busy = .theme
-        themeError = nil
-        themeNote = nil
-        lookNote = nil
-        themeStep = "Lettering the title and building the scene (~40s)…"
-        Task {
-            do {
-                let result = try await MixbaseAPI.shared.applyTheme(projectId: projectId, scene: chosenScene)
-                onRendered(result.artworkUrl, result.finalizedArtworkUrl)
-                coverUrl = result.finalizedArtworkUrl ?? result.artworkUrl
-                if let file = result.lettering {
-                    lettering.insert(file, at: 0)
-                    letteringPath = file.path
-                    useLettering = true
+                quickError = error.localizedDescription
+                // One may already be running for this song: pick it up.
+                if let existing = try? await MixbaseAPI.shared.latestQuickJob(projectId: projectId), existing.isRunning {
+                    applyQuick(existing)
+                    await pollQuick(existing.id)
                 }
-                lastSceneLabel = result.sceneLabel
+            }
+        }
+    }
+
+    /// Poll a run until it finishes. A newer poll (or leaving the screen)
+    /// stops this one.
+    private func pollQuick(_ id: String) async {
+        pollToken += 1
+        let token = pollToken
+        while token == pollToken {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard token == pollToken else { return }
+            do {
+                let job = try await MixbaseAPI.shared.quickJob(id: id)
+                applyQuick(job)
+                if !job.isRunning {
+                    await loadSetupInfo()
+                    await loadLook()
+                    return
+                }
+            } catch {
+                quickError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    /// Show a run's state and hand the song screen anything new it applied.
+    private func applyQuick(_ job: MixbaseAPI.QuickJob) {
+        quickJob = job
+        if let art = job.artworkUrl {
+            let cover = job.finalizedArtworkUrl ?? art
+            if cover != announcedCover {
+                announcedCover = cover
+                onRendered(art, job.finalizedArtworkUrl)
+                coverUrl = cover
                 hasRendered = true
                 canMove = true
-                motionUrl = nil
-                motionError = nil
-                savedMotion = false
-                if let lookError = result.lookError {
-                    lookNote = lookError
-                }
-                var made: [String] = []
-                for format in result.formats {
-                    let label = Self.motionFormats.first { $0.id == format }?.label ?? format
-                    themeStep = "Rendering the \(label) clip\(format == "youtube" ? " (~1 min)" : "")…"
-                    let clip = try await MixbaseAPI.shared.renderCassetteMotion(projectId: projectId, format: format, withTitle: result.clipTitle)
-                    motionUrl = clip.videoUrl
-                    motionUrlFormat = format
-                    themeStep = "Pinning the \(label) clip…"
-                    try await MixbaseAPI.shared.pinVisualizer(projectId: projectId, videoUrl: clip.videoUrl, wide: clip.wide)
-                    onVisualizerPinned?(clip.videoUrl, clip.wide)
-                    made.append(label)
-                }
-                let sceneName = result.sceneLabel ?? "a new scene"
-                themeNote = made.isEmpty
-                    ? "Done: cover in \(sceneName)."
-                    : "Done: cover in \(sceneName), and \(made.joined(separator: " + ")) pinned as this song's visualizer\(made.count > 1 ? "s" : "")."
-            } catch {
-                themeError = error.localizedDescription
             }
-            themeStep = nil
-            busy = nil
-            await loadLook()
         }
+        for clip in job.clips where !announcedClips.contains(clip.videoUrl) {
+            announcedClips.insert(clip.videoUrl)
+            onVisualizerPinned?(clip.videoUrl, clip.format == "youtube")
+        }
+    }
+
+    private func uploadSheet(_ item: PhotosPickerItem) async {
+        guard busy == nil else {
+            sheetPick = nil
+            return
+        }
+        busy = .sheet
+        sheetError = nil
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw MixbaseAPIError.serverError("Could not read that image.")
+            }
+            try await MixbaseAPI.shared.uploadHandwritingSheet(imageData: data)
+            await loadSetupInfo()
+        } catch {
+            sheetError = error.localizedDescription
+        }
+        busy = nil
+        sheetPick = nil
     }
 
     // MARK: Type it / teach it
@@ -1724,6 +1834,7 @@ struct CassetteStudioView: View {
         }
         busy = nil
         subjectPick = nil
+        await loadSetupInfo()
     }
 
     /// Same cut-out as addSubject, from an image already in one of the songs

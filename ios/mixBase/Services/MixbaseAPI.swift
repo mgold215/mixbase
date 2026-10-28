@@ -1122,122 +1122,116 @@ final class MixbaseAPI {
         )
     }
 
-    // MARK: - Theme (owner-only)
-    // The one recipe every release is rendered in — same cassette, framing,
-    // handwriting treatment, look and clips, a new scene each time
-    // (src/lib/cassette-theme.ts; the server stores and applies it).
+    // MARK: - One click (owner-only)
+    // Describe a scene → the cover (the real cassette, the artist's
+    // handwriting) plus Canvas and YouTube moving scenes, all applied to the
+    // song server-side (/api/cassette-studio/quick, src/lib/cassette-quick.ts).
+    // The run continues in the background; poll quickJob(id:).
 
-    struct StudioTheme: Decodable {
-        let subject: String
-        let placeX: Double?
-        let placeY: Double?
-        let placeScale: Double?
-        /// "title" | "artist-title" | "existing" | "none"
-        let lettering: String
-        let align: String
-        let color: String
-        let position: String
-        let size: String
-        let filter: FilterSettings?
-        let formats: [String]
-        let clipTitle: Bool
-        let savedAt: String?
+    struct QuickClip: Decodable, Equatable {
+        let format: String          // "canvas" | "youtube"
+        let videoUrl: String
+        let kind: String            // "cinematic" | "loop"
+        let model: String?
 
         enum CodingKeys: String, CodingKey {
-            case subject
-            case placeX = "place_x"
-            case placeY = "place_y"
-            case placeScale = "place_scale"
-            case lettering
-            case align
-            case color
-            case position
-            case size
-            case filter
-            case formats
-            case clipTitle = "clip_title"
-            case savedAt = "saved_at"
+            case format
+            case videoUrl = "video_url"
+            case kind
+            case model
         }
     }
 
-    /// The saved theme, or nil when none has been saved.
-    func loadTheme() async throws -> StudioTheme? {
-        struct Response: Decodable { let theme: StudioTheme? }
-        let data = try await requestData(path: "/api/cassette-studio/theme", method: "GET")
-        return try decoder.decode(Response.self, from: data).theme
-    }
-
-    /// Save (replace) the theme. The look is taken from `lookFromProject`'s
-    /// current cover server-side; nil placement fields keep the default framing.
-    func saveTheme(
-        subject: String,
-        placement: CassettePlacement,
-        lettering: String,
-        align: String,
-        color: String,
-        position: String,
-        size: String,
-        formats: [String],
-        clipTitle: Bool,
-        lookFromProject projectId: UUID
-    ) async throws -> StudioTheme {
-        struct Response: Decodable { let theme: StudioTheme }
-        var body: [String: Any] = [
-            "subject": subject,
-            "lettering": lettering,
-            "align": align,
-            "color": color,
-            "position": position,
-            "size": size,
-            "formats": formats,
-            "clip_title": clipTitle,
-            "project_id": projectId.postgresString,
-        ]
-        if let x = placement.x { body["place_x"] = x }
-        if let y = placement.y { body["place_y"] = y }
-        if let scale = placement.scale { body["place_scale"] = scale }
-        let data = try await requestData(path: "/api/cassette-studio/theme", method: "POST", body: body)
-        return try decoder.decode(Response.self, from: data).theme
-    }
-
-    func deleteTheme() async throws {
-        _ = try await requestData(path: "/api/cassette-studio/theme", method: "DELETE")
-    }
-
-    /// What one tap in the theme produced for a song: the cover (applied
-    /// server-side), the lettering it was given, and which clips the theme
-    /// says to render next (through renderCassetteMotion) and pin.
-    struct ThemeApplyResult: Decodable {
-        let artworkUrl: String
-        let finalizedArtworkUrl: String?
+    struct QuickJob: Decodable, Equatable {
+        let id: String
+        let status: String          // "running" | "done" | "error"
+        let stage: String
+        /// brief / cover / canvas / youtube → pending | running | done | failed
+        let steps: [String: String]
         let sceneLabel: String?
-        let lettering: StudioFile?
-        let formats: [String]
-        let clipTitle: Bool
-        let lookApplied: Bool
-        let lookError: String?
+        let artworkUrl: String?
+        let finalizedArtworkUrl: String?
+        let clips: [QuickClip]
+        let notes: [String]
+        let error: String?
+
+        var isRunning: Bool { status == "running" }
 
         enum CodingKeys: String, CodingKey {
+            case id
+            case status
+            case stage
+            case steps
+            case sceneLabel = "scene_label"
             case artworkUrl = "artwork_url"
             case finalizedArtworkUrl = "finalized_artwork_url"
-            case sceneLabel = "scene_label"
-            case lettering
-            case formats
-            case clipTitle = "clip_title"
-            case lookApplied = "look_applied"
-            case lookError = "look_error"
+            case clips
+            case notes
+            case error
         }
     }
 
-    /// Render this song in the theme: lettering + cover + look, in `scene`
-    /// (a preset id, or "random" for a fresh one).
-    func applyTheme(projectId: UUID, scene: String) async throws -> ThemeApplyResult {
+    /// Start a one-click run for this song from a scene description.
+    func startQuick(projectId: UUID, description: String) async throws -> QuickJob {
+        struct Response: Decodable { let job: QuickJob }
         let data = try await requestData(
-            path: "/api/cassette-studio/theme/apply",
+            path: "/api/cassette-studio/quick",
             method: "POST",
-            body: ["project_id": projectId.postgresString, "scene": scene]
+            body: ["project_id": projectId.postgresString, "description": description]
         )
-        return try decoder.decode(ThemeApplyResult.self, from: data)
+        return try decoder.decode(Response.self, from: data).job
+    }
+
+    func quickJob(id: String) async throws -> QuickJob {
+        struct Response: Decodable { let job: QuickJob }
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: Self.queryValueAllowed) ?? id
+        let data = try await requestData(path: "/api/cassette-studio/quick?job=\(encoded)", method: "GET")
+        return try decoder.decode(Response.self, from: data).job
+    }
+
+    /// The newest run for this song (running or recently finished), so a
+    /// reopened screen picks up where it was.
+    func latestQuickJob(projectId: UUID) async throws -> QuickJob? {
+        struct Response: Decodable { let job: QuickJob? }
+        let data = try await requestData(path: "/api/cassette-studio/quick?project_id=\(projectId.postgresString)", method: "GET")
+        return try decoder.decode(Response.self, from: data).job
+    }
+
+    /// What the one click will use: the cassette, the handwritten name, how
+    /// many letters the handwriting knows, and this song's title as written.
+    struct StudioSetup: Decodable {
+        struct Signature: Decodable {
+            let url: String
+            let source: String
+        }
+        struct Letters: Decodable {
+            let known: Int
+            let total: Int
+        }
+        struct Title: Decodable {
+            let text: String
+            let missing: [String]
+        }
+        let cassette: StudioFile?
+        let signature: Signature?
+        let letters: Letters
+        let title: Title?
+    }
+
+    func studioSetup(projectId: UUID) async throws -> StudioSetup {
+        let data = try await requestData(path: "/api/cassette-studio/setup?project_id=\(projectId.postgresString)", method: "GET")
+        return try decoder.decode(StudioSetup.self, from: data)
+    }
+
+    /// The handwriting sheet: the name on line one, then A–Z and 0–9 in
+    /// capitals. Nothing to type — the server labels the letters by order.
+    func uploadHandwritingSheet(imageData: Data) async throws {
+        let jpeg = try Self.uploadableJPEG(imageData, maxEdge: 2400)
+        _ = try await requestMultipart(
+            path: "/api/cassette-studio/setup",
+            fields: [],
+            files: [MultipartFile(name: "photo", filename: "sheet.jpg", data: jpeg)]
+        )
     }
 
     // MARK: - Instrumental slot

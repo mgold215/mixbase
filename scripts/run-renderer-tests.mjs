@@ -54,7 +54,7 @@ const SUITES = [
   'film-finish-test.mjs',
   'cassette-studio-test.mjs',
   'handwriting-glyphs-test.mjs',
-  'cassette-theme-test.mjs',
+  'cassette-quick-test.mjs',
   'cover-filters-test.mjs',
   'artwork-history-test.mjs',
   'upload-ownership-test.mjs',
