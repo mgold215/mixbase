@@ -1445,6 +1445,13 @@ final class MixbaseAPI {
         return url
     }
 
+    /// Make sure this account has its THUMB DRIVE — the built-in playlist of
+    /// every song, each playing its newest mix. The server creates and fills it
+    /// if it's missing (src/lib/thumb-drive.ts); the app never builds it itself.
+    func ensureThumbDrive() async throws {
+        _ = try await requestJSON(path: "/api/collections/thumb-drive", method: "GET")
+    }
+
     // MARK: - Versions (new mixes)
 
     /// Create the mb_versions row for a mix that has just finished uploading.

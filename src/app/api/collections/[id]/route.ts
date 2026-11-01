@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid, isJsonObject, isSupabaseStorageUrl } from '@/lib/validators'
+import { isThumbDrive, THUMB_DRIVE_LOCKED_FIELDS } from '@/lib/thumb-drive-plan'
+
+// Is this collection the account's THUMB DRIVE (the auto-filled "all my songs"
+// playlist, src/lib/thumb-drive.ts)? select('*') rather than naming the column:
+// a database that hasn't run migration 042 yet must read as "no", not fail.
+async function isUsersThumbDrive(id: string, userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('mb_collections')
+    .select('*')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .maybeSingle()
+  return isThumbDrive(data)
+}
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -75,6 +89,11 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
+  // THUMB DRIVE keeps its name and type (its cover can still change).
+  if (THUMB_DRIVE_LOCKED_FIELDS.some(field => field in updates) && await isUsersThumbDrive(id, userId)) {
+    return NextResponse.json({ error: "THUMB DRIVE's name and type can't be changed" }, { status: 400 })
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_collections')
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -93,6 +112,12 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
 
   const { id } = await ctx.params
   if (!isUuid(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+
+  // THUMB DRIVE is every account's built-in playlist — it can't be deleted
+  // (songs inside it can still be removed one by one).
+  if (await isUsersThumbDrive(id, userId)) {
+    return NextResponse.json({ error: "THUMB DRIVE is your built-in playlist and can't be deleted" }, { status: 400 })
+  }
 
   const { error } = await supabaseAdmin
     .from('mb_collections')

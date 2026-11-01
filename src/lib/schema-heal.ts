@@ -575,6 +575,36 @@ export function isMissingCollectionShareToken(error: { message?: string } | null
   return !!error?.message?.includes('share_token')
 }
 
+// ── mb_collections.is_thumb_drive (migration 042) ──────────────────────────────
+// Marks each account's THUMB DRIVE playlist (src/lib/thumb-drive.ts). Its
+// lookup catches the missing-column error, heals, and retries, so a deploy that
+// beats the migration still gets a THUMB DRIVE instead of a silent no-op. The
+// index is what makes "one per account" hold under racing first requests.
+
+const THUMB_DRIVE_SQL =
+  'alter table public.mb_collections add column if not exists is_thumb_drive boolean not null default false;' +
+  ' create unique index if not exists idx_collections_one_thumb_drive on public.mb_collections(user_id) where is_thumb_drive;' +
+  " notify pgrst, 'reload schema';"
+
+let thumbDriveEnsured: Promise<boolean> | null = null
+
+export function ensureThumbDriveColumn(): Promise<boolean> {
+  if (!thumbDriveEnsured) {
+    thumbDriveEnsured = runQuery(THUMB_DRIVE_SQL, 'mb_collections.is_thumb_drive column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) thumbDriveEnsured = null
+        return ok
+      })
+  }
+  return thumbDriveEnsured
+}
+
+/** True when a PostgREST error is the missing is_thumb_drive column failure. */
+export function isMissingThumbDriveColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /is_thumb_drive/.test(error.message)
+}
+
 const VERSION_INDEX_SQL = `
 create unique index if not exists mb_versions_project_version_uidx
   on public.mb_versions (project_id, version_number);`

@@ -4,6 +4,7 @@ import { isUuid, isSupabaseStorageUrl } from '@/lib/validators'
 import { ensureVersionUniqueIndex, ensureVersionInFeedColumn, isMissingInFeedColumn } from '@/lib/schema-heal'
 import { resolveAllowDownload } from '@/lib/version-defaults'
 import { normalizeStatus, nextKindLabel, parseVersionName, type MixStatus } from '@/lib/mix-status'
+import { addSongToThumbDrive } from '@/lib/thumb-drive'
 
 // POST /api/versions — create a new version under a project (user must own the project)
 export async function POST(request: NextRequest) {
@@ -146,6 +147,15 @@ export async function POST(request: NextRequest) {
     user_id: userId,
     description: `${resolvedLabel ?? `${parsedName?.kind ?? 'Mix'} ${nextVersion}`} uploaded`,
   })
+
+  // THUMB DRIVE: a song's FIRST mix puts the song in the artist's built-in
+  // "all my songs" playlist. Later mixes need nothing here — the playlist
+  // points at the song and every player plays its newest mix — and keying on
+  // the first mix (not every mix) means a song the artist removed by hand
+  // isn't forced back in. Awaited so the song is there when the client next
+  // loads its collections; addSongToThumbDrive never throws, so it can't fail
+  // the upload that already succeeded above.
+  if (nextVersion === 1) await addSongToThumbDrive(userId, project_id)
 
   return NextResponse.json(data, { status: 201 })
 }

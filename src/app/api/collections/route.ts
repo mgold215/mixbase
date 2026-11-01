@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { ensureThumbDrive } from '@/lib/thumb-drive'
+import { pinThumbDriveFirst } from '@/lib/thumb-drive-plan'
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get('X-User-Id')
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Every account has a THUMB DRIVE; a new account gets it on first look.
+  // Never throws — a failure here just means the list comes back without it.
+  await ensureThumbDrive(userId)
 
   const { data, error } = await supabaseAdmin
     .from('mb_collections')
@@ -13,7 +19,7 @@ export async function GET(request: NextRequest) {
     .limit(200)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  return NextResponse.json(pinThumbDriveFirst(data ?? []))
 }
 
 export async function POST(request: NextRequest) {

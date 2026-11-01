@@ -17,6 +17,14 @@ struct Collection: Codable, Identifiable {
     var notes: String?
     let createdAt: Date
     var updatedAt: Date
+    // True for the account's THUMB DRIVE: the built-in playlist the server keeps
+    // filled with every song (each playing its newest mix) — see
+    // src/lib/thumb-drive.ts. Optional so a row from before migration 042
+    // still decodes; read it through `isThumbDriveCollection`.
+    var isThumbDrive: Bool?
+
+    /// The account's THUMB DRIVE — can't be deleted, renamed or retyped.
+    var isThumbDriveCollection: Bool { isThumbDrive == true }
 
     enum CodingKeys: String, CodingKey {
         case id, title, type, notes
@@ -25,6 +33,7 @@ struct Collection: Codable, Identifiable {
         case releaseDate = "release_date"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case isThumbDrive = "is_thumb_drive"
     }
 }
 
