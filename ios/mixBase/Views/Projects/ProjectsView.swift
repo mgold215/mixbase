@@ -840,6 +840,21 @@ struct CollectionDetailView: View {
                                 .buttonStyle(.borderless)
                             }
 
+                            // THUMB DRIVE exists to send someone all your songs, so
+                            // its share link is a button on the page rather than
+                            // an item in the ⋯ menu. The link is already warmed by
+                            // loadItems; until it lands, tapping mints it.
+                            if collection.isThumbDriveCollection && !items.isEmpty {
+                                Group {
+                                    if let shareURL {
+                                        ShareLink(item: shareURL) { sendAllSongsLabel }
+                                    } else {
+                                        Button(action: { Task { await mintShareLink() } }) { sendAllSongsLabel }
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                            }
+
                             if let errorMessage {
                                 Text(errorMessage)
                                     .font(.caption)
@@ -966,6 +981,17 @@ struct CollectionDetailView: View {
         .task {
             await loadItems()
         }
+    }
+
+    // The THUMB DRIVE share button's face — same look as the Shuffle button.
+    private var sendAllSongsLabel: some View {
+        Label("Send All Songs", systemImage: "square.and.arrow.up")
+            .font(.subheadline).fontWeight(.semibold)
+            .foregroundColor(Color(hex: "#2dd4bf"))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Color(hex: "#2dd4bf").opacity(0.15))
+            .cornerRadius(10)
     }
 
     // MARK: - Cover block
