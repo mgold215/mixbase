@@ -12,8 +12,11 @@ import { IMAGE_MODELS } from '@/lib/artwork-models'
 import { copyToClipboard } from '@/lib/clipboard'
 import { albumShareUrl } from '@/lib/share-url'
 import AlbumPlayer, { type AlbumPlayerTrack } from '@/components/AlbumPlayer'
+import { isThumbDrive, THUMB_DRIVE_BLURB } from '@/lib/thumb-drive-plan'
 
-type Collection = { id: string; title: string; type: string; cover_url: string | null }
+// is_thumb_drive: the account's auto-filled "all my songs" playlist (migration 042)
+// — it can't be deleted, renamed or retyped. Optional so a pre-042 row still fits.
+type Collection = { id: string; title: string; type: string; cover_url: string | null; is_thumb_drive?: boolean }
 type CollectionItem = {
   id: string
   collection_id: string
@@ -44,6 +47,7 @@ type Props = {
 }
 
 export default function CollectionClient({ collection, initialItems, allProjects, trackMeta, artistName }: Props) {
+  const thumbDrive = isThumbDrive(collection)
   const router = useRouter()
   const { playTrack, setQueue } = usePlayer()
   const [items, setItems] = useState(initialItems)
@@ -396,14 +400,21 @@ export default function CollectionClient({ collection, initialItems, allProjects
             <Pencil size={13} />
             <span className="hidden sm:inline">Edit</span>
           </button>
-          <button
-            onClick={deleteCollection}
-            className="p-2 rounded-lg transition-colors text-white/40 hover:text-white/70"
-            title="Delete collection"
-          >
-            <Trash2 size={16} />
-          </button>
+          {!thumbDrive && (
+            <button
+              onClick={deleteCollection}
+              className="p-2 rounded-lg transition-colors text-white/40 hover:text-white/70"
+              title="Delete collection"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
+        {thumbDrive && (
+          <p className="relative z-20 w-full max-w-6xl mx-auto px-5 sm:px-8 pt-2 text-xs text-white/50">
+            {THUMB_DRIVE_BLURB}
+          </p>
+        )}
 
         <AlbumPlayer
           title={collection.title}
@@ -456,16 +467,25 @@ export default function CollectionClient({ collection, initialItems, allProjects
 
           <div className="flex-1 min-w-0">
             <div className="relative inline-block mb-1.5">
-              <button
-                onClick={() => setShowTypePicker(v => !v)}
-                className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full transition-opacity hover:opacity-80"
-                style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
-                title="Change type"
-              >
-                {TYPE_LABEL[type] ?? type}
-                <ChevronDown size={11} />
-              </button>
-              {showTypePicker && (
+              {thumbDrive ? (
+                <span
+                  className="inline-flex items-center text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                  style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+                >
+                  {TYPE_LABEL[type] ?? type}
+                </span>
+              ) : (
+                <button
+                  onClick={() => setShowTypePicker(v => !v)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full transition-opacity hover:opacity-80"
+                  style={{ backgroundColor: 'var(--accent-dim)', color: 'var(--accent)' }}
+                  title="Change type"
+                >
+                  {TYPE_LABEL[type] ?? type}
+                  <ChevronDown size={11} />
+                </button>
+              )}
+              {showTypePicker && !thumbDrive && (
                 <div
                   className="absolute left-0 top-full mt-1 z-20 rounded-lg overflow-hidden py-1 min-w-[7rem]"
                   style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--surface-2)' }}
@@ -487,6 +507,11 @@ export default function CollectionClient({ collection, initialItems, allProjects
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
               {items.length} {items.length === 1 ? 'track' : 'tracks'}
             </p>
+            {thumbDrive && (
+              <p className="text-xs mt-1.5 max-w-md" style={{ color: 'var(--text-muted)' }}>
+                {THUMB_DRIVE_BLURB}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0 mt-1">
@@ -511,14 +536,16 @@ export default function CollectionClient({ collection, initialItems, allProjects
                 {exported ? <Check size={16} /> : <FileText size={16} />}
               </button>
             )}
-            <button
-              onClick={deleteCollection}
-              className="p-2 rounded-lg transition-colors"
-              style={{ color: 'var(--text-muted)' }}
-              title="Delete collection"
-            >
-              <Trash2 size={16} />
-            </button>
+            {!thumbDrive && (
+              <button
+                onClick={deleteCollection}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                title="Delete collection"
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
           </div>
         </div>
 

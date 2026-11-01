@@ -90,6 +90,7 @@ const APP_ONLY = {
   '/api/feed/report': 'Report a post (App Store 1.2) — the web has no report UI yet',
   '/api/feed/block': 'Block a user (App Store 1.2) — the web has no block UI yet',
   '/api/visualizer/free': "The app's server-side free visualizer (the web renders in the browser)",
+  '/api/collections/thumb-drive': 'Create a new account\'s THUMB DRIVE — the app reads collections from PostgREST; the web pages call ensureThumbDrive (src/lib/thumb-drive.ts) server-side, the same function this route runs',
 }
 
 // ── Extraction ────────────────────────────────────────────────────────────────

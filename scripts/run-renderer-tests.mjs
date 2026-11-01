@@ -92,6 +92,7 @@ const SUITES = [
   'duration-backfill-test.mjs',
   'audio-duration-test.mjs',
   'mix-status-test.mjs',
+  'thumb-drive-test.mjs',
   'tracks-duration-heal-test.mjs',
   'share-duration-heal-test.mjs',
   'write-route-guards-test.mjs',

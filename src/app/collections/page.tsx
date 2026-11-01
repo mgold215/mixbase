@@ -5,6 +5,8 @@ import Image from 'next/image'
 import Nav from '@/components/Nav'
 import CassetteIcon from '@/components/CassetteIcon'
 import NewCollectionButton from './NewCollectionButton'
+import { ensureThumbDrive } from '@/lib/thumb-drive'
+import { isThumbDrive, pinThumbDriveFirst } from '@/lib/thumb-drive-plan'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +18,7 @@ type CollectionRow = {
   type: string
   cover_url: string | null
   updated_at: string
+  is_thumb_drive?: boolean
   mb_collection_items: {
     position: number
     mb_projects: { artwork_url: string | null; finalized_artwork_url: string | null } | null
@@ -25,13 +28,19 @@ type CollectionRow = {
 export default async function CollectionsPage() {
   const userId = await getUserId()
 
+  // Every account has a THUMB DRIVE (all its songs, newest mix each); a new
+  // account gets it here on first visit. Never throws.
+  await ensureThumbDrive(userId)
+
+  // `*` rather than a column list so a database that hasn't run migration 042
+  // (is_thumb_drive) still renders the page instead of failing the select.
   const { data } = await supabaseAdmin
     .from('mb_collections')
-    .select('id, title, type, cover_url, updated_at, mb_collection_items(position, mb_projects(artwork_url, finalized_artwork_url))')
+    .select('*, mb_collection_items(position, mb_projects(artwork_url, finalized_artwork_url))')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
-  const collections = (data ?? []) as unknown as CollectionRow[]
+  const collections = pinThumbDriveFirst((data ?? []) as unknown as CollectionRow[])
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-page)' }}>
@@ -87,7 +96,7 @@ export default async function CollectionsPage() {
                     <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>{c.title}</p>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-xs font-medium" style={{ color: 'var(--accent)' }}>
-                        {TYPE_LABEL[c.type] ?? c.type}
+                        {isThumbDrive(c) ? 'All your songs' : (TYPE_LABEL[c.type] ?? c.type)}
                       </span>
                       <span style={{ color: 'var(--surface-3)' }}>·</span>
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>

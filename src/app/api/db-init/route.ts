@@ -219,6 +219,15 @@ create index if not exists idx_releases_user_id    on mb_releases(user_id);
 create index if not exists idx_collections_user_id on mb_collections(user_id);
 create index if not exists idx_activity_user_id    on mb_activity(user_id);
 
+-- Migration 042: THUMB DRIVE — each account's auto-filled "all my songs"
+-- playlist (src/lib/thumb-drive.ts). One per account; the rows themselves are
+-- created on demand by ensureThumbDrive, so a fresh database needs no backfill.
+-- Placed AFTER the user_id adds above: the unique index is on user_id.
+alter table mb_collections
+  add column if not exists is_thumb_drive boolean not null default false;
+create unique index if not exists idx_collections_one_thumb_drive
+  on mb_collections(user_id) where is_thumb_drive;
+
 alter table mb_projects        enable row level security;
 alter table mb_versions        enable row level security;
 alter table mb_releases        enable row level security;

@@ -462,7 +462,7 @@ struct ProjectsView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color(hex: "#1a1a1a"))
                         .frame(width: 56, height: 56)
-                    Image(systemName: iconForType(collection.type))
+                    Image(systemName: collection.isThumbDriveCollection ? "externaldrive.fill" : iconForType(collection.type))
                         .font(.title3)
                         .foregroundColor(colorForType(collection.type))
                 }
@@ -475,7 +475,7 @@ struct ProjectsView: View {
                     .foregroundColor(Color(hex: "#f0f0f0"))
 
                 HStack(spacing: 8) {
-                    Text(collection.type.uppercased())
+                    Text(collection.isThumbDriveCollection ? "ALL YOUR SONGS" : collection.type.uppercased())
                         .font(.caption2)
                         .fontWeight(.medium)
                         .foregroundColor(colorForType(collection.type))
@@ -567,7 +567,20 @@ struct ProjectsView: View {
 
     private func loadCollections() async {
         do {
-            collections = try await SupabaseService.shared.fetchCollections()
+            var fetched = try await SupabaseService.shared.fetchCollections()
+            // Every account has a THUMB DRIVE (all its songs, newest mix each).
+            // The server creates it; only ask when this list doesn't have it yet
+            // (a brand-new account), so a normal load costs no extra request.
+            if !fetched.contains(where: { $0.isThumbDriveCollection }) {
+                do {
+                    try await MixbaseAPI.shared.ensureThumbDrive()
+                    fetched = (try? await SupabaseService.shared.fetchCollections()) ?? fetched
+                } catch {
+                    print("ProjectsView: THUMB DRIVE setup failed — \(error.localizedDescription)")
+                }
+            }
+            // THUMB DRIVE pinned first; everything else keeps newest-first.
+            collections = fetched.filter { $0.isThumbDriveCollection } + fetched.filter { !$0.isThumbDriveCollection }
         } catch {
             print("ProjectsView: Failed to load collections — \(error.localizedDescription)")
         }
@@ -795,6 +808,13 @@ struct CollectionDetailView: View {
                                     .lineLimit(3)
                             }
 
+                            if collection.isThumbDriveCollection {
+                                Text("Every song you upload lands here automatically and always plays its newest mix. Share it to send someone all your songs.")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                    .multilineTextAlignment(.center)
+                            }
+
                             // Play / Shuffle the whole collection
                             if !queueItems().isEmpty {
                                 HStack(spacing: 12) {
@@ -882,8 +902,12 @@ struct CollectionDetailView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button(action: { showEditDetails = true }) {
-                        Label("Edit Details", systemImage: "pencil")
+                    // THUMB DRIVE keeps its name and type, and can't be deleted
+                    // (the server refuses both); its songs can still be edited.
+                    if !collection.isThumbDriveCollection {
+                        Button(action: { showEditDetails = true }) {
+                            Label("Edit Details", systemImage: "pencil")
+                        }
                     }
                     if let shareURL {
                         ShareLink(item: shareURL) {
@@ -894,9 +918,11 @@ struct CollectionDetailView: View {
                             Label("Create Share Link", systemImage: "link")
                         }
                     }
-                    Divider()
-                    Button(role: .destructive, action: { showDeleteConfirm = true }) {
-                        Label("Delete Collection", systemImage: "trash")
+                    if !collection.isThumbDriveCollection {
+                        Divider()
+                        Button(role: .destructive, action: { showDeleteConfirm = true }) {
+                            Label("Delete Collection", systemImage: "trash")
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
