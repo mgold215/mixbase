@@ -237,6 +237,9 @@ check('the app pins THUMB DRIVE first',
   /fetched\.filter \{ \$0\.isThumbDriveCollection \} \+ fetched\.filter \{ !\$0\.isThumbDriveCollection \}/.test(views))
 check('the app hides Delete Collection for THUMB DRIVE',
   /if !collection\.isThumbDriveCollection \{\s*Divider\(\)\s*Button\(role: \.destructive, action: \{ showDeleteConfirm = true \}\)/.test(views))
+check('the app gives THUMB DRIVE a visible Send All Songs share button',
+  /if collection\.isThumbDriveCollection && !items\.isEmpty \{[\s\S]*?ShareLink\(item: shareURL\) \{ sendAllSongsLabel \}[\s\S]*?mintShareLink\(\)/.test(views) &&
+  /Label\("Send All Songs", systemImage: "square\.and\.arrow\.up"\)/.test(views))
 check('the app hides Edit Details (name/type) for THUMB DRIVE',
   /if !collection\.isThumbDriveCollection \{\s*Button\(action: \{ showEditDetails = true \}\)/.test(views))
 
