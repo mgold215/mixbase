@@ -568,6 +568,7 @@ export default function ArtworkGenerator({
       {showActions && ownerTools && mode === 'cassette' && (
         <CassetteStudio
           projectId={projectId}
+          projectTitle={projectTitle}
           onRendered={(art, finalized) => { onArtworkUpdated(art); onFinalizedUpdated(finalized) }}
           onVisualizerPinned={onVisualizerPinned}
           onClose={() => setMode('idle')}

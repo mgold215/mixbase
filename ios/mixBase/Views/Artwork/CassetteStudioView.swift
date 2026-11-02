@@ -211,6 +211,10 @@ struct CassetteStudioView: View {
     @State private var motionError: String?
     @State private var isSavingMotion = false
     @State private var savedMotion = false
+    // One click results: the URL being saved right now, and those already saved.
+    @State private var savingQuickUrl: String?
+    @State private var savedQuickUrls: Set<String> = []
+    @State private var quickSaveError: String?
     // The project's CURRENT cover can already move (its layers were saved).
     @State private var canMove = false
 
@@ -1355,13 +1359,16 @@ struct CassetteStudioView: View {
             }
 
             if let cover = job.finalizedArtworkUrl ?? job.artworkUrl, let url = URL(string: cover) {
-                AsyncImage(url: url) { image in
-                    image.resizable().aspectRatio(1, contentMode: .fill)
-                } placeholder: {
-                    Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
+                VStack(alignment: .leading, spacing: 4) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(1, contentMode: .fill)
+                    } placeholder: {
+                        Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
+                    }
+                    .frame(width: 160, height: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    quickSaveRow(url: cover, video: false)
                 }
-                .frame(width: 160, height: 160)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
             ForEach(job.clips, id: \.videoUrl) { clip in
@@ -1381,7 +1388,15 @@ struct CassetteStudioView: View {
                     Text("\(clip.format == "youtube" ? "YouTube" : "Canvas") · \(clip.kind == "cinematic" ? (clip.model ?? "cinematic") : "cassette loop")")
                         .font(.caption2)
                         .foregroundColor(.gray)
+                    quickSaveRow(url: clip.videoUrl, video: true)
                 }
+            }
+
+            if let quickSaveError {
+                Text(quickSaveError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(job.notes, id: \.self) { note in
@@ -1533,6 +1548,35 @@ struct CassetteStudioView: View {
             LoopingVideoPlayer(url: url)
                 .frame(width: 180, height: 320)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    /// Save row under a one-click result: a spinner while saving, "Saved"
+    /// after, else the save button — the moving cover's three states.
+    @ViewBuilder
+    private func quickSaveRow(url: String, video: Bool) -> some View {
+        if savingQuickUrl == url {
+            ProgressView().tint(Color(hex: "#2dd4bf"))
+        } else if savedQuickUrls.contains(url) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                Text("Saved")
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(Color(hex: "#2dd4bf"))
+        } else {
+            Button(action: { Task { await saveQuick(url, video: video) } }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down")
+                    Text(saveButtonLabel)
+                }
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(Color(hex: "#2dd4bf"))
+            }
+            .buttonStyle(.plain)
+            .disabled(savingQuickUrl != nil)
         }
     }
 
@@ -2038,6 +2082,24 @@ struct CassetteStudioView: View {
             motionError = error.localizedDescription
         }
         isSavingMotion = false
+    }
+
+    /// Save a one-click result (the cover or a clip): Photos on iOS,
+    /// ~/Downloads on macOS, like the moving cover.
+    private func saveQuick(_ url: String, video: Bool) async {
+        savingQuickUrl = url
+        quickSaveError = nil
+        do {
+            if video {
+                try await PhotoLibrarySaver.saveVideo(from: url)
+            } else {
+                try await PhotoLibrarySaver.saveImage(from: url)
+            }
+            savedQuickUrls.insert(url)
+        } catch {
+            quickSaveError = error.localizedDescription
+        }
+        savingQuickUrl = nil
     }
 
     /// Small preview of a picked photo (ImageIO, so it works the same on iOS

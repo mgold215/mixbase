@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import {
   Camera, PenLine, Shuffle, Image as ImageIcon, Images, X, RefreshCw, Film, ExternalLink, Keyboard, GraduationCap, Pin, Sparkles,
-  Check, ChevronDown, ChevronRight, AlertCircle,
+  Check, ChevronDown, ChevronRight, AlertCircle, Download,
 } from 'lucide-react'
+import { saveMedia } from '@/lib/download'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { CASSETTE_SCENES, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 import CassetteLook, {
@@ -129,16 +130,20 @@ const CHECKER = {
 
 const chip = (on: boolean) => `px-2 py-1 rounded-md text-[10px] ${on ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#888] hover:text-white'}`
 const SPINNER = <span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
+// Which section a Save was tapped in — its "tap to save" / error row shows there.
+type SaveWhere = 'quick' | 'motion'
 
 type Props = {
   projectId: string
+  /** Names the saved files ("<title> cover.jpg"); falls back to "mixbase". */
+  projectTitle?: string
   onRendered: (artworkUrl: string, finalizedUrl: string | null) => void
   /** A clip was pinned on THIS song (url, into the wide slot?) — mirror it on the page. */
   onVisualizerPinned?: (url: string, wide: boolean) => void
   onClose: () => void
 }
 
-export default function CassetteStudio({ projectId, onRendered, onVisualizerPinned, onClose }: Props) {
+export default function CassetteStudio({ projectId, projectTitle, onRendered, onVisualizerPinned, onClose }: Props) {
   const [subjects, setSubjects] = useState<StudioFile[]>([])
   const [lettering, setLettering] = useState<StudioFile[]>([])
   const [subject, setSubject] = useState<string | null>(null)
@@ -178,6 +183,12 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
   const [motionTitle, setMotionTitle] = useState(true)
   const [motionBusy, setMotionBusy] = useState(false)
   const [motionError, setMotionError] = useState('')
+  // Saving a result to the device (src/lib/download.ts): the share sheet on a
+  // phone so a clip or cover lands in Photos, a real download elsewhere. iOS
+  // Safari's tap window can expire while the bytes download; `finish` then
+  // holds the already-fetched file for one more tap. Keyed by section so the
+  // "tap to save" button appears next to what was tapped.
+  const [saveStatus, setSaveStatus] = useState<{ where: SaveWhere; error?: string; finish?: () => Promise<void> } | null>(null)
   const [motionVideo, setMotionVideo] = useState<Clip | null>(null)
   // The project's CURRENT cover can already move (a studio cover with its
   // layers saved) — offers the row on open, not only after a new render.
@@ -681,6 +692,35 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
   // A moving-cover render reads the CURRENT cover's layers server-side, so a
   // new cover must not replace it mid-render.
   const working = busy !== null || motionBusy || jobRunning || sheetBusy
+  // Save to the device. A bare link to Storage only plays the file inline on
+  // a phone — the "I can't download anything" failure — so every result gets
+  // a real Save button instead.
+  function saveFile(where: SaveWhere, url: string, what: string, ext: 'mp4' | 'jpg') {
+    setSaveStatus(null)
+    void saveMedia(url, `${projectTitle || 'mixbase'} ${what}`, ext, {
+      onNeedsFinishTap: finish => setSaveStatus({ where, finish }),
+    }).catch(() => setSaveStatus({ where, error: "Couldn't save the file. Please try again." }))
+  }
+
+  function finishSaveTap() {
+    const s = saveStatus
+    if (!s?.finish) return
+    setSaveStatus(null)
+    void s.finish().catch(() => setSaveStatus({ where: s.where, error: "Couldn't save the file. Tap Save again." }))
+  }
+
+  const saveButton = (where: SaveWhere, url: string, what: string, ext: 'mp4' | 'jpg') => (
+    <button onClick={() => saveFile(where, url, what, ext)} className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
+      <Download size={10} />Save
+    </button>
+  )
+
+  const saveStatusRow = (where: SaveWhere) => saveStatus?.where !== where ? null : saveStatus.finish ? (
+    <button onClick={finishSaveTap} className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold bg-[#2dd4bf] text-[#0f0f0f] rounded-xl">
+      <Download size={13} />Ready — tap to save to Photos
+    </button>
+  ) : saveStatus.error ? <p className="text-red-400 text-xs">{saveStatus.error}</p> : null
+
   const canRender = !!subject && !working && (scene !== 'custom' || setting.trim().length > 0) && (scene !== 'photo' || !!bgFile)
   const currentLettering = lettering.find(l => l.path === letterPath) ?? null
   const knownLetters = glyphCounts ? Object.values(glyphCounts).filter(n => n > 0).length : 0
@@ -747,17 +787,23 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
             {(shownCover || job.clips.length > 0) && (
               <div className="flex flex-wrap items-end gap-2">
                 {shownCover && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={shownCover} alt="The new cover" className="w-32 h-32 rounded-lg object-cover bg-black" />
+                  <div className="space-y-0.5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={shownCover} alt="The new cover" className="w-32 h-32 rounded-lg object-cover bg-black" />
+                    <p className="text-[9px] text-[#777]">Cover</p>
+                    {saveButton('quick', shownCover, 'cover', 'jpg')}
+                  </div>
                 )}
                 {job.clips.map(c => (
                   <div key={c.video_url} className="space-y-0.5">
                     <video src={c.video_url} muted loop autoPlay playsInline className={`rounded-lg bg-black ${c.format === 'youtube' ? 'w-56 aspect-video' : 'w-[72px] aspect-[9/16]'}`} />
                     <p className="text-[9px] text-[#777]">{c.format === 'youtube' ? 'YouTube' : 'Canvas'} · {c.kind === 'cinematic' ? (c.model ?? 'cinematic') : 'cassette loop'}</p>
+                    {saveButton('quick', c.video_url, c.format, 'mp4')}
                   </div>
                 ))}
               </div>
             )}
+            {saveStatusRow('quick')}
             {job.notes.length > 0 && (
               <ul className="space-y-0.5">
                 {job.notes.map(n => <li key={n} className="text-[10px] text-[#999] leading-snug">· {n}</li>)}
@@ -1210,10 +1256,12 @@ export default function CassetteStudio({ projectId, onRendered, onVisualizerPinn
                 <button onClick={() => pinClip(motionVideo)} disabled={pinBusy} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
                   <Pin size={10} />{pinBusy ? 'Pinning…' : 'Use as this song\'s visualizer'}
                 </button>
+                {saveButton('motion', motionVideo.video_url, `moving cover ${motionVideo.format}`, 'mp4')}
                 <a href={motionVideo.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-[#2dd4bf] hover:underline">
                   <ExternalLink size={10} />Open the clip
                 </a>
               </div>
+              {saveStatusRow('motion')}
             </div>
           )}
         </section>
