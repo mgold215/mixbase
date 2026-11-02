@@ -25,6 +25,12 @@ type StudioFile = { path: string; url: string; createdAt: string | null }
 // An image already in one of the owner's songs (GET /api/cassette-studio/photos).
 type MixbasePhoto = { path: string; url: string; thumb_url: string; project_id: string; project_title: string; created_at: string | null }
 type Position = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right'
+// Re-letter the current cover with these instead of the manual controls
+// (Adjust the title under a one-click result).
+type Reletter = { lettering: string; color: string; position: Position | 'auto'; size: Size }
+// What a render landed: the cover URLs (after the remembered look, if any) and
+// the colour/spot the server resolved for the handwriting.
+type Landed = { artwork_url: string; finalized_artwork_url: string | null; color: string | null; position: Position | null }
 type Size = 'small' | 'medium' | 'large'
 type SceneChoice = 'random' | 'custom' | 'photo' | string
 // A moving cover just rendered (POST /api/cassette-studio/motion).
@@ -39,6 +45,10 @@ type QuickJob = {
   scene_label: string | null
   artwork_url: string | null
   finalized_artwork_url: string | null
+  /** The lettering the run composed (what Adjust the title re-applies). */
+  lettering: { path: string } | null
+  /** How the title was lettered: the resolved colour and spot, and the size. */
+  title: { color: string | null; position: Position | null; size: Size } | null
   clips: { format: 'canvas' | 'youtube'; video_url: string; kind: 'cinematic' | 'loop'; model: string | null }[]
   notes: string[]
   error: string | null
@@ -198,6 +208,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   // One click: the description, the run being polled, and what it will use.
   const [quickText, setQuickText] = useState('')
   const [job, setJob] = useState<QuickJob | null>(null)
+  // Adjust the title under the result: null = what the run used (job.title).
+  const [quickColor, setQuickColor] = useState<string | null>(null)
+  const [quickPosition, setQuickPosition] = useState<Position | 'auto' | null>(null)
+  const [quickSize, setQuickSize] = useState<Size | null>(null)
+  const [quickTitleError, setQuickTitleError] = useState('')
   const [quickError, setQuickError] = useState('')
   const [setup, setSetup] = useState<Setup | null>(null)
   const [sheetBusy, setSheetBusy] = useState(false)
@@ -488,7 +503,9 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
     }
   }
 
-  async function render(mode: 'scene' | 'reletter') {
+  // Returns the cover it landed (after the remembered look, if any) or the
+  // error it showed, so Adjust the title can mirror the result on the run.
+  async function render(mode: 'scene' | 'reletter', override?: Reletter): Promise<Landed | { error: string }> {
     setBusy(mode === 'scene' ? 'render' : 'reletter')
     setError('')
     setLookNote('')
@@ -499,10 +516,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
       if (subject) form.append('subject', subject)
       if (scene === 'custom') form.append('setting', setting)
       if (mode === 'scene' && scene === 'photo' && bgFile) form.append('background', bgFile, 'background.jpg')
-      if (useLettering && letterPath) form.append('lettering', letterPath)
-      form.append('color', color)
-      form.append('position', position)
-      form.append('size', size)
+      const letteringToSend = override?.lettering ?? (useLettering && letterPath ? letterPath : null)
+      if (letteringToSend) form.append('lettering', letteringToSend)
+      form.append('color', override?.color ?? color)
+      form.append('position', override?.position ?? position)
+      form.append('size', override?.size ?? size)
       if (glossy) form.append('reflection', '1')
       if (spot !== 'auto') {
         const [x, y] = spot.split(',')
@@ -513,7 +531,13 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
       const res = await fetch('/api/cassette-studio/render', { method: 'POST', body: form })
       const data = await readJson(res)
       if (!res.ok || !data?.artwork_url) throw new Error((data?.error as string) ?? 'Could not make the cover.')
-      onRendered(data.artwork_url as string, (data.finalized_artwork_url as string | null) ?? null)
+      let landed: Landed = {
+        artwork_url: data.artwork_url as string,
+        finalized_artwork_url: (data.finalized_artwork_url as string | null) ?? null,
+        color: (data.color as string | null) ?? null,
+        position: (data.position as Position | null) ?? null,
+      }
+      onRendered(landed.artwork_url, landed.finalized_artwork_url)
       if (mode === 'scene') setLastScene((data.scene_label as string | null) ?? null)
       setHasRendered(true)
       setMotionVideo(null)
@@ -526,17 +550,42 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
         setBusy('apply-look')
         try {
           const saved = await saveLook(projectId, keep)
-          if (saved.artworkUrl) onRendered(saved.artworkUrl, saved.finalizedUrl)
+          if (saved.artworkUrl) {
+            landed = { ...landed, artwork_url: saved.artworkUrl, finalized_artwork_url: saved.finalizedUrl }
+            onRendered(landed.artwork_url, landed.finalized_artwork_url)
+          }
         } catch {
           setLookNote('Your look could not be added this time. The cover is saved without it.')
         }
       }
       setLookRefresh(n => n + 1)
+      return landed
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Network error. Try again.')
+      const message = err instanceof Error ? err.message : 'Network error. Try again.'
+      setError(message)
+      return { error: message }
     } finally {
       setBusy(null)
     }
+  }
+
+  // Adjust the title after a one-click run: the same cover re-lettered from
+  // its kept layers (scene = keep, no AI) in the colour, spot and size chosen
+  // under the result. The clips keep the title they were filmed with.
+  async function adjustQuickTitle() {
+    if (!job?.lettering) return
+    setQuickTitleError('')
+    const size = quickSize ?? job.title?.size ?? 'medium'
+    const landed = await render('reletter', {
+      lettering: job.lettering.path,
+      color: quickColor ?? 'auto',
+      position: quickPosition ?? job.title?.position ?? 'auto',
+      size,
+    })
+    if ('error' in landed) { setQuickTitleError(landed.error); return }
+    // The poll already announced this cover to the page via onRendered.
+    announcedCover.current = landed.finalized_artwork_url ?? landed.artwork_url
+    setJob(j => (j ? { ...j, artwork_url: landed.artwork_url, finalized_artwork_url: landed.finalized_artwork_url, title: { color: landed.color, position: landed.position, size } } : j))
   }
 
   // "Save look" in Finish the look: bakes the look into the cover and updates
@@ -609,6 +658,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
 
   // ── One click ───────────────────────────────────────────────────────────
   async function makeIt() {
+    // A new run letters its own title; the adjustments start over from it.
+    setQuickColor(null)
+    setQuickPosition(null)
+    setQuickSize(null)
+    setQuickTitleError('')
     const description = quickText.trim()
     if (description.length < 3) { setQuickError('Describe the scene first.'); return }
     setQuickError('')
@@ -727,6 +781,10 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   const quickReady = !!setup?.cassette || subjects.length > 0
   const needsSheet = setup !== null && (!setup.signature || setup.letters.known < setup.letters.total)
   const shownCover = job?.finalized_artwork_url ?? job?.artwork_url ?? null
+  // Adjust the title: start from what the run used until a chip is tapped.
+  const qColor = quickColor ?? 'auto'
+  const qPosition: Position | 'auto' = quickPosition ?? job?.title?.position ?? 'auto'
+  const qSize: Size = quickSize ?? job?.title?.size ?? 'medium'
 
   return (
     <div className="space-y-4 rounded-xl border border-[#222] bg-[#0f0f0f] p-3">
@@ -804,6 +862,41 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
               </div>
             )}
             {saveStatusRow('quick')}
+            {job.status !== 'running' && job.lettering && shownCover && (
+              <div className="space-y-1.5 rounded-lg border border-[#1f2a2a] p-2">
+                <p className="text-[10px] font-semibold text-white">Adjust the title</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex gap-1">
+                    <button onClick={() => setQuickColor('auto')} className={chip(qColor === 'auto')}>Auto</button>
+                    {TEXT_COLORS.map(c => (
+                      <button key={c.value} onClick={() => setQuickColor(c.value)} title={c.label} aria-label={c.label}
+                        className={`w-6 h-6 rounded-md border ${qColor === c.value ? 'border-[#2dd4bf]' : 'border-[#333]'}`} style={{ backgroundColor: c.value }} />
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setQuickPosition('auto')} className={chip(qPosition === 'auto')}>Auto</button>
+                    <div className="grid grid-cols-3 gap-0.5">
+                      {POSITIONS.map(p => (
+                        <button key={p.value} onClick={() => setQuickPosition(p.value)} aria-label={p.value}
+                          className={`w-6 h-5 rounded text-[10px] ${qPosition === p.value ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#666]'}`}>{p.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-0.5">
+                    {(['small', 'medium', 'large'] as Size[]).map(s => (
+                      <button key={s} onClick={() => setQuickSize(s)}
+                        className={`w-6 h-6 rounded text-[10px] ${qSize === s ? 'bg-[#2dd4bf]/20 text-[#2dd4bf]' : 'bg-[#1a1a1a] text-[#666]'}`}>{s[0].toUpperCase()}</button>
+                    ))}
+                  </div>
+                  <button onClick={() => void adjustQuickTitle()} disabled={working}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] bg-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
+                    {busy === 'reletter' ? SPINNER : <PenLine size={10} />}{busy === 'reletter' ? 'Updating…' : 'Update the title'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#666]">Changes the cover only. The Canvas and YouTube clips keep the title they were filmed with.</p>
+                {quickTitleError && <p className="text-red-400 text-xs">{quickTitleError}</p>}
+              </div>
+            )}
             {job.notes.length > 0 && (
               <ul className="space-y-0.5">
                 {job.notes.map(n => <li key={n} className="text-[10px] text-[#999] leading-snug">· {n}</li>)}

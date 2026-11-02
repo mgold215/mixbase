@@ -1149,8 +1149,14 @@ final class MixbaseAPI {
         /// brief / cover / canvas / youtube → pending | running | done | failed
         let steps: [String: String]
         let sceneLabel: String?
-        let artworkUrl: String?
-        let finalizedArtworkUrl: String?
+        // var: Adjust the title re-letters the cover after the run, and the
+        // view mirrors the new cover onto the run it shows.
+        var artworkUrl: String?
+        var finalizedArtworkUrl: String?
+        /// The lettering the run composed (what Adjust the title re-applies).
+        let lettering: StudioFile?
+        /// How the title was lettered: the resolved colour and spot, and the size.
+        var title: QuickTitle?
         let clips: [QuickClip]
         let notes: [String]
         let error: String?
@@ -1165,10 +1171,18 @@ final class MixbaseAPI {
             case sceneLabel = "scene_label"
             case artworkUrl = "artwork_url"
             case finalizedArtworkUrl = "finalized_artwork_url"
+            case lettering
+            case title
             case clips
             case notes
             case error
         }
+    }
+
+    struct QuickTitle: Decodable, Equatable {
+        let color: String?
+        let position: String?
+        let size: String
     }
 
     /// Start a one-click run for this song from a scene description.

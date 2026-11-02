@@ -32,7 +32,7 @@ import {
   downloadStudio, fillScene, isOwnStudioKey, listStudio, loadGlyphBank, loadSignature, removeStudio, studioPrefix, uploadStudio,
   type StudioFile,
 } from '@/lib/cassette-server'
-import { buildOutpaintRequest, finishOutpaint, type FrameShape } from '@/lib/cassette-studio'
+import { buildOutpaintRequest, finishOutpaint, type FrameShape, type LetteringPosition, type LetteringSize } from '@/lib/cassette-studio'
 import { scenePrompt } from '@/lib/cassette-scenes'
 import { composeHandwriting } from '@/lib/handwriting-glyphs'
 import { stackLockup, titleForHandwriting } from '@/lib/handwriting-sheet'
@@ -59,6 +59,8 @@ export type QuickJob = {
   artwork_url: string | null
   finalized_artwork_url: string | null
   lettering: StudioFile | null
+  /** How the title was lettered (the resolved colour and spot, the size), so a client's Adjust the title starts from it. */
+  title: { color: string | null; position: LetteringPosition | null; size: LetteringSize } | null
   clips: QuickClip[]
   notes: string[]
   error: string | null
@@ -101,6 +103,26 @@ export function latestQuickJob(userId: string, projectId: string): QuickJob | nu
   return best
 }
 
+/**
+ * The project's cover changed outside a run — Adjust the title (render with
+ * scene = keep) or Finish the look — so the latest finished run shows the
+ * cover as it now is when a client reloads it, not the one the run made.
+ * With a `size` the title was re-lettered: its resolved colour/spot replace
+ * the run's; without one only the cover URLs move (a look on the same title).
+ */
+export function syncQuickCover(
+  userId: string, projectId: string,
+  cover: { artwork_url: string | null; finalized_artwork_url: string | null; color?: string | null; position?: LetteringPosition | null; size?: LetteringSize },
+): void {
+  const j = latestQuickJob(userId, projectId)
+  if (!j || j.status === 'running' || !cover.artwork_url) return
+  update(j, {
+    artwork_url: cover.artwork_url,
+    finalized_artwork_url: cover.finalized_artwork_url,
+    title: cover.size ? { color: cover.color ?? null, position: cover.position ?? null, size: cover.size } : j.title,
+  })
+}
+
 export type StartResult = { ok: true; job: QuickJob } | { ok: false; code: 'user_busy' | 'server_busy'; existing?: QuickJob }
 
 export function startQuickJob(args: { userId: string; projectId: string; title: string; description: string; subjectPath: string }): StartResult {
@@ -125,6 +147,7 @@ export function startQuickJob(args: { userId: string; projectId: string; title: 
     artwork_url: null,
     finalized_artwork_url: null,
     lettering: null,
+    title: null,
     clips: [],
     notes: [],
     error: null,
@@ -168,7 +191,10 @@ async function run(job: QuickJob, title: string, subjectPath: string): Promise<v
       letteringPath: lettering?.path ?? '', color: 'auto', position: 'auto', size: 'medium', reflection: false,
       placement: {}, prompt: scenePrompt(brief.setting),
     })
-    update(job, { artwork_url: cover.artwork_url, finalized_artwork_url: cover.finalized_artwork_url })
+    update(job, {
+      artwork_url: cover.artwork_url, finalized_artwork_url: cover.finalized_artwork_url,
+      title: lettering ? { color: cover.color, position: cover.position, size: 'medium' } : null,
+    })
     setStep(job, 'cover', 'done')
 
     // ── 4. Clips ──────────────────────────────────────────────────────────
