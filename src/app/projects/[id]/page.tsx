@@ -4,6 +4,7 @@ import { isAdminIdentity } from '@/lib/admin-identity'
 import { notFound } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { getFeedCommentsForVersions, type FeedComment } from '@/lib/feed'
+import { isSongInThumbDrive } from '@/lib/thumb-drive'
 import ProjectClient from './ProjectClient'
 
 export const dynamic = 'force-dynamic'
@@ -41,7 +42,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   //
   // getFeedCommentsForVersions is total, so this await cannot 500 the page.
   const versions = versionsRes.data ?? []
-  const feedComments = await getFeedCommentsForVersions(versions.map(v => v.id))
+  // THUMB DRIVE switch state rides the same post-gate step: it's scoped to
+  // this user's own THUMB DRIVE, and null (couldn't read) hides the switch.
+  const [feedComments, inThumbDrive] = await Promise.all([
+    getFeedCommentsForVersions(versions.map(v => v.id)),
+    isSongInThumbDrive(userId, id),
+  ])
 
   const feedCommentsByVersion: Record<string, FeedComment[]> = {}
   for (const c of feedComments) (feedCommentsByVersion[c.version_id] ??= []).push(c)
@@ -56,6 +62,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         initialFeedComments={feedCommentsByVersion}
         ownerDefaults={profileRes.data?.is_owner === true}
         ownerTools={ownerTools === true}
+        inThumbDrive={inThumbDrive}
       />
     </div>
   )

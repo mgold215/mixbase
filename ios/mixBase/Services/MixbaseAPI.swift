@@ -1466,6 +1466,34 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/collections/thumb-drive", method: "GET")
     }
 
+    /// Is this song in the account's THUMB DRIVE? Drives the switch on the
+    /// song screen.
+    func isInThumbDrive(projectId: UUID) async throws -> Bool {
+        let json = try await requestJSON(
+            path: "/api/projects/\(projectId.uuidString.lowercased())/thumb-drive",
+            method: "GET"
+        )
+        guard let included = json["included"] as? Bool else {
+            throw MixbaseAPIError.invalidResponse("No THUMB DRIVE state in response")
+        }
+        return included
+    }
+
+    /// Put this song in the THUMB DRIVE (at the top) or take it out — the
+    /// server applies the rule (same route as the web's switch). Returns the
+    /// state the server confirmed.
+    func setInThumbDrive(projectId: UUID, included: Bool) async throws -> Bool {
+        let json = try await requestJSON(
+            path: "/api/projects/\(projectId.uuidString.lowercased())/thumb-drive",
+            method: "PUT",
+            body: ["included": included]
+        )
+        guard let confirmed = json["included"] as? Bool else {
+            throw MixbaseAPIError.invalidResponse("No THUMB DRIVE state in response")
+        }
+        return confirmed
+    }
+
     // MARK: - Versions (new mixes)
 
     /// Create the mb_versions row for a mix that has just finished uploading.

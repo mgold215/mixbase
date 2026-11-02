@@ -12,12 +12,18 @@
 //                          for the app), so new accounts get one on first look.
 //   addSongToThumbDrive  — called by POST /api/versions when a song's FIRST mix
 //                          is uploaded; puts the song at the top.
+//   isSongInThumbDrive / setSongInThumbDrive
+//                        — the "Include in THUMB DRIVE" switch on each song's
+//                          page (web + app, via /api/projects/[id]/thumb-drive).
+//                          Switching off removes the song, and it stays out.
 //
 // "Newest mix" needs no code here: items point at the song (project), and
 // every player resolves the song's highest version_number when it plays.
 //
-// Neither function ever throws. A THUMB DRIVE hiccup must never fail an upload
-// or blank the collections page — it's logged and the caller carries on.
+// ensureThumbDrive, addSongToThumbDrive and isSongInThumbDrive never throw. A
+// THUMB DRIVE hiccup must never fail an upload or blank a page — it's logged
+// and the caller carries on. setSongInThumbDrive DOES throw, because the switch
+// has to tell the artist when flipping it didn't work.
 
 import { supabaseAdmin } from '@/lib/supabase'
 import { ensureThumbDriveColumn, isMissingThumbDriveColumn } from '@/lib/schema-heal'
@@ -124,6 +130,48 @@ export async function ensureThumbDrive(userId: string): Promise<ThumbDrive | nul
   }
 }
 
+// True when the song is already in this THUMB DRIVE. Throws on a read error.
+async function containsSong(driveId: string, projectId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_collection_items')
+    .select('id')
+    .eq('collection_id', driveId)
+    .eq('project_id', projectId)
+    .limit(1)
+  if (error) throw error
+  return (data ?? []).length > 0
+}
+
+// Bump updated_at so newest-first collection lists stay honest.
+async function touchThumbDrive(driveId: string): Promise<void> {
+  await supabaseAdmin
+    .from('mb_collections')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', driveId)
+}
+
+// Put a song at the top of this THUMB DRIVE unless it's already in it (a song
+// that's there is left where the artist put it). Throws on a database error.
+async function insertSongAtTop(driveId: string, projectId: string): Promise<void> {
+  if (await containsSong(driveId, projectId)) return
+
+  const { data: top, error: topError } = await supabaseAdmin
+    .from('mb_collection_items')
+    .select('position')
+    .eq('collection_id', driveId)
+    .order('position', { ascending: true })
+    .limit(1)
+  if (topError) throw topError
+
+  const { error: insertError } = await supabaseAdmin.from('mb_collection_items').insert({
+    collection_id: driveId,
+    project_id: projectId,
+    position: positionForNewSong(top?.[0]?.position as number | undefined),
+  })
+  if (insertError) throw insertError
+  await touchThumbDrive(driveId)
+}
+
 /**
  * Add a song to the top of its owner's THUMB DRIVE — called when the song's
  * first mix is uploaded. A song that's already there is left where it is.
@@ -135,36 +183,52 @@ export async function addSongToThumbDrive(userId: string, projectId: string): Pr
     // null: couldn't set it up (already logged). created: the fill just put
     // every song with a mix in it — this one included.
     if (!drive || drive.created) return
-
-    const { data: already, error: lookupError } = await supabaseAdmin
-      .from('mb_collection_items')
-      .select('id')
-      .eq('collection_id', drive.id)
-      .eq('project_id', projectId)
-      .limit(1)
-    if (lookupError) throw lookupError
-    if (already && already.length > 0) return
-
-    const { data: top, error: topError } = await supabaseAdmin
-      .from('mb_collection_items')
-      .select('position')
-      .eq('collection_id', drive.id)
-      .order('position', { ascending: true })
-      .limit(1)
-    if (topError) throw topError
-
-    const { error: insertError } = await supabaseAdmin.from('mb_collection_items').insert({
-      collection_id: drive.id,
-      project_id: projectId,
-      position: positionForNewSong(top?.[0]?.position as number | undefined),
-    })
-    if (insertError) throw insertError
-
-    await supabaseAdmin
-      .from('mb_collections')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', drive.id)
+    await insertSongAtTop(drive.id, projectId)
   } catch (err) {
     console.error(`[thumb-drive] could not add song ${projectId} for ${userId}: ${errorText(err)}`)
   }
+}
+
+/**
+ * Is this song in its owner's THUMB DRIVE right now? Powers the switch on the
+ * song page. Resolves null — never throws — when it can't be read, so the page
+ * can hide the switch rather than show a guess. The caller must already have
+ * checked that userId owns projectId.
+ */
+export async function isSongInThumbDrive(userId: string, projectId: string): Promise<boolean | null> {
+  try {
+    const drive = await ensureThumbDrive(userId)
+    if (!drive) return null
+    return await containsSong(drive.id, projectId)
+  } catch (err) {
+    console.error(`[thumb-drive] could not read song ${projectId} for ${userId}: ${errorText(err)}`)
+    return null
+  }
+}
+
+/**
+ * The song page's switch: put a song in its owner's THUMB DRIVE (at the top)
+ * or take it out. Taking it out removes every copy of it from THUMB DRIVE, and
+ * it stays out — later mixes don't add it back (only a song's FIRST mix does).
+ *
+ * Unlike the upload hook this THROWS on failure: the switch has to tell the
+ * artist when it didn't work. The caller must already have checked that userId
+ * owns projectId.
+ */
+export async function setSongInThumbDrive(userId: string, projectId: string, included: boolean): Promise<void> {
+  const drive = await ensureThumbDrive(userId)
+  if (!drive) throw new Error('THUMB DRIVE could not be set up')
+
+  if (included) {
+    await insertSongAtTop(drive.id, projectId)
+    return
+  }
+
+  const { error } = await supabaseAdmin
+    .from('mb_collection_items')
+    .delete()
+    .eq('collection_id', drive.id)
+    .eq('project_id', projectId)
+  if (error) throw error
+  await touchThumbDrive(drive.id)
 }
