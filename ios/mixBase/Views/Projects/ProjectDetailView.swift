@@ -57,6 +57,12 @@ struct ProjectDetailView: View {
     // "Version history (N)" toggle.
     @State private var showVersionHistory = false
 
+    // THUMB DRIVE switch. nil = not loaded (or couldn't be read) — the switch
+    // stays hidden rather than showing a guess.
+    @State private var inThumbDrive: Bool?
+    @State private var thumbDriveSaving = false
+    @State private var thumbDriveError: String?
+
     var body: some View {
         ZStack {
             Color(hex: "#080808")
@@ -76,6 +82,11 @@ struct ProjectDetailView: View {
 
                         // MARK: - Editable Project Info
                         projectInfoSection(project: project)
+
+                        // MARK: - THUMB DRIVE (include this song in the all-my-songs playlist)
+                        if let inThumbDrive {
+                            thumbDriveSection(included: inThumbDrive)
+                        }
 
                         // MARK: - Quick Play (plays latest version)
                         if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
@@ -1265,6 +1276,9 @@ struct ProjectDetailView: View {
             )
 
             versions.append(version)
+            // A song's first mix adds it to THUMB DRIVE server-side — refresh
+            // the switch so it shows that.
+            await loadThumbDrive()
             await showUploadResult("Done!", success: true)
         } catch {
             await showUploadResult("⚠️ Upload failed: \(error.localizedDescription)", success: false)
@@ -1281,12 +1295,68 @@ struct ProjectDetailView: View {
         uploadProgress = ""
     }
 
+    // MARK: - THUMB DRIVE switch
+    // On puts this song in the account's THUMB DRIVE (at the top); off takes it
+    // out, and it stays out — later mixes don't add it back. The server owns
+    // the rule (PUT /api/projects/[id]/thumb-drive, same as the web); the app
+    // only flips it.
+    private func thumbDriveSection(included: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { included },
+                set: { newValue in Task { await setThumbDrive(newValue) } }
+            )) {
+                Label("Include in THUMB DRIVE", systemImage: "externaldrive.fill")
+                    .font(.subheadline)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+            }
+            .tint(Color(hex: "#2dd4bf"))
+            .disabled(thumbDriveSaving)
+
+            Text(thumbDriveError ?? thumbDriveHint(included: included))
+                .font(.caption2)
+                .foregroundColor(thumbDriveError == nil ? .gray : .red)
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func thumbDriveHint(included: Bool) -> String {
+        if included { return "In your THUMB DRIVE — switch off to remove it." }
+        if versions.isEmpty { return "Joins your THUMB DRIVE automatically when its first mix is uploaded." }
+        return "Not in your THUMB DRIVE — switch on to add it."
+    }
+
+    // Optimistic, then the server's answer wins; a failure puts the switch
+    // back, because THUMB DRIVE is shared by link and must never look
+    // different from what it holds.
+    private func setThumbDrive(_ newValue: Bool) async {
+        guard !thumbDriveSaving else { return }
+        let previous = inThumbDrive
+        inThumbDrive = newValue
+        thumbDriveSaving = true
+        thumbDriveError = nil
+        do {
+            inThumbDrive = try await MixbaseAPI.shared.setInThumbDrive(projectId: projectId, included: newValue)
+        } catch {
+            inThumbDrive = previous
+            thumbDriveError = "Couldn't update THUMB DRIVE: \(error.localizedDescription)"
+        }
+        thumbDriveSaving = false
+    }
+
+    private func loadThumbDrive() async {
+        if let included = try? await MixbaseAPI.shared.isInThumbDrive(projectId: projectId) {
+            inThumbDrive = included
+        }
+    }
+
     // MARK: - Data Loading
     private func loadProjectData() async {
         isLoading = true
         do {
             project = try await SupabaseService.shared.fetchProject(id: projectId)
             versions = try await SupabaseService.shared.fetchVersions(projectId: projectId)
+            await loadThumbDrive()
 
             // Load feedback for all versions concurrently
             let versionIds = versions.map(\.id)

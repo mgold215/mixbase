@@ -4,6 +4,7 @@ import { isAdminIdentity } from '@/lib/admin-identity'
 import ModalShell from '@/components/ModalShell'
 import ProjectClient from '@/app/projects/[id]/ProjectClient'
 import { getFeedCommentsForVersions, type FeedComment } from '@/lib/feed'
+import { isSongInThumbDrive } from '@/lib/thumb-drive'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,7 +39,12 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
   // to this project's own versions. Kept in sync so the modal doesn't quietly
   // hide notes the full page shows.
   const versions = versionsRes.data ?? []
-  const feedComments = await getFeedCommentsForVersions(versions.map(v => v.id))
+  // THUMB DRIVE switch state rides the same post-gate step: it's scoped to
+  // this user's own THUMB DRIVE, and null (couldn't read) hides the switch.
+  const [feedComments, inThumbDrive] = await Promise.all([
+    getFeedCommentsForVersions(versions.map(v => v.id)),
+    isSongInThumbDrive(userId, id),
+  ])
   const feedCommentsByVersion: Record<string, FeedComment[]> = {}
   for (const c of feedComments) (feedCommentsByVersion[c.version_id] ??= []).push(c)
 
@@ -52,6 +58,7 @@ export default async function ProjectModalPage({ params }: { params: Promise<{ i
         inModal
         ownerDefaults={profileRes.data?.is_owner === true}
         ownerTools={ownerTools === true}
+        inThumbDrive={inThumbDrive}
       />
     </ModalShell>
   )

@@ -147,12 +147,32 @@ check('a fresh THUMB DRIVE is filled, and removed again if the fill fails (never
 check('the fill reads only this account\'s songs', /from\('mb_projects'\)[\s\S]*\.eq\('user_id', userId\)/.test(fill))
 check('the fill uses the pure order and skips songs already present',
   fill.includes('thumbDriveFillOrder(') && /!have\.has\(item\.project_id\)/.test(fill))
+const contains = functionBody(lib, 'async function containsSong')
+const atTop = functionBody(lib, 'async function insertSongAtTop')
+check('containsSong and insertSongAtTop were located', !!contains && !!atTop)
+check('the presence check is scoped to this THUMB DRIVE and this song',
+  /\.eq\('collection_id', driveId\)\s*\.eq\('project_id', projectId\)/.test(contains))
 check('adding skips a song that is already in it (no duplicates, keeps the artist\'s order)',
-  /\.eq\('project_id', projectId\)[\s\S]*if \(already && already\.length > 0\) return/.test(add))
+  /if \(await containsSong\(driveId, projectId\)\) return/.test(atTop) &&
+  atTop.indexOf('containsSong(') < atTop.indexOf('.insert('))
 check('adding puts the song on top via positionForNewSong',
-  /order\('position', \{ ascending: true \}\)/.test(add) && add.includes('positionForNewSong('))
+  /order\('position', \{ ascending: true \}\)/.test(atTop) && atTop.includes('positionForNewSong('))
+check('the upload hook adds through insertSongAtTop', add.includes('await insertSongAtTop(drive.id, projectId)'))
 check('adding returns early when ensure just ran a fill (the song is already in it)',
   /if \(!drive \|\| drive\.created\) return/.test(add))
+
+// The song page's switch.
+const isIn = functionBody(lib, 'export async function isSongInThumbDrive')
+const setIn = functionBody(lib, 'export async function setSongInThumbDrive')
+check('isSongInThumbDrive and setSongInThumbDrive were located', !!isIn && !!setIn)
+check('reading the switch never throws (null = couldn\'t read, so the page hides it)',
+  /^[^{]*\{\s*try\s*\{/.test(isIn) && /catch\s*\(err\)\s*\{[\s\S]*return null/.test(isIn))
+check('switching on adds the song at the top — even into a just-created THUMB DRIVE (a song with no mix isn\'t in the fill)',
+  /if \(included\) \{\s*await insertSongAtTop\(drive\.id, projectId\)/.test(setIn) && !/drive\.created/.test(setIn))
+check('switching off deletes only this song from only this account\'s THUMB DRIVE',
+  /\.delete\(\)\s*\.eq\('collection_id', drive\.id\)\s*\.eq\('project_id', projectId\)/.test(setIn))
+check('the switch THROWS when it fails, so the artist is told (no silent catch)',
+  /if \(!drive\) throw new Error/.test(setIn) && /if \(error\) throw error/.test(setIn) && !/catch\s*\(/.test(setIn))
 
 // ── 4. Upload route: first mix → THUMB DRIVE ──────────────────────────────────
 console.log('\nPOST /api/versions')
@@ -165,6 +185,31 @@ check('only for the song\'s FIRST mix (a hand-removed song is not forced back in
 check('only after the version insert succeeded (after the !data bail-out)',
   addAt > post.indexOf("if (!data) {") && post.indexOf("if (!data) {") !== -1)
 check('userId comes from the X-User-Id header, never the body', /const userId = request\.headers\.get\('X-User-Id'\)/.test(post))
+
+// ── 4b. The song page's switch: /api/projects/[id]/thumb-drive ─────────────────
+console.log('\n/api/projects/[id]/thumb-drive')
+const switchRoutePath = 'src/app/api/projects/[id]/thumb-drive/route.ts'
+check('the switch route exists', existsSync(join(root, switchRoutePath)))
+const switchRoute = code(switchRoutePath)
+const swGet = handler(switchRoute, 'GET')
+const swPut = handler(switchRoute, 'PUT')
+check('GET and PUT handlers were located', !!swGet && !!swPut)
+for (const [name, body] of [['GET', swGet], ['PUT', swPut]]) {
+  check(`${name} reads the user from X-User-Id and 401s without one`,
+    /const userId = request\.headers\.get\('X-User-Id'\)/.test(body) && /status: 401/.test(body))
+  check(`${name} validates the song id`, /if \(!isUuid\(id\)\)/.test(body))
+  check(`${name} checks the song is the caller's before touching THUMB DRIVE`,
+    body.indexOf('await ownsProject(id, userId)') !== -1 &&
+    body.indexOf('await ownsProject(id, userId)') < body.indexOf('SongInThumbDrive('))
+}
+check('ownership is checked against mb_projects.user_id',
+  /async function ownsProject[\s\S]*?from\('mb_projects'\)[\s\S]*?\.eq\('id', projectId\)\s*\.eq\('user_id', userId\)/.test(switchRoute))
+check('PUT accepts a literal boolean only ("false" / 0 are refused)',
+  /if \(!isJsonObject\(body\)\)/.test(swPut) && /typeof body\.included !== 'boolean'/.test(swPut))
+check('PUT reports a failure as a 500 instead of claiming success',
+  /try \{\s*await setSongInThumbDrive\(userId, id, included\)\s*\} catch[\s\S]*?status: 500/.test(swPut))
+check('GET reports an unreadable state as a 500, never a guess', /included === null[\s\S]*?status: 500/.test(swGet))
+check('the switch route is not a public path', !code('src/proxy.ts').includes("'/api/projects"))
 
 // ── 5. Collections routes ─────────────────────────────────────────────────────
 console.log('\ncollections routes')
@@ -213,6 +258,25 @@ check('every Delete button on the collection page is hidden for THUMB DRIVE',
 check('the type picker is hidden for THUMB DRIVE', /showTypePicker && !thumbDrive/.test(client) && /\{thumbDrive \? \(/.test(client))
 check('the page tells the artist what THUMB DRIVE does', client.includes('THUMB_DRIVE_BLURB'))
 
+console.log('\nsong page switch (web)')
+const toggle = code('src/components/ThumbDriveToggle.tsx')
+check('the web switch is an accessible switch', /role="switch"/.test(toggle) && /aria-checked=\{included\}/.test(toggle))
+check('it flips through the shared route with PUT { included }',
+  /fetch\(`\/api\/projects\/\$\{projectId\}\/thumb-drive`, \{\s*method: 'PUT'/.test(toggle) &&
+  /JSON\.stringify\(\{ included: next \}\)/.test(toggle))
+check('it reverts on a failed or unreachable request',
+  /if \(!res\.ok\) \{\s*setIncluded\(!next\)/.test(toggle) && /catch \{\s*setIncluded\(!next\)/.test(toggle))
+const projectClient = code('src/app/projects/[id]/ProjectClient.tsx')
+check('the song page shows the switch keyed on the server value (a refresh after a first mix remounts it)',
+  /inThumbDrive !== null && \(\s*<ThumbDriveToggle\s+key=\{String\(inThumbDrive\)\}/.test(projectClient))
+for (const pagePath of ['src/app/projects/[id]/page.tsx', 'src/app/@modal/(.)projects/[id]/page.tsx']) {
+  const pg = code(pagePath)
+  const gateAt = pg.search(/if \(projectRes\.error \|\| !projectRes\.data\)/)
+  const readAt = pg.indexOf('isSongInThumbDrive(userId, id)')
+  check(`${pagePath}: reads the switch state AFTER the ownership gate and passes it on`,
+    gateAt !== -1 && readAt > gateAt && pg.includes('inThumbDrive={inThumbDrive}'))
+}
+
 // ── 7. Players play the NEWEST mix ────────────────────────────────────────────
 console.log('\nnewest mix')
 const share = code('src/lib/album-share.ts')
@@ -240,6 +304,18 @@ check('the app hides Delete Collection for THUMB DRIVE',
 check('the app gives THUMB DRIVE a visible Send All Songs share button',
   /if collection\.isThumbDriveCollection && !items\.isEmpty \{[\s\S]*?ShareLink\(item: shareURL\) \{ sendAllSongsLabel \}[\s\S]*?mintShareLink\(\)/.test(views) &&
   /Label\("Send All Songs", systemImage: "square\.and\.arrow\.up"\)/.test(views))
+const appApi = api
+check('the app reads and flips the switch through the same route as the web',
+  /path: "\/api\/projects\/\\\(projectId\.uuidString\.lowercased\(\)\)\/thumb-drive",\s*method: "GET"/.test(appApi) &&
+  /path: "\/api\/projects\/\\\(projectId\.uuidString\.lowercased\(\)\)\/thumb-drive",\s*method: "PUT",\s*body: \["included": included\]/.test(appApi))
+const detail2 = code('ios/mixBase/Views/Projects/ProjectDetailView.swift')
+check('the app\'s song screen shows the switch only once its state is known',
+  /if let inThumbDrive \{\s*thumbDriveSection\(included: inThumbDrive\)/.test(detail2))
+check('the app\'s switch flips via the server and reverts on failure',
+  /inThumbDrive = try await MixbaseAPI\.shared\.setInThumbDrive\(projectId: projectId, included: newValue\)/.test(detail2) &&
+  /catch \{\s*inThumbDrive = previous/.test(detail2))
+check('the app refreshes the switch after an upload (a first mix adds the song)',
+  /versions\.append\(version\)[\s\S]{0,200}?await loadThumbDrive\(\)/.test(detail2))
 check('the app hides Edit Details (name/type) for THUMB DRIVE',
   /if !collection\.isThumbDriveCollection \{\s*Button\(action: \{ showEditDetails = true \}\)/.test(views))
 
