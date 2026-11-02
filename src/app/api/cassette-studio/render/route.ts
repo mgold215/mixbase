@@ -6,6 +6,7 @@ import { isOwnStudioKey, readPhoto, StudioUnavailable } from '@/lib/cassette-ser
 import { parsePlacement, LETTERING_POSITIONS, LETTERING_SIZES, type LetteringPosition, type LetteringSize } from '@/lib/cassette-studio'
 import { isSceneId, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 import { CoverError, loadCoverProject, makeStudioCover, randomSceneId } from '@/lib/cassette-pipeline'
+import { syncQuickCover } from '@/lib/cassette-quick'
 
 export const runtime = 'nodejs'
 export const maxDuration = 180
@@ -19,7 +20,7 @@ export const maxDuration = 180
 //   background   image file when scene=photo
 //   lettering    studio/<userId>/lettering-<projectId>-<ts>.png, optional
 //   color        '#rrggbb' | 'auto'
-//   position     one of LETTERING_POSITIONS
+//   position     one of LETTERING_POSITIONS | 'auto' (the calmest spot clear of the cassette)
 //   size         small | medium | large
 //   reflection   '1' for a glossy surface (photo mode)
 //   place_x      where the cassette's centre sits across the cover, 0.15–0.85  ┐ optional —
@@ -67,7 +68,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Lettering not found' }, { status: 404 })
   }
   if (scene === 'keep' && !letteringPath) return NextResponse.json({ error: 'Add your handwriting first.' }, { status: 400 })
-  const position: LetteringPosition = (LETTERING_POSITIONS as readonly string[]).includes(str('position')) ? str('position') as LetteringPosition : 'bottom-left'
+  // 'auto' = what the one-click flow uses (pickLetteringPosition); Adjust the
+  // title can ask for it again after choosing a corner.
+  const position: LetteringPosition | 'auto' = str('position') === 'auto' ? 'auto'
+    : (LETTERING_POSITIONS as readonly string[]).includes(str('position')) ? str('position') as LetteringPosition : 'bottom-left'
   const size: LetteringSize = (LETTERING_SIZES as readonly string[]).includes(str('size')) ? str('size') as LetteringSize : 'medium'
   const color = /^#[0-9a-f]{6}$/i.test(str('color')) ? str('color') : 'auto'
   const placement = parsePlacement(str('place_x'), str('place_y'), str('place_scale'))
@@ -84,6 +88,9 @@ export async function POST(request: NextRequest) {
       userId, project, scene, setting, subjectPath, background, letteringPath, color, position, size,
       reflection: str('reflection') === '1', placement,
     })
+    // Adjust the title after a one-click run: the run a client reloads must
+    // show the cover as it is now, not the one the run made.
+    if (scene === 'keep') syncQuickCover(userId, projectId, { ...result, size })
     return NextResponse.json(result)
   } catch (err) {
     if (err instanceof CoverError) return NextResponse.json({ error: err.message }, { status: err.status })

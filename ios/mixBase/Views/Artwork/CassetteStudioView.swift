@@ -66,7 +66,8 @@ struct CassetteStudioView: View {
         // look: putting the remembered look on a fresh render.
         // typing: setting a typed title from the glyph bank.
         // teaching: learning letters from a photo. sheet: reading the handwriting sheet.
-        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, sheet
+        // quickTitle: Adjust the title under a one-click result (re-letter, no AI).
+        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, sheet, quickTitle
     }
 
     // One click: example scenes (tap fills the box) and the steps shown while it runs.
@@ -211,6 +212,15 @@ struct CassetteStudioView: View {
     @State private var motionError: String?
     @State private var isSavingMotion = false
     @State private var savedMotion = false
+    // One click results: the URL being saved right now, and those already saved.
+    @State private var savingQuickUrl: String?
+    @State private var savedQuickUrls: Set<String> = []
+    @State private var quickSaveError: String?
+    // Adjust the title under a one-click result: nil = what the run used.
+    @State private var quickColor: String?
+    @State private var quickPosition: String?
+    @State private var quickSize: String?
+    @State private var quickTitleError: String?
     // The project's CURRENT cover can already move (its layers were saved).
     @State private var canMove = false
 
@@ -1355,13 +1365,16 @@ struct CassetteStudioView: View {
             }
 
             if let cover = job.finalizedArtworkUrl ?? job.artworkUrl, let url = URL(string: cover) {
-                AsyncImage(url: url) { image in
-                    image.resizable().aspectRatio(1, contentMode: .fill)
-                } placeholder: {
-                    Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
+                VStack(alignment: .leading, spacing: 4) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(1, contentMode: .fill)
+                    } placeholder: {
+                        Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
+                    }
+                    .frame(width: 160, height: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    quickSaveRow(url: cover, video: false)
                 }
-                .frame(width: 160, height: 160)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
             ForEach(job.clips, id: \.videoUrl) { clip in
@@ -1381,7 +1394,19 @@ struct CassetteStudioView: View {
                     Text("\(clip.format == "youtube" ? "YouTube" : "Canvas") · \(clip.kind == "cinematic" ? (clip.model ?? "cinematic") : "cassette loop")")
                         .font(.caption2)
                         .foregroundColor(.gray)
+                    quickSaveRow(url: clip.videoUrl, video: true)
                 }
+            }
+
+            if !job.isRunning, let lettering = job.lettering, job.artworkUrl != nil {
+                quickTitleControls(job: job, lettering: lettering)
+            }
+
+            if let quickSaveError {
+                Text(quickSaveError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(job.notes, id: \.self) { note in
@@ -1536,6 +1561,149 @@ struct CassetteStudioView: View {
         }
     }
 
+    /// Adjust the title after a run: the same cover re-lettered from its kept
+    /// layers (scene = keep, no AI). The clips keep the title they were filmed with.
+    private func quickTitleControls(job: MixbaseAPI.QuickJob, lettering: MixbaseAPI.StudioFile) -> some View {
+        let chosenColor = quickColor ?? "auto"
+        let chosenPosition = quickPosition ?? job.title?.position ?? "auto"
+        let chosenSize = quickSize ?? job.title?.size ?? "medium"
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Adjust the title")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    smallChip("Auto", selected: chosenColor == "auto") { quickColor = "auto" }
+                    ForEach(CoverTextColors.all) { option in
+                        Button(action: { quickColor = option.value }) {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(hex: option.value))
+                                .frame(width: 28, height: 28)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(
+                                            chosenColor == option.value ? Color(hex: "#2dd4bf") : Color(hex: "#333333"),
+                                            lineWidth: chosenColor == option.value ? 3 : 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isWorking)
+                        .accessibilityLabel(Text(option.label))
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Position")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    smallChip("Auto", selected: chosenPosition == "auto") { quickPosition = "auto" }
+                    HStack(spacing: 4) {
+                        ForEach(Array(Self.positions.prefix(3)), id: \.id) { option in
+                            quickPositionButton(option, selected: chosenPosition == option.id)
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        ForEach(Array(Self.positions.suffix(3)), id: \.id) { option in
+                            quickPositionButton(option, selected: chosenPosition == option.id)
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Size")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    HStack(spacing: 4) {
+                        ForEach(Self.sizes, id: \.id) { option in
+                            smallChip(option.label, selected: chosenSize == option.id) { quickSize = option.id }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            Button(action: { Task { await updateQuickTitle(job: job, lettering: lettering, color: chosenColor, position: chosenPosition, size: chosenSize) } }) {
+                HStack(spacing: 6) {
+                    if busy == .quickTitle {
+                        ProgressView().tint(Color(hex: "#080808"))
+                    } else {
+                        Image(systemName: "pencil")
+                    }
+                    Text(busy == .quickTitle ? "Updating…" : "Update the title")
+                }
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#080808"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(isWorking && busy != .quickTitle ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+
+            Text("Changes the cover only. The Canvas and YouTube clips keep the title they were filmed with.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let quickTitleError {
+                Text(quickTitleError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func quickPositionButton(_ option: (id: String, symbol: String), selected: Bool) -> some View {
+        Button(action: { quickPosition = option.id }) {
+            Image(systemName: option.symbol)
+                .font(.caption)
+                .foregroundColor(selected ? Color(hex: "#080808") : Color(hex: "#999999"))
+                .frame(width: 34, height: 30)
+                .background(selected ? Color(hex: "#2dd4bf") : Color(hex: "#222222"))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+    }
+
+    /// Save row under a one-click result: a spinner while saving, "Saved"
+    /// after, else the save button — the moving cover's three states.
+    @ViewBuilder
+    private func quickSaveRow(url: String, video: Bool) -> some View {
+        if savingQuickUrl == url {
+            ProgressView().tint(Color(hex: "#2dd4bf"))
+        } else if savedQuickUrls.contains(url) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                Text("Saved")
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(Color(hex: "#2dd4bf"))
+        } else {
+            Button(action: { Task { await saveQuick(url, video: video) } }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down")
+                    Text(saveButtonLabel)
+                }
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(Color(hex: "#2dd4bf"))
+            }
+            .buttonStyle(.plain)
+            .disabled(savingQuickUrl != nil)
+        }
+    }
+
     /// iOS saves into the Photos library; macOS downloads into ~/Downloads.
     private var saveButtonLabel: String {
         #if os(iOS)
@@ -1627,6 +1795,11 @@ struct CassetteStudioView: View {
         let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 3, !quickRunning else { return }
         quickError = nil
+        // A new run letters its own title; the adjustments start over from it.
+        quickColor = nil
+        quickPosition = nil
+        quickSize = nil
+        quickTitleError = nil
         Task {
             do {
                 let job = try await MixbaseAPI.shared.startQuick(projectId: projectId, description: text)
@@ -2038,6 +2211,64 @@ struct CassetteStudioView: View {
             motionError = error.localizedDescription
         }
         isSavingMotion = false
+    }
+
+    /// Save a one-click result (the cover or a clip): Photos on iOS,
+    /// ~/Downloads on macOS, like the moving cover.
+    private func saveQuick(_ url: String, video: Bool) async {
+        savingQuickUrl = url
+        quickSaveError = nil
+        do {
+            if video {
+                try await PhotoLibrarySaver.saveVideo(from: url)
+            } else {
+                try await PhotoLibrarySaver.saveImage(from: url)
+            }
+            savedQuickUrls.insert(url)
+        } catch {
+            quickSaveError = error.localizedDescription
+        }
+        savingQuickUrl = nil
+    }
+
+    /// Adjust the title: re-letter the current cover (scene = keep) with the
+    /// run's own lettering, then mirror the new cover onto the run shown.
+    private func updateQuickTitle(job: MixbaseAPI.QuickJob, lettering: MixbaseAPI.StudioFile, color: String, position: String, size: String) async {
+        guard busy == nil else { return }
+        busy = .quickTitle
+        quickTitleError = nil
+        do {
+            let result = try await MixbaseAPI.shared.renderCassette(
+                projectId: projectId,
+                scene: "keep",
+                subject: nil,
+                setting: nil,
+                background: nil,
+                lettering: lettering.path,
+                color: color,
+                position: position,
+                size: size,
+                reflection: false
+            )
+            var shown = job
+            shown.artworkUrl = result.artworkUrl
+            shown.finalizedArtworkUrl = result.finalizedArtworkUrl
+            shown.title = MixbaseAPI.QuickTitle(color: result.color, position: position == "auto" ? nil : position, size: size)
+            quickJob = shown
+            let cover = result.finalizedArtworkUrl ?? result.artworkUrl
+            announcedCover = cover
+            coverUrl = cover
+            onRendered(result.artworkUrl, result.finalizedArtworkUrl)
+            hasRendered = true
+            // A moving cover made from the old title no longer matches.
+            motionUrl = nil
+            motionError = nil
+            savedMotion = false
+            await applyRememberedLook()
+        } catch {
+            quickTitleError = error.localizedDescription
+        }
+        busy = nil
     }
 
     /// Small preview of a picked photo (ImageIO, so it works the same on iOS

@@ -6,6 +6,7 @@ import { downloadStudio, studioPublicUrl } from '@/lib/cassette-server'
 import {
   CoverError, LOAD_FAILED, NO_COVER, loadCoverProject, resolveCoverBase, saveLookOnProject, type CoverBase,
 } from '@/lib/cassette-pipeline'
+import { syncQuickCover } from '@/lib/cassette-quick'
 import {
   FILTER_ADJUSTMENTS, FILTER_PRESETS, decodeForFilter, filterRawToJpeg, normalizeFilter, type RawImage,
 } from '@/lib/cover-filters'
@@ -156,7 +157,10 @@ export async function POST(request: NextRequest) {
 
   // ── Save ──────────────────────────────────────────────────────────────────
   try {
-    return NextResponse.json(await saveLookOnProject(userId, project, settings))
+    const saved = await saveLookOnProject(userId, project, settings)
+    // A one-click run's shown cover follows the look (see the render route).
+    syncQuickCover(userId, project.id, saved)
+    return NextResponse.json(saved)
   } catch (err) {
     if (err instanceof CoverError) return NextResponse.json({ error: err.message }, { status: err.status })
     console.error('[cassette-studio/filter] save failed:', err instanceof Error ? err.message : err)
