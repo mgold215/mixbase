@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import { Check, Film, MonitorPlay } from 'lucide-react'
 import { saveMedia } from '@/lib/download'
@@ -65,6 +65,11 @@ export default function Visualizer({
   const [finishSave, setFinishSave] = useState<(() => Promise<void>) | null>(null)
   const [projectViz, setProjectViz] = useState(visualizerUrl ?? null)
   const [projectVizWide, setProjectVizWide] = useState(wideVisualizerUrl ?? null)
+  // The page learns of a pin made elsewhere (Cassette Studio's one-click run,
+  // the moving cover) through these props; without following them the panel
+  // kept showing the pin it opened with until a reload.
+  useEffect(() => { setProjectViz(visualizerUrl ?? null) }, [visualizerUrl])
+  useEffect(() => { setProjectVizWide(wideVisualizerUrl ?? null) }, [wideVisualizerUrl])
   const [settingViz, setSettingViz] = useState(false)
   const [vizError, setVizError] = useState('')
   // "Choose from Media" picker — pin any previously generated loop, from any

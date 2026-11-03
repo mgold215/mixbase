@@ -22,6 +22,8 @@ struct ProjectsView: View {
     // Projects data
     @State private var projects: [Project] = []
     @State private var latestVersions: [UUID: Version] = [:]
+    // Tapping a song's art opens its full cover (CoverViewerView).
+    @State private var coverViewer: Project?
 
     // Collections data
     @State private var collections: [Collection] = []
@@ -131,6 +133,19 @@ struct ProjectsView: View {
             }
         }
         // Sheets must be on NavigationStack (not inner ZStack) for reliable iPad presentation
+        .sheet(item: $coverViewer) { project in
+            CoverViewerView(
+                projectId: project.id,
+                title: project.title,
+                coverUrl: project.displayArtworkUrl ?? "",
+                onRendered: { artworkUrl, finalizedUrl in
+                    if let idx = projects.firstIndex(where: { $0.id == project.id }) {
+                        projects[idx].artworkUrl = artworkUrl
+                        projects[idx].finalizedArtworkUrl = finalizedUrl
+                    }
+                }
+            )
+        }
         .sheet(isPresented: $showNewProject) {
             NewProjectView(onCreated: {
                 Task { await loadProjects() }
@@ -275,13 +290,17 @@ struct ProjectsView: View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
-                    AsyncImage(url: url) { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        artworkPlaceholder
+                    // Tap the art: the full cover (the play button sits on top of it).
+                    Button(action: { coverViewer = project }) {
+                        AsyncImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            artworkPlaceholder
+                        }
+                        .frame(height: 140)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .frame(height: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .buttonStyle(.plain)
                 } else {
                     artworkPlaceholder
                         .frame(height: 140)
@@ -329,13 +348,17 @@ struct ProjectsView: View {
         HStack(spacing: 12) {
             ZStack {
                 if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
-                    AsyncImage(url: url) { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        artworkPlaceholder
+                    // Tap the art: the full cover (the play button sits on top of it).
+                    Button(action: { coverViewer = project }) {
+                        AsyncImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            artworkPlaceholder
+                        }
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .buttonStyle(.plain)
                 } else {
                     artworkPlaceholder
                         .frame(width: 56, height: 56)

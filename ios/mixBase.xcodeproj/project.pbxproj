@@ -55,6 +55,7 @@
 		A100000082 /* CassetteStudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000082; };
 		A100000083 /* CassetteStudioLook.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000083; };
 		A100000084 /* FinalizeArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000084; };
+		A100000085 /* CoverViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000085; };
 
 		/* Views - Visualizer */
 		A1000000E0 /* VisualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000E0; };
@@ -144,6 +145,7 @@
 		B100000082 /* CassetteStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CassetteStudioView.swift; sourceTree = "<group>"; };
 		B100000083 /* CassetteStudioLook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CassetteStudioLook.swift; sourceTree = "<group>"; };
 		B100000084 /* FinalizeArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinalizeArtworkView.swift; sourceTree = "<group>"; };
+		B100000085 /* CoverViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverViewerView.swift; sourceTree = "<group>"; };
 		B1000000E0 /* VisualizerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualizerView.swift; sourceTree = "<group>"; };
 		B1000000F0 /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
 		B1000000F1 /* MixSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixSessionView.swift; sourceTree = "<group>"; };
@@ -371,6 +373,7 @@
 				B100000082 /* CassetteStudioView.swift */,
 				B100000083 /* CassetteStudioLook.swift */,
 				B100000084 /* FinalizeArtworkView.swift */,
+				B100000085 /* CoverViewerView.swift */,
 			);
 			path = Artwork;
 			sourceTree = "<group>";
@@ -600,6 +603,7 @@
 				A100000082 /* CassetteStudioView.swift in Sources */,
 				A100000083 /* CassetteStudioLook.swift in Sources */,
 				A100000084 /* FinalizeArtworkView.swift in Sources */,
+				A100000085 /* CoverViewerView.swift in Sources */,
 				A100000072 /* ReleasedLibraryView.swift in Sources */,
 				A1000000F0 /* FeedView.swift in Sources */,
 				A1000000F1 /* MixSessionView.swift in Sources */,

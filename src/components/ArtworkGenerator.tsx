@@ -10,6 +10,7 @@ import { IMAGE_MODELS } from '@/lib/artwork-models'
 // serves to the native app (GET /api/finalize-artwork) — one option set.
 import { FILTER_OPTIONS, FINALIZE_DEFAULTS, POSITIONS, SIZE_OPTIONS, type Filter, type Position, type Size } from '@/lib/finalize-options'
 import CassetteStudio from '@/components/CassetteStudio'
+import CoverViewer from '@/components/CoverViewer'
 // Type-only: erased at compile time, so the client bundle never pulls in
 // artwork-history.ts's server-side dependency chain.
 import type { ArtworkHistoryItem } from '@/lib/artwork-history'
@@ -58,6 +59,9 @@ export default function ArtworkGenerator({
   onVisualizerPinned,
 }: Props) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'upload' | 'cassette'>('idle')
+  // Tapping the preview opens the full cover (and, for the owner, its title
+  // and look editors) — the same from the compact header and the Artwork tab.
+  const [viewerOpen, setViewerOpen] = useState(false)
   // Subject only — the photographic treatment (lens, light, weather, mood) is
   // layered on server-side by the Vary option so repeat runs look different.
   const [prompt, setPrompt] = useState(
@@ -273,7 +277,9 @@ export default function ArtworkGenerator({
       {/* Current artwork preview */}
       <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-[#111] border border-[#1e1e1e]">
         {previewUrl ? (
-          <Image src={previewUrl} alt="Project artwork" fill className="object-cover" />
+          <button type="button" onClick={() => setViewerOpen(true)} className="absolute inset-0 cursor-zoom-in" aria-label="See the full cover">
+            <Image src={previewUrl} alt="Project artwork" fill className="object-cover" />
+          </button>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
@@ -285,6 +291,17 @@ export default function ArtworkGenerator({
           </div>
         )}
       </div>
+
+      {viewerOpen && previewUrl && (
+        <CoverViewer
+          projectId={projectId}
+          projectTitle={projectTitle}
+          coverUrl={previewUrl}
+          ownerTools={ownerTools}
+          onRendered={(art, finalized) => { onArtworkUpdated(art); onFinalizedUpdated(finalized) }}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
 
       {/* Applied vary treatment — tells the user why this shot looks the way
           it does, and what to re-roll for */}

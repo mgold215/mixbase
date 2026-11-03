@@ -20,6 +20,8 @@ struct ProjectDetailView: View {
     @State private var project: Project?
     @State private var versions: [Version] = []
     @State private var isLoading = true
+    // Tapping the header art opens the full cover (CoverViewerView).
+    @State private var showCoverViewer = false
 
     // Editing state
     @State private var isEditingTitle = false
@@ -298,15 +300,30 @@ struct ProjectDetailView: View {
         ZStack(alignment: .bottomTrailing) {
             // Large artwork image — the lettered cover when there is one
             if let artworkUrl = project.displayArtworkUrl, let url = URL(string: artworkUrl) {
-                AsyncImage(url: url) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    artworkPlaceholder
+                // Tap: the full cover, with its title and look editors for the owner.
+                Button(action: { showCoverViewer = true }) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        artworkPlaceholder
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 280)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 280)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .buttonStyle(.plain)
                 .padding(.horizontal)
+                .sheet(isPresented: $showCoverViewer) {
+                    CoverViewerView(
+                        projectId: project.id,
+                        title: project.title,
+                        coverUrl: artworkUrl,
+                        onRendered: { newArtwork, finalizedUrl in
+                            self.project?.artworkUrl = newArtwork
+                            self.project?.finalizedArtworkUrl = finalizedUrl
+                        }
+                    )
+                }
             } else {
                 artworkPlaceholder
                     .frame(height: 280)
@@ -344,6 +361,11 @@ struct ProjectDetailView: View {
                                 self.project?.visualizerWideUrl = url
                             } else {
                                 self.project?.visualizerUrl = url
+                                // The song playing right now takes the new clip
+                                // too, instead of the one it started with.
+                                if audioService.currentVersion?.projectId == projectId {
+                                    audioService.currentVisualizerUrl = url
+                                }
                             }
                         }
                     )) {

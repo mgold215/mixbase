@@ -6,6 +6,7 @@ import Image from 'next/image'
 import CassetteIcon from '@/components/CassetteIcon'
 import DashPlayButton from '@/components/DashPlayButton'
 import AddToPipelineButton from '@/components/AddToPipelineButton'
+import CoverViewer from '@/components/CoverViewer'
 
 type WorkflowStage = 'start' | 'mix' | 'master' | 'finished' | 'in_pipeline' | 'released'
 
@@ -49,8 +50,14 @@ export type ProjectRow = {
   audioUrl: string | null
 }
 
-export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
+export default function ProjectGrid({ projects, ownerTools = false }: { projects: ProjectRow[]; ownerTools?: boolean }) {
   const [activeFilter, setActiveFilter] = useState<WorkflowStage | 'all'>('all')
+  // Tapping a song's art opens its full cover (CoverViewer); a cover changed
+  // there (the owner's title or look edits) replaces the thumbnail until the
+  // next server render.
+  const [viewer, setViewer] = useState<ProjectRow | null>(null)
+  const [art, setArt] = useState<Record<string, string>>({})
+  const cover = (p: ProjectRow) => art[p.id] ?? p.artwork_url
 
   const availableStages = new Set(projects.map(p => p.stage))
   const filtered = activeFilter === 'all' ? projects : projects.filter(p => p.stage === activeFilter)
@@ -58,6 +65,16 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
 
   return (
     <div>
+      {viewer && cover(viewer) && (
+        <CoverViewer
+          projectId={viewer.id}
+          projectTitle={viewer.title}
+          coverUrl={cover(viewer) ?? ''}
+          ownerTools={ownerTools}
+          onRendered={(artworkUrl, finalizedUrl) => setArt(prev => ({ ...prev, [viewer.id]: finalizedUrl ?? artworkUrl }))}
+          onClose={() => setViewer(null)}
+        />
+      )}
       {/* Filter chips */}
       {showFilters && (
         <div className="flex gap-1 mb-5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
@@ -197,18 +214,22 @@ export default function ProjectGrid({ projects }: { projects: ProjectRow[] }) {
                 transition: 'opacity 0.15s',
               }} className="group-hover:opacity-100" />
 
-              {/* Artwork */}
-              <Link href={`/projects/${project.id}`} style={{ flexShrink: 0 }}>
-                <div style={{ width: 44, height: 44, background: 'var(--surface-2)', overflow: 'hidden', position: 'relative', borderRadius: 4 }}>
-                  {project.artwork_url ? (
-                    <Image src={project.artwork_url} alt={project.title} fill className="object-cover" />
-                  ) : (
+              {/* Artwork — tap for the full cover; a song without art opens the song */}
+              {cover(project) ? (
+                <button type="button" onClick={() => setViewer(project)} style={{ flexShrink: 0 }} className="cursor-zoom-in" aria-label={`See the cover of ${project.title}`}>
+                  <div style={{ width: 44, height: 44, background: 'var(--surface-2)', overflow: 'hidden', position: 'relative', borderRadius: 4 }}>
+                    <Image src={cover(project) ?? ''} alt={project.title} fill className="object-cover" />
+                  </div>
+                </button>
+              ) : (
+                <Link href={`/projects/${project.id}`} style={{ flexShrink: 0 }}>
+                  <div style={{ width: 44, height: 44, background: 'var(--surface-2)', overflow: 'hidden', position: 'relative', borderRadius: 4 }}>
                     <div className="w-full h-full flex items-center justify-center">
                       <CassetteIcon size={14} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
                     </div>
-                  )}
-                </div>
-              </Link>
+                  </div>
+                </Link>
+              )}
 
               {/* Title + meta */}
               <Link href={`/projects/${project.id}`} className="flex-1 min-w-0" style={{ textDecoration: 'none' }}>

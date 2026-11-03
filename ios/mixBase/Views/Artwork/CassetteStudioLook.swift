@@ -69,6 +69,8 @@ struct CassetteLookSection: View {
     @Binding var isSaving: Bool
     // The server has baked the look into the project's cover.
     let onSaved: (MixbaseAPI.FilterSaveResult) -> Void
+    // The Studio numbers its steps; the cover viewer shows the same section unnumbered.
+    let heading: String
 
     @State private var look: MixbaseAPI.FilterSettings
     // The look on the cover right now.
@@ -94,11 +96,13 @@ struct CassetteLookSection: View {
         projectId: UUID,
         options: MixbaseAPI.FilterOptions,
         initialLook: MixbaseAPI.FilterSettings? = nil,
+        heading: String = "4 · Finish the look",
         locked: Bool,
         isSaving: Binding<Bool>,
         onSaved: @escaping (MixbaseAPI.FilterSaveResult) -> Void
     ) {
         self.projectId = projectId
+        self.heading = heading
         self.baseUrl = options.baseUrl ?? ""
         self.presets = options.presets
         // A reversed range would trap in Slider; fall back to the contract's
@@ -119,7 +123,7 @@ struct CassetteLookSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("4 · Finish the look")
+            Text(heading)
                 .font(.headline)
                 .foregroundColor(Color(hex: "#f0f0f0"))
                 .padding(.horizontal)
