@@ -1,5 +1,6 @@
 import { supabaseAdmin, displayArtworkUrl } from '@/lib/supabase'
 import { getUserId } from '@/lib/auth'
+import { isAdminIdentity } from '@/lib/admin-identity'
 import Link from 'next/link'
 import Nav from '@/components/Nav'
 import { Plus } from 'lucide-react'
@@ -27,7 +28,7 @@ function getWorkflowStage(
 export default async function DashboardPage() {
   const userId = await getUserId()
 
-  const [projectsRes, profileRes] = await Promise.all([
+  const [projectsRes, profileRes, ownerTools] = await Promise.all([
     supabaseAdmin
       .from('mb_projects')
       .select('*, mb_versions(id, status, created_at, audio_url, version_number), mb_releases(id)')
@@ -40,6 +41,9 @@ export default async function DashboardPage() {
       .select('artist_name')
       .eq('id', userId)
       .maybeSingle(),
+    // The owner's cover editors (title, look) in the cover viewer — the same
+    // gate the project page uses for Cassette Studio.
+    isAdminIdentity(userId).catch(() => false),
   ])
 
   const artistName = profileRes.error ? null : profileRes.data?.artist_name?.trim() || null
@@ -116,7 +120,7 @@ export default async function DashboardPage() {
                   </Link>
                 </div>
               ) : (
-                <ProjectGrid projects={projectRows} />
+                <ProjectGrid projects={projectRows} ownerTools={ownerTools === true} />
               )}
             </div>
 

@@ -165,9 +165,11 @@ type Props = {
   onPrefsChange: (prefs: LookPrefs) => void
   /** Saves the look as the cover; the studio updates the Artwork tab. Rejects with friendly copy. */
   onSave: (settings: FilterSettings) => Promise<SavedLook>
+  /** The section's heading — the Studio numbers its steps, the cover viewer does not. */
+  heading?: string
 }
 
-export default function CassetteLook({ projectId, refreshKey, disabled, saving, prefs, onPrefsChange, onSave }: Props) {
+export default function CassetteLook({ projectId, refreshKey, disabled, saving, prefs, onPrefsChange, onSave, heading = '4 · Finish the look' }: Props) {
   const [info, setInfo] = useState<Info | null>(null)
   const [look, setLook] = useState<FilterSettings>(ORIGINAL_LOOK)
   const [preview, setPreview] = useState<(Shown & { url: string }) | null>(null)
@@ -279,7 +281,7 @@ export default function CassetteLook({ projectId, refreshKey, disabled, saving, 
   return (
     <section className="space-y-2.5 border-t border-[#1e1e1e] pt-3">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium text-[#999]">4 · Finish the look</p>
+        <p className="text-[11px] font-medium text-[#999]">{heading}</p>
         <button
           onClick={() => choose(ORIGINAL_LOOK)}
           disabled={original && look.preset === 'original'}
