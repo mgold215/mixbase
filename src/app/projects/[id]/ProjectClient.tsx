@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import AddToCollectionButton from '@/components/AddToCollectionButton'
+import ThumbDriveToggle from '@/components/ThumbDriveToggle'
 import ShareToFeedToggle from '@/components/ShareToFeedToggle'
 import type { Release } from '@/lib/supabase'
 
@@ -195,9 +196,11 @@ type Props = {
   ownerDefaults?: boolean
   /** Platform owner's own tools (Cassette Studio). Server-computed with isAdminIdentity; the routes gate independently. */
   ownerTools?: boolean
+  /** Is this song in the artist's THUMB DRIVE? Server-read; null = couldn't read (the switch is hidden). */
+  inThumbDrive?: boolean | null
 }
 
-export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false, ownerTools = false }: Props) {
+export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false, ownerTools = false, inThumbDrive = null }: Props) {
   const [versions, setVersions] = useState(initialVersions)
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
@@ -1004,6 +1007,17 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 {/* Project actions row */}
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <AddToCollectionButton projectId={project.id} />
+                  {/* Keyed on the server value so a refresh that changes it
+                      (e.g. this song's first mix just added it) remounts the
+                      switch with the new truth. */}
+                  {inThumbDrive !== null && (
+                    <ThumbDriveToggle
+                      key={String(inThumbDrive)}
+                      projectId={project.id}
+                      initialIncluded={inThumbDrive}
+                      hasMix={versions.length > 0}
+                    />
+                  )}
                   {project.share_token && (
                     <button
                       onClick={copyShareLink}
