@@ -53,6 +53,7 @@ const PUBLIC_PATHS = [
   '/terms',
   '/dmca',
   '/share/',
+  '/listen/', // canonical public single-track player (token-addressed; /share/<token> redirects here)
   '/album/', // canonical public album share player (token-addressed)
   '/auth/callback',
   // Share-token-scoped duration backfill, posted by the anonymous listeners on

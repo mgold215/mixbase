@@ -61,6 +61,8 @@ const SUITES = [
   'uuid-storage-key-test.mjs',
   'ios-storage-key-test.mjs',
   'share-projection-test.mjs',
+  'waveform-peaks-test.mjs',
+  'share-url-test.mjs',
   'download-default-test.mjs',
   'public-input-caps-test.mjs',
   'mix-notes-test.mjs',

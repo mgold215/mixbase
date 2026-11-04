@@ -50,7 +50,8 @@ const cols = (v) => (v ?? '').split(',').map((c) => c.trim()).filter(Boolean)
 console.log('share-projection: public share loaders must not leak owner-private columns')
 
 // ── /share/[token] — single-track / version share page ───────────────────────
-const sharePage = read('src/app/share/[token]/page.tsx')
+// The loader moved out of the page (both /listen/… and /share/… serve it).
+const sharePage = read('src/lib/track-share.ts')
 
 // Structural guards (catch a regression that bypasses the column constants).
 check('share page: no select(\'*\')', !/\.select\(\s*['"`]\*/.test(sharePage))
@@ -74,7 +75,7 @@ for (const c of ['private_notes', 'change_log', 'share_token', 'mb_feedback', '*
 }
 
 const projCols = cols(PROJ)
-for (const c of ['title', 'artwork_url', 'finalized_artwork_url', 'visualizer_url']) {
+for (const c of ['title', 'artwork_url', 'finalized_artwork_url', 'visualizer_url', 'visualizer_wide_url']) {
   check(`project select includes rendered column "${c}"`, projCols.includes(c))
 }
 for (const c of ['share_token', 'bpm', 'key_signature', 'private_notes', 'instrumental_url', '*']) {
@@ -110,7 +111,7 @@ for (const c of ['notes', 'release_date', 'share_token', '*']) {
 // any display_name containing '@'. This asserts the guard is actually wired,
 // not just available.
 const NAME_SURFACES = [
-  ['share page', 'src/app/share/[token]/page.tsx'],
+  ['share loader', 'src/lib/track-share.ts'],
   ['album share loader', 'src/lib/album-share.ts'],
   ['collection share URL route', 'src/app/api/collections/[id]/share/route.ts'],
   ['collections page', 'src/app/collections/[id]/page.tsx'],

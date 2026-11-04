@@ -123,7 +123,7 @@ check(
   'share page renders the download button only when allow_download is set',
   /\{\s*version\.allow_download\s*&&/.test(shareClient)
 )
-const sharePage = read('src/app/share/[token]/page.tsx')
+const sharePage = read('src/lib/track-share.ts')
 check(
   'share page serves the LATEST version (why the upload-time value is the public one)',
   /order\(\s*['"`]version_number['"`]\s*,\s*\{\s*ascending:\s*false\s*\}\s*\)/.test(sharePage)

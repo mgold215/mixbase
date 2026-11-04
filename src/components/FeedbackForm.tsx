@@ -9,10 +9,13 @@ type Props = {
   /** Live playback position from the share-page player. Lets the listener pin
    *  their comment to a moment in the track ("the kick is too loud at 1:32"). */
   currentTime?: number
+  /** A moment to start pinned to (the share page's "Note at 1:32"); when
+   *  given it wins over the live position. */
+  initialPinnedAt?: number | null
   onSubmitted?: () => void
 }
 
-export default function FeedbackForm({ versionId, currentTime, onSubmitted }: Props) {
+export default function FeedbackForm({ versionId, currentTime, initialPinnedAt, onSubmitted }: Props) {
   const [name, setName] = useState('')
   const [rating, setRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
@@ -24,7 +27,9 @@ export default function FeedbackForm({ versionId, currentTime, onSubmitted }: Pr
   // listener was at when they opened the form (the common case: they paused on a
   // spot to comment), but they can clear it for general feedback or re-pin to now.
   const [pinnedAt, setPinnedAt] = useState<number | null>(
-    currentTime != null && currentTime >= 1 ? Math.floor(currentTime) : null,
+    initialPinnedAt != null
+      ? Math.floor(initialPinnedAt)
+      : currentTime != null && currentTime >= 1 ? Math.floor(currentTime) : null,
   )
   const canPin = currentTime != null && currentTime >= 1
 

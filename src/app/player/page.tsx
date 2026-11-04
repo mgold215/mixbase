@@ -11,6 +11,7 @@ import CassetteIcon from '@/components/CassetteIcon'
 import type { Track } from '../api/tracks/route'
 import { formatDuration, audioProxyUrl, MIX_NOTE_AUTHOR, type Feedback } from '@/lib/supabase'
 import { trackShareUrl } from '@/lib/share-url'
+import { useArtistName } from '@/lib/use-artist-name'
 import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
 import Nav from '@/components/Nav'
@@ -88,6 +89,7 @@ function PlayerPage() {
   const searchParams = useSearchParams()
   const trackParam = searchParams.get('track')
   const [filtered, setFiltered] = useState<Track[]>([])
+  const artistName = useArtistName()
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -347,7 +349,7 @@ function PlayerPage() {
 
   const handleShare = useCallback(() => {
     if (!current?.share_token) return
-    const url = trackShareUrl(current.share_token)
+    const url = trackShareUrl(current.share_token, { artistName, title: current.title })
     copyToClipboard(url).then(ok => {
       if (ok) {
         setCopied(true)
@@ -359,7 +361,7 @@ function PlayerPage() {
         alert(`Couldn't copy automatically. Copy this link:\n${url}`)
       }
     })
-  }, [current])
+  }, [current, artistName])
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`

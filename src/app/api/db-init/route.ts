@@ -164,6 +164,10 @@ alter table public.mb_versions
 alter table public.mb_feedback
   add column if not exists resolved_at timestamptz;
 
+-- Migration 043: the public share player's real waveform (200 peaks, write-once)
+alter table public.mb_versions
+  add column if not exists waveform_peaks jsonb;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

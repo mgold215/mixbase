@@ -14,6 +14,7 @@ import {
   resetTemplate, DEFAULT_TEMPLATE, curatorsToCsv, parseCuratorCsv, EXAMPLE_CSV,
 } from '@/lib/submit'
 import { trackShareUrl } from '@/lib/share-url'
+import { useArtistName } from '@/lib/use-artist-name'
 
 const TYPES: CuratorType[] = ['label', 'playlist', 'blog', 'radio', 'influencer', 'other']
 const METHODS: ContactMethod[] = ['form', 'email', 'soundcloud', 'instagram', 'twitter', 'other']
@@ -58,6 +59,7 @@ export default function SubmitClient({
   userId: string
 }) {
   const [curators, setCurators] = useState<Curator[]>(initialCurators)
+  const artistName = useArtistName()
   const [submissions, setSubmissions] = useState<SbSubmission[]>(initialSubmissions)
   const [view, setView] = useState<'compose' | 'tracker'>('compose')
   const [step, setStep] = useState<'select' | 'review'>('select')
@@ -96,7 +98,7 @@ export default function SubmitClient({
 
   function shareUrlFor(s: Song | undefined): string {
     if (!s?.share_token) return ''
-    return trackShareUrl(s.share_token)
+    return trackShareUrl(s.share_token, { artistName, title: s.title })
   }
 
   async function refreshCurators() {
