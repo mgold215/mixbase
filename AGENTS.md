@@ -45,7 +45,7 @@ Do not remove `ServiceWorkerRegistrar.tsx`, `PullToRefresh.tsx`, or the `appleWe
 `/api/tus` and `/api/tus/[uploadId]` are **authenticated** (not in `PUBLIC_PATHS`): they proxy to Supabase Storage with the service-role key, so the POST validates session + project ownership + bucket allow-list before creating a session. The web client uploads through them; the iOS app uploads directly to Supabase and does not use these routes.
 
 # App Gotchas
-- The `/player` waveform is **decorative, not real**: `generateWaveform()` is an LCG seeded by `project_id`, so the shape is stable per project but carries zero information about the audio. Don't cite it as analysis, and don't "fix" it without deciding to build real peak extraction.
+- The `/player` waveform is **real** since 2026-11-04: it draws the peaks from `GET /api/share/<token>/peaks` (one server-side decode per mix, kept on `mb_versions.waveform_peaks`), the same data the public share pages and the iOS player draw. A shimmer means the peaks are still loading; even bars mean the mix could not be read. (Before this it was an LCG seeded by `project_id` — pure decoration.)
 - **Features this app does NOT have** (verified absent 2026-08-03 — don't build on them): A/B version compare (one shared `<audio>` in `PlayerContext`, no two-source switching); a `WaveformPlayer` component (the name appears nowhere in `src/`).
 
 # Testing

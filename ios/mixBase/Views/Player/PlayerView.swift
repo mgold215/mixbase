@@ -34,20 +34,23 @@ struct AirPlayRoutePicker: NSViewRepresentable {
 #endif
 
 // MARK: - WaveformScrubber
-// A stylized waveform-style progress bar. Each track gets its own stable set of
-// bar heights derived deterministically from its version id, so it *looks* like
-// an audio waveform without decoding the file on-device. Bars up to the current
-// position glow teal; the rest sit dim. Dragging anywhere seeks.
+// The waveform progress bar. With `peaks` (the mix's real peaks from
+// GET /api/share/<token>/peaks — the same data the web draws) the bars ARE the
+// song; until they arrive, or if the mix could not be read, each track falls
+// back to a stable set of bar heights derived from its version id, so the
+// scrubber never jumps around. Bars up to the current position glow teal; the
+// rest sit dim. Dragging anywhere seeks.
 struct WaveformScrubber: View {
     let progress: CGFloat            // 0…1 playback position
-    let seed: UUID                   // stable per-track shape
+    let seed: UUID                   // stable per-track fallback shape
+    var peaks: [Int]? = nil          // real peaks 0…100, any length
     let onSeek: (CGFloat) -> Void    // fraction 0…1
 
     private let barCount = 56
 
     var body: some View {
         GeometryReader { geo in
-            let heights = Self.samples(for: seed, count: barCount)
+            let heights = Self.heights(peaks: peaks, seed: seed, count: barCount)
             let spacing: CGFloat = 3
             let barWidth = max(1.5, (geo.size.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
 
@@ -77,6 +80,20 @@ struct WaveformScrubber: View {
             )
         }
         .frame(height: 44)
+    }
+
+    /// Bar heights 0.08…1.0: the real peaks folded into `count` bars (each bar
+    /// keeps the loudest peak it covers, like the web's resamplePeaks), or the
+    /// seeded fallback when there are none.
+    static func heights(peaks: [Int]?, seed: UUID, count: Int) -> [CGFloat] {
+        guard let peaks, !peaks.isEmpty else { return samples(for: seed, count: count) }
+        return (0..<count).map { i in
+            let from = i * peaks.count / count
+            let to = max(from + 1, (i + 1) * peaks.count / count)
+            var top = 0
+            for j in from..<min(to, peaks.count) where peaks[j] > top { top = peaks[j] }
+            return 0.08 + 0.92 * CGFloat(min(100, max(0, top))) / 100
+        }
     }
 
     // Deterministic bar heights (0.2…1.0) from the 16 bytes of the track's UUID —
@@ -123,6 +140,11 @@ struct PlayerView: View {
 
     // Mix-notes sheet — quick notes on the playing mix (see MixNotesSheet below)
     @State private var showNotes = false
+
+    // The playing song's real waveform (see WaveformScrubber). Keyed by share
+    // token; a long mix the server is still decoding is polled a few times.
+    @State private var waveformPeaks: [Int]? = nil
+    @State private var waveformToken: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -255,6 +277,7 @@ struct PlayerView: View {
                     WaveformScrubber(
                         progress: playbackProgress,
                         seed: version.id,
+                        peaks: waveformToken == waveformShareToken ? waveformPeaks : nil,
                         onSeek: { fraction in
                             audioService.seek(to: Double(fraction) * audioService.duration)
                         }
@@ -280,6 +303,58 @@ struct PlayerView: View {
         .task(id: version.projectId) {
             await loadVersionsForCurrentProject(projectId: version.projectId)
         }
+        // The real waveform for whatever is playing. Cancelled and restarted by
+        // SwiftUI whenever the token changes (a track change), so a slow fetch
+        // for the previous song can never paint over the next one.
+        .task(id: waveformShareToken) {
+            await loadWaveform(token: waveformShareToken)
+        }
+    }
+
+    // MARK: - Waveform
+    // The song's own share token — the capability the peaks route is scoped
+    // to. Same two sources as shareURL below: the playing Version's token,
+    // else the project's (feed playback builds synthetic Versions with none).
+    private var waveformShareToken: String? {
+        let candidates = [audioService.currentVersion?.shareToken, playingProject?.shareToken]
+        return candidates.compactMap { $0 }.first(where: { !$0.isEmpty })
+    }
+
+    private func loadWaveform(token: String?) async {
+        guard let token else {
+            waveformPeaks = nil
+            waveformToken = nil
+            return
+        }
+        if waveformToken == token, waveformPeaks != nil { return }
+        waveformPeaks = nil
+        waveformToken = token
+        // A mix the server has not decoded yet answers 202 for up to a couple
+        // of minutes; poll gently, then leave the seeded bars in place.
+        for attempt in 0..<12 {
+            if Task.isCancelled { return }
+            do {
+                if let peaks = try await MixbaseAPI.shared.fetchWaveformPeaks(shareToken: token) {
+                    if !Task.isCancelled, waveformToken == token { waveformPeaks = peaks }
+                    return
+                }
+            } catch {
+                return // unavailable — the seeded bars stay
+            }
+            if attempt < 11 { try? await Task.sleep(nanoseconds: 8_000_000_000) }
+        }
+    }
+
+    // How loud the song is right now, 0…1, read off the waveform at the
+    // playhead — drives the play button's glow. Nothing touches the audio
+    // graph (AVPlayer keeps playing with the screen locked); the peaks are
+    // coarse (a bar is a second or two of music), so the glow swells in loud
+    // passages rather than on every beat.
+    private var playheadEnergy: CGFloat {
+        guard audioService.isPlaying, let peaks = waveformPeaks, !peaks.isEmpty,
+              waveformToken == waveformShareToken else { return 0 }
+        let i = min(peaks.count - 1, max(0, Int(playbackProgress * CGFloat(peaks.count))))
+        return CGFloat(peaks[i]) / 100
     }
 
     // Title, artist credit and the version switcher — left-aligned and large,
@@ -692,9 +767,14 @@ struct PlayerView: View {
                         startPoint: .topLeading, endPoint: .bottomTrailing))
                 )
                 .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                // The glow swells with the music (playheadEnergy), on top of the
+                // playing/paused baseline.
                 .shadow(color: Color(hex: "#2dd4bf").opacity(audioService.isPlaying ? 0.7 : 0.4),
-                        radius: audioService.isPlaying ? 26 : 14, y: 4)
+                        radius: (audioService.isPlaying ? 26 : 14) + 30 * playheadEnergy, y: 4)
+                .shadow(color: Color(hex: "#2dd4bf").opacity(0.35 * playheadEnergy),
+                        radius: 70 * playheadEnergy)
                 .animation(.easeInOut(duration: 0.35), value: audioService.isPlaying)
+                .animation(.easeOut(duration: 0.5), value: playheadEnergy)
             }
             .buttonStyle(PressScaleButtonStyle())
             .accessibilityLabel(audioService.isPlaying ? "Pause" : "Play")

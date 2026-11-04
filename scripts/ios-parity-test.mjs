@@ -82,7 +82,6 @@ const KNOWN = {
   '/api/infra/*': { status: 'web-only', note: 'Infra control panel (its own macOS client, MixbaseInfra)' },
   '/api/feedback': { status: 'web-only', note: 'Anonymous listener feedback on public share pages' },
   '/api/share/*/duration': { status: 'web-only', note: 'Anonymous share-page duration backfill' },
-  '/api/share/*/peaks': { status: 'web-only', note: 'Anonymous share-page waveform' },
   '/api/share/*/card': { status: 'web-only', note: 'Share-page link-preview image (og:image)' },
 }
 

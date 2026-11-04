@@ -12,6 +12,9 @@ export type Track = {
   artwork_url: string | null
   /** Project visualizer video (Spotify-Canvas style) — loops in the player while the track plays */
   visualizer_url: string | null
+  /** The 16:9 loop, for a laptop screen; optional so other Track builders
+   *  (the feed's synthetic rows) need not carry it. */
+  visualizer_wide_url?: string | null
   audio_url: string
   /** Stored length of this mix, or null on a row that has never been measured
    *  (~40% of the catalog). Carried so the engine can tell a healed row from an
@@ -67,7 +70,7 @@ export async function GET(request: NextRequest) {
 
   const selectVersions = (withVisualizer: boolean) => supabaseAdmin
     .from('mb_versions')
-    .select(`id, project_id, label, version_number, audio_filename, audio_url, duration_seconds, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, ' : ''}key_signature, bpm, user_id, share_token)`)
+    .select(`id, project_id, label, version_number, audio_filename, audio_url, duration_seconds, status, created_at, mb_projects!inner(title, artwork_url, finalized_artwork_url, ${withVisualizer ? 'visualizer_url, visualizer_wide_url, ' : ''}key_signature, bpm, user_id, share_token)`)
     .eq('mb_projects.user_id', userId)
     .order('version_number', { ascending: false })
 
@@ -103,7 +106,7 @@ export async function GET(request: NextRequest) {
 
   const tracks: Track[] = latest.map((v) => {
     const project = Array.isArray(v.mb_projects) ? v.mb_projects[0] : v.mb_projects
-    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; visualizer_url?: string | null; key_signature?: string | null; bpm?: number | null; share_token?: string | null }
+    const p = project as { title?: string; artwork_url?: string | null; finalized_artwork_url?: string | null; visualizer_url?: string | null; visualizer_wide_url?: string | null; key_signature?: string | null; bpm?: number | null; share_token?: string | null }
     const projectTitle: string = p?.title ?? 'Unknown'
     return {
       id: v.id,
@@ -114,6 +117,7 @@ export async function GET(request: NextRequest) {
       artist: artistName,
       artwork_url: p?.finalized_artwork_url ?? p?.artwork_url ?? null,
       visualizer_url: p?.visualizer_url ?? null,
+      visualizer_wide_url: p?.visualizer_wide_url ?? null,
       audio_url: v.audio_url,
       // `?? null` so an absent column (a deploy that beats a migration) reads as
       // "not measured" rather than undefined — the engine tests this with

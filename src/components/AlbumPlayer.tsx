@@ -34,6 +34,11 @@ export type AlbumPlayerTrack = {
   visualizerUrl: string | null
   /** The 16:9 loop, for a laptop; optional, the 9:16 one stands in. */
   visualizerWideUrl?: string | null
+  /** The song's own share token. The signed-in collection view passes it so
+   *  the artist sees each song's real waveform (GET /api/share/<token>/peaks)
+   *  without an album token; it unlocks NOTHING else — the listener features
+   *  stay gated on the album token. */
+  shareToken?: string | null
   audioUrl: string | null
   duration: number | null
   /** Artist ticked "Allow download" on this mix — row shows a download link
@@ -231,19 +236,24 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     }).catch(() => { /* offline / navigating away — the next listener tries again */ })
   }, [albumToken])
 
-  // ── Waveform of the current track (public page only) ──────────────────────
-  // GET /api/share/<token>/peaks?project=<id> — the server resolves the track's
-  // newest mix, decodes it once and keeps the peaks. Cached per track for the
-  // life of the page so going back to a song is instant. Without a token
-  // (the signed-in view) the scrubber draws plain bars.
+  // ── Waveform of the current track ──────────────────────────────────────────
+  // GET /api/share/<token>/peaks — the server resolves the track's newest mix,
+  // decodes it once and keeps the peaks. On the public page the album token
+  // names the track (?project=<id>); on the artist's own collection view each
+  // song's own share token does. Cached per track for the life of the page so
+  // going back to a song is instant. With neither, the scrubber draws plain bars.
   useEffect(() => {
     const track = tracks[index]
-    if (!albumToken || !track?.audioUrl) { setPeaks([]); return }
+    const peaksUrl = !track?.audioUrl ? null
+      : albumToken ? `/api/share/${encodeURIComponent(albumToken)}/peaks?project=${encodeURIComponent(track.id)}`
+      : track.shareToken ? `/api/share/${encodeURIComponent(track.shareToken)}/peaks`
+      : null
+    if (!peaksUrl) { setPeaks([]); return }
     const cached = peaksCache.current.get(track.id)
     if (cached) { setPeaks(cached); return }
     setPeaks(null)
     const controller = new AbortController()
-    fetchPeaks(`/api/share/${encodeURIComponent(albumToken)}/peaks?project=${encodeURIComponent(track.id)}`, controller.signal)
+    fetchPeaks(peaksUrl, controller.signal)
       .then(p => {
         if (controller.signal.aborted) return
         if (p.length > 0) peaksCache.current.set(track.id, p)

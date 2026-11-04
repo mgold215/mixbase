@@ -71,7 +71,10 @@ check('the waveform is keyboard-seekable (slider role honoured)', /role="slider"
 
 console.log('\nalbum player: public-only extras stay off the signed-in view\n')
 const album = stripComments(read('src/components/AlbumPlayer.tsx'))
-check('the waveform fetch is gated on the album token', /if \(!albumToken \|\| !track\?\.audioUrl\) \{ setPeaks\(\[\]\); return \}/.test(album))
+check('the waveform uses the album token on the public page, the song\'s own token on the artist\'s view, else plain bars',
+  /albumToken \? `\/api\/share\/\$\{encodeURIComponent\(albumToken\)\}\/peaks\?project=/.test(album)
+  && /track\.shareToken \? `\/api\/share\/\$\{encodeURIComponent\(track\.shareToken\)\}\/peaks`/.test(album)
+  && /if \(!peaksUrl\) \{ setPeaks\(\[\]\); return \}/.test(album))
 check('the note offer is gated on the album token', /if \(!albumToken \|\| !\(duration > 0\)\) return/.test(album))
 check('the feedback drawer is gated on the album token', /\{albumToken && \(\s*<div ref=\{drawerRef\}/.test(album))
 check('the end-of-album card is gated on the album token', /\{albumToken && albumEnded &&/.test(album))

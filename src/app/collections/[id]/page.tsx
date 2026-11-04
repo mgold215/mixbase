@@ -19,7 +19,7 @@ export default async function CollectionPage({ params }: Props) {
   const selectProjects = (withVisualizer: boolean) =>
     supabaseAdmin
       .from('mb_projects')
-      .select(`id, title, genre, artwork_url, finalized_artwork_url${withVisualizer ? ', visualizer_url' : ''}`)
+      .select(`id, title, genre, artwork_url, finalized_artwork_url, share_token${withVisualizer ? ', visualizer_url, visualizer_wide_url' : ''}`)
       .eq('user_id', userId)
       .order('title')
 
@@ -47,7 +47,9 @@ export default async function CollectionPage({ params }: Props) {
     genre: string | null
     artwork_url: string | null
     finalized_artwork_url: string | null
+    share_token?: string | null
     visualizer_url?: string | null
+    visualizer_wide_url?: string | null
   }>
 
   // Newest version per project — powers the in-page album player (the current
@@ -70,7 +72,12 @@ export default async function CollectionPage({ params }: Props) {
     }
   }
   for (const p of projectRows) {
-    if (p.visualizer_url && trackMeta[p.id]) trackMeta[p.id].visualizerUrl = p.visualizer_url
+    const meta = trackMeta[p.id]
+    if (!meta) continue
+    if (p.visualizer_url) meta.visualizerUrl = p.visualizer_url
+    if (p.visualizer_wide_url) meta.visualizerWideUrl = p.visualizer_wide_url
+    // The owner's own token — the player draws each song's waveform with it.
+    meta.shareToken = p.share_token ?? null
   }
 
   let artistName = 'mixBASE'
