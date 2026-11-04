@@ -61,6 +61,10 @@ const nextConfig: NextConfig = {
   // the Cassette Studio moving cover encodes with the same ffmpeg.
   outputFileTracingIncludes: {
     '/api/finalize-artwork': ['./src/fonts/**/*.ttf'],
+    // The share link card draws its type with the same bundled Futura files;
+    // the share waveform decodes a mix with the same ffmpeg build.
+    '/api/share/[token]/card': ['./src/fonts/**/*.ttf'],
+    '/api/share/[token]/peaks': ['./node_modules/@ffmpeg-installer/**'],
     '/api/finalize-video': [
       './src/fonts/**/*.ttf',
       './node_modules/@ffmpeg-installer/**',

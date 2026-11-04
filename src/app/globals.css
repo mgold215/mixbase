@@ -118,3 +118,38 @@ button, a { transition: all 0.15s ease; }
     font-size: 16px;
   }
 }
+
+/* ── Public share player (src/app/share/[token]/ShareClient.tsx) ─────────── */
+/* Entrance: each block rises into place in turn. */
+@keyframes mb-rise {
+  from { opacity: 0; transform: translate3d(0, 18px, 0) scale(0.97); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.share-in {
+  opacity: 0;
+  animation: mb-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+/* The backdrop breathes — a slow Ken Burns move, never still. */
+@keyframes mb-drift {
+  0%   { transform: scale(1.12) translate3d(-1.5%, -1%, 0); }
+  100% { transform: scale(1.2) translate3d(1.5%, 1.5%, 0); }
+}
+.share-drift {
+  animation: mb-drift 40s ease-in-out infinite alternate;
+  will-change: transform;
+}
+/* Waveform placeholder while the peaks load. */
+@keyframes mb-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.share-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.22) 50%, rgba(255,255,255,0.08) 100%);
+  background-size: 200% 100%;
+  animation: mb-shimmer 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .share-in { animation: none; opacity: 1; }
+  .share-drift { animation: none; }
+  .share-shimmer { animation: none; }
+}

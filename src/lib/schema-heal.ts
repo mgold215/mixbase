@@ -114,6 +114,34 @@ export function isMissingInFeedColumn(error: { message?: string } | null): boole
   return !!error?.message && /in_feed/.test(error.message)
 }
 
+// ── mb_versions.waveform_peaks (migration 043) ──────────────────────────────────
+// The share player's real waveform. GET /api/share/[token]/peaks reads it and
+// fills it write-once; it catches the missing-column error, heals, and retries,
+// so a deploy that beats the migration still draws a waveform (computed per
+// request until the column exists).
+
+const WAVEFORM_PEAKS_SQL =
+  "alter table public.mb_versions add column if not exists waveform_peaks jsonb; notify pgrst, 'reload schema';"
+
+let waveformPeaksEnsured: Promise<boolean> | null = null
+
+export function ensureVersionWaveformPeaksColumn(): Promise<boolean> {
+  if (!waveformPeaksEnsured) {
+    waveformPeaksEnsured = runQuery(WAVEFORM_PEAKS_SQL, 'mb_versions.waveform_peaks column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) waveformPeaksEnsured = null
+        return ok
+      })
+  }
+  return waveformPeaksEnsured
+}
+
+/** True when a PostgREST error is the missing waveform_peaks column failure. */
+export function isMissingWaveformPeaksColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /waveform_peaks/.test(error.message)
+}
+
 // ── mb_feedback.resolved_at (migration 041) ─────────────────────────────────────
 // The Mix Session's done tick on a note. GET /api/mix-session reads it and
 // PATCH /api/mix-session/notes/[id] writes it; both catch the missing-column

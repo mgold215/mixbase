@@ -1,21 +1,30 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, useMemo, type ChangeEvent } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import Image from 'next/image'
-import { Play, Pause, SkipBack, SkipForward, Download } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Download, MessageSquare, ChevronDown, PenLine, RotateCcw } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { audioDownloadFileName } from '@/lib/download'
 import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
+import ShareWaveform from '@/components/ShareWaveform'
+import FeedbackForm from '@/components/FeedbackForm'
+import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
 
-// Full-album player used by both the public /share/album/[token] page and the
-// logged-in collection view: blurred backdrop + accent theme that follow the
-// current track, transport with auto-advance, and a tracklist with per-track
-// artwork. Tracks without an uploaded mix (audioUrl null) are listed but
-// muted — playback and auto-advance skip over them.
+// Full-album player used by both the public /album/<artist>/<title>/<token>
+// page and the logged-in collection view: the current track's visualizer loop
+// (or its art, drifting) fills the screen, an accent theme follows the art,
+// transport with auto-advance, and a tracklist with per-track artwork. Tracks
+// without an uploaded mix (audioUrl null) are listed but muted — playback and
+// auto-advance skip over them.
+//
+// On the PUBLIC page (an album token in the URL) the listener also gets the
+// real waveform of each track, "Note at 1:32", a per-track feedback drawer and
+// one-tap reactions when the album ends. The signed-in view has none of those:
+// it is the artist's own page.
 
 export type AlbumPlayerTrack = {
   id: string
@@ -23,6 +32,8 @@ export type AlbumPlayerTrack = {
   genre: string | null
   artworkUrl: string | null
   visualizerUrl: string | null
+  /** The 16:9 loop, for a laptop; optional, the 9:16 one stands in. */
+  visualizerWideUrl?: string | null
   audioUrl: string | null
   duration: number | null
   /** Artist ticked "Allow download" on this mix — row shows a download link
@@ -43,7 +54,19 @@ type Props = {
   footnote?: string | null
 }
 
+// One-tap reactions offered when the album ends (public page only). Ordinary
+// feedback rows on the track that just finished, so they land in the artist's
+// feedback list next to written notes.
+const REACTIONS = [
+  { emoji: '🔥', label: 'Fire' },
+  { emoji: '❤️', label: 'Love it' },
+  { emoji: '🔁', label: 'On repeat' },
+] as const
+
 export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tracks, sourceId = 'album-player', footnote }: Props) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const vizVideoRef = useRef<HTMLVideoElement | null>(null)
   const [index, setIndex] = useState(() => {
@@ -60,10 +83,28 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   // Latest transport callbacks for the media-session handlers, which are
   // registered once per 'play' event and must not go stale between renders.
   const controlsRef = useRef({ next: () => {}, prev: () => {}, toggle: () => {} })
+  // Public-page extras.
+  const [peaks, setPeaks] = useState<number[] | null>(null)
+  const peaksCache = useRef<Map<string, number[]>>(new Map())
+  const [notePrompt, setNotePrompt] = useState<number | null>(null)
+  const [noteAt, setNoteAt] = useState<number | null>(null)
+  const [showFeedback, setShowFeedback] = useState(false)
+  const [formKey, setFormKey] = useState(0)
+  const [albumEnded, setAlbumEnded] = useState(false)
+  const [reactionSent, setReactionSent] = useState<string | null>(null)
+  const [reactionBusy, setReactionBusy] = useState(false)
+  const portrait = usePortrait()
 
   const current: AlbumPlayerTrack | undefined = tracks[index]
   const displayArt = current?.artworkUrl ?? coverUrl
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
+  const accentA = (a: number) => `rgba(${accent[0]},${accent[1]},${accent[2]},${a})`
+  // The current track's loop fills the page: the 9:16 one on a phone, the
+  // 16:9 one on a laptop, either standing in for a missing other.
+  const loopUrl = current
+    ? (portrait ? (current.visualizerUrl ?? current.visualizerWideUrl ?? null) : (current.visualizerWideUrl ?? current.visualizerUrl ?? null))
+    : null
+  const hasLoop = !!loopUrl
 
   // Total runtime for the header — only shown when every playable track
   // reported one, so a missing duration can't display as a too-short total.
@@ -85,13 +126,15 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     return -1
   }, [tracks])
 
-  // Keep the muted visualizer loop in step with the audio.
+  // The muted loop is ambient: it runs from the moment the page opens (muted
+  // autoplay is allowed with playsInline) and is nudged again whenever a track
+  // starts, for browsers that blocked the autoplay. play() can reject; the
+  // poster (the art) just stays.
   useEffect(() => {
     const v = vizVideoRef.current
     if (!v) return
-    if (isPlaying) v.play().catch(() => {})
-    else v.pause()
-  }, [isPlaying, index, current?.visualizerUrl])
+    v.play().catch(() => {})
+  }, [isPlaying, index, loopUrl])
 
   // Accent colour follows the current track's artwork.
   useEffect(() => {
@@ -188,6 +231,32 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     }).catch(() => { /* offline / navigating away — the next listener tries again */ })
   }, [albumToken])
 
+  // ── Waveform of the current track (public page only) ──────────────────────
+  // GET /api/share/<token>/peaks?project=<id> — the server resolves the track's
+  // newest mix, decodes it once and keeps the peaks. Cached per track for the
+  // life of the page so going back to a song is instant. Without a token
+  // (the signed-in view) the scrubber draws plain bars.
+  useEffect(() => {
+    const track = tracks[index]
+    if (!albumToken || !track?.audioUrl) { setPeaks([]); return }
+    const cached = peaksCache.current.get(track.id)
+    if (cached) { setPeaks(cached); return }
+    setPeaks(null)
+    const controller = new AbortController()
+    fetchPeaks(`/api/share/${encodeURIComponent(albumToken)}/peaks?project=${encodeURIComponent(track.id)}`, controller.signal)
+      .then(p => {
+        if (controller.signal.aborted) return
+        if (p.length > 0) peaksCache.current.set(track.id, p)
+        setPeaks(p)
+      })
+    return () => controller.abort()
+  }, [albumToken, index, tracks])
+
+  // ── Alive: glow with the music, backdrop follows the mouse ─────────────────
+  const pct = duration > 0 ? currentTime / duration : 0
+  const { ensureAnalyser } = useAudioEnergy({ audioRef, rootRef, isPlaying, peaks, progress: pct })
+  useParallax(rootRef, backdropRef)
+
   // Wire audio events. Depends on `index` so onEnded always advances from the
   // track that actually finished (re-binding on change is cheap).
   useEffect(() => {
@@ -212,6 +281,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     }
     const onPlay = () => {
       setIsPlaying(true)
+      setAlbumEnded(false)
       announcePlay(sourceId)
       claimTransport()
       // Re-apply metadata on every play so auto-advance updates the lock
@@ -230,6 +300,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
         setIndex(next)
       } else {
         setIsPlaying(false)
+        setAlbumEnded(true)
         announceStop(sourceId)
       }
     }
@@ -261,6 +332,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     const audio = audioRef.current
     if (!audio) return
     setCurrentTime(0)
+    setNotePrompt(null)
     // Prefer the element's real duration when metadata already loaded (its
     // durationchange can fire before our listeners attach); fall back to the
     // stored value so the time readout isn't blank while the file loads.
@@ -285,15 +357,17 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       } else {
         // Must run synchronously before play() so iOS registers the metadata
         // inside the user-gesture context.
+        ensureAnalyser()
         applyMediaSession(track.title, track.artworkUrl ?? coverUrl, true, artistName)
         audio.play().catch(() => {})
       }
       return
     }
+    ensureAnalyser()
     applyMediaSession(track.title, track.artworkUrl ?? coverUrl, true, artistName)
     pendingPlay.current = true
     setIndex(i)
-  }, [tracks, index, isPlaying, coverUrl, artistName])
+  }, [tracks, index, isPlaying, coverUrl, artistName, ensureAnalyser])
 
   const togglePlay = useCallback(() => playTrackAt(index), [playTrackAt, index])
 
@@ -320,13 +394,68 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     controlsRef.current = { next: nextTrack, prev: prevTrack, toggle: togglePlay }
   }, [nextTrack, prevTrack, togglePlay])
 
-  const seek = (e: ChangeEvent<HTMLInputElement>) => {
+  const seekTo = useCallback((fraction: number) => {
     const audio = audioRef.current
-    if (!audio) return
-    audio.currentTime = parseFloat(e.target.value)
-  }
+    if (!audio || !(duration > 0)) return
+    const t = fraction * duration
+    audio.currentTime = t
+    setCurrentTime(t)
+  }, [duration])
 
-  const pct = duration > 0 ? (currentTime / duration) * 100 : 0
+  // Landing somewhere on the waveform is the moment to offer a pinned note
+  // (public page only — the signed-in view has no listener to ask).
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const offerNote = useCallback((fraction: number) => {
+    if (!albumToken || !(duration > 0)) return
+    const at = Math.floor(fraction * duration)
+    if (at < 1) { setNotePrompt(null); return }
+    setNotePrompt(at)
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setNotePrompt(null), 7000)
+  }, [albumToken, duration])
+
+  const openNote = useCallback((at: number | null) => {
+    setNoteAt(at)
+    setFormKey(k => k + 1)
+    setShowFeedback(true)
+    setNotePrompt(null)
+    setTimeout(() => drawerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50)
+  }, [])
+
+  const playAgain = useCallback(() => {
+    setAlbumEnded(false)
+    const first = tracks.findIndex(t => t.audioUrl)
+    if (first === -1) return
+    if (first === index) {
+      const audio = audioRef.current
+      if (!audio) return
+      audio.currentTime = 0
+      audio.play().catch(() => {})
+    } else {
+      playTrackAt(first)
+    }
+  }, [tracks, index, playTrackAt])
+
+  const sendReaction = useCallback(async (reaction: (typeof REACTIONS)[number]) => {
+    const track = tracks[index]
+    if (!albumToken || !track || reactionBusy || reactionSent) return
+    setReactionBusy(true)
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          share_token: albumToken,
+          project_id: track.id,
+          reviewer_name: 'Anonymous',
+          comment: `${reaction.emoji} ${reaction.label} — the whole ${typeLabel.toLowerCase()} "${title}"`,
+        }),
+      })
+      if (res.ok) setReactionSent(reaction.label)
+    } catch { /* nothing to show — the buttons simply stay */ }
+    setReactionBusy(false)
+  }, [albumToken, tracks, index, reactionBusy, reactionSent, typeLabel, title])
+
   const currentPlayable = !!current?.audioUrl
 
   // ── Empty state: no tracks at all ──
@@ -353,7 +482,11 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   }
 
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
+    <div
+      ref={rootRef}
+      className="relative flex-1 flex flex-col overflow-hidden"
+      style={{ '--energy': 0 } as React.CSSProperties}
+    >
       {currentPlayable && (
         <audio
           ref={audioRef}
@@ -367,26 +500,45 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       {/* Equalizer bars for the playing row */}
       <style>{`@keyframes mb-eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }`}</style>
 
-      {/* ── Blurred artwork backdrop (follows the current track) ── */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {displayArt ? (
+      {/* ── Backdrop: the current track's loop full-screen, else its art, drifting ── */}
+      <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transition: 'transform 0.6s ease-out' }}>
+        {hasLoop ? (
+          <video
+            ref={vizVideoRef}
+            key={loopUrl}
+            src={loopUrl!}
+            poster={displayArt ?? undefined}
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: 'scale(1.04)' }}
+          />
+        ) : displayArt ? (
           <Image
             key={displayArt}
             src={displayArt} alt="" fill unoptimized
-            className="object-cover transition-opacity duration-700"
+            className="object-cover share-drift transition-opacity duration-700"
             style={{ filter: 'blur(18px) saturate(1.6) brightness(0.45)' }}
           />
         ) : (
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 share-drift"
             style={{ background: accentCss, filter: 'blur(60px) brightness(0.25)' }}
           />
         )}
         <div className="absolute inset-0" style={{
           background: `
-            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,0.88) 100%),
-            radial-gradient(ellipse 80% 60% at 50% 50%, rgba(${accent[0]},${accent[1]},${accent[2]},0.14) 0%, transparent 70%)
+            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,${hasLoop ? 0.4 : 0.5}) 60%, rgba(0,0,0,${hasLoop ? 0.82 : 0.88}) 100%),
+            radial-gradient(ellipse 80% 60% at 50% 50%, ${accentA(0.14)} 0%, transparent 70%)
           `,
+        }} />
+        {/* An accent wash that brightens with the music */}
+        <div className="absolute inset-0" style={{
+          background: `radial-gradient(ellipse 60% 50% at 35% 55%, ${accentA(0.32)} 0%, transparent 70%)`,
+          opacity: 'calc(var(--energy) * 0.9)',
         }} />
       </div>
 
@@ -396,69 +548,79 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
         {/* Now playing */}
         <div className="flex flex-col items-center gap-6 lg:flex-1 lg:min-w-0">
           <div
-            className="relative w-52 h-52 sm:w-64 sm:h-64 xl:w-80 xl:h-80 rounded-2xl overflow-hidden flex-shrink-0"
-            style={{ boxShadow: `0 32px 80px rgba(${accent[0]},${accent[1]},${accent[2]},0.4), 0 8px 32px rgba(0,0,0,0.7)` }}
+            className={`share-in relative ${hasLoop ? 'w-44 h-44 sm:w-56 sm:h-56 xl:w-72 xl:h-72' : 'w-52 h-52 sm:w-64 sm:h-64 xl:w-80 xl:h-80'} rounded-2xl overflow-hidden flex-shrink-0`}
+            style={{ animationDelay: '80ms', boxShadow: `0 32px 80px ${accentA(0.4)}, 0 8px 32px rgba(0,0,0,0.7)` }}
           >
-            {current.artworkUrl ?? coverUrl ? (
-              <Image
-                key={displayArt ?? current.id}
-                src={(current.artworkUrl ?? coverUrl)!}
-                alt={current.title} fill className="object-cover" unoptimized
-              />
-            ) : (
-              <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-                <CassetteIcon size={64} className="text-[#333]" />
-              </div>
-            )}
-            {/* Track visualizer loops over the artwork while playing */}
-            {current.visualizerUrl && (
-              <video
-                key={current.visualizerUrl}
-                ref={vizVideoRef}
-                src={current.visualizerUrl}
-                loop
-                muted
-                playsInline
-                preload="auto"
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-            )}
+            <div
+              className="absolute inset-0"
+              style={{ transform: 'scale(calc(1 + var(--energy) * 0.035))', transition: 'transform 90ms linear' }}
+            >
+              {current.artworkUrl ?? coverUrl ? (
+                <Image
+                  key={displayArt ?? current.id}
+                  src={(current.artworkUrl ?? coverUrl)!}
+                  alt={current.title} fill className="object-cover" unoptimized
+                />
+              ) : (
+                <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
+                  <CassetteIcon size={64} className="text-[#333]" />
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="text-center max-w-sm">
+          <div className="share-in text-center max-w-sm" style={{ animationDelay: '260ms' }}>
             <p className="text-[11px] uppercase tracking-[0.2em] text-white/35 mb-1.5">
               {typeLabel} · {title}
             </p>
-            <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate">{current.title}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate" style={{ textShadow: '0 2px 18px rgba(0,0,0,0.6)' }}>{current.title}</h1>
             {/* Artist stays in its natural case — no uppercase transform here */}
             <p className="text-sm text-white/40 mt-1 truncate">{artistName}</p>
           </div>
 
-          {/* Progress + transport */}
-          <div className="w-full max-w-xs space-y-5">
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
-                {/* formatDuration renders 0 as "--:--"; before playback starts 0:00 is correct */}
-                {currentTime >= 1 ? formatDuration(Math.floor(currentTime)) : '0:00'}
-              </span>
-              <div className="flex-1 relative h-1.5 rounded-full bg-white/15 overflow-hidden">
-                <div
-                  className="absolute inset-y-0 left-0 rounded-full"
-                  style={{ width: `${pct}%`, background: accentCss }}
-                />
-                <input
-                  type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                  onChange={seek}
-                  aria-label="Seek"
-                  className="absolute inset-0 w-full opacity-0 cursor-pointer"
-                />
+          {/* Waveform + transport */}
+          <div className="share-in w-full max-w-sm space-y-5" style={{ animationDelay: '420ms' }}>
+            <div className="relative">
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
+                  {/* formatDuration renders 0 as "--:--"; before playback starts 0:00 is correct */}
+                  {currentTime >= 1 ? formatDuration(Math.floor(currentTime)) : '0:00'}
+                </span>
+                <div className="flex-1 h-12">
+                  {peaks === null ? (
+                    <div className="h-full flex items-center">
+                      <div className="share-shimmer h-1.5 w-full rounded-full" />
+                    </div>
+                  ) : (
+                    <ShareWaveform
+                      peaks={peaks}
+                      progress={pct}
+                      accent={accent}
+                      onSeek={seekTo}
+                      onSeekEnd={offerNote}
+                      className="h-full w-full"
+                    />
+                  )}
+                </div>
+                <span className="text-[11px] font-mono text-white/30 tabular-nums w-10 shrink-0">
+                  {duration > 0 ? `−${formatDuration(Math.max(0, Math.floor(duration - currentTime)))}` : '--:--'}
+                </span>
               </div>
-              <span className="text-[11px] font-mono text-white/30 tabular-nums w-10 shrink-0">
-                {duration > 0 ? `−${formatDuration(Math.max(0, Math.floor(duration - currentTime)))}` : '--:--'}
-              </span>
+              {notePrompt != null && !showFeedback && (
+                <div className="absolute left-0 right-0 -bottom-7 flex justify-center">
+                  <button
+                    onClick={() => openNote(notePrompt)}
+                    className="share-in inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium text-black"
+                    style={{ background: accentCss, animationDuration: '0.35s' }}
+                  >
+                    <PenLine size={11} />
+                    Note at {formatDuration(notePrompt)}
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-center gap-6">
+            <div className="flex items-center justify-center gap-6 pt-1">
               <button
                 onClick={prevTrack}
                 className="p-2 text-white/70 hover:text-white transition-colors"
@@ -468,11 +630,11 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
               </button>
               <button
                 onClick={togglePlay}
-                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 disabled:opacity-40"
+                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
                 disabled={!currentPlayable}
                 style={{
-                  background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.7))`,
-                  boxShadow: `0 0 40px rgba(${accent[0]},${accent[1]},${accent[2]},0.5), inset 0 1px 0 rgba(255,255,255,0.2)`,
+                  background: `linear-gradient(180deg, ${accentCss}, ${accentA(0.7)})`,
+                  boxShadow: `0 0 calc(40px + var(--energy) * 50px) ${accentA(0.5)}, 0 0 calc(var(--energy) * 120px) ${accentA(0.35)}, inset 0 1px 0 rgba(255,255,255,0.2)`,
                 }}
                 title={isPlaying ? 'Pause' : 'Play'}
               >
@@ -489,13 +651,55 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
               </button>
             </div>
           </div>
+
+          {/* When the album ends (public page): one tap says what you thought */}
+          {albumToken && albumEnded && (
+            <div
+              className="share-in w-full max-w-xs rounded-2xl p-5 border border-white/10 text-center"
+              style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)', animationDuration: '0.5s' }}
+            >
+              {reactionSent ? (
+                <>
+                  <p className="text-sm text-white">Sent to {artistName}. Thank you.</p>
+                  <div className="mt-4 flex items-center justify-center gap-3">
+                    <button onClick={() => openNote(null)} className="text-xs text-white/60 hover:text-white underline-offset-4 hover:underline">Add a note</button>
+                    <span className="text-white/20">·</span>
+                    <button onClick={playAgain} className="inline-flex items-center gap-1 text-xs text-white/60 hover:text-white"><RotateCcw size={12} /> Play again</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] text-white/40 uppercase tracking-wider">That was {title}</p>
+                  <p className="text-sm text-white mt-1">What did you think?</p>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    {REACTIONS.map(r => (
+                      <button
+                        key={r.label}
+                        onClick={() => sendReaction(r)}
+                        disabled={reactionBusy}
+                        className="rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 active:scale-95 transition py-3 flex flex-col items-center gap-1 disabled:opacity-50"
+                      >
+                        <span className="text-2xl leading-none">{r.emoji}</span>
+                        <span className="text-[11px] text-white/70">{r.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center justify-center gap-3">
+                    <button onClick={() => openNote(null)} className="text-xs text-white/60 hover:text-white underline-offset-4 hover:underline">Tell them more</button>
+                    <span className="text-white/20">·</span>
+                    <button onClick={playAgain} className="inline-flex items-center gap-1 text-xs text-white/60 hover:text-white"><RotateCcw size={12} /> Play again</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Tracklist */}
-        <div className="w-full lg:w-[24rem] xl:w-[27rem] flex-shrink-0">
+        <div className="share-in w-full lg:w-[24rem] xl:w-[27rem] flex-shrink-0" style={{ animationDelay: '560ms' }}>
           <div
             className="rounded-2xl border border-white/10 overflow-hidden"
-            style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(16px)' }}
+            style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(16px)' }}
           >
             {/* Album header */}
             <div className="flex items-center gap-3.5 px-4 py-4 border-b border-white/10">
@@ -533,7 +737,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                   <div
                     key={track.id}
                     className={`w-full flex items-center transition-colors group ${playable ? 'hover:bg-white/[0.06]' : ''}`}
-                    style={active ? { background: `rgba(${accent[0]},${accent[1]},${accent[2]},0.12)` } : undefined}
+                    style={active ? { background: accentA(0.12) } : undefined}
                   >
                   {/* An <a> can't nest inside a <button>, so the row is a flex
                       wrapper: play button fills it, download link sits beside. */}
@@ -616,6 +820,35 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                 )
               })}
             </div>
+
+            {/* Feedback on the current track (public page only) */}
+            {albumToken && (
+              <div ref={drawerRef} className="border-t border-white/10">
+                <button
+                  onClick={() => setShowFeedback(v => !v)}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 text-sm text-white/35 hover:text-white/60 transition-colors"
+                >
+                  <MessageSquare size={14} />
+                  <span className="truncate">Leave a note on {current.title}</span>
+                  <ChevronDown
+                    size={14}
+                    className="transition-transform duration-200 flex-shrink-0"
+                    style={{ transform: showFeedback ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                  />
+                </button>
+                {showFeedback && (
+                  <div className="px-4 pb-5">
+                    <FeedbackForm
+                      key={`${current.id}-${formKey}`}
+                      shareToken={albumToken}
+                      projectId={current.id}
+                      currentTime={currentTime}
+                      initialPinnedAt={noteAt ?? undefined}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {footnote && (

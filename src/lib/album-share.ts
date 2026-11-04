@@ -16,6 +16,7 @@ type ProjectRow = {
   artwork_url: string | null
   finalized_artwork_url: string | null
   visualizer_url?: string | null
+  visualizer_wide_url?: string | null
 }
 
 export type AlbumShareData = {
@@ -59,7 +60,7 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
   const selectItems = (withVisualizer: boolean) =>
     supabaseAdmin
       .from('mb_collection_items')
-      .select(`project_id, position, mb_projects(title, genre, artwork_url, finalized_artwork_url${withVisualizer ? ', visualizer_url' : ''})`)
+      .select(`project_id, position, mb_projects(title, genre, artwork_url, finalized_artwork_url${withVisualizer ? ', visualizer_url, visualizer_wide_url' : ''})`)
       .eq('collection_id', collection.id)
       .order('position', { ascending: true })
 
@@ -109,6 +110,7 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
       genre: p.genre ?? null,
       artworkUrl: displayArtworkUrl(p),
       visualizerUrl: p.visualizer_url ?? null,
+      visualizerWideUrl: p.visualizer_wide_url ?? null,
       audioUrl: version.audio_url,
       duration: version.duration_seconds ?? null,
       allowDownload: version.allow_download === true,
@@ -120,3 +122,12 @@ export const getAlbumShareData = cache(async (token: string): Promise<AlbumShare
 
   return { title: collection.title as string, typeLabel, coverUrl, artistName, tracks }
 })
+
+// A short fingerprint of what the album's link card is drawn from, for the
+// ?v= cache-buster on GET /api/share/<token>/card (same idea as the track one).
+export function albumCardStamp(data: AlbumShareData): string {
+  const input = `${data.coverUrl ?? ''}|${data.title}|${data.artistName}|${data.tracks.length}`
+  let h = 5381
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}

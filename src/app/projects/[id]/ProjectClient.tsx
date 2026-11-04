@@ -16,6 +16,7 @@ import {
   AUTO_MEASURE_MAX_FILE_BYTES, autoMeasureProbeFrames, fitsAutoMeasureBudget, canAttemptAutoMeasure,
 } from '@/lib/loudness-auto'
 import { trackShareUrl } from '@/lib/share-url'
+import { useArtistName } from '@/lib/use-artist-name'
 import { formatReleaseDate } from '@/lib/release-plan'
 import { buildPunchList, buildSummaryExport, buildMixReport } from '@/lib/punch-list'
 import { analyzeFile } from '@/lib/audio-analysis'
@@ -202,6 +203,7 @@ type Props = {
 
 export default function ProjectClient({ project, initialVersions, initialRelease, initialFeedComments = {}, inModal = false, ownerDefaults = false, ownerTools = false, inThumbDrive = null }: Props) {
   const [versions, setVersions] = useState(initialVersions)
+  const artistName = useArtistName()
   const [artwork, setArtwork] = useState(project.artwork_url)
   const [finalizedArtwork, setFinalizedArtwork] = useState(project.finalized_artwork_url)
   // ?? null: prod rows can predate the 015/020 migrations (columns self-heal on first write)
@@ -346,7 +348,7 @@ export default function ProjectClient({ project, initialVersions, initialRelease
 
   async function copyShareLink() {
     if (!project.share_token) return
-    const url = trackShareUrl(project.share_token)
+    const url = trackShareUrl(project.share_token, { artistName, title: project.title })
     // copyToClipboard tries the async API then a hidden-textarea fallback, so we
     // only flash "Copied!" when the text actually made it to the clipboard.
     if (await copyToClipboard(url)) {

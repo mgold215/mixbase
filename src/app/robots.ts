@@ -26,6 +26,7 @@ export default function robots(): MetadataRoute.Robots {
         '/profile',
         '/submit',
         '/share/', // private token links — never index
+        '/listen/', // canonical single-track share links — same privacy rules
         '/album/', // canonical album share links — same privacy rules
       ],
     },

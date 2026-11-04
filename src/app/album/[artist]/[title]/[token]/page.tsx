@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { getAlbumShareData } from '@/lib/album-share'
+import { getAlbumShareData, albumCardStamp } from '@/lib/album-share'
 import { albumShareUrl } from '@/lib/share-url'
 import AlbumShareScreen from '@/components/AlbumShareScreen'
 
@@ -18,14 +18,26 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const data = await getAlbumShareData(token)
   if (!data) return { title: 'mixBASE' }
   const description = `Listen to ${data.title} by ${data.artistName} on mixBASE — ${data.tracks.length} ${data.tracks.length === 1 ? 'track' : 'tracks'}`
+  // The link card: a 1200×630 image drawn for THIS album (cover, title,
+  // artist, track count) by GET /api/share/<token>/card. metadataBase in
+  // layout.tsx makes the relative path absolute.
+  const card = `/api/share/${encodeURIComponent(token)}/card?v=${albumCardStamp(data)}`
+  const title = `${data.title} — ${data.artistName}`
   return {
-    title: `${data.title} — ${data.artistName} | mixBASE`,
+    title: `${title} | mixBASE`,
     description,
     alternates: { canonical: albumShareUrl(data.artistName, data.title, token) },
     openGraph: {
-      title: `${data.title} — ${data.artistName}`,
+      type: 'music.album',
+      title,
       description,
-      ...(data.coverUrl ? { images: [data.coverUrl] } : {}),
+      images: [{ url: card, width: 1200, height: 630, alt: title }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [card],
     },
   }
 }

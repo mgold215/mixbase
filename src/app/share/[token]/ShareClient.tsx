@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Image from 'next/image'
-import { Play, Pause, MessageSquare, ChevronDown, Download } from 'lucide-react'
+import { Play, Pause, MessageSquare, ChevronDown, Download, PenLine, RotateCcw } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import { versionDisplayLabel } from '@/lib/mix-status'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
@@ -12,9 +12,11 @@ import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coordinator'
 import { audioDownloadFileName } from '@/lib/download'
 import FeedbackForm from '@/components/FeedbackForm'
+import ShareWaveform from '@/components/ShareWaveform'
+import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
 
 // The public share page renders ONLY these version fields. The loader
-// (share/[token]/page.tsx) selects exactly this set and deliberately omits
+// (src/lib/track-share.ts) selects exactly this set and deliberately omits
 // owner-private columns (private_notes, mb_feedback, share_token, …), so the
 // type mirrors the minimized public payload — reading an omitted field here
 // would fail the build, preventing an accidental re-leak.
@@ -34,19 +36,34 @@ type Props = {
   // Public artist name (already shown in the page header) — feeds the Media
   // Session artist slot so lock screens / car displays don't say "mixBase".
   artistName: string
+  // The song title in the artist's own handwriting (Cassette Studio lettering,
+  // white ink on transparency). Only the platform owner has one; null = type.
+  letteringUrl: string | null
 }
+
+// One-tap reactions offered when the song ends. They are ordinary feedback
+// rows (POST /api/feedback, comment = the label) so they land in the artist's
+// feedback list next to written notes — nothing new to store.
+const REACTIONS = [
+  { emoji: '🔥', label: 'Fire' },
+  { emoji: '❤️', label: 'Love it' },
+  { emoji: '🔁', label: 'On repeat' },
+] as const
 
 // Download naming lives in src/lib/download.ts (audioDownloadFileName) — the
 // album share player names its per-track downloads the same way.
 
-export default function ShareClient({ version, artistName }: Props) {
+export default function ShareClient({ version, artistName, letteringUrl }: Props) {
   // The share token this page was addressed by. Read from the route rather than
-  // taken as a prop: page.tsx deliberately hands this component the MINIMISED
+  // taken as a prop: the loader deliberately hands this component the MINIMISED
   // public projection of the row (see the Props note above), and the token is
   // not part of it — it is in the URL the visitor already has.
   const params = useParams<{ token?: string }>()
   const shareToken = typeof params?.token === 'string' ? params.token : null
 
+  const rootRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const vizVideoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -54,15 +71,31 @@ export default function ShareClient({ version, artistName }: Props) {
   const [duration, setDuration] = useState(0)
   const [accent, setAccent] = useState<[number, number, number]>([139, 92, 246])
   const [showFeedback, setShowFeedback] = useState(false)
+  const [ended, setEnded] = useState(false)
+  const [reactionSent, setReactionSent] = useState<string | null>(null)
+  const [reactionBusy, setReactionBusy] = useState(false)
+  // Waveform: null = loading, [] = unavailable (plain bars), else the peaks.
+  // Without a token there is nothing to fetch, so it starts as plain bars.
+  const [peaks, setPeaks] = useState<number[] | null>(() => (shareToken ? null : []))
+  // "Note at 1:32" — offered after a seek; the time the note would pin to.
+  const [notePrompt, setNotePrompt] = useState<number | null>(null)
+  const [noteAt, setNoteAt] = useState<number | null>(null)
+  const [formKey, setFormKey] = useState(0)
+  const portrait = usePortrait()
 
   const project = version.mb_projects
   const artworkUrl: string | null = displayArtworkUrl(project ?? {})
-  // Project visualizer (Spotify-Canvas style) — ?? null because rows can
-  // predate the 015 migration until the column self-heals.
-  const visualizerUrl: string | null = project?.visualizer_url ?? null
+  // Project visualizers — the 9:16 Canvas loop and the 16:9 one. ?? null
+  // because rows can predate the 015/020 migrations until the columns self-heal.
+  const loopPortrait: string | null = project?.visualizer_url ?? null
+  const loopWide: string | null = project?.visualizer_wide_url ?? null
+  // Phones get the vertical loop, laptops the wide one; either stands in for
+  // a missing other. The backdrop fills the whole page, Spotify-Canvas style.
+  const loopUrl = portrait ? (loopPortrait ?? loopWide) : (loopWide ?? loopPortrait)
   const title: string = project?.title ?? 'Untitled'
   const audioUrl = audioProxyUrl(version.audio_url)
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
+  const accentA = (a: number) => `rgba(${accent[0]},${accent[1]},${accent[2]},${a})`
   // Original-quality download, when the artist enabled it on this mix. The
   // audio proxy is same-origin, so the `download` attribute is honoured and
   // ?download=1 makes it a streamed attachment — a 2 GB WAV never buffers.
@@ -70,15 +103,15 @@ export default function ShareClient({ version, artistName }: Props) {
   const downloadHref = `${audioUrl}?download=1&filename=${encodeURIComponent(downloadName)}`
   const downloadLabel = downloadName.split('.').pop()!.toUpperCase()
 
-  // Keep the muted visualizer loop in step with the audio: runs while the
-  // track plays, freezes on pause — same behavior as the app's full player.
-  // play() can reject (autoplay policy); the video just sits on its first frame.
+  // The muted loop is ambient: it runs from the moment the page opens (muted
+  // autoplay is allowed with playsInline) and is nudged again whenever the
+  // track starts, for browsers that blocked the autoplay. play() can reject;
+  // the poster (the artwork) just stays.
   useEffect(() => {
     const v = vizVideoRef.current
     if (!v) return
-    if (isPlaying) v.play().catch(() => {})
-    else v.pause()
-  }, [isPlaying, visualizerUrl])
+    v.play().catch(() => {})
+  }, [isPlaying, loopUrl])
 
   // Extract accent colour from artwork
   useEffect(() => {
@@ -86,6 +119,24 @@ export default function ShareClient({ version, artistName }: Props) {
       extractDominantColor(artworkUrl).then(setAccent).catch(() => {})
     }
   }, [artworkUrl])
+
+  // ── Waveform peaks ─────────────────────────────────────────────────────────
+  // The server decodes the mix once and keeps the peaks on the row; a long mix
+  // answers 202 while it is still decoding and fetchPeaks polls for it.
+  useEffect(() => {
+    if (!shareToken) return
+    const controller = new AbortController()
+    fetchPeaks(`/api/share/${encodeURIComponent(shareToken)}/peaks`, controller.signal)
+      .then(p => { if (!controller.signal.aborted) setPeaks(p) })
+    return () => controller.abort()
+  }, [shareToken])
+
+  // ── Alive: glow with the music, backdrop follows the mouse ─────────────────
+  // Shared with the album player (src/lib/share-fx.ts). pct is computed below;
+  // the hook reads it through a ref so the order here does not matter.
+  const pct = duration > 0 ? currentTime / duration : 0
+  const { ensureAnalyser } = useAudioEnergy({ audioRef, rootRef, isPlaying, peaks, progress: pct })
+  useParallax(rootRef, backdropRef)
 
   // ── Self-healing duration backfill (public half) ───────────────────────────
   // 145 of 364 mb_versions rows have duration_seconds NULL. The signed-in
@@ -140,9 +191,13 @@ export default function ShareClient({ version, artistName }: Props) {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
       healDuration(audio)
     }
-    const onPlay = () => { setIsPlaying(true); announcePlay('share-player') }
+    const onPlay = () => {
+      setIsPlaying(true)
+      setEnded(false)
+      announcePlay('share-player')
+    }
     const onPause = () => { setIsPlaying(false); announceStop('share-player') }
-    const onEnded = () => { setIsPlaying(false); announceStop('share-player') }
+    const onEnded = () => { setIsPlaying(false); setEnded(true); announceStop('share-player') }
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('durationchange', onDuration)
     audio.addEventListener('play', onPlay)
@@ -176,21 +231,71 @@ export default function ShareClient({ version, artistName }: Props) {
       audio.pause()
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     } else {
+      ensureAnalyser()
       applyMediaSession(title, artworkUrl, true, artistName)
       audio.play().catch(() => {})
     }
-  }, [isPlaying, title, artworkUrl, artistName])
+  }, [isPlaying, title, artworkUrl, artistName, ensureAnalyser])
 
-  const seek = (e: ChangeEvent<HTMLInputElement>) => {
+  const seekTo = useCallback((fraction: number) => {
+    const audio = audioRef.current
+    if (!audio || !(duration > 0)) return
+    const t = fraction * duration
+    audio.currentTime = t
+    setCurrentTime(t)
+  }, [duration])
+
+  // Landing somewhere on the waveform is the moment to offer a pinned note.
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const offerNote = useCallback((fraction: number) => {
+    if (!(duration > 0)) return
+    const at = Math.floor(fraction * duration)
+    if (at < 1) { setNotePrompt(null); return }
+    setNotePrompt(at)
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setNotePrompt(null), 7000)
+  }, [duration])
+
+  const openNote = useCallback((at: number | null) => {
+    setNoteAt(at)
+    setFormKey(k => k + 1)
+    setShowFeedback(true)
+    setNotePrompt(null)
+    setTimeout(() => drawerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), 50)
+  }, [])
+
+  const playAgain = useCallback(() => {
     const audio = audioRef.current
     if (!audio) return
-    audio.currentTime = parseFloat(e.target.value)
-  }
+    audio.currentTime = 0
+    setEnded(false)
+    audio.play().catch(() => {})
+  }, [])
 
-  const pct = duration > 0 ? (currentTime / duration) * 100 : 0
+  const sendReaction = useCallback(async (reaction: (typeof REACTIONS)[number]) => {
+    if (reactionBusy || reactionSent) return
+    setReactionBusy(true)
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version_id: version.id, reviewer_name: 'Anonymous', comment: `${reaction.emoji} ${reaction.label}` }),
+      })
+      if (res.ok) setReactionSent(reaction.label)
+    } catch { /* nothing to show — the buttons simply stay */ }
+    setReactionBusy(false)
+  }, [reactionBusy, reactionSent, version.id])
+
+  const hasLoop = !!loopUrl
+  // The cover steps back a little when a loop fills the screen behind it.
+  const coverSize = hasLoop ? 'w-44 h-44 sm:w-60 sm:h-60' : 'w-56 h-56 sm:w-72 sm:h-72'
 
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
+    <div
+      ref={rootRef}
+      className="relative flex-1 flex flex-col overflow-hidden"
+      style={{ '--energy': 0 } as React.CSSProperties}
+    >
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -199,63 +304,91 @@ export default function ShareClient({ version, artistName }: Props) {
         style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
       />
 
-      {/* ── Blurred artwork backdrop ── */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {artworkUrl ? (
+      {/* ── Backdrop: the visualizer loop full-screen, else the art, drifting ── */}
+      <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transition: 'transform 0.6s ease-out' }}>
+        {hasLoop ? (
+          <video
+            ref={vizVideoRef}
+            key={loopUrl}
+            src={loopUrl!}
+            poster={artworkUrl ?? undefined}
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: 'scale(1.04)' }}
+          />
+        ) : artworkUrl ? (
           <Image
             src={artworkUrl} alt="" fill unoptimized
-            className="object-cover"
-            style={{ filter: 'blur(16px) saturate(1.6) brightness(0.5)' }}
+            className="object-cover share-drift"
+            style={{ filter: 'blur(18px) saturate(1.6) brightness(0.5)' }}
           />
         ) : (
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 share-drift"
             style={{ background: accentCss, filter: 'blur(60px) brightness(0.25)' }}
           />
         )}
-        {/* Vignette */}
+        {/* Vignette + an accent wash that brightens with the music */}
         <div className="absolute inset-0" style={{
           background: `
-            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,0.45) 60%, rgba(0,0,0,0.85) 100%),
-            radial-gradient(ellipse 80% 60% at 50% 50%, rgba(${accent[0]},${accent[1]},${accent[2]},0.15) 0%, transparent 70%)
+            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,${hasLoop ? 0.35 : 0.45}) 60%, rgba(0,0,0,${hasLoop ? 0.8 : 0.85}) 100%),
+            radial-gradient(ellipse 80% 60% at 50% 50%, ${accentA(0.18)} 0%, transparent 70%)
           `,
+        }} />
+        <div className="absolute inset-0" style={{
+          background: `radial-gradient(ellipse 60% 50% at 50% 55%, ${accentA(0.35)} 0%, transparent 70%)`,
+          opacity: 'calc(var(--energy) * 0.9)',
         }} />
       </div>
 
       {/* ── Main player ── */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-12 gap-8">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-10 gap-7">
 
-        {/* Artwork */}
+        {/* Artwork — breathes with the music */}
         <div
-          className="relative w-56 h-56 sm:w-72 sm:h-72 rounded-2xl overflow-hidden flex-shrink-0"
-          style={{ boxShadow: `0 32px 80px rgba(${accent[0]},${accent[1]},${accent[2]},0.45), 0 8px 32px rgba(0,0,0,0.7)` }}
+          className={`share-in relative ${coverSize} rounded-2xl overflow-hidden flex-shrink-0`}
+          style={{
+            animationDelay: '80ms',
+            boxShadow: `0 32px 80px ${accentA(0.45)}, 0 8px 32px rgba(0,0,0,0.7)`,
+          }}
         >
-          {artworkUrl ? (
-            <Image src={artworkUrl} alt={title} fill className="object-cover" unoptimized />
-          ) : (
-            <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-              <CassetteIcon size={64} className="text-[#333]" />
-            </div>
-          )}
-          {/* Project visualizer — loops over the artwork while the track plays
-              (artwork stays underneath as the instant frame while the video loads) */}
-          {visualizerUrl && (
-            <video
-              ref={vizVideoRef}
-              src={visualizerUrl}
-              loop
-              muted
-              playsInline
-              preload="auto"
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          )}
+          <div
+            className="absolute inset-0"
+            style={{ transform: 'scale(calc(1 + var(--energy) * 0.035))', transition: 'transform 90ms linear' }}
+          >
+            {artworkUrl ? (
+              <Image src={artworkUrl} alt={title} fill className="object-cover" unoptimized priority />
+            ) : (
+              <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
+                <CassetteIcon size={64} className="text-[#333]" />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Title + meta */}
-        <div className="text-center">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight">{title}</h1>
-          <p className="text-sm text-white/40 mt-1.5">
+        {/* Title + meta — the artist's own handwriting when there is one */}
+        <div className="share-in text-center" style={{ animationDelay: '260ms' }}>
+          {letteringUrl ? (
+            <>
+              <div className="relative mx-auto h-16 sm:h-24 w-[min(84vw,620px)]">
+                <Image
+                  src={letteringUrl} alt={title} fill unoptimized
+                  className="object-contain"
+                  style={{ filter: 'drop-shadow(0 2px 12px rgba(0,0,0,0.6))' }}
+                />
+              </div>
+              <h1 className="sr-only">{title}</h1>
+            </>
+          ) : (
+            <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight" style={{ textShadow: '0 2px 18px rgba(0,0,0,0.6)' }}>{title}</h1>
+          )}
+          <p className="text-sm text-white/45 mt-2">
+            <span className="text-white/70">{artistName}</span>
+            <span className="mx-2 text-white/25">·</span>
             {versionDisplayLabel(version)}
             {version.status && (
               <span className="ml-2 text-white/25">· {version.status}</span>
@@ -264,36 +397,57 @@ export default function ShareClient({ version, artistName }: Props) {
         </div>
 
         {/* Controls */}
-        <div className="w-full max-w-xs space-y-5">
-          {/* Progress bar */}
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
-              {formatDuration(Math.floor(currentTime))}
-            </span>
-            <div className="flex-1 relative h-1.5 rounded-full bg-white/15 overflow-hidden">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${pct}%`, background: accentCss }}
-              />
-              <input
-                type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                onChange={seek}
-                className="absolute inset-0 w-full opacity-0 cursor-pointer"
-              />
+        <div className="share-in w-full max-w-md space-y-5" style={{ animationDelay: '420ms' }}>
+          {/* Waveform */}
+          <div className="relative">
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
+                {formatDuration(Math.floor(currentTime))}
+              </span>
+              <div className="flex-1 h-14">
+                {peaks === null ? (
+                  <div className="h-full flex items-center">
+                    <div className="share-shimmer h-1.5 w-full rounded-full" />
+                  </div>
+                ) : (
+                  <ShareWaveform
+                    peaks={peaks}
+                    progress={pct}
+                    accent={accent}
+                    onSeek={seekTo}
+                    onSeekEnd={offerNote}
+                    className="h-full w-full"
+                  />
+                )}
+              </div>
+              <span className="text-[11px] font-mono text-white/30 tabular-nums w-10 shrink-0">
+                {duration > 0 ? `−${formatDuration(Math.max(0, Math.floor(duration - currentTime)))}` : '--:--'}
+              </span>
             </div>
-            <span className="text-[11px] font-mono text-white/30 tabular-nums w-10 shrink-0">
-              {duration > 0 ? `−${formatDuration(Math.max(0, Math.floor(duration - currentTime)))}` : '--:--'}
-            </span>
+            {/* Offered after a seek: pin a note to that moment */}
+            {notePrompt != null && !showFeedback && (
+              <div className="absolute left-0 right-0 -bottom-7 flex justify-center">
+                <button
+                  onClick={() => openNote(notePrompt)}
+                  className="share-in inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium text-black"
+                  style={{ background: accentCss, animationDuration: '0.35s' }}
+                >
+                  <PenLine size={11} />
+                  Note at {formatDuration(notePrompt)}
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Play / Pause */}
-          <div className="flex justify-center">
+          {/* Play / Pause — the glow swells with the music */}
+          <div className="flex justify-center pt-2">
             <button
               onClick={togglePlay}
-              className="w-20 h-20 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
               style={{
-                background: `linear-gradient(180deg, ${accentCss}, rgba(${accent[0]},${accent[1]},${accent[2]},0.7))`,
-                boxShadow: `0 0 40px rgba(${accent[0]},${accent[1]},${accent[2]},0.55), inset 0 1px 0 rgba(255,255,255,0.2)`,
+                background: `linear-gradient(180deg, ${accentCss}, ${accentA(0.7)})`,
+                boxShadow: `0 0 calc(40px + var(--energy) * 50px) ${accentA(0.55)}, 0 0 calc(var(--energy) * 120px) ${accentA(0.35)}, inset 0 1px 0 rgba(255,255,255,0.2)`,
               }}
             >
               {isPlaying
@@ -319,11 +473,53 @@ export default function ShareClient({ version, artistName }: Props) {
           )}
         </div>
 
+        {/* When the song ends: one tap says what you thought */}
+        {ended && (
+          <div
+            className="share-in w-full max-w-xs rounded-2xl p-5 border border-white/10 text-center"
+            style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)', animationDuration: '0.5s' }}
+          >
+            {reactionSent ? (
+              <>
+                <p className="text-sm text-white">Sent to {artistName}. Thank you.</p>
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  <button onClick={() => openNote(null)} className="text-xs text-white/60 hover:text-white underline-offset-4 hover:underline">Add a note</button>
+                  <span className="text-white/20">·</span>
+                  <button onClick={playAgain} className="inline-flex items-center gap-1 text-xs text-white/60 hover:text-white"><RotateCcw size={12} /> Play again</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] text-white/40 uppercase tracking-wider">That was {title}</p>
+                <p className="text-sm text-white mt-1">What did you think?</p>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  {REACTIONS.map(r => (
+                    <button
+                      key={r.label}
+                      onClick={() => sendReaction(r)}
+                      disabled={reactionBusy}
+                      className="rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 active:scale-95 transition py-3 flex flex-col items-center gap-1 disabled:opacity-50"
+                    >
+                      <span className="text-2xl leading-none">{r.emoji}</span>
+                      <span className="text-[11px] text-white/70">{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-3">
+                  <button onClick={() => openNote(null)} className="text-xs text-white/60 hover:text-white underline-offset-4 hover:underline">Tell them more</button>
+                  <span className="text-white/20">·</span>
+                  <button onClick={playAgain} className="inline-flex items-center gap-1 text-xs text-white/60 hover:text-white"><RotateCcw size={12} /> Play again</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Public notes from artist */}
         {version.public_notes && (
           <div
-            className="w-full max-w-xs rounded-2xl p-5 border border-white/10"
-            style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(12px)' }}
+            className="share-in w-full max-w-xs rounded-2xl p-5 border border-white/10"
+            style={{ animationDelay: '560ms', background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(12px)' }}
           >
             <p className="text-[10px] text-white/35 uppercase tracking-wider mb-2">From the artist</p>
             <p className="text-sm text-white/65 leading-relaxed">{version.public_notes}</p>
@@ -333,8 +529,9 @@ export default function ShareClient({ version, artistName }: Props) {
 
       {/* ── Feedback drawer ── */}
       <div
-        className="relative z-10 flex-shrink-0 border-t border-white/10"
-        style={{ background: 'rgba(6,4,16,0.88)', backdropFilter: 'blur(24px)' }}
+        ref={drawerRef}
+        className="share-in relative z-10 flex-shrink-0 border-t border-white/10"
+        style={{ animationDelay: '700ms', background: 'rgba(6,4,16,0.88)', backdropFilter: 'blur(24px)' }}
       >
         <button
           onClick={() => setShowFeedback(v => !v)}
@@ -350,7 +547,7 @@ export default function ShareClient({ version, artistName }: Props) {
         </button>
         {showFeedback && (
           <div className="px-6 pb-8 max-w-lg mx-auto w-full">
-            <FeedbackForm versionId={version.id} currentTime={currentTime} />
+            <FeedbackForm key={formKey} versionId={version.id} currentTime={currentTime} initialPinnedAt={noteAt ?? undefined} />
           </div>
         )}
       </div>
