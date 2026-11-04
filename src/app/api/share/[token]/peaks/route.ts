@@ -4,12 +4,14 @@ import { createWriteStream } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import { supabaseAdmin } from '@/lib/supabase'
 import { rateLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { ensureVersionWaveformPeaksColumn, isMissingWaveformPeaksColumn } from '@/lib/schema-heal'
+import { resolveShareTarget, SHARE_TOKEN_RE } from '@/lib/share-target'
+import { isUuid } from '@/lib/validators'
 import { BARS, isPeakList, peaksFromPcm16 } from '@/lib/waveform-peaks'
 import { armDeadline } from '@/lib/proc-deadline.ts'
 
@@ -32,15 +34,15 @@ import { armDeadline } from '@/lib/proc-deadline.ts'
 // design, exactly like finalize-video's jobs: the next request simply starts
 // it again.
 //
-// Mirrors the token forms the single-track page serves (project-level → latest
-// mix; legacy version-level → that row). Never the album form — the album
-// player has no waveform.
+// Which mix a token names is decided by src/lib/share-target.ts, shared with
+// the duration and feedback routes: a project token → its latest mix, a legacy
+// version token → that row, an album token → the newest mix of the track the
+// caller names with ?project=<id>, checked against the collection's own items.
 
 export const dynamic = 'force-dynamic'
 
 const FFMPEG = ffmpegInstaller.path
 const PCM_RATE = 4000             // Hz — 200 bars of a 10-minute song need nothing finer
-const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/
 const RESPOND_WITHIN_MS = 20_000  // past this, answer 202 and keep decoding
 const DECODE_DEADLINE_MS = 10 * 60_000
 const DECODE_IDLE_MS = 60_000
@@ -74,13 +76,12 @@ async function selectVersion(run: (cols: string) => PromiseLike<RowResult>): Pro
   return null
 }
 
-async function resolveTarget(token: string): Promise<Target | null> {
-  const { data: project } = await supabaseAdmin.from('mb_projects').select('id').eq('share_token', token).maybeSingle()
-  if (project) {
-    return selectVersion(cols => supabaseAdmin.from('mb_versions').select(cols)
-      .eq('project_id', project.id as string).order('version_number', { ascending: false }).limit(1).maybeSingle())
-  }
-  return selectVersion(cols => supabaseAdmin.from('mb_versions').select(cols).eq('share_token', token).maybeSingle())
+async function resolveTarget(token: string, wantProjectId: string | null): Promise<Target | null> {
+  const target = await resolveShareTarget(token, wantProjectId)
+  if (!target) return null
+  // A project id in the query may only NARROW what the token resolved to.
+  if (wantProjectId && wantProjectId !== target.projectId) return null
+  return selectVersion(cols => supabaseAdmin.from('mb_versions').select(cols).eq('id', target.versionId).maybeSingle())
 }
 
 // ── Decode ───────────────────────────────────────────────────────────────────
@@ -97,9 +98,14 @@ async function download(url: string, dest: string): Promise<void> {
   try {
     const res = await fetch(url, { signal: controller.signal })
     if (!res.ok || !res.body) throw new Error(`Download failed (${res.status})`)
-    const source = Readable.fromWeb(res.body as import('node:stream/web').ReadableStream)
-    source.on('data', bump)
-    await pipeline(source, createWriteStream(dest))
+    // The heartbeat lives INSIDE the pipeline (same shape as video-render.ts):
+    // a bare 'data' listener would flip the stream into flowing mode ahead of
+    // the write stream; a pass-through transform sees every chunk without
+    // touching flow control.
+    const heartbeat = new Transform({
+      transform(chunk, _enc, cb) { bump(); cb(null, chunk) },
+    })
+    await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), heartbeat, createWriteStream(dest))
   } finally {
     clearTimeout(timer)
   }
@@ -188,9 +194,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
   }
 
   const { token } = await ctx.params
-  if (!TOKEN_RE.test(token)) return NextResponse.json({ error: 'Not found' }, { status: 404, headers: CACHE_NO })
+  if (!SHARE_TOKEN_RE.test(token)) return NextResponse.json({ error: 'Not found' }, { status: 404, headers: CACHE_NO })
+  // The album page names its track; a malformed id is refused before any lookup.
+  const wantProject = request.nextUrl.searchParams.get('project')
+  if (wantProject != null && !isUuid(wantProject)) return NextResponse.json({ error: 'Invalid project' }, { status: 400, headers: CACHE_NO })
 
-  const target = await resolveTarget(token)
+  const target = await resolveTarget(token, wantProject)
   if (!target) return NextResponse.json({ error: 'Not found' }, { status: 404, headers: CACHE_NO })
 
   if (target.peaks) return NextResponse.json({ peaks: target.peaks, bars: target.peaks.length }, { headers: CACHE_OK })

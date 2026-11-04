@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTrackShareData, shareCoverUrl, shareTitle } from '@/lib/track-share'
+import { getAlbumShareData } from '@/lib/album-share'
 import { renderShareCard } from '@/lib/share-card'
 import { versionDisplayLabel } from '@/lib/mix-status'
 import { rateLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
@@ -45,15 +46,26 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
   const { token } = await ctx.params
   if (!TOKEN_RE.test(token)) return new NextResponse(null, { status: 404 })
 
-  const data = await getTrackShareData(token)
-  if (!data) return new NextResponse(null, { status: 404 })
+  // A song, or — the same token space — an album/collection.
+  let card: { title: string; artist: string; label: string | null; coverUrl: string | null } | null = null
+  const track = await getTrackShareData(token)
+  if (track) {
+    card = { title: shareTitle(track), artist: track.artistName, label: versionDisplayLabel(track.version), coverUrl: shareCoverUrl(track) }
+  } else {
+    const album = await getAlbumShareData(token)
+    if (album) {
+      const n = album.tracks.length
+      card = { title: album.title, artist: album.artistName, label: `${album.typeLabel} · ${n} ${n === 1 ? 'track' : 'tracks'}`, coverUrl: album.coverUrl }
+    }
+  }
+  if (!card) return new NextResponse(null, { status: 404 })
 
-  const cover = await fetchCover(shareCoverUrl(data))
+  const cover = await fetchCover(card.coverUrl)
   try {
     const png = await renderShareCard({
-      title: shareTitle(data),
-      artist: data.artistName,
-      label: versionDisplayLabel(data.version),
+      title: card.title,
+      artist: card.artist,
+      label: card.label,
       cover,
     })
     return new NextResponse(new Uint8Array(png), {

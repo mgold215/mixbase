@@ -13,6 +13,7 @@ import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coord
 import { audioDownloadFileName } from '@/lib/download'
 import FeedbackForm from '@/components/FeedbackForm'
 import ShareWaveform from '@/components/ShareWaveform'
+import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
 
 // The public share page renders ONLY these version fields. The loader
 // (src/lib/track-share.ts) selects exactly this set and deliberately omits
@@ -74,12 +75,13 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
   const [reactionSent, setReactionSent] = useState<string | null>(null)
   const [reactionBusy, setReactionBusy] = useState(false)
   // Waveform: null = loading, [] = unavailable (plain bars), else the peaks.
-  const [peaks, setPeaks] = useState<number[] | null>(null)
+  // Without a token there is nothing to fetch, so it starts as plain bars.
+  const [peaks, setPeaks] = useState<number[] | null>(() => (shareToken ? null : []))
   // "Note at 1:32" — offered after a seek; the time the note would pin to.
   const [notePrompt, setNotePrompt] = useState<number | null>(null)
   const [noteAt, setNoteAt] = useState<number | null>(null)
   const [formKey, setFormKey] = useState(0)
-  const [portrait, setPortrait] = useState(true)
+  const portrait = usePortrait()
 
   const project = version.mb_projects
   const artworkUrl: string | null = displayArtworkUrl(project ?? {})
@@ -101,15 +103,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
   const downloadHref = `${audioUrl}?download=1&filename=${encodeURIComponent(downloadName)}`
   const downloadLabel = downloadName.split('.').pop()!.toUpperCase()
 
-  // Which loop fits the screen.
-  useEffect(() => {
-    const mq = window.matchMedia('(orientation: portrait)')
-    const apply = () => setPortrait(mq.matches)
-    apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [])
-
   // The muted loop is ambient: it runs from the moment the page opens (muted
   // autoplay is allowed with playsInline) and is nudged again whenever the
   // track starts, for browsers that blocked the autoplay. play() can reject;
@@ -129,118 +122,21 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
 
   // ── Waveform peaks ─────────────────────────────────────────────────────────
   // The server decodes the mix once and keeps the peaks on the row; a long mix
-  // answers 202 while it is still decoding, so poll gently for a couple of
-  // minutes, then give up to plain bars (the scrubber works either way).
+  // answers 202 while it is still decoding and fetchPeaks polls for it.
   useEffect(() => {
-    if (!shareToken) { setPeaks([]); return }
+    if (!shareToken) return
     const controller = new AbortController()
-    let attempts = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/share/${encodeURIComponent(shareToken)}/peaks`, { signal: controller.signal })
-        if (res.status === 202 && attempts++ < 15) { timer = setTimeout(load, 8000); return }
-        if (!res.ok) { setPeaks([]); return }
-        const data = await res.json().catch(() => null) as { peaks?: unknown } | null
-        setPeaks(Array.isArray(data?.peaks) && data.peaks.length > 0 ? (data.peaks as number[]) : [])
-      } catch {
-        if (!controller.signal.aborted) setPeaks([])
-      }
-    }
-    load()
-    return () => { controller.abort(); clearTimeout(timer) }
+    fetchPeaks(`/api/share/${encodeURIComponent(shareToken)}/peaks`, controller.signal)
+      .then(p => { if (!controller.signal.aborted) setPeaks(p) })
+    return () => controller.abort()
   }, [shareToken])
 
-  // ── Audio-reactive glow ────────────────────────────────────────────────────
-  // An AnalyserNode on the same-origin audio proxy feeds one CSS variable,
-  // --energy (0–1), that the play button's glow and the cover's scale read.
-  // The context is created inside the first play tap (autoplay policy) and
-  // resumed on every play. If anything here fails the element plays as it
-  // always did — the analyser is decoration, never the audio path.
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const rafRef = useRef<number | null>(null)
-  const energyRef = useRef(0)
-
-  const ensureAnalyser = useCallback(() => {
-    const audio = audioRef.current
-    if (!audio || audioCtxRef.current) return
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctx) return
-    let ctx: AudioContext | null = null
-    let source: MediaElementAudioSourceNode | null = null
-    try {
-      ctx = new Ctx()
-      source = ctx.createMediaElementSource(audio)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.82
-      source.connect(analyser)
-      analyser.connect(ctx.destination)
-      audioCtxRef.current = ctx
-      analyserRef.current = analyser
-    } catch {
-      // Once an element is wired into a context it only sounds through it —
-      // if the analyser failed after that point, keep the audio audible.
-      try { if (ctx && source) source.connect(ctx.destination) } catch { /* nothing more to do */ }
-      if (ctx) audioCtxRef.current = ctx
-    }
-  }, [])
-
-  useEffect(() => {
-    const root = rootRef.current
-    const analyser = analyserRef.current
-    if (!root) return
-    const setEnergy = (e: number) => root.style.setProperty('--energy', e.toFixed(3))
-    if (!isPlaying || !analyser) {
-      // Ease the glow back down rather than snapping it off.
-      const decay = () => {
-        energyRef.current *= 0.85
-        setEnergy(energyRef.current)
-        if (energyRef.current > 0.01) rafRef.current = requestAnimationFrame(decay)
-      }
-      rafRef.current = requestAnimationFrame(decay)
-      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-    }
-    const bins = new Uint8Array(analyser.frequencyBinCount)
-    const tick = () => {
-      analyser.getByteFrequencyData(bins)
-      // Low/mid bins carry the beat; the top of the spectrum is mostly hiss.
-      let sum = 0
-      const n = Math.min(40, bins.length)
-      for (let i = 0; i < n; i++) sum += bins[i]
-      const raw = Math.min(1, (sum / n / 255) * 1.35)
-      energyRef.current += (raw - energyRef.current) * 0.25
-      setEnergy(energyRef.current)
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [isPlaying])
-
-  // ── Parallax ───────────────────────────────────────────────────────────────
-  // Desktop only (a fine pointer): the backdrop follows the mouse by a few
-  // pixels. Phones keep the slow drift alone — tilt would need a permission
-  // prompt on iOS, which is not worth it for a page you open from a text.
-  useEffect(() => {
-    if (!window.matchMedia('(pointer: fine)').matches) return
-    const root = rootRef.current
-    const bg = backdropRef.current
-    if (!root || !bg) return
-    let frame: number | null = null
-    const onMove = (e: PointerEvent) => {
-      if (frame) return
-      frame = requestAnimationFrame(() => {
-        frame = null
-        const r = root.getBoundingClientRect()
-        const dx = ((e.clientX - r.left) / r.width - 0.5) * -16
-        const dy = ((e.clientY - r.top) / r.height - 0.5) * -12
-        bg.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`
-      })
-    }
-    root.addEventListener('pointermove', onMove)
-    return () => { root.removeEventListener('pointermove', onMove); if (frame) cancelAnimationFrame(frame) }
-  }, [])
+  // ── Alive: glow with the music, backdrop follows the mouse ─────────────────
+  // Shared with the album player (src/lib/share-fx.ts). pct is computed below;
+  // the hook reads it through a ref so the order here does not matter.
+  const pct = duration > 0 ? currentTime / duration : 0
+  const { ensureAnalyser } = useAudioEnergy({ audioRef, rootRef, isPlaying, peaks, progress: pct })
+  useParallax(rootRef, backdropRef)
 
   // ── Self-healing duration backfill (public half) ───────────────────────────
   // 145 of 364 mb_versions rows have duration_seconds NULL. The signed-in
@@ -299,9 +195,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
       setIsPlaying(true)
       setEnded(false)
       announcePlay('share-player')
-      // A lock-screen or headset play lands here without a tap — wake the
-      // analyser's context too, or the element it is wired through stays mute.
-      audioCtxRef.current?.resume().catch(() => {})
     }
     const onPause = () => { setIsPlaying(false); announceStop('share-player') }
     const onEnded = () => { setIsPlaying(false); setEnded(true); announceStop('share-player') }
@@ -339,7 +232,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
     } else {
       ensureAnalyser()
-      audioCtxRef.current?.resume().catch(() => {})
       applyMediaSession(title, artworkUrl, true, artistName)
       audio.play().catch(() => {})
     }
@@ -377,7 +269,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
     if (!audio) return
     audio.currentTime = 0
     setEnded(false)
-    audioCtxRef.current?.resume().catch(() => {})
     audio.play().catch(() => {})
   }, [])
 
@@ -395,7 +286,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
     setReactionBusy(false)
   }, [reactionBusy, reactionSent, version.id])
 
-  const pct = duration > 0 ? currentTime / duration : 0
   const hasLoop = !!loopUrl
   // The cover steps back a little when a loop fills the screen behind it.
   const coverSize = hasLoop ? 'w-44 h-44 sm:w-60 sm:h-60' : 'w-56 h-56 sm:w-72 sm:h-72'

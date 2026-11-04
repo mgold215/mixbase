@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react'
+import React, { useEffect, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react'
 import { resamplePeaks } from '@/lib/waveform-peaks'
 
 // The share page's waveform: real peaks from GET /api/share/<token>/peaks,
@@ -98,12 +98,25 @@ export default function ShareWaveform({ peaks, progress, accent, onSeek, onSeekE
     dragging.current = false
     onSeekEnd?.(lastFraction.current)
   }
+  // Keyboard: arrows nudge by 2%, Home/End jump. The slider role promises this.
+  const onKey = (e: React.KeyboardEvent) => {
+    let f: number | null = null
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') f = Math.min(1, progress + 0.02)
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') f = Math.max(0, progress - 0.02)
+    else if (e.key === 'Home') f = 0
+    else if (e.key === 'End') f = 1
+    if (f === null) return
+    e.preventDefault()
+    onSeek(f)
+    onSeekEnd?.(f)
+  }
 
   return (
     <div
       ref={wrapRef}
       className={`relative select-none touch-none cursor-pointer ${className ?? ''}`}
       role="slider"
+      tabIndex={0}
       aria-label="Seek"
       aria-valuemin={0}
       aria-valuemax={100}
@@ -112,6 +125,7 @@ export default function ShareWaveform({ peaks, progress, accent, onSeek, onSeekE
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
+      onKeyDown={onKey}
     >
       <canvas ref={canvasRef} className="block w-full h-full" />
     </div>

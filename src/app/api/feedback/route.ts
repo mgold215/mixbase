@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
 import { versionDisplayLabel } from '@/lib/mix-status'
+import { resolveShareTarget } from '@/lib/share-target'
 
 // Caps for the two free-text fields on this PUBLIC, unauthenticated route.
 // Both are stored in unbounded `text` columns, and `reviewer_name` is also
@@ -22,13 +23,22 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  const { version_id, reviewer_name, rating, comment, timestamp_seconds } = body
+  const { version_id, reviewer_name, rating, comment, timestamp_seconds, share_token, project_id } = body
 
   // Public route — `comment` may be any JSON type. `comment?.trim()` only guards
   // null/undefined, so a number or array reached `.trim` as undefined and threw
   // an uncaught TypeError (500) on an unauthenticated endpoint.
   const commentText = typeof comment === 'string' ? comment.trim() : ''
-  if (!version_id || !commentText) {
+  // The target is named one of two ways:
+  //   · version_id                — the single-track share page, which has it;
+  //   · share_token + project_id  — the album share page, whose payload carries
+  //     no version ids at all (deliberately). The token is the capability and
+  //     the project id can only narrow it: src/lib/share-target.ts resolves the
+  //     pair to the newest mix of that track, and refuses a project the
+  //     collection does not contain.
+  const namesVersion = version_id != null
+  const namesShare = !namesVersion && typeof share_token === 'string' && typeof project_id === 'string'
+  if ((!namesVersion && !namesShare) || !commentText) {
     return NextResponse.json({ error: 'version_id and comment are required' }, { status: 400 })
   }
   if (commentText.length > MAX_COMMENT_LENGTH) {
@@ -37,8 +47,11 @@ export async function POST(request: NextRequest) {
 
   // Public endpoint — validate the id shape before it reaches a DB insert/lookup so a
   // malformed value can't surface a raw Postgres error message to an anonymous caller.
-  if (!isUuid(version_id)) {
+  if (namesVersion && !isUuid(version_id)) {
     return NextResponse.json({ error: 'Valid version_id is required' }, { status: 400 })
+  }
+  if (namesShare && !isUuid(project_id)) {
+    return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   }
 
   // Rating is optional, but if present it must be a whole number 1–5 — the UI
@@ -72,10 +85,21 @@ export async function POST(request: NextRequest) {
   const rawName = typeof reviewer_name === 'string' ? reviewer_name.trim() : ''
   const safeName = (rawName || 'Anonymous').slice(0, MAX_REVIEWER_NAME_LENGTH)
 
+  let versionId: string = version_id
+  if (namesShare) {
+    const target = await resolveShareTarget(share_token, project_id)
+    // A token that is unknown, or that does not cover this project, reads the
+    // same as a share that does not exist.
+    if (!target || target.projectId !== project_id) {
+      return NextResponse.json({ error: 'Share not found' }, { status: 404 })
+    }
+    versionId = target.versionId
+  }
+
   const { data, error } = await supabaseAdmin
     .from('mb_feedback')
     .insert({
-      version_id,
+      version_id: versionId,
       reviewer_name: safeName,
       rating: hasRating ? rating : null,
       comment: commentText,
@@ -90,7 +114,7 @@ export async function POST(request: NextRequest) {
   const { data: version } = await supabaseAdmin
     .from('mb_versions')
     .select('project_id, version_number, label, audio_filename, status, mb_projects!inner(user_id)')
-    .eq('id', version_id)
+    .eq('id', versionId)
     .single()
 
   if (version) {
@@ -101,7 +125,7 @@ export async function POST(request: NextRequest) {
     await supabaseAdmin.from('mb_activity').insert({
       type: 'feedback_received',
       project_id: version.project_id,
-      version_id,
+      version_id: versionId,
       user_id: projectUserId,
       description: `Feedback from ${safeName} on ${versionDisplayLabel(version)}`,
     })

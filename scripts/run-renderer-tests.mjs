@@ -63,6 +63,7 @@ const SUITES = [
   'share-projection-test.mjs',
   'waveform-peaks-test.mjs',
   'share-url-test.mjs',
+  'share-target-test.mjs',
   'download-default-test.mjs',
   'public-input-caps-test.mjs',
   'mix-notes-test.mjs',

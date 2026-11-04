@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { rateLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
+import { resolveShareTarget, SHARE_TOKEN_RE } from '@/lib/share-target'
 
 // POST /api/share/[token]/duration — the PUBLIC half of the self-healing
 // duration backfill.
@@ -107,90 +108,13 @@ function parseHealSeconds(raw: unknown): number | null {
   return seconds
 }
 
-// Every share token in production is 32 lowercase hex characters
-// (`replace(gen_random_uuid()::text, '-', '')` — verified across mb_projects,
-// mb_versions and mb_collections, 458/458 rows). This check is deliberately
-// looser than that exact shape: hard-coding `^[0-9a-f]{32}$` would silently
-// stop healing the day the generator changes, and the value is a parameterised
-// query argument either way. The point is only to keep obvious junk out of
-// three DB round trips.
-const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/
-
-/** The version a token exposes, plus the project it belongs to. */
-type ShareTarget = { versionId: string; projectId: string }
-
-/** Newest mix of a project — the one, and only one, that both public players
- *  actually load. `share/[token]/page.tsx` and `src/lib/album-share.ts` both
- *  resolve "latest" exactly this way; mirroring it is what keeps this route
- *  from granting a version the token does not expose. */
-async function latestVersionOf(projectId: string): Promise<ShareTarget | null> {
-  const { data } = await supabaseAdmin
-    .from('mb_versions')
-    .select('id, project_id')
-    .eq('project_id', projectId)
-    .order('version_number', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  return data ? { versionId: data.id as string, projectId: data.project_id as string } : null
-}
-
-/**
- * Resolve a share token to the single version it authorises a write to.
- *
- * Mirrors the three token forms the app actually serves:
- *   1. PROJECT-level  (mb_projects.share_token)    → /share/<token>, latest mix
- *   2. VERSION-level  (mb_versions.share_token)    → /share/<token>, legacy links
- *   3. COLLECTION     (mb_collections.share_token) → /album/<artist>/<title>/<token>
- *
- * Form 2 is what makes this feature able to reach ARCHIVED mixes at all: a
- * project link only ever plays the newest version, so without it the older
- * rows — the bulk of the NULLs — are structurally unreachable.
- *
- * `wantProjectId` is required for form 3 and ignored by the others: an album
- * has many tracks, so the caller must say which one, and that claim is checked
- * against the collection's own item list before it means anything.
- */
-async function resolveShareTarget(token: string, wantProjectId: string | null): Promise<ShareTarget | null> {
-  // 1. Project-level token.
-  const { data: project } = await supabaseAdmin
-    .from('mb_projects')
-    .select('id')
-    .eq('share_token', token)
-    .maybeSingle()
-  if (project) return latestVersionOf(project.id as string)
-
-  // 2. Legacy version-level token — the token IS the row.
-  const { data: version } = await supabaseAdmin
-    .from('mb_versions')
-    .select('id, project_id')
-    .eq('share_token', token)
-    .maybeSingle()
-  if (version) return { versionId: version.id as string, projectId: version.project_id as string }
-
-  // 3. Collection/album token. An error here (e.g. a deploy that raced
-  // migration 019 and has no share_token column yet) is treated as "no match":
-  // this route is advisory, so it declines to heal rather than reaching for a
-  // schema self-heal from an unauthenticated write path.
-  const { data: collection } = await supabaseAdmin
-    .from('mb_collections')
-    .select('id')
-    .eq('share_token', token)
-    .maybeSingle()
-  if (!collection) return null
-  if (!wantProjectId) return null
-
-  // The album token authorises exactly the collection's own tracks — never an
-  // arbitrary project id the caller attached to a valid token.
-  const { data: item } = await supabaseAdmin
-    .from('mb_collection_items')
-    .select('project_id')
-    .eq('collection_id', collection.id as string)
-    .eq('project_id', wantProjectId)
-    .maybeSingle()
-  if (!item) return null
-
-  return latestVersionOf(wantProjectId)
-}
+// Token shape + resolution live in src/lib/share-target.ts, shared with the
+// waveform route and the album page's feedback: one definition of what a
+// token exposes, so no public door can grant a row another would refuse.
+// This route keeps the PROPERTIES that make the write safe (write-once on the
+// UPDATE itself, body ids only narrow, the response is independent of
+// database state) — see the notes above and the checks in
+// scripts/share-duration-heal-test.mjs.
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const limit = shareDurationLimiter.check(ipKey(request))
@@ -233,7 +157,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ token:
   const accepted = NextResponse.json({ ok: true }, { status: 202 })
 
   const { token } = await ctx.params
-  if (!TOKEN_RE.test(token)) return accepted
+  if (!SHARE_TOKEN_RE.test(token)) return accepted
 
   const target = await resolveShareTarget(token, wantProjectId)
   if (!target) return accepted
