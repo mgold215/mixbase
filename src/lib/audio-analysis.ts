@@ -107,7 +107,46 @@ export function detectBPM(audioBuffer: AudioBuffer): number {
   for (let l = l0; l <= l1; l++) { wSum += corr[l]; lagSum += corr[l] * l }
   const fracLag = wSum > 0 ? lagSum / wSum : bestLag
 
-  return Math.round(60_000 / (fracLag * 10))
+  return Math.round(refineTempo(flux, start, span, 6000 / fracLag))
+}
+
+// Fine tempo refinement. The coarse estimate above reads ONE beat period off a
+// 10 ms grid, where one frame is ~2.4 BPM at 120 — centroid interpolation
+// narrows that but is biased by the correlation floor, so it routinely landed
+// 1–2 BPM off (120 → 122, 100 → 101, 150 → 153). Here the candidate tempo is
+// scored against the correlation at MANY beat multiples (up to ~16 beats):
+// an error of 1 BPM is a fraction of a frame after one beat but several frames
+// after sixteen, so the long lags pin the tempo to well under 0.5 BPM. Searched
+// ±4% around the coarse value in 0.02 BPM steps, so it never changes octave.
+function refineTempo(flux: Float32Array, start: number, span: number, coarse: number): number {
+  if (!Number.isFinite(coarse) || coarse <= 0) return 120
+  const maxLag = Math.min(1700, Math.floor(span / 2))
+  if (maxLag < 40) return coarse
+  // Autocorrelation at every integer lag, lightly smoothed so a beat whose
+  // energy falls across two frames still interpolates cleanly.
+  const raw = new Float64Array(maxLag + 2)
+  for (let lag = 1; lag <= maxLag + 1; lag++) {
+    let c = 0
+    for (let i = start; i < start + span - lag; i++) c += flux[i] * flux[i + lag]
+    raw[lag] = c / Math.max(1, span - lag)
+  }
+  const ac = new Float64Array(maxLag + 2)
+  for (let lag = 2; lag <= maxLag; lag++) ac[lag] = 0.25 * raw[lag - 1] + 0.5 * raw[lag] + 0.25 * raw[lag + 1]
+  const at = (x: number) => {
+    const i = Math.floor(x), f = x - i
+    return ac[i] * (1 - f) + ac[i + 1] * f
+  }
+  let best = coarse, bestScore = -Infinity
+  for (let bpm = coarse * 0.96; bpm <= coarse * 1.04; bpm += 0.02) {
+    const period = 6000 / bpm // frames per beat at 100 fps
+    const beats = Math.min(16, Math.floor(maxLag / period))
+    if (beats < 1) continue
+    let s = 0
+    for (let k = 1; k <= beats; k++) s += at(k * period)
+    s /= beats
+    if (s > bestScore) { bestScore = s; best = bpm }
+  }
+  return best
 }
 
 // ─── Key Detection ─────────────────────────────────────────────────────────────

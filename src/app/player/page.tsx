@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useRef, useState, useCallback, useMemo, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import React, { Suspense, useEffect, useRef, useState, useCallback, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -16,6 +16,8 @@ import { analyzeAudioUrl, extractDominantColor } from '@/lib/audio-analysis'
 import { copyToClipboard } from '@/lib/clipboard'
 import Nav from '@/components/Nav'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
+import { resamplePeaks } from '@/lib/waveform-peaks'
 
 type SortKey = 'title' | 'date'
 
@@ -23,23 +25,8 @@ type SortKey = 'title' | 'date'
 // standalone green, so the full-screen player reads as the same product.
 const PLAYER_ACCENT = '#2dd4bf'
 const WAVEFORM_BARS = 100
-
-function generateWaveform(seed: string, count: number): number[] {
-  let h = seed.length > 0
-    ? seed.split('').reduce((a, c) => ((a * 31 + c.charCodeAt(0)) | 0), 0x811c9dc5)
-    : 0x811c9dc5
-  const raw = Array.from({ length: count }, (_, i) => {
-    h = ((h * 1664525 + 1013904223) >>> 0) ^ (i * 2654435761)
-    return (h >>> 0) / 0xffffffff
-  })
-  // 3-point smooth so adjacent bars don't spike wildly
-  return raw.map((v, i) => {
-    const p = i > 0 ? raw[i - 1] : v
-    const n = i < raw.length - 1 ? raw[i + 1] : v
-    const s = (p + v * 2 + n) / 4
-    return 0.08 + s * 0.65  // clamp to 8–73%, no bar reaches full height
-  })
-}
+// Resting height of a bar when the waveform is unavailable (plain, even bars).
+const FLAT_BAR = 0.4
 
 // m:ss for the quick-note stamp and list. formatDuration() renders 0 as
 // "--:--", but a note pinned at the very start of a mix is legitimate — the
@@ -124,9 +111,51 @@ function PlayerPage() {
   // Refs
   const analysisAbortRef = useRef<AbortController | null>(null)
   const vizVideoRef = useRef<HTMLVideoElement | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+
+  // ── The real waveform ──────────────────────────────────────────────────────
+  // The same peaks the share page draws: GET /api/share/<token>/peaks, which
+  // the owner's own share token addresses (one decode per mix, kept on the
+  // row). null = loading (shimmer), [] = unavailable (even bars). Cached per
+  // song for the life of the page so skipping back is instant.
+  const [peaks, setPeaks] = useState<number[] | null>(null)
+  const peaksCache = useRef<Map<string, number[]>>(new Map())
+  const portrait = usePortrait()
 
   // current = whatever the shared audio engine is playing right now
   const current = currentTrack
+  // The loop that fits the screen: the 9:16 Canvas on a phone, the 16:9 one
+  // on a laptop, either standing in for a missing other.
+  const loopUrl = current
+    ? (portrait ? (current.visualizer_url ?? current.visualizer_wide_url ?? null) : (current.visualizer_wide_url ?? current.visualizer_url ?? null))
+    : null
+
+  useEffect(() => {
+    const token = current?.share_token
+    const key = current?.project_id
+    if (!token || !key) { setPeaks([]); return }
+    const cached = peaksCache.current.get(key)
+    if (cached) { setPeaks(cached); return }
+    setPeaks(null)
+    const controller = new AbortController()
+    fetchPeaks(`/api/share/${encodeURIComponent(token)}/peaks`, controller.signal)
+      .then(p => {
+        if (controller.signal.aborted) return
+        if (p.length > 0) peaksCache.current.set(key, p)
+        setPeaks(p)
+      })
+    return () => controller.abort()
+  }, [current?.share_token, current?.project_id])
+
+  // ── Alive: the glow swells with the music, the backdrop follows the mouse ──
+  // The audio element here belongs to the app-wide PlayerContext and outlives
+  // this page, so it is never wired into an AudioContext; the energy comes
+  // from the waveform peaks at the playhead (the same source the share page
+  // uses on iOS). Shared hooks: src/lib/share-fx.ts.
+  const noAnalyserRef = useRef<HTMLAudioElement | null>(null)
+  useAudioEnergy({ audioRef: noAnalyserRef, rootRef, isPlaying, peaks, progress: duration > 0 ? currentTime / duration : 0 })
+  useParallax(rootRef, backdropRef)
 
   // ── Project visualizer (Spotify-Canvas style) ─────────────────────────────
   // Keep the muted video loop in step with the audio: canvas runs while the
@@ -137,7 +166,7 @@ function PlayerPage() {
     if (!v) return
     if (isPlaying) v.play().catch(() => {})
     else v.pause()
-  }, [isPlaying, current?.visualizer_url])
+  }, [isPlaying, loopUrl])
 
   // ── Sort + search (uses tracks from context) ──────────────────────────────
   useEffect(() => {
@@ -366,7 +395,13 @@ function PlayerPage() {
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
   const status = current ? statusTag(current.status) : null
-  const bars = useMemo(() => generateWaveform(current?.project_id ?? '', WAVEFORM_BARS), [current?.project_id])
+  // Bar heights 0–1 from the real peaks; null while they load; even bars when
+  // the mix could not be read.
+  const bars: number[] | null = peaks === null
+    ? null
+    : peaks.length > 0
+      ? resamplePeaks(peaks, WAVEFORM_BARS).map(v => 0.08 + (v / 100) * 0.9)
+      : new Array<number>(WAVEFORM_BARS).fill(FLAT_BAR)
 
   // ── Empty state ────────────────────────────────────────────────────────────────
   // Only when nothing is playing either. A feed track played via the URL queue
@@ -406,15 +441,20 @@ function PlayerPage() {
   return (
     <>
     <Nav />
-    <div className="fixed top-14 left-0 right-0 bg-black flex overflow-hidden select-none" style={{ bottom: 'var(--player-bottom, 0px)' }}>
+    <div
+      ref={rootRef}
+      className="fixed top-14 left-0 right-0 bg-black flex overflow-hidden select-none"
+      style={{ bottom: 'var(--player-bottom, 0px)', '--energy': 0 } as React.CSSProperties}
+    >
       {/* No local <audio> — playback runs through the shared PlayerContext element */}
 
-      {/* ── BIG album art backdrop (the whole screen) ─────────────────────────── */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {/* ── BIG album art backdrop (the whole screen) — drifts, follows the mouse ── */}
+      <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transition: 'transform 0.6s ease-out' }}>
         {current?.artwork_url && (
           <Image
+            key={current.artwork_url}
             src={current.artwork_url} alt="" fill unoptimized
-            className="object-cover transition-opacity duration-700"
+            className="object-cover share-drift transition-opacity duration-700"
             style={{ filter: 'blur(14px) saturate(1.5) brightness(0.6)' }}
           />
         )}
@@ -424,6 +464,11 @@ function PlayerPage() {
             radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,0.35) 60%, rgba(0,0,0,0.75) 100%),
             radial-gradient(ellipse 80% 60% at 50% 50%, rgba(${accent[0]},${accent[1]},${accent[2]},0.18) 0%, transparent 70%)
           `,
+        }} />
+        {/* An accent wash that brightens with the music */}
+        <div className="absolute inset-0" style={{
+          background: `radial-gradient(ellipse 70% 60% at 50% 60%, rgba(${accent[0]},${accent[1]},${accent[2]},0.3) 0%, transparent 70%)`,
+          opacity: 'calc(var(--energy) * 0.9)',
         }} />
       </div>
 
@@ -683,11 +728,11 @@ function PlayerPage() {
               {/* Project visualizer — loops over the artwork while the track plays
                   (artwork stays underneath as the instant frame while the video loads).
                   Keyed by URL so switching tracks swaps the element cleanly. */}
-              {current.visualizer_url && (
+              {loopUrl && (
                 <video
-                  key={current.visualizer_url}
+                  key={loopUrl}
                   ref={vizVideoRef}
-                  src={current.visualizer_url}
+                  src={loopUrl}
                   autoPlay
                   loop
                   muted
@@ -710,9 +755,9 @@ function PlayerPage() {
                     )`,
                   }}
                 >
-                  {/* Track info */}
-                  <div className="px-5 pb-2">
-                    <h2 className="text-2xl font-bold text-white leading-tight">{current.title}</h2>
+                  {/* Track info — rises in on every track change */}
+                  <div key={current.project_id} className="share-in px-5 pb-2" style={{ animationDuration: '0.6s' }}>
+                    <h2 className="text-2xl font-bold text-white leading-tight" style={{ textShadow: '0 2px 18px rgba(0,0,0,0.6)' }}>{current.title}</h2>
                     <div className="flex flex-wrap items-center gap-x-2 mt-1">
                       <span className="font-mono text-sm text-white/50">{current.version}</span>
                       <span className="text-white/20">·</span>
@@ -732,7 +777,9 @@ function PlayerPage() {
                         ctxSeek(((e.clientX - rect.left) / rect.width) * duration)
                       }}
                     >
-                      {bars.map((h, i) => {
+                      {bars === null ? (
+                        <div className="share-shimmer h-1.5 w-full rounded-full" />
+                      ) : bars.map((h, i) => {
                         const barPct = (i + 0.5) / WAVEFORM_BARS
                         const played = pct > 0 && barPct <= pct / 100
                         return (
@@ -819,7 +866,7 @@ function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: PLAYER_ACCENT }}
+                  style={{ background: PLAYER_ACCENT, boxShadow: `0 0 calc(12px + var(--energy) * 48px) rgba(45,212,191,0.6), 0 0 calc(var(--energy) * 110px) rgba(45,212,191,0.35)` }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {buffering
                     ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />
@@ -869,7 +916,7 @@ function PlayerPage() {
                 </button>
                 <button onClick={togglePlay}
                   className="w-16 h-16 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-                  style={{ background: PLAYER_ACCENT }}
+                  style={{ background: PLAYER_ACCENT, boxShadow: `0 0 calc(12px + var(--energy) * 48px) rgba(45,212,191,0.6), 0 0 calc(var(--energy) * 110px) rgba(45,212,191,0.35)` }}
                   title={isPlaying ? 'Pause' : 'Play'}>
                   {buffering
                     ? <span className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(0,0,0,0.25)', borderTopColor: '#000' }} />

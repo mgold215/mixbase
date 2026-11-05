@@ -31,6 +31,10 @@ export type TrackMeta = {
   audioUrl: string | null
   duration: number | null
   visualizerUrl: string | null
+  visualizerWideUrl?: string | null
+  /** The song's own share token — lets the player fetch its waveform from
+   *  GET /api/share/<token>/peaks (the artist holds every token of their own). */
+  shareToken?: string | null
 }
 
 // User-facing type labels live in collection-export.ts so the pill and the
@@ -347,8 +351,10 @@ export default function CollectionClient({ collection, initialItems, allProjects
       genre: item.mb_projects?.genre ?? null,
       artworkUrl: item.mb_projects?.artwork_url ?? null,
       visualizerUrl: meta?.visualizerUrl ?? null,
+      visualizerWideUrl: meta?.visualizerWideUrl ?? null,
       audioUrl: meta?.audioUrl ?? null,
       duration: meta?.duration ?? null,
+      shareToken: meta?.shareToken ?? null,
     }
   })
 

@@ -1365,6 +1365,35 @@ final class MixbaseAPI {
         return (json["owner_tools"] as? Bool) == true
     }
 
+    /// The real waveform of a mix — 200 integer peaks (0–100) from
+    /// GET /api/share/<token>/peaks, the same route the web share pages and
+    /// the web player draw from (the server decodes a mix once and keeps the
+    /// result on the version row). The token is the song's own share token,
+    /// which the signed-in artist holds for every song of theirs.
+    ///
+    /// Returns nil while the server is still decoding a long mix (HTTP 202);
+    /// the caller polls again a few seconds later. Throws on any other
+    /// non-2xx, like every other request here.
+    func fetchWaveformPeaks(shareToken: String) async throws -> [Int]? {
+        let encoded = shareToken.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? shareToken
+        let (status, data) = try await send(
+            path: "/api/share/\(encoded)/peaks",
+            method: "GET",
+            contentType: nil,
+            body: nil,
+            timeout: 30
+        )
+        if status == 202 { return nil }
+        guard (200...299).contains(status) else {
+            throw scrubbedError(statusCode: status, data: data)
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let peaks = json["peaks"] as? [Int], !peaks.isEmpty else {
+            throw MixbaseAPIError.invalidResponse("Waveform response had no peaks")
+        }
+        return peaks
+    }
+
     /// Permanently delete the signed-in account and all its data (Guideline
     /// 5.1.1(v)). Goes through requestData so an expired access token is
     /// refreshed and retried instead of failing the one flow Apple requires

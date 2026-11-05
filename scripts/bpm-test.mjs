@@ -214,6 +214,46 @@ console.log('\nbpm: beatless intro — the drum section is what gets analyzed')
   check(`window-selecting detector finds the drums → 120±${TOL}`, Math.abs(newGot - 120) <= TOL, newGot)
 }
 
+// ── 9. Exact tempo: no off-by-one on a realistic mix ────────────────────────
+// Reported 2026-11-05: "the BPM counter is often off by 1". The coarse lag is
+// read off a 10 ms grid (~2.4 BPM per frame at 120) and its centroid
+// interpolation is biased by the correlation floor; on this mix (soft-attack
+// 808 on every beat, clap on 2&4, 16th hats, random off-grid tonal hits) the
+// pre-refinement detector returned 148→147, 152→153, 156→157, 164→163,
+// 174→175, 179→178, 180→181. refineTempo() scores many beat multiples, so the
+// answer must now be EXACT — zero tolerance.
+console.log('\nbpm: exact tempo on a realistic mix (no off-by-one)')
+function realisticMix(bpm, sr = 44100, seconds = 45) {
+  const n = Math.floor(seconds * sr), d = new Float32Array(n)
+  let seed = 999 + Math.round(bpm * 7)
+  const rng = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  const beat = 60 / bpm
+  const hit = (t, f, att, dec, amp, noise) => {
+    const s = Math.floor(t * sr), L = Math.floor((att + dec * 5) * sr)
+    for (let k = 0; k < L && s + k < n; k++) {
+      const tt = k / sr, env = tt < att ? tt / att : Math.exp(-(tt - att) / dec)
+      d[s + k] += amp * env * (noise ? rng() * 2 - 1 : Math.sin(2 * Math.PI * f * tt))
+    }
+  }
+  for (let b = 0; b * beat < seconds; b++) {
+    hit(b * beat, 50, 0.008, 0.25, 0.8, false)
+    if (b % 2) hit(b * beat + 0.003, 0, 0.002, 0.06, 0.4, true)
+    for (let q = 0; q < 4; q++) hit((b + q / 4) * beat, 0, 0.001, 0.008, 0.08 + 0.04 * rng(), true)
+  }
+  for (let i = 0; i < seconds * 3; i++) hit(rng() * seconds, 300 + rng() * 500, 0.02, 0.15, 0.3, false)
+  return { sampleRate: sr, getChannelData: () => d }
+}
+for (const b of [72, 90, 100, 120, 128, 140, 148, 152, 156, 164, 174, 179, 180]) {
+  const got = detectBPM(realisticMix(b))
+  check(`${b} BPM realistic mix → exactly ${b}`, got === b, got)
+}
+// Perfectly steady clicks at tempos whose beat lands on an exact 10 ms frame
+// (100/120/150 BPM) used to read 101/122/153.
+for (const b of [75, 80, 100, 120, 125, 150]) {
+  const got = bpmOf({ bpm: b, seconds: 40 })
+  check(`${b} BPM steady clicks → exactly ${b}`, got === b, got)
+}
+
 // ── Diagnostic (non-asserting): known strong-accent half-tempo limitation ────
 // Surfaced, not asserted. A dominant-kick pattern (alternate beats ≤ ~40% of the
 // downbeat) still reads at half tempo because the shipped octave gate is a
