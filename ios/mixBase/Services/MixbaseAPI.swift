@@ -374,6 +374,58 @@ final class MixbaseAPI {
         _ = try await requestJSON(path: "/api/projects/\(projectId.uuidString.lowercased())", method: "PATCH", body: body)
     }
 
+    // MARK: - Your own visualizer (a video from Photos)
+    // The same three steps the web takes: a signed Storage URL from
+    // /api/upload-url (the bytes never pass through the server), a PUT of the
+    // file, then /api/visualizer/finalize checks it is a playable H.264 MP4
+    // and files it in the library.
+
+    struct SignedVideoUpload: Decodable {
+        let signedUrl: String
+    }
+
+    /// A fresh `<projectId>/viz-<stamp>.mp4` key, signed for one PUT.
+    func signVisualizerUpload(projectId: UUID) async throws -> (signedUrl: URL, storagePath: String) {
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let storagePath = "\(projectId.storageKeyComponent)/viz-\(stamp).mp4"
+        let data = try await requestData(
+            path: "/api/upload-url",
+            method: "POST",
+            body: ["filename": storagePath, "contentType": "video/mp4", "bucket": "mf-video"]
+        )
+        let signed = try decoder.decode(SignedVideoUpload.self, from: data)
+        guard let url = URL(string: signed.signedUrl) else {
+            throw MixbaseAPIError.invalidResponse("Bad signed upload URL")
+        }
+        return (url, storagePath)
+    }
+
+    /// PUT the file to the signed URL. No session header: the URL carries its own token.
+    func putVisualizerFile(_ fileURL: URL, to signedUrl: URL) async throws {
+        var request = URLRequest(url: signedUrl)
+        request.httpMethod = "PUT"
+        request.setValue("video/mp4", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 600
+        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200...299).contains(status) else {
+            throw MixbaseAPIError.invalidResponse("Upload failed (\(status))")
+        }
+    }
+
+    /// File the uploaded clip in the library; the server checks the bytes first.
+    func finalizeUploadedVisualizer(projectId: UUID, storagePath: String, title: String) async throws -> String {
+        let json = try await requestJSON(
+            path: "/api/visualizer/finalize",
+            method: "POST",
+            body: ["projectId": projectId.postgresString, "storagePath": storagePath, "title": title, "source": "upload"]
+        )
+        guard let videoUrl = json["video_url"] as? String else {
+            throw MixbaseAPIError.invalidResponse("No video URL in the response")
+        }
+        return videoUrl
+    }
+
     // MARK: - AI video (owner-only; Runway image-to-video)
 
     struct AIVideoRatio: Decodable, Hashable {
