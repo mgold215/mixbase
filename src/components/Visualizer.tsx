@@ -90,6 +90,10 @@ export default function Visualizer({
   // Your own video on its way into a pin slot: the stage shown on the button.
   const [ownUpload, setOwnUpload] = useState<string | null>(null)
   const [ownUploadError, setOwnUploadError] = useState('')
+  // Where the upload is pinned, which decides the finished videos it feeds:
+  // 'auto' follows its shape, 'both' pins it to both slots (the renderer
+  // centre-crops whichever shape does not match).
+  const [ownUploadSlot, setOwnUploadSlot] = useState<'auto' | 'canvas' | 'wide' | 'both'>('auto')
   // "Choose from Media" picker — pin any previously generated loop, from any
   // project, into whichever slot (vertical/horizontal) opened the picker.
   const [pickerSlot, setPickerSlot] = useState<VizSlot | null>(null)
@@ -219,7 +223,10 @@ export default function Visualizer({
         source: 'upload',
       })
       setOwnUpload('Pinning…')
-      await setProjectVisualizer(landscape ? 'wide' : 'canvas', saved.video_url)
+      const slots: VizSlot[] = ownUploadSlot === 'both' ? ['canvas', 'wide']
+        : ownUploadSlot === 'auto' ? [landscape ? 'wide' : 'canvas']
+        : [ownUploadSlot]
+      for (const slot of slots) await setProjectVisualizer(slot, saved.video_url)
     } catch (err) {
       setOwnUploadError(err instanceof Error ? err.message : 'Could not upload the video.')
     } finally {
@@ -281,8 +288,23 @@ export default function Visualizer({
           {ownUpload ?? 'Upload your own video'}
           <input type="file" accept="video/mp4,video/webm" className="hidden" onChange={uploadOwnVideo} disabled={!!ownUpload || settingViz} />
         </label>
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Use it for
+          <select
+            value={ownUploadSlot}
+            onChange={e => setOwnUploadSlot(e.target.value as typeof ownUploadSlot)}
+            disabled={!!ownUpload}
+            className="rounded-md px-2 py-1 text-xs"
+            style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          >
+            <option value="auto">Fits its shape</option>
+            <option value="canvas">Vertical (player + Short)</option>
+            <option value="wide">Horizontal (full-length)</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          An MP4 (H.264) or WebM up to 200 MB. Portrait pins as the vertical loop, landscape as the horizontal one.
+          An MP4 (H.264) or WebM up to 200 MB. The Finalize tab then renders your Short and full-length video from the pinned loops.
         </span>
         {ownUploadError && <span className="text-xs text-red-400">{ownUploadError}</span>}
       </div>

@@ -203,6 +203,12 @@ struct VisualizerView: View {
     @State private var ownVideoPick: PhotosPickerItem?
     @State private var ownVideoStage: String?
     @State private var ownVideoError: String?
+    // Where the uploaded video is pinned — which finished videos it then feeds.
+    @State private var ownVideoSlot = "auto"
+
+    private static let ownVideoSlots: [(id: String, label: String)] = [
+        ("auto", "Fits its shape"), ("vertical", "Canvas + Short"), ("wide", "YouTube"), ("both", "Both"),
+    ]
 
     private var finishBusy: Bool {
         isStartingFinish || finishJob != nil
@@ -377,11 +383,25 @@ struct VisualizerView: View {
                 .foregroundColor(Color(hex: "#f0f0f0"))
                 .padding(.horizontal)
 
-            Text("Pick a video from Photos and it becomes this song's visualizer. Portrait clips pin as the vertical loop, landscape ones as the 16:9 loop. Up to 200 MB once converted.")
+            Text("Pick a video from Photos and it becomes this song's visualizer, pinned where you choose. Render Short or Render YouTube video below then uses it. Up to 200 MB once converted.")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal)
+
+            // "Fits its shape": portrait → the vertical loop (Canvas + Short),
+            // landscape → the 16:9 loop (YouTube). "Both" pins it to both; the
+            // renderer centre-crops whichever shape does not match.
+            HStack(spacing: 8) {
+                Text("Use it for")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                ForEach(Self.ownVideoSlots, id: \.id) { option in
+                    chip(option.label, selected: ownVideoSlot == option.id) { ownVideoSlot = option.id }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
 
             if let ownVideoStage {
                 HStack(spacing: 8) {
@@ -703,6 +723,13 @@ struct VisualizerView: View {
             } else {
                 formatPicker(finishFormats, selection: $finishFormat)
 
+                // Which pin feeds this format (pinForFormat on the server).
+                Text(finishSourceNote)
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+
                 if finishFormat == "shorts" {
                     HStack(spacing: 8) {
                         Text("Length")
@@ -783,6 +810,19 @@ struct VisualizerView: View {
                 finishedRow(latest.shorts, label: "Short", wide: false)
             }
         }
+    }
+
+    /// The pinned loop the finished video renders from: the pin in its own
+    /// shape, else the other one, centre-cropped (pinForFormat on the server).
+    private var finishSourceNote: String {
+        if finishFormat == "shorts" {
+            return pinnedUrl != nil
+                ? "Renders from your vertical loop."
+                : "No vertical loop pinned, so this renders from your 16:9 loop, centre-cropped."
+        }
+        return pinnedWideUrl != nil
+            ? "Renders from your 16:9 loop."
+            : "No 16:9 loop pinned, so this renders from your vertical loop, centre-cropped."
     }
 
     // "No text" first, then the colours — picking a colour turns text back on.
@@ -1117,7 +1157,16 @@ struct VisualizerView: View {
                 title: "Your video"
             )
             await loadLibrary()
-            await pin(videoUrl, wide: export.landscape)
+            let slots: [Bool]
+            switch ownVideoSlot {
+            case "vertical": slots = [false]
+            case "wide": slots = [true]
+            case "both": slots = [false, true]
+            default: slots = [export.landscape]
+            }
+            for wide in slots {
+                await pin(videoUrl, wide: wide)
+            }
         } catch {
             ownVideoError = error.localizedDescription
         }
