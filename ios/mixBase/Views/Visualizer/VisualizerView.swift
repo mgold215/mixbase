@@ -766,6 +766,13 @@ struct VisualizerView: View {
                     .padding(.horizontal)
 
                 finishColorPicker
+                if finishShowText {
+                    Text(finishTextNote)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal)
+                }
 
                 if latestFinished?.suggestShowText == false {
                     Text("Your pinned visualizer was made from your finished cover, so text starts off — the cover usually shows the title already.")
@@ -823,6 +830,19 @@ struct VisualizerView: View {
         return pinnedWideUrl != nil
             ? "Renders from your 16:9 loop."
             : "No 16:9 loop pinned, so this renders from your vertical loop, centre-cropped."
+    }
+
+    /// How the title is written on the finished video: the artist's own
+    /// handwriting (a Cassette Studio lettering for this song) held on screen
+    /// like the cover, else set in type and flashed through the song.
+    private var finishTextNote: String {
+        if latestFinished?.handwritingAvailable == true {
+            return "Written in your handwriting and held on screen, like the cover."
+        }
+        if authService.ownerTools {
+            return "Set in type and flashed through the song. Letter this song in Cassette Studio to use your handwriting instead."
+        }
+        return "Set in type and flashed through the song."
     }
 
     // "No text" first, then the colours — picking a colour turns text back on.

@@ -47,6 +47,9 @@ export default function VideoFinalizer({
   const [errors, setErrors] = useState<Partial<Record<VideoFormat, string>>>({})
   const [color, setColor] = useState('#FFFFFF')
   const [showText, setShowText] = useState(true)
+  // This song has a Cassette Studio lettering: the title is written in the
+  // artist's handwriting and held on screen, not set in type and flashed.
+  const [handwritingAvailable, setHandwritingAvailable] = useState(false)
   // The server's suggestion: false when a pinned loop was made from the
   // finished cover, which usually already shows the title. Applied until the
   // artist picks a text option themselves.
@@ -68,6 +71,7 @@ export default function VideoFinalizer({
       .then(data => {
         if (cancelled || !data) return
         setSaved({ youtube: data.youtube ?? null, shorts: data.shorts ?? null })
+        setHandwritingAvailable(data.handwriting_available === true)
         const coverLoop = data.suggest_show_text === false
         setLoopShowsCover(coverLoop)
         if (!textTouched.current) setShowText(!coverLoop)
@@ -242,6 +246,13 @@ export default function VideoFinalizer({
             />
           ))}
         </div>
+        {showText && (
+          <p className="text-[10px] text-[#777] mt-1.5">
+            {handwritingAvailable
+              ? 'Written in your handwriting and held on screen, like the cover.'
+              : 'Set in type and flashed through the song.'}
+          </p>
+        )}
         {loopShowsCover && (
           <p className="text-[10px] text-[#777] mt-1.5">
             Your pinned visualizer was made from your finished cover, so text starts off — the cover usually shows the title already.

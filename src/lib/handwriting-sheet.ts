@@ -133,8 +133,10 @@ export function titleForHandwriting(title: string): { text: string; dropped: str
 
 /**
  * Stack the signature over the title into one lettering (white RGB + ink
- * alpha), left-aligned: the signature at 85% of the title's height, a small
- * gap between. Either may be missing; with neither there is nothing to letter.
+ * alpha), centred on one axis (the lockup sits bottom-centre on the cover,
+ * as on the owner's reference): the signature at 85% of the title's height,
+ * a small gap between. Either may be missing; with neither there is nothing
+ * to letter.
  */
 export async function stackLockup(top: Buffer | null, bottom: Buffer | null): Promise<Lettering | null> {
   if (!top && !bottom) return null
@@ -152,7 +154,10 @@ export async function stackLockup(top: Buffer | null, bottom: Buffer | null): Pr
   const W = Math.max(bw, tw), H = th + gap + bh
   const topPng = await sharp(top).resize(tw, th, { fit: 'fill', kernel: 'lanczos3' }).png().toBuffer()
   const { data } = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } } })
-    .composite([{ input: topPng, left: 0, top: 0 }, { input: bottom, left: 0, top: th + gap }])
+    .composite([
+      { input: topPng, left: Math.round((W - tw) / 2), top: 0 },
+      { input: bottom, left: Math.round((W - bw) / 2), top: th + gap },
+    ])
     .raw().toBuffer({ resolveWithObject: true })
   const alpha = new Uint8Array(W * H)
   for (let i = 0; i < W * H; i++) alpha[i] = data[i * 4 + 3]
