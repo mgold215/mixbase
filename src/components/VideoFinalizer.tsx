@@ -190,7 +190,7 @@ export default function VideoFinalizer({
           </p>
           <ul className="text-xs text-[var(--text-secondary)] space-y-1.5 mb-5 inline-block text-left">
             <li className={hasAudio ? 'line-through text-[var(--text-muted)]' : ''}>1. Upload a mix (Song Info tab)</li>
-            <li className={anyViz ? 'line-through text-[var(--text-muted)]' : ''}>2. Generate &amp; pin a visualizer</li>
+            <li className={anyViz ? 'line-through text-[var(--text-muted)]' : ''}>2. Generate, upload or pin a visualizer</li>
           </ul>
           <div>
             {!anyViz && (

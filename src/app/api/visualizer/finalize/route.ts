@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     settings?: unknown
     sourceImageUrl?: unknown
     abandonedPaths?: unknown
+    source?: unknown
   } | null
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
 
@@ -88,7 +89,9 @@ export async function POST(req: NextRequest) {
   const sourceImageUrl = isSupabaseStorageUrl(body.sourceImageUrl)
     ? String(body.sourceImageUrl)
     : null
-  const settings = sanitizeSettings(body.settings)
+  // A video the artist uploaded themselves (the app's Photos picker, the web's
+  // file button) carries no recipe; it is marked so the library can say so.
+  const settings = body.source === 'upload' ? { source: 'upload' } : sanitizeSettings(body.settings)
 
   const { data: pub } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(storagePath)
 

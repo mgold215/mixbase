@@ -62,7 +62,6 @@ const KNOWN = {
   '/api/sb-submissions/*': { status: 'direct', note: 'Update submission status — app sets sent_at from the phone clock' },
   '/api/media': { status: 'direct', note: 'Media library listing (read-only)' },
   '/api/tracks': { status: 'direct', note: 'Player track list (read-only)' },
-  '/api/upload-url': { status: 'direct', note: 'Uploads — app PUTs to Storage itself, at the bucket root, skipping rate limit + ownership' },
 
   // ── native: same job, the app's own way by design ───────────────────────────
   '/api/auth': { status: 'native', note: 'Sign-in — app uses Supabase Auth directly (email + Apple)' },
@@ -71,7 +70,6 @@ const KNOWN = {
   '/api/auth/refresh': { status: 'native', note: 'Token refresh — AuthService refreshes with Supabase' },
   '/api/tus': { status: 'native', note: 'Browser large-file chunking proxy; the app uploads directly (see /api/upload-url)' },
   '/api/visualizer/save': { status: 'native', note: 'Browser-rendered visualizer save; the app renders server-side via /api/visualizer/free' },
-  '/api/visualizer/finalize': { status: 'native', note: 'Browser-rendered visualizer finalize; see /api/visualizer/save' },
   '/api/audio/*': { status: 'native', note: 'Range-request proxy for <audio>; AVPlayer streams Storage URLs directly' },
   '/api/artwork/*': { status: 'native', note: 'Cookie-less artwork proxy for the browser; the app loads Storage URLs directly' },
 

@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import Image from 'next/image'
-import { Check, Film, MonitorPlay } from 'lucide-react'
+import { Check, Film, MonitorPlay, Upload } from 'lucide-react'
 import { saveMedia } from '@/lib/download'
+import { uploadVisualizer } from '@/lib/fx/upload'
 import { useVizRecipe } from './visualizer/useVizRecipe'
 import { type Format, type LibraryItem, type VizSlot } from './visualizer/shared'
 import PinSlots from './visualizer/PinSlots'
@@ -49,6 +50,20 @@ type Props = {
 // Note: audioUrl/audioVersionId are accepted (the project page already passes
 // them) but not destructured — the studio starts consuming them in the
 // audio-reactivity phase.
+// Which pin slot an uploaded video fits: landscape → the horizontal loop,
+// anything else → the vertical one. Read off the file's own metadata; a file
+// the browser cannot read counts as vertical (the server will reject it).
+function isLandscapeVideo(file: File): Promise<boolean> {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file)
+    const v = document.createElement('video')
+    v.preload = 'metadata'
+    v.onloadedmetadata = () => { resolve(v.videoWidth > v.videoHeight); URL.revokeObjectURL(url) }
+    v.onerror = () => { resolve(false); URL.revokeObjectURL(url) }
+    v.src = url
+  })
+}
+
 export default function Visualizer({
   projectTitle, artworkUrl, coverUrl, onSwitchToArtwork, projectId,
   visualizerUrl, onVisualizerUpdated, wideVisualizerUrl, onWideVisualizerUpdated,
@@ -72,6 +87,13 @@ export default function Visualizer({
   useEffect(() => { setProjectVizWide(wideVisualizerUrl ?? null) }, [wideVisualizerUrl])
   const [settingViz, setSettingViz] = useState(false)
   const [vizError, setVizError] = useState('')
+  // Your own video on its way into a pin slot: the stage shown on the button.
+  const [ownUpload, setOwnUpload] = useState<string | null>(null)
+  const [ownUploadError, setOwnUploadError] = useState('')
+  // Where the upload is pinned, which decides the finished videos it feeds:
+  // 'auto' follows its shape, 'both' pins it to both slots (the renderer
+  // centre-crops whichever shape does not match).
+  const [ownUploadSlot, setOwnUploadSlot] = useState<'auto' | 'canvas' | 'wide' | 'both'>('auto')
   // "Choose from Media" picker — pin any previously generated loop, from any
   // project, into whichever slot (vertical/horizontal) opened the picker.
   const [pickerSlot, setPickerSlot] = useState<VizSlot | null>(null)
@@ -176,6 +198,42 @@ export default function Visualizer({
     })
   }
 
+  // Your own video, straight into a pin slot: the file goes to Storage from
+  // the browser (a signed URL, never through Railway), /api/visualizer/finalize
+  // checks it is a playable H.264 MP4 (or WebM) and files it, then the slot
+  // that fits its shape is pinned. The app does the same from Photos.
+  async function uploadOwnVideo(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !projectId) return
+    setOwnUploadError('')
+    const contentType = file.type === 'video/webm' ? 'video/webm' : file.type === 'video/mp4' ? 'video/mp4' : null
+    if (!contentType) { setOwnUploadError('Choose an MP4 (H.264) or WebM video.'); return }
+    try {
+      setOwnUpload('Checking…')
+      const landscape = await isLandscapeVideo(file)
+      setOwnUpload('Uploading…')
+      const saved = await uploadVisualizer({
+        blob: file,
+        contentType,
+        projectId,
+        title: file.name.replace(/\.[^.]+$/, '') || 'Your video',
+        settings: null,
+        sourceImageUrl: null,
+        source: 'upload',
+      })
+      setOwnUpload('Pinning…')
+      const slots: VizSlot[] = ownUploadSlot === 'both' ? ['canvas', 'wide']
+        : ownUploadSlot === 'auto' ? [landscape ? 'wide' : 'canvas']
+        : [ownUploadSlot]
+      for (const slot of slots) await setProjectVisualizer(slot, saved.video_url)
+    } catch (err) {
+      setOwnUploadError(err instanceof Error ? err.message : 'Could not upload the video.')
+    } finally {
+      setOwnUpload(null)
+    }
+  }
+
   // Pin affordance for a persisted mf-video URL — only where the project page
   // wired the callback, and only once the video is saved. The slot follows the
   // render's orientation: 16:9 loops pin as the horizontal (Full-Length)
@@ -205,20 +263,52 @@ export default function Visualizer({
   // onVisualizerUpdated is wired); rendered even before any artwork exists so
   // a previously set visualizer never disappears.
   const projectVizSection = projectId && onVisualizerUpdated ? (
-    <PinSlots
-      projectViz={projectViz}
-      projectVizWide={projectVizWide}
-      settingViz={settingViz}
-      vizError={vizError}
-      pickerSlot={pickerSlot}
-      library={library}
-      libraryLoading={libraryLoading}
-      libraryError={libraryError}
-      onOpenPicker={openPicker}
-      onClosePicker={() => setPickerSlot(null)}
-      onPick={pickFromLibrary}
-      onRemove={slot => setProjectVisualizer(slot, null)}
-    />
+    <>
+      <PinSlots
+        projectViz={projectViz}
+        projectVizWide={projectVizWide}
+        settingViz={settingViz}
+        vizError={vizError}
+        pickerSlot={pickerSlot}
+        library={library}
+        libraryLoading={libraryLoading}
+        libraryError={libraryError}
+        onOpenPicker={openPicker}
+        onClosePicker={() => setPickerSlot(null)}
+        onPick={pickFromLibrary}
+        onRemove={slot => setProjectVisualizer(slot, null)}
+      />
+      {/* Your own video → a pin slot (see uploadOwnVideo). */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors ${ownUpload || settingViz ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
+          style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)' }}
+        >
+          <Upload size={14} />
+          {ownUpload ?? 'Upload your own video'}
+          <input type="file" accept="video/mp4,video/webm" className="hidden" onChange={uploadOwnVideo} disabled={!!ownUpload || settingViz} />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Use it for
+          <select
+            value={ownUploadSlot}
+            onChange={e => setOwnUploadSlot(e.target.value as typeof ownUploadSlot)}
+            disabled={!!ownUpload}
+            className="rounded-md px-2 py-1 text-xs"
+            style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          >
+            <option value="auto">Fits its shape</option>
+            <option value="canvas">Vertical (player + Short)</option>
+            <option value="wide">Horizontal (full-length)</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          An MP4 (H.264) or WebM up to 200 MB. The Finalize tab then renders your Short and full-length video from the pinned loops.
+        </span>
+        {ownUploadError && <span className="text-xs text-red-400">{ownUploadError}</span>}
+      </div>
+    </>
   ) : null
 
   if (!sourceUrl) {

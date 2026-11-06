@@ -1,5 +1,8 @@
 import SwiftUI
 import AVKit
+import PhotosUI
+import CoreTransferable
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -15,6 +18,43 @@ import AppKit
 // AuthService.ownerTools is true. The server refuses those routes for every
 // other account regardless; this only decides what is shown. Nothing on this
 // screen is ever sold (there are no paid plans anywhere).
+
+/// A video picked from Photos, handed over as a file (a Data load would copy
+/// the whole clip into memory).
+private struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let ext = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pick-\(UUID().uuidString)")
+                .appendingPathExtension(ext)
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.copyItem(at: received.file, to: dest)
+            return PickedMovie(url: dest)
+        }
+    }
+}
+
+/// What can go wrong turning the artist's own video into a visualizer.
+private enum OwnVideoError: LocalizedError {
+    case unreadable, noVideoTrack, exportFailed, tooLarge
+
+    // MAX_FINALIZE_BYTES on the server (src/lib/visualizer-finalize.ts).
+    static let maxBytes = 200 * 1024 * 1024
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable: return "Could not read that video."
+        case .noVideoTrack: return "That file has no video in it."
+        case .exportFailed: return "Could not convert the video. Try another clip."
+        case .tooLarge: return "That video is over 200 MB after conversion. Try a shorter clip."
+        }
+    }
+}
 
 struct VisualizerView: View {
 
@@ -159,6 +199,17 @@ struct VisualizerView: View {
 
     @State private var errorMessage: String?
 
+    // Your own video: Photos → silent H.264 MP4 → Storage → library → pinned.
+    @State private var ownVideoPick: PhotosPickerItem?
+    @State private var ownVideoStage: String?
+    @State private var ownVideoError: String?
+    // Where the uploaded video is pinned — which finished videos it then feeds.
+    @State private var ownVideoSlot = "auto"
+
+    private static let ownVideoSlots: [(id: String, label: String)] = [
+        ("auto", "Fits its shape"), ("vertical", "Canvas + Short"), ("wide", "YouTube"), ("both", "Both"),
+    ]
+
     private var finishBusy: Bool {
         isStartingFinish || finishJob != nil
     }
@@ -172,6 +223,9 @@ struct VisualizerView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     // MARK: - Pinned Visualizers
                     pinnedSection
+
+                    // MARK: - Your own video
+                    ownVideoSection
 
                     // Pin/delete errors surface here
                     if let errorMessage {
@@ -209,6 +263,10 @@ struct VisualizerView: View {
                 }
                 .padding(.top, 16)
             }
+        }
+        .onChange(of: ownVideoPick) { _, item in
+            guard let item else { return }
+            Task { await uploadOwnVideo(item) }
         }
         .navigationTitle("Visualizer")
         .navigationBarTitleDisplayMode(.inline)
@@ -307,6 +365,76 @@ struct VisualizerView: View {
                     saveToPhotosButton(url: pinnedWideUrl, labeled: true)
                 }
                 .padding(.horizontal)
+            }
+        }
+    }
+
+    // MARK: - Your own video
+    // A video from Photos becomes this song's visualizer: converted on the
+    // device to a silent H.264 MP4 (phones record HEVC, which the server's
+    // playability check and the web players don't take), uploaded straight to
+    // Storage, filed in the library by /api/visualizer/finalize and pinned to
+    // the slot its shape fits — portrait → the vertical loop, landscape → the
+    // 16:9 one.
+    private var ownVideoSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Your own video")
+                .font(.headline)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+                .padding(.horizontal)
+
+            Text("Pick a video from Photos and it becomes this song's visualizer, pinned where you choose. Render Short or Render YouTube video below then uses it. Up to 200 MB once converted.")
+                .font(.caption)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal)
+
+            // "Fits its shape": portrait → the vertical loop (Canvas + Short),
+            // landscape → the 16:9 loop (YouTube). "Both" pins it to both; the
+            // renderer centre-crops whichever shape does not match.
+            HStack(spacing: 8) {
+                Text("Use it for")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                ForEach(Self.ownVideoSlots, id: \.id) { option in
+                    chip(option.label, selected: ownVideoSlot == option.id) { ownVideoSlot = option.id }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
+
+            if let ownVideoStage {
+                HStack(spacing: 8) {
+                    ProgressView().tint(Color(hex: "#2dd4bf"))
+                    Text(ownVideoStage)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .padding(.horizontal)
+            } else {
+                PhotosPicker(selection: $ownVideoPick, matching: .videos) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Upload a video")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#080808"))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(Color(hex: "#2dd4bf"))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal)
+            }
+
+            if let ownVideoError {
+                Text(ownVideoError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
             }
         }
     }
@@ -595,6 +723,13 @@ struct VisualizerView: View {
             } else {
                 formatPicker(finishFormats, selection: $finishFormat)
 
+                // Which pin feeds this format (pinForFormat on the server).
+                Text(finishSourceNote)
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+
                 if finishFormat == "shorts" {
                     HStack(spacing: 8) {
                         Text("Length")
@@ -675,6 +810,19 @@ struct VisualizerView: View {
                 finishedRow(latest.shorts, label: "Short", wide: false)
             }
         }
+    }
+
+    /// The pinned loop the finished video renders from: the pin in its own
+    /// shape, else the other one, centre-cropped (pinForFormat on the server).
+    private var finishSourceNote: String {
+        if finishFormat == "shorts" {
+            return pinnedUrl != nil
+                ? "Renders from your vertical loop."
+                : "No vertical loop pinned, so this renders from your 16:9 loop, centre-cropped."
+        }
+        return pinnedWideUrl != nil
+            ? "Renders from your 16:9 loop."
+            : "No 16:9 loop pinned, so this renders from your vertical loop, centre-cropped."
     }
 
     // "No text" first, then the colours — picking a colour turns text back on.
@@ -974,6 +1122,87 @@ struct VisualizerView: View {
     }
 
     // MARK: - Actions
+
+    // MARK: - Your own video: convert, upload, file, pin
+
+    private func uploadOwnVideo(_ item: PhotosPickerItem) async {
+        ownVideoError = nil
+        ownVideoStage = "Reading the video…"
+        var scratch: [URL] = []
+        defer {
+            for url in scratch { try? FileManager.default.removeItem(at: url) }
+            ownVideoPick = nil
+            ownVideoStage = nil
+        }
+        do {
+            guard let picked = try await item.loadTransferable(type: PickedMovie.self) else {
+                throw OwnVideoError.unreadable
+            }
+            scratch.append(picked.url)
+
+            ownVideoStage = "Converting…"
+            let export = try await Self.exportForUpload(picked.url)
+            scratch.append(export.url)
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: export.url.path)[.size] as? Int) ?? 0
+            if bytes > OwnVideoError.maxBytes { throw OwnVideoError.tooLarge }
+
+            ownVideoStage = "Uploading…"
+            let slot = try await MixbaseAPI.shared.signVisualizerUpload(projectId: projectId)
+            try await MixbaseAPI.shared.putVisualizerFile(export.url, to: slot.signedUrl)
+
+            ownVideoStage = "Saving…"
+            let videoUrl = try await MixbaseAPI.shared.finalizeUploadedVisualizer(
+                projectId: projectId,
+                storagePath: slot.storagePath,
+                title: "Your video"
+            )
+            await loadLibrary()
+            let slots: [Bool]
+            switch ownVideoSlot {
+            case "vertical": slots = [false]
+            case "wide": slots = [true]
+            case "both": slots = [false, true]
+            default: slots = [export.landscape]
+            }
+            for wide in slots {
+                await pin(videoUrl, wide: wide)
+            }
+        } catch {
+            ownVideoError = error.localizedDescription
+        }
+    }
+
+    /// A silent H.264 MP4 at most 1080p, with the rotation the phone recorded
+    /// kept, so the server's playability check and every player take it.
+    private static func exportForUpload(_ source: URL) async throws -> (url: URL, landscape: Bool) {
+        let asset = AVURLAsset(url: source)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw OwnVideoError.noVideoTrack
+        }
+        let (size, transform, range) = try await track.load(.naturalSize, .preferredTransform, .timeRange)
+        let shown = size.applying(transform)
+
+        // Video only: the song is the sound.
+        let composition = AVMutableComposition()
+        guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw OwnVideoError.exportFailed
+        }
+        try videoTrack.insertTimeRange(range, of: track, at: .zero)
+        videoTrack.preferredTransform = transform
+
+        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
+            throw OwnVideoError.exportFailed
+        }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("viz-\(UUID().uuidString).mp4")
+        session.outputURL = out
+        session.outputFileType = .mp4
+        session.shouldOptimizeForNetworkUse = true
+        await session.export()
+        guard session.status == .completed else {
+            throw session.error ?? OwnVideoError.exportFailed
+        }
+        return (out, abs(shown.width) > abs(shown.height))
+    }
 
     private func loadLibrary() async {
         isLoadingLibrary = true

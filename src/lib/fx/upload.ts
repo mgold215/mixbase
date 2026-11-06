@@ -91,8 +91,11 @@ export async function uploadVisualizer(opts: {
   contentType: 'video/mp4' | 'video/webm'
   projectId: string
   title: string
-  settings: VizRecipe
+  // null for a video the artist uploaded (no recipe to keep).
+  settings: VizRecipe | null
   sourceImageUrl: string | null
+  // 'upload' = the artist's own file, filed as such by the server.
+  source?: 'upload'
 }): Promise<UploadedVisualizer> {
   const ext = opts.contentType === 'video/mp4' ? 'mp4' : 'webm'
 
@@ -118,7 +121,8 @@ export async function uploadVisualizer(opts: {
           projectId: opts.projectId,
           storagePath,
           title: opts.title,
-          settings: opts.settings,
+          settings: opts.settings ?? undefined,
+          source: opts.source,
           sourceImageUrl: opts.sourceImageUrl ?? undefined,
           // Empty on the overwhelmingly common single-attempt path.
           abandonedPaths,
