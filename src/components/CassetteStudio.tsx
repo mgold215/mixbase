@@ -218,6 +218,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   const [sheetBusy, setSheetBusy] = useState(false)
   const [sheetError, setSheetError] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
+  // The result's Title and Look editors and the Setup card stay folded until
+  // asked for: one box, one button, one result on screen.
+  const [quickTitleOpen, setQuickTitleOpen] = useState(false)
+  const [quickLookOpen, setQuickLookOpen] = useState(false)
+  const [setupOpen, setSetupOpen] = useState(false)
   // Clip URLs and the cover already handed to the page, so polling announces
   // each once; the page's callbacks via refs so a re-render of the page never
   // restarts the poll.
@@ -780,6 +785,8 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   const knownLetters = glyphCounts ? Object.values(glyphCounts).filter(n => n > 0).length : 0
   const quickReady = !!setup?.cassette || subjects.length > 0
   const needsSheet = setup !== null && (!setup.signature || setup.letters.known < setup.letters.total)
+  // Everything the one click needs is in place, so Setup folds to one line.
+  const setupReady = quickReady && setup !== null && !needsSheet
   const shownCover = job?.finalized_artwork_url ?? job?.artwork_url ?? null
   // Adjust the title: start from what the run used until a chip is tapped.
   const qColor = quickColor ?? 'auto'
@@ -819,7 +826,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
             : <><Sparkles size={13} />{job?.status === 'done' ? 'Make another' : 'Make it'} · cover + Canvas + YouTube</>}
         </button>
         <p className="text-[10px] text-[#777] leading-snug">
-          Your real cassette in that scene, with moodmixformat and the title in your handwriting, then the same scene filmed as Canvas and YouTube clips of the cassette playing. Everything is applied to this song. Takes about 3–5 minutes; you can leave this open.
+          Your cassette and your handwriting in that scene, then the scene filmed for Canvas and YouTube. About 3–5 minutes; you can leave this open.
         </p>
         {quickError && <p className="text-red-400 text-xs">{quickError}</p>}
 
@@ -862,9 +869,21 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
               </div>
             )}
             {saveStatusRow('quick')}
-            {job.status !== 'running' && job.lettering && shownCover && (
+            {job.status !== 'running' && shownCover && (
+              <div className="flex items-center gap-1.5">
+                {job.lettering && (
+                  <button onClick={() => setQuickTitleOpen(v => !v)} className={`${chip(quickTitleOpen)} inline-flex items-center gap-0.5`}>
+                    {quickTitleOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Title
+                  </button>
+                )}
+                <button onClick={() => setQuickLookOpen(v => !v)} className={`${chip(quickLookOpen)} inline-flex items-center gap-0.5`}>
+                  {quickLookOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Look
+                </button>
+              </div>
+            )}
+            {quickTitleOpen && job.status !== 'running' && job.lettering && shownCover && (
               <div className="space-y-1.5 rounded-lg border border-[#1f2a2a] p-2">
-                <p className="text-[10px] font-semibold text-white">Adjust the title</p>
+                <p className="text-[10px] font-semibold text-white">The title</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex gap-1">
                     <button onClick={() => setQuickColor('auto')} className={chip(qColor === 'auto')}>Auto</button>
@@ -897,6 +916,20 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
                 {quickTitleError && <p className="text-red-400 text-xs">{quickTitleError}</p>}
               </div>
             )}
+            {quickLookOpen && job.status !== 'running' && shownCover && (
+              <div className="rounded-lg border border-[#1f2a2a] p-2">
+                <CassetteLook
+                  projectId={projectId}
+                  refreshKey={lookRefresh}
+                  disabled={working}
+                  saving={busy === 'save-look'}
+                  prefs={lookPrefs}
+                  onPrefsChange={setLookPrefs}
+                  onSave={saveLookNow}
+                  heading="The look"
+                />
+              </div>
+            )}
             {job.notes.length > 0 && (
               <ul className="space-y-0.5">
                 {job.notes.map(n => <li key={n} className="text-[10px] text-[#999] leading-snug">· {n}</li>)}
@@ -908,7 +941,18 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
 
       {/* Setup — what the one click uses. */}
       <section className="space-y-2">
-        <p className="text-[11px] font-medium text-[#999]">Setup</p>
+        {setupReady && !setupOpen ? (
+          // Everything the one click needs is in place: one line, folded.
+          <p className="flex items-center gap-1.5 text-[10px] text-[#999]">
+            <Check size={11} className="text-[#2dd4bf]" />
+            Cassette · handwriting {setup?.letters.known}/{setup?.letters.total}
+            <button onClick={() => setSetupOpen(true)} className="ml-1 text-[#2dd4bf] hover:underline">Change</button>
+          </p>
+        ) : (<>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-medium text-[#999]">Setup</p>
+          {setupReady && <button onClick={() => setSetupOpen(false)} className="text-[10px] text-[#2dd4bf] hover:underline">Hide</button>}
+        </div>
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex items-center gap-2">
             <div className="w-16 h-11 rounded-md overflow-hidden" style={CHECKER}>
@@ -955,10 +999,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
           <p className="text-[10px] text-amber-400/90">This title uses {setup.title.missing.join(' ')}, which your sheet doesn&rsquo;t have.</p>
         )}
         {sheetError && <p className="text-red-400 text-xs">{sheetError}</p>}
+        </>)}
       </section>
 
       <button onClick={() => setManualOpen(v => !v)} className="flex items-center gap-1 text-[11px] text-[#888] hover:text-white">
-        {manualOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}Manual studio (every control)
+        {manualOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}Advanced
       </button>
 
       {manualOpen && (<>

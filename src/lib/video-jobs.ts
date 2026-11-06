@@ -128,6 +128,7 @@ async function runJob(job: VideoJob, args: StartJobArgs) {
       format: args.format,
       color: args.color,
       showText: args.showText,
+      handwriting: args.handwriting,
       startSec: args.startSec,
       startMode: args.startMode,
       clipSeconds: args.clipSeconds,

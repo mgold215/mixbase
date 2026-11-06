@@ -527,10 +527,15 @@ final class MixbaseAPI {
         /// pinned loop was made from the finished cover, which usually already
         /// shows the title. nil from servers that predate it.
         let suggestShowText: Bool?
+        /// True when this song has a Cassette Studio lettering, so the title
+        /// on a finished video is written in the artist's handwriting (held on
+        /// screen) rather than set in type and flashed. nil from older servers.
+        let handwritingAvailable: Bool?
 
         enum CodingKeys: String, CodingKey {
             case youtube, shorts
             case suggestShowText = "suggest_show_text"
+            case handwritingAvailable = "handwriting_available"
         }
     }
 

@@ -733,7 +733,11 @@ export type LetteringPosition = (typeof LETTERING_POSITIONS)[number]
 export const LETTERING_SIZES = ['small', 'medium', 'large'] as const
 export type LetteringSize = (typeof LETTERING_SIZES)[number]
 
-const SIZE_FRAC: Record<LetteringSize, number> = { small: 0.32, medium: 0.42, large: 0.54 }
+// Fraction of the cover's width the lettering takes. Sized after the owner's
+// reference cover (2026-11-06): the title reads as part of the picture, not a
+// caption — the two-line lockup lands at roughly a quarter of the width.
+// letteringRect in cassette-motion-scene.ts mirrors these; keep them equal.
+const SIZE_FRAC: Record<LetteringSize, number> = { small: 0.22, medium: 0.30, large: 0.40 }
 /** Marker white (slightly warm, never pure #FFF) and near-black ink. */
 const AUTO_LIGHT = '#F4F1EA'
 const AUTO_DARK = '#161616'
@@ -825,8 +829,10 @@ export async function applyLettering(
  * Where the handwriting reads best on THIS cover: of the six lettering
  * positions, the one whose patch is calmest (lowest brightness variation —
  * sky, a wall, an out-of-focus background, never a busy street sign) and
- * clear of the cassette. Ties go to the order a designer would try them:
- * bottom-left, top-left, bottom-right, top-right, then the centres.
+ * clear of the cassette. Near-ties go to the order a designer would try them:
+ * bottom-centre first (the signature over the title, under the picture — the
+ * owner's reference cover), then bottom-left, bottom-right, top-centre,
+ * top-left, top-right.
  */
 export async function pickLetteringPosition(
   art: Buffer, avoid: Box | null, nativeW: number, nativeH: number, size: LetteringSize = 'medium',
@@ -837,9 +843,9 @@ export async function pickLetteringPosition(
   const k = SMALL / Math.max(W, H)
   const sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k))
   const small = await sharp(art).resize(sw, sh, { fit: 'fill' }).greyscale().raw().toBuffer()
-  const order: LetteringPosition[] = ['bottom-left', 'top-left', 'bottom-right', 'top-right', 'bottom-center', 'top-center']
+  const order: LetteringPosition[] = ['bottom-center', 'bottom-left', 'bottom-right', 'top-center', 'top-left', 'top-right']
   const pad = W * 0.02
-  let best: LetteringPosition = 'bottom-left'
+  let best: LetteringPosition = 'bottom-center'
   let bestScore = Infinity
   order.forEach((pos, rank) => {
     const r = letteringPlacement(W, H, nativeW, nativeH, pos, size)
@@ -855,8 +861,10 @@ export async function pickLetteringPosition(
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = small[y * sw + x]; sum += v; sq += v * v; n++ }
     const mean = n ? sum / n : 0
     const sd = n ? Math.sqrt(Math.max(0, sq / n - mean * mean)) : 0
-    // Overlapping the cassette is all but disqualifying; rank breaks near-ties.
-    const score = sd + overlap * 400 + rank * 1.5
+    // Overlapping the cassette is all but disqualifying; rank breaks near-ties
+    // (4 grey levels of calm per step, so bottom-centre holds unless another
+    // spot is clearly calmer).
+    const score = sd + overlap * 400 + rank * 4
     if (score < bestScore) { bestScore = score; best = pos }
   })
   return best

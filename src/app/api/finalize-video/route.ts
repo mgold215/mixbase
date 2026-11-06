@@ -7,6 +7,20 @@ import { isHexColor, DEFAULT_TEXT_COLOR } from '@/lib/finalize-render'
 import { startVideoJob, getVideoJob } from '@/lib/video-jobs'
 import { SHORTS_LENGTHS, MAX_SONG_SECONDS, type VideoFormat } from '@/lib/video-render'
 import { isFinishedCoverUrl, pinForFormat } from '@/lib/visualizer-source'
+import { downloadStudio, listStudio } from '@/lib/cassette-server'
+
+// The song's newest Cassette Studio lettering (white ink + alpha PNG) — the
+// title in the artist's own handwriting — or null: most accounts have none and
+// get the type lockup. Best-effort: a Storage hiccup never blocks a render.
+async function loadSongHandwriting(userId: string, projectId: string): Promise<Buffer | null> {
+  try {
+    const newest = (await listStudio(userId, `lettering-${projectId}-`))[0]
+    return newest ? await downloadStudio(newest.path) : null
+  } catch (err) {
+    console.error('[finalize-video] handwriting lookup failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
 
 export const runtime = 'nodejs'
 
@@ -80,6 +94,10 @@ export async function POST(request: NextRequest) {
   // Opt-out only: anything but an explicit false keeps the title cards, so
   // older clients that never send it render exactly as before.
   const showText = body.show_text !== false
+  // The title in the artist's own handwriting when this song has a Cassette
+  // Studio lettering — held on screen like the cover — unless the client asks
+  // for type ('type' = the flashed lockup every account gets).
+  const textStyle: 'handwriting' | 'type' = body.text_style === 'type' ? 'type' : 'handwriting'
   const clipSeconds: number = SHORTS_LENGTHS.includes(body.clip_seconds) ? body.clip_seconds : 30
   const startSec: number = typeof body.start_sec === 'number' && body.start_sec >= 0 && Number.isFinite(body.start_sec)
     ? body.start_sec : 0
@@ -146,6 +164,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Media source is not a valid storage URL' }, { status: 400 })
   }
 
+  const handwriting = showText && textStyle === 'handwriting' ? await loadSongHandwriting(userId, project_id) : null
+
   const started = startVideoJob({
     userId,
     projectId: project_id,
@@ -156,6 +176,7 @@ export async function POST(request: NextRequest) {
     format,
     color,
     showText,
+    handwriting,
     startSec,
     startMode,
     clipSeconds,
@@ -236,5 +257,7 @@ export async function GET(request: NextRequest) {
     console.error('[finalize-video] text suggestion lookup failed:', err instanceof Error ? err.message : err)
   }
 
-  return NextResponse.json({ ...latest, suggest_show_text: suggestShowText })
+  // Whether the next render writes the title in the artist's handwriting.
+  const handwritingAvailable = (await listStudio(userId, `lettering-${projectId}-`).catch(() => [])).length > 0
+  return NextResponse.json({ ...latest, suggest_show_text: suggestShowText, handwriting_available: handwritingAvailable })
 }

@@ -51,7 +51,8 @@ export function motionCrop(cover: number, box: Box, W: number, H: number): Rect 
  * Canvas doesn't crop the title the square cover had bottom-left.
  */
 export function letteringRect(W: number, H: number, lw: number, lh: number, position: string, size: string): Rect {
-  const frac = size === 'small' ? 0.32 : size === 'large' ? 0.54 : 0.42
+  // SIZE_FRAC in cassette-studio.ts, mirrored: keep the two equal.
+  const frac = size === 'small' ? 0.22 : size === 'large' ? 0.40 : 0.30
   const base = Math.min(W, H)
   let w = base * frac * (W < H ? 1.25 : 1)
   let h = w * (lh / lw)

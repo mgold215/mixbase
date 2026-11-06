@@ -9,8 +9,10 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import ffprobeInstaller from '@ffprobe-installer/ffprobe'
 // Relative extension-full import (not the @/ alias) so the smoke test can
 // exercise this module directly under plain Node type-stripping.
+import sharp from 'sharp'
 import { buildTextOverlay, DEFAULT_TEXT_COLOR } from './finalize-render.ts'
 import { armDeadline } from './proc-deadline.ts'
+import { tintLettering } from './cassette-studio.ts'
 
 // ── Final video renderer ─────────────────────────────────────────────────────
 // Composes the finished YouTube video / vertical Short for a song from the
@@ -59,6 +61,13 @@ export type BuildVideoArgs = {
   color?: string
   /** false = no title cards at all (just the loop + audio). Default true. */
   showText?: boolean
+  /**
+   * The artist's own handwriting for the title (a Cassette Studio lettering:
+   * white ink + alpha PNG). When given it replaces the type lockup: tinted in
+   * `color`, set bottom-centre at ~32% of the short edge, faded in once and
+   * held — part of the picture like the cover, not a flashed caption.
+   */
+  handwriting?: Buffer | null
   /** Shorts only: where in the song the clip starts (seconds). */
   startSec?: number
   /**
@@ -468,16 +477,33 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
     // so the video card matches the finalized cover. Soft shadow rather than
     // the artwork's tight outline. Skipped entirely for "No text" renders.
     const showText = args.showText !== false
+    const handwritten = showText && !!args.handwriting
     const textFile = join(dir, 'text.png')
-    if (showText) {
+    if (showText && args.handwriting) {
+      // The handwriting, tinted and sized for this frame: ~32% of the short
+      // edge wide, never taller than 22% of the frame.
+      const lm = await sharp(args.handwriting).metadata()
+      const lw0 = lm.width ?? 1, lh0 = lm.height ?? 1
+      let lw = Math.round(Math.min(W, H) * 0.32)
+      let lh = Math.round(lw * (lh0 / lw0))
+      if (lh > H * 0.22) { lh = Math.round(H * 0.22); lw = Math.round(lh * (lw0 / lh0)) }
+      await writeFile(textFile, await tintLettering(args.handwriting, color, { width: lw, height: lh }))
+    } else if (showText) {
       const overlay = await buildTextOverlay(title, artist, W, 'medium', true, color, 'soft')
       await writeFile(textFile, overlay.png)
     }
 
-    // ── Pass 2: loop for the song, flash text, mux audio ────────────────────
+    // ── Pass 2: loop for the song, write the title, mux audio ───────────────
     report(0.2, 'Rendering full video')
-    const windows = showText ? flashWindows(outDur) : []
-    const F = FLASH_FADE_SEC
+    // Type flashes through the song; the handwriting fades in once and stays
+    // to the end, bottom-centre, clear of the Shorts UI strip along the bottom.
+    const F = handwritten ? 1.0 : FLASH_FADE_SEC
+    const windows: FlashWindow[] = !showText ? []
+      : handwritten ? [{ start: 0.8, end: Math.max(1.2, outDur - F - (format === 'shorts' ? 1.0 : 0.5)) }]
+      : flashWindows(outDur)
+    const overlayXY = handwritten
+      ? `x=(W-w)/2:y=H-h-${Math.round(H * (format === 'shorts' ? 0.14 : 0.07))}`
+      : 'x=(W-w)/2:y=(H-h)/2'
     const loops = Math.ceil(outDur / unitDur) + 1
 
     const parts: string[] = [`[0:v]trim=end=${outDur.toFixed(3)},setpts=PTS-STARTPTS[bg]`]
@@ -494,7 +520,7 @@ export async function buildFinalVideo(args: BuildVideoArgs): Promise<BuiltVideo>
         )
         const next = `v${i}`
         parts.push(
-          `[${chain}][f${i}]overlay=x=(W-w)/2:y=(H-h)/2:` +
+          `[${chain}][f${i}]overlay=${overlayXY}:` +
           `enable='between(t,${win.start.toFixed(3)},${(win.end + F).toFixed(3)})'[${next}]`
         )
         chain = next

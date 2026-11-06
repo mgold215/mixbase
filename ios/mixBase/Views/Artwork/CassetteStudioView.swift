@@ -232,6 +232,11 @@ struct CassetteStudioView: View {
     @State private var sheetPick: PhotosPickerItem?
     @State private var sheetError: String?
     @State private var manualOpen = false
+    // The result's Title and Look editors and the Setup card stay folded until
+    // asked for: one box, one button, one result on screen.
+    @State private var quickTitleOpen = false
+    @State private var quickLookOpen = false
+    @State private var setupOpen = false
     @State private var pollToken = 0
     // The cover and clips already handed to the song screen, so polling
     // announces each once.
@@ -274,12 +279,16 @@ struct CassetteStudioView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     quickSection
-                    setupSection
+                    if setupOpen || !setupReady {
+                        setupSection
+                    } else {
+                        setupStatusRow
+                    }
 
                     Button(action: { manualOpen.toggle() }) {
                         HStack(spacing: 6) {
                             Image(systemName: manualOpen ? "chevron.down" : "chevron.right")
-                            Text("Manual studio (every control)")
+                            Text("Advanced")
                         }
                         .font(.subheadline)
                         .foregroundColor(Color(hex: "#999999"))
@@ -1150,6 +1159,7 @@ struct CassetteStudioView: View {
                 projectId: projectId,
                 options: options,
                 initialLook: pendingLook,
+                heading: "The look",
                 locked: busy != nil,
                 isSaving: $lookSaving,
                 onSaved: { result in
@@ -1304,7 +1314,7 @@ struct CassetteStudioView: View {
             .buttonStyle(.plain)
             .disabled(!canMakeIt)
 
-            Text("Your real cassette in that scene, with moodmixformat and the title in your handwriting, then the same scene filmed as Canvas and YouTube clips of the cassette playing. Everything is applied to this song. Takes about 3–5 minutes.")
+            Text("Your cassette and your handwriting in that scene, then the scene filmed for Canvas and YouTube. About 3–5 minutes.")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1398,8 +1408,22 @@ struct CassetteStudioView: View {
                 }
             }
 
-            if !job.isRunning, let lettering = job.lettering, job.artworkUrl != nil {
-                quickTitleControls(job: job, lettering: lettering)
+            if !job.isRunning, job.artworkUrl != nil {
+                // The editors stay folded: the title (when this song has
+                // handwriting) and the look.
+                HStack(spacing: 8) {
+                    if job.lettering != nil {
+                        foldChip("Title", open: quickTitleOpen) { quickTitleOpen.toggle() }
+                    }
+                    foldChip("Look", open: quickLookOpen) { quickLookOpen.toggle() }
+                    Spacer(minLength: 0)
+                }
+                if quickTitleOpen, let lettering = job.lettering {
+                    quickTitleControls(job: job, lettering: lettering)
+                }
+                if quickLookOpen {
+                    lookSection
+                }
             }
 
             if let quickSaveError {
@@ -1444,12 +1468,41 @@ struct CassetteStudioView: View {
         }
     }
 
+    /// Everything the one click needs is in place — a cassette and a full
+    /// handwriting sheet — so Setup folds to one line.
+    private var setupReady: Bool { quickReady && setupInfo != nil && !needsSheet }
+
+    private var setupStatusRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(Color(hex: "#2dd4bf"))
+            Text(setupInfo.map { "Cassette · handwriting \($0.letters.known)/\($0.letters.total)" } ?? "Cassette · handwriting")
+                .foregroundColor(Color(hex: "#999999"))
+            Spacer(minLength: 0)
+            Button("Change") { setupOpen = true }
+                .foregroundColor(Color(hex: "#2dd4bf"))
+                .buttonStyle(.plain)
+        }
+        .font(.caption)
+        .padding(.horizontal)
+    }
+
     // MARK: - Setup
 
     @ViewBuilder
     private var setupSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("Setup")
+            HStack {
+                sectionTitle("Setup")
+                Spacer()
+                if setupReady {
+                    Button("Hide") { setupOpen = false }
+                        .font(.caption)
+                        .foregroundColor(Color(hex: "#2dd4bf"))
+                        .buttonStyle(.plain)
+                        .padding(.horizontal)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
@@ -1559,6 +1612,24 @@ struct CassetteStudioView: View {
                 .frame(width: 180, height: 320)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
         }
+    }
+
+    /// A fold's chip: chevron + name; tapping opens or closes that editor.
+    private func foldChip(_ label: String, open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: open ? "chevron.down" : "chevron.right")
+                Text(label)
+            }
+            .font(.caption)
+            .fontWeight(.medium)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundColor(Color(hex: "#f0f0f0"))
+            .background(Color(hex: "#222222"))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Adjust the title after a run: the same cover re-lettered from its kept
