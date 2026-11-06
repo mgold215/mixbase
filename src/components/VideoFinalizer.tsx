@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MonitorPlay, Smartphone, Download, Clapperboard, RefreshCw } from 'lucide-react'
+import { MonitorPlay, Smartphone, Download, Clapperboard, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react'
 import { TEXT_COLORS } from '@/lib/text-colors'
 import { saveMedia } from '@/lib/download'
 
@@ -50,6 +50,8 @@ export default function VideoFinalizer({
   // This song has a Cassette Studio lettering: the title is written in the
   // artist's handwriting and held on screen, not set in type and flashed.
   const [handwritingAvailable, setHandwritingAvailable] = useState(false)
+  // Text, length and start point stay folded: the defaults are the usual ask.
+  const [optionsOpen, setOptionsOpen] = useState(false)
   // The server's suggestion: false when a pinned loop was made from the
   // finished cover, which usually already shows the title. Applied until the
   // artist picks a text option themselves.
@@ -214,13 +216,15 @@ export default function VideoFinalizer({
   return (
     <div className="max-w-2xl space-y-5">
       <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-        Loops a pinned visualizer seamlessly for the length of the song, flashes the artist name and
-        title through the track (or no text at all), and muxes in the current mix — rendered
-        server-side into an upload-ready MP4. The full-length video renders from your horizontal pin,
-        the Short from your vertical pin.
+        Your pinned loop, your latest mix and your title, rendered as an upload-ready MP4.
       </p>
 
-      {/* Shared text: a color for the title cards, or no text at all */}
+      {/* Options fold: the text colour (or none), and the Short's length and start. */}
+      <button onClick={() => setOptionsOpen(v => !v)} className="flex items-center gap-1 text-[11px] text-[#888] hover:text-white">
+        {optionsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        Options · text {showText ? (TEXT_COLORS.find(c => c.value === color)?.label ?? 'on') : 'off'} · Short {shortLen}s from the {shortStart === 'start' ? 'intro' : shortStart}
+      </button>
+      {optionsOpen && (
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1.5">Text</p>
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -259,6 +263,7 @@ export default function VideoFinalizer({
           </p>
         )}
       </div>
+      )}
 
       <FormatCard
         icon={<MonitorPlay size={15} />}
@@ -288,7 +293,7 @@ export default function VideoFinalizer({
         job={jobs.shorts}
         error={errors.shorts}
         onRender={() => startRender('shorts')}
-        controls={
+        controls={optionsOpen ? (
           <div className="flex flex-wrap gap-3">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-[#777] mb-1">Length</p>
@@ -323,7 +328,7 @@ export default function VideoFinalizer({
               </div>
             </div>
           </div>
-        }
+        ) : undefined}
       />
     </div>
   )

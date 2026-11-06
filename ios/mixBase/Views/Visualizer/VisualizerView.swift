@@ -102,6 +102,7 @@ struct VisualizerView: View {
         self.coverUrl = coverUrl
         self._pinnedUrl = State(initialValue: pinnedUrl)
         self._pinnedWideUrl = State(initialValue: pinnedWideUrl)
+        self._moreLoopsOpen = State(initialValue: pinnedUrl == nil && pinnedWideUrl == nil)
         self.onPinChanged = onPinChanged
         self.onWidePinChanged = onWidePinChanged
     }
@@ -206,6 +207,13 @@ struct VisualizerView: View {
     // Where the uploaded video is pinned — which finished videos it then feeds.
     @State private var ownVideoSlot = "auto"
 
+    // Folds: the finished video's options, the loop makers and the library stay
+    // closed until asked for. The makers open on their own when no loop is
+    // pinned yet, since that is how a first loop gets made.
+    @State private var finishOptionsOpen = false
+    @State private var moreLoopsOpen: Bool
+    @State private var libraryOpen = false
+
     private static let ownVideoSlots: [(id: String, label: String)] = [
         ("auto", "Fits its shape"), ("vertical", "Canvas + Short"), ("wide", "YouTube"), ("both", "Both"),
     ]
@@ -224,9 +232,6 @@ struct VisualizerView: View {
                     // MARK: - Pinned Visualizers
                     pinnedSection
 
-                    // MARK: - Your own video
-                    ownVideoSection
-
                     // Pin/delete errors surface here
                     if let errorMessage {
                         Text(errorMessage)
@@ -235,29 +240,36 @@ struct VisualizerView: View {
                             .padding(.horizontal)
                     }
 
-                    // MARK: - Free Generator
-                    // Server-side render of the artwork into a seamless loop by
-                    // the web generator's own effect engine — the web records a
-                    // browser canvas, which this platform doesn't have.
-                    if hasSourceChoice {
-                        sourcePicker
-                    }
-
-                    if let sourceImageUrl, !sourceImageUrl.isEmpty {
-                        freeGeneratorSection
-                    }
-
-                    // MARK: - Owner-only tools
-                    if authService.ownerTools {
-                        movingCoverSection
-                        aiVideoSection
-                    }
-
-                    // MARK: - Finished Video (every account)
+                    // MARK: - Finished Video (every account) — the point of the screen
                     finishedSection
 
-                    // MARK: - Library
-                    librarySection
+                    // MARK: - Your own video
+                    ownVideoSection
+
+                    // MARK: - More ways to make a loop (folded; open when nothing is pinned)
+                    // The free generator renders server-side with the web's own
+                    // effect engine (the web records a browser canvas, which this
+                    // platform doesn't have); the moving cover and AI video are
+                    // owner-only.
+                    foldRow("More ways to make a loop", open: $moreLoopsOpen)
+                    if moreLoopsOpen {
+                        if hasSourceChoice {
+                            sourcePicker
+                        }
+                        if let sourceImageUrl, !sourceImageUrl.isEmpty {
+                            freeGeneratorSection
+                        }
+                        if authService.ownerTools {
+                            movingCoverSection
+                            aiVideoSection
+                        }
+                    }
+
+                    // MARK: - Library (folded)
+                    foldRow("Your videos", open: $libraryOpen)
+                    if libraryOpen {
+                        librarySection
+                    }
 
                     Spacer(minLength: 80)
                 }
@@ -709,11 +721,25 @@ struct VisualizerView: View {
         }
     }
 
+    /// A fold's header row: chevron + title; tapping opens or closes it.
+    private func foldRow(_ title: String, open: Binding<Bool>) -> some View {
+        Button(action: { open.wrappedValue.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: open.wrappedValue ? "chevron.down" : "chevron.right")
+                Text(title)
+            }
+            .font(.subheadline)
+            .foregroundColor(Color(hex: "#999999"))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal)
+    }
+
     // MARK: - Finished video section (every account)
     @ViewBuilder
     private var finishedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Finished Video", subtitle: "Your pinned loop and your latest mix — with your title or without — rendered for YouTube or Shorts.")
+            sectionHeader("Finished Video", subtitle: "Your pinned loop and your latest mix, rendered for YouTube or a Short.")
 
             if pinnedUrl == nil && pinnedWideUrl == nil {
                 Text("Pin a visualizer above first.")
@@ -730,6 +756,10 @@ struct VisualizerView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal)
 
+                // Length, start point and text stay folded: the defaults (30 s
+                // from the hook, the title in the chosen colour) are the usual ask.
+                foldRow("Options", open: $finishOptionsOpen)
+                if finishOptionsOpen {
                 if finishFormat == "shorts" {
                     HStack(spacing: 8) {
                         Text("Length")
@@ -779,6 +809,7 @@ struct VisualizerView: View {
                         .font(.caption2)
                         .foregroundColor(.gray)
                         .padding(.horizontal)
+                }
                 }
 
                 if let job = finishJob {

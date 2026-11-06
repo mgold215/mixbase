@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ChangeEvent } from 'react'
 import Image from 'next/image'
-import { Check, Film, MonitorPlay, Upload } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Film, MonitorPlay, Upload } from 'lucide-react'
 import { saveMedia } from '@/lib/download'
 import { uploadVisualizer } from '@/lib/fx/upload'
 import { useVizRecipe } from './visualizer/useVizRecipe'
@@ -94,6 +94,9 @@ export default function Visualizer({
   // 'auto' follows its shape, 'both' pins it to both slots (the renderer
   // centre-crops whichever shape does not match).
   const [ownUploadSlot, setOwnUploadSlot] = useState<'auto' | 'canvas' | 'wide' | 'both'>('auto')
+  // The loop makers (the free generator, AI video) stay folded once a loop is
+  // pinned; with nothing pinned yet they open, since that is how one gets made.
+  const [moreOpen, setMoreOpen] = useState(!(visualizerUrl || wideVisualizerUrl))
   // "Choose from Media" picker — pin any previously generated loop, from any
   // project, into whichever slot (vertical/horizontal) opened the picker.
   const [pickerSlot, setPickerSlot] = useState<VizSlot | null>(null)
@@ -334,6 +337,10 @@ export default function Visualizer({
     <div className="max-w-4xl space-y-6">
       {projectVizSection}
 
+      <button onClick={() => setMoreOpen(v => !v)} className="flex items-center gap-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+        {moreOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}More ways to make a loop
+      </button>
+      {moreOpen && (<>
       {/* Artwork preview — and, when the finished cover differs from the
           clean artwork, which of the two the loop animates. */}
       <div className="flex items-center gap-4">
@@ -399,6 +406,7 @@ export default function Visualizer({
         finishSave={finishSave}
         onFinishSaveTap={finishSaveTap}
       />
+      </>)}
     </div>
   )
 }
