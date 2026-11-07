@@ -1576,7 +1576,7 @@ struct CassetteStudioView: View {
             .padding(.horizontal)
 
             if needsSheet {
-                hint("Handwriting sheet, once: on plain paper write moodmixformat on the first line, then A–Z and 0–9 in capitals on the lines below with a gap between every letter. Photograph it flat. After that every song title is written in your hand automatically.")
+                hint("Handwriting sheet, once: on plain paper write A–Z then 0–9 in capitals with a gap between every character, over as many lines as you like, and moodmixformat on its own line at the top or the bottom. Nothing else on the sheet (no # or dashes). Photograph it flat. After that every song title is written in your hand automatically.")
             }
 
             if let title = setupInfo?.title, !title.missing.isEmpty, !needsSheet {

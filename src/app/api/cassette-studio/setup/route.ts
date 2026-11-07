@@ -24,9 +24,9 @@ export const maxDuration = 60
 //                                           letters the handwriting can't write yet
 //
 // POST /api/cassette-studio/setup   multipart { photo }
-//   The handwriting sheet: your name on the first line, then A–Z and 0–9 in
-//   capitals with a gap between each (src/lib/handwriting-sheet.ts). Nothing
-//   to type — the letters are labelled by their order.
+//   The handwriting sheet: A–Z and 0–9 in capitals with a gap between each,
+//   and your name on its own line, top or bottom (src/lib/handwriting-sheet.ts).
+//   Nothing to type — the letters are labelled by their order.
 //   → { signature: { url }, added, letters: { known, total } }  or 422 { error, found, expected }
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.

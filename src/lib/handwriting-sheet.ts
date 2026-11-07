@@ -1,14 +1,18 @@
 // Handwriting SHEET — the one photo that sets up "your handwriting" for good,
 // with nothing to type:
 //
-//   line 1        your name, the way you sign it (e.g. moodmixformat) — kept
-//                 whole, as one image: a signature is a shape, not letters
-//   lines 2 …     A–Z then 0–9 in capitals, a gap between every character,
-//                 broken over as many lines as you like
+//   one line      your name, the way you sign it (e.g. moodmixformat) — kept
+//                 whole, as one image: a signature is a shape, not letters.
+//                 The TOP line or the BOTTOM line, whichever it was written on
+//                 (pickSignatureRow decides: the line that looks like a name —
+//                 joined-up or lowercase — else the one that leaves 36 shapes)
+//   other lines   A–Z then 0–9 in capitals, a gap between every character,
+//                 broken over as many lines as you like, nothing else on the
+//                 sheet (a # or a dash would be taken for a letter)
 //
-// The letters are labelled by ORDER (the 36 shapes after the first line are
+// The letters are labelled by ORDER (the 36 shapes on the letter lines are
 // A, B, C … 9), so nothing is typed. If the count is not 36 (or 26, letters
-// only) the sheet is refused with how many shapes were found — a miscount
+// only) the sheet is refused with how many shapes each line had — a miscount
 // would label every later letter wrong, and a wrong letter is worse than none.
 //
 // Also here: the title as it is written (capitals, accents stripped, long
@@ -37,25 +41,29 @@ export async function readHandwritingSheet(photo: Buffer): Promise<SheetResult> 
   const lifted = await extractHandwriting(photo)
   const { alpha, width, height } = await letteringAlpha(lifted.png)
   const rows = segmentGlyphs(alpha, width, height)
+  const expected = SHEET_LETTERS.length + SHEET_DIGITS.length
   if (rows.length < 2) {
     return {
       ok: false,
-      error: 'I can only see one line. Write your name on the first line, then the alphabet (A–Z) and 0–9 on the lines below it.',
+      error: 'I can only see one line. Write your name on its own line (top or bottom) and A–Z then 0–9 on the other lines.',
       found: rows[0]?.glyphs.length ?? 0,
-      expected: SHEET_LETTERS.length + SHEET_DIGITS.length,
+      expected,
     }
   }
-  const letterRows = rows.slice(1)
+  const signatureAt = pickSignatureRow(rows)
+  const letterRows = signatureAt === 'top' ? rows.slice(1) : rows.slice(0, -1)
+  const signatureRow = signatureAt === 'top' ? rows[0] : rows[rows.length - 1]
   const count = letterRows.reduce((n, r) => n + r.glyphs.length, 0)
-  const chars = count === SHEET_LETTERS.length + SHEET_DIGITS.length ? SHEET_LETTERS + SHEET_DIGITS
+  const chars = count === expected ? SHEET_LETTERS + SHEET_DIGITS
     : count === SHEET_LETTERS.length ? SHEET_LETTERS
       : null
   if (!chars) {
+    const perRow = letterRows.map(r => r.glyphs.length).join(' · ')
     return {
       ok: false,
-      error: `I found ${count} letter shapes under your name but expected 36 (A–Z and 0–9). Leave a clear gap between every character and write them in order.`,
+      error: `I found ${count} shapes on the letter lines (${perRow}) but expected 36: A–Z then 0–9 and nothing else (no # or dashes). Leave a clear gap between characters and write them in order. Your name was read from the ${signatureAt} line.`,
       found: count,
-      expected: SHEET_LETTERS.length + SHEET_DIGITS.length,
+      expected,
     }
   }
   // Split the run of characters over the rows as written.
@@ -68,8 +76,50 @@ export async function readHandwritingSheet(photo: Buffer): Promise<SheetResult> 
   for (const g of labelled.glyphs) {
     glyphs.push({ char: g.char, unit: g.unit, base: g.base, width: g.x1 - g.x0 + 1, height: g.y1 - g.y0 + 1, png: await glyphPng(alpha, width, g) })
   }
-  const signature = await cropRow(alpha, width, height, rows[0])
+  const signature = await cropRow(alpha, width, height, signatureRow)
   return { ok: true, signature, glyphs }
+}
+
+/**
+ * Which end of the sheet carries the name. A name reads differently from a
+ * line of spaced capitals: written joined-up it is one shape far wider than
+ * the line is tall, written in lowercase most of its letters stop at the
+ * x-height while the line's height is set by the tall ones. When exactly one
+ * end line looks like that, it is the name. When neither or both do, the end
+ * that leaves 36 (or 26) shapes on the other lines wins; when that does not
+ * settle it either, the clearer name wins, else the top line (the layout the
+ * instructions describe).
+ */
+export function pickSignatureRow(rows: GlyphRow[]): 'top' | 'bottom' {
+  if (rows.length < 2) return 'top'
+  const first = rows[0], last = rows[rows.length - 1]
+  const a = nameLikeness(first), b = nameLikeness(last)
+  if ((a >= 1) !== (b >= 1)) return b >= 1 ? 'bottom' : 'top'
+  const total = rows.reduce((n, r) => n + r.glyphs.length, 0)
+  const fits = (sig: GlyphRow): boolean => {
+    const n = total - sig.glyphs.length
+    return n === SHEET_LETTERS.length + SHEET_DIGITS.length || n === SHEET_LETTERS.length
+  }
+  const topFits = fits(first), bottomFits = fits(last)
+  if (topFits !== bottomFits) return bottomFits ? 'bottom' : 'top'
+  return b >= 1 && b > a * 1.5 ? 'bottom' : 'top'
+}
+
+/** ≥ 1 when a line of writing looks like a name rather than spaced capitals (see pickSignatureRow). */
+function nameLikeness(row: GlyphRow): number {
+  const h = Math.max(1, row.y1 - row.y0 + 1)
+  const heights = row.glyphs.map(g => g.y1 - g.y0 + 1).sort((a, b) => a - b)
+  // The tall letters' height: the 80th percentile, so one flourish or a
+  // descender does not make every other letter look short.
+  const tall = Math.max(1, heights[Math.min(heights.length - 1, Math.floor(heights.length * 0.8))])
+  let widest = 0, short = 0
+  for (const g of row.glyphs) {
+    widest = Math.max(widest, g.x1 - g.x0 + 1)
+    if (g.y1 - g.y0 + 1 < tall * 0.72) short++
+  }
+  const joined = widest / h / 2                      // one shape twice as wide as the line is tall
+  const lowercase = row.glyphs.length >= 4 ? short / row.glyphs.length / 0.4 : 0  // 40 % of the letters stop short of the tall ones
+  return Math.max(joined, lowercase)
 }
 
 /**
