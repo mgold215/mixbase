@@ -3,8 +3,9 @@ import SwiftUI
 import UIKit
 
 // MARK: - Recent Uploads widget
-// Your three newest uploads (each song's newest mix), each with a play/pause
-// button, plus "Mix Note" to jot a note on a mix. Replaced the Studio Stats
+// Your three newest uploads (each song's newest mix) as big cover-art tiles,
+// each with a play/pause button on the cover, plus "Mix Note" to jot a note
+// on a mix. Replaced the Studio Stats
 // counters (2026-11-07) but keeps that widget's kind, so a widget already on
 // the Home Screen turns into this one in place.
 //
@@ -97,7 +98,6 @@ struct RecentUploadsWidgetView: View {
                 smallView
             }
         }
-        .containerBackground(for: .widget) { MBTheme.background }
         .widgetURL(widgetTapURL)
     }
 
@@ -113,122 +113,149 @@ struct RecentUploadsWidgetView: View {
 
     private var uploads: [RecentUpload] { entry.uploads ?? [] }
 
-    // MARK: Small — the newest upload
+    // MARK: Small — the newest upload's cover, full-bleed
 
     private var smallView: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                MBWordmark(size: 13)
+                Text("LATEST UPLOAD")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundColor(MBTheme.teal)
                 Spacer()
                 // A label, not a Link — the whole small widget is the tap.
                 if !uploads.isEmpty { mixNoteLabel(compact: true) }
             }
-            Spacer(minLength: 6)
+            Spacer(minLength: 0)
             if let upload = uploads.first {
-                cover(for: upload, side: 44, cornerRadius: 8)
-                Spacer(minLength: 6)
                 HStack(alignment: .bottom, spacing: 6) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(upload.title)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 14, weight: .bold))
                             .foregroundColor(MBTheme.text)
-                            .lineLimit(1)
+                            .lineLimit(2)
                         Text(subtitle(for: upload))
                             .font(.system(size: 10))
-                            .foregroundColor(MBTheme.text.opacity(0.55))
+                            .foregroundColor(MBTheme.text.opacity(0.75))
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    playButton(for: upload, diameter: 30)
+                    playButton(for: upload, diameter: 32)
                 }
             } else {
                 emptyHint
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-
-    // MARK: Medium — three compact rows
-
-    private var mediumView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                MBWordmark(size: 14)
-                Spacer()
-                mixNotePill(compact: false)
-            }
-            if uploads.isEmpty {
-                emptyHint
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(uploads, id: \.versionId) { upload in
-                        row(upload, coverSide: 30, playDiameter: 28, showsNoteButton: false)
-                    }
-                }
                 Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .containerBackground(for: .widget) { smallBackground }
     }
 
-    // MARK: Large — roomier rows, each with its own note button
+    private var smallBackground: some View {
+        ZStack {
+            MBTheme.background
+            if let upload = uploads.first, let image = entry.covers[upload.versionId] {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                LinearGradient(
+                    colors: [.black.opacity(0.45), .black.opacity(0.05), .black.opacity(0.85)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+    }
+
+    // MARK: Medium — three cover tiles in a row
+
+    private var mediumView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header(wordmarkSize: 14)
+            if uploads.isEmpty {
+                emptyHint
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                tilesRow(maxSide: 74, playDiameter: 26, showsDetails: false)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .containerBackground(for: .widget) { MBTheme.background }
+    }
+
+    // MARK: Large — three big cover tiles, each with its own note button
 
     private var largeView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                MBWordmark(size: 16)
-                Spacer()
-                mixNotePill(compact: false)
-            }
-
+        VStack(alignment: .leading, spacing: 14) {
+            header(wordmarkSize: 16)
             Text("RECENT UPLOADS")
                 .font(.system(size: 10, weight: .bold))
                 .tracking(1)
                 .foregroundColor(MBTheme.text.opacity(0.4))
-
             if uploads.isEmpty {
                 emptyHint
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
             } else {
-                VStack(spacing: 10) {
-                    ForEach(uploads, id: \.versionId) { upload in
-                        row(upload, coverSide: 54, playDiameter: 38, showsNoteButton: true)
-                            .padding(8)
-                            .background(MBTheme.card)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                }
+                tilesRow(maxSide: 200, playDiameter: 34, showsDetails: true)
             }
-
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .containerBackground(for: .widget) { MBTheme.background }
     }
 
-    // MARK: Pieces
+    // MARK: Tiles
 
-    private func row(_ upload: RecentUpload, coverSide: CGFloat, playDiameter: CGFloat, showsNoteButton: Bool) -> some View {
-        let large = coverSide > 40
-        return HStack(spacing: large ? 12 : 10) {
-            cover(for: upload, side: coverSide, cornerRadius: large ? 8 : 6)
-            VStack(alignment: .leading, spacing: large ? 3 : 1) {
-                Text(upload.title)
-                    .font(.system(size: large ? 15 : 13, weight: .semibold))
-                    .foregroundColor(isPlaying(upload) ? MBTheme.teal : MBTheme.text)
-                    .lineLimit(1)
+    private func header(wordmarkSize: CGFloat) -> some View {
+        HStack {
+            MBWordmark(size: wordmarkSize)
+            Spacer()
+            mixNotePill()
+        }
+    }
+
+    /// Up to three square covers side by side, sized to the widget's width.
+    private func tilesRow(maxSide: CGFloat, playDiameter: CGFloat, showsDetails: Bool) -> some View {
+        GeometryReader { geo in
+            let gap: CGFloat = 10
+            let side = min(maxSide, (geo.size.width - gap * 2) / 3)
+            HStack(alignment: .top, spacing: gap) {
+                ForEach(uploads, id: \.versionId) { upload in
+                    tile(upload, side: side, playDiameter: playDiameter, showsDetails: showsDetails)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func tile(_ upload: RecentUpload, side: CGFloat, playDiameter: CGFloat, showsDetails: Bool) -> some View {
+        VStack(alignment: .leading, spacing: showsDetails ? 3 : 2) {
+            cover(for: upload, side: side, cornerRadius: showsDetails ? 12 : 9)
+                .overlay(
+                    RoundedRectangle(cornerRadius: showsDetails ? 12 : 9)
+                        .stroke(MBTheme.teal, lineWidth: isPlaying(upload) ? 2 : 0)
+                )
+                .overlay(alignment: .bottomTrailing) {
+                    playButton(for: upload, diameter: playDiameter)
+                        .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+                        .padding(showsDetails ? 7 : 5)
+                }
+            Text(upload.title)
+                .font(.system(size: showsDetails ? 13 : 11, weight: .semibold))
+                .foregroundColor(isPlaying(upload) ? MBTheme.teal : MBTheme.text)
+                .lineLimit(1)
+                .padding(.top, showsDetails ? 3 : 1)
+            if showsDetails {
                 Text(subtitle(for: upload))
-                    .font(.system(size: large ? 11 : 10))
+                    .font(.system(size: 10))
                     .foregroundColor(MBTheme.text.opacity(0.55))
                     .lineLimit(1)
+                noteLink(for: upload)
+                    .padding(.top, 6)
             }
-            Spacer(minLength: 4)
-            if showsNoteButton {
-                noteButton(for: upload, diameter: playDiameter)
-            }
-            playButton(for: upload, diameter: playDiameter)
         }
+        .frame(width: side, alignment: .leading)
     }
 
     private func isPlaying(_ upload: RecentUpload) -> Bool {
@@ -250,18 +277,21 @@ struct RecentUploadsWidgetView: View {
         .buttonStyle(.plain)
     }
 
-    /// Opens the app's notes sheet for this exact mix.
-    private func noteButton(for upload: RecentUpload, diameter: CGFloat) -> some View {
+    /// "Note" under a large tile — opens the app's notes sheet for this mix.
+    private func noteLink(for upload: RecentUpload) -> some View {
         Group {
             if let url = mixNoteURL(for: upload) {
                 Link(destination: url) {
-                    ZStack {
-                        Circle().stroke(MBTheme.teal.opacity(0.6), lineWidth: 1.5)
+                    HStack(spacing: 4) {
                         Image(systemName: "square.and.pencil")
-                            .font(.system(size: diameter * 0.38, weight: .semibold))
-                            .foregroundColor(MBTheme.teal)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Note")
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .frame(width: diameter, height: diameter)
+                    .foregroundColor(MBTheme.teal)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .overlay(Capsule().stroke(MBTheme.teal.opacity(0.6), lineWidth: 1))
                 }
             }
         }
@@ -269,10 +299,10 @@ struct RecentUploadsWidgetView: View {
 
     /// "+ Mix Note" — a note on the mix that's playing (or, with nothing
     /// playing, the newest upload). ContentView decides which.
-    private func mixNotePill(compact: Bool) -> some View {
+    private func mixNotePill() -> some View {
         Group {
             if let url = URL(string: "mixbase://mix-note") {
-                Link(destination: url) { mixNoteLabel(compact: compact) }
+                Link(destination: url) { mixNoteLabel(compact: false) }
             }
         }
     }
@@ -318,7 +348,7 @@ struct RecentUploadsWidgetView: View {
                         endPoint: .bottomTrailing
                     )
                     Image(systemName: "music.note")
-                        .font(.system(size: side * 0.4))
+                        .font(.system(size: side * 0.3))
                         .foregroundColor(.gray.opacity(0.4))
                 }
             }

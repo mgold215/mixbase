@@ -126,7 +126,7 @@ enum NowPlayingStore {
         return try? JSONDecoder().decode(RecentUploadsSnapshot.self, from: data)
     }
 
-    /// Small cover thumbnails for the widget rows, one file per slot. The URL
+    /// Cover thumbnails for the widget tiles (big enough for the large size), one file per slot. The URL
     /// is remembered per slot so a row never shows another song's cover.
     static func hasRecentArtwork(slot: Int, urlString: String) -> Bool {
         defaults?.string(forKey: recentArtUrlKeyPrefix + "\(slot)") == urlString
@@ -134,7 +134,7 @@ enum NowPlayingStore {
 
     static func saveRecentArtwork(data: Data, slot: Int, urlString: String) {
         guard let dir = containerURL,
-              let jpeg = downsampledJPEG(from: data, maxDimension: 240) else { return }
+              let jpeg = downsampledJPEG(from: data, maxDimension: 480) else { return }
         let fileURL = dir.appendingPathComponent("widget-recent-\(slot).jpg")
         guard (try? jpeg.write(to: fileURL, options: .atomic)) != nil else { return }
         defaults?.set(urlString, forKey: recentArtUrlKeyPrefix + "\(slot)")
