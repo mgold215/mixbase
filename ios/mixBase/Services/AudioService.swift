@@ -76,6 +76,10 @@ class AudioService: ObservableObject {
     /// Which version is currently loaded in the player
     @Published var currentVersion: Version?
 
+    /// Set by the widget's "Mix Note" deep link: the Player opens the notes
+    /// sheet as soon as this mix is the one up (PlayerView clears it).
+    @Published var pendingMixNoteVersionId: UUID?
+
     /// The name of the currently playing track (project title)
     @Published var currentTrackName: String?
 
@@ -697,6 +701,7 @@ class AudioService: ObservableObject {
                 lastWidgetSnapshot = nil
                 NowPlayingStore.saveNowPlaying(nil)
                 NowPlayingStore.reloadNowPlayingWidgets()
+                NowPlayingStore.reloadRecentUploadsWidgets()
             }
             return
         }
@@ -707,6 +712,7 @@ class AudioService: ObservableObject {
             artistName: displayArtistName.isEmpty ? nil : displayArtistName,
             artworkUrl: currentArtworkUrl,
             projectId: version.projectId,
+            versionId: version.id,
             isPlaying: isPlaying,
             updatedAt: Date()
         )
@@ -714,6 +720,8 @@ class AudioService: ObservableObject {
         lastWidgetSnapshot = snapshot
         NowPlayingStore.saveNowPlaying(snapshot)
         NowPlayingStore.reloadNowPlayingWidgets()
+        // The Recent Uploads widget marks the playing row with a pause icon.
+        NowPlayingStore.reloadRecentUploadsWidgets()
     }
 
     /// The widget's play/pause button (PlayPauseWidgetIntent) lands here, in
@@ -728,6 +736,43 @@ class AudioService: ObservableObject {
             NowPlayingStore.saveNowPlaying(nil)
             NowPlayingStore.reloadNowPlayingWidgets()
         }
+    }
+
+    /// A Recent Uploads widget row's play button (PlayRecentUploadIntent),
+    /// run in the app's process — possibly a fresh background launch with
+    /// nothing loaded. The row that's already up just toggles; any other row
+    /// fetches its song + mix and starts it.
+    @MainActor
+    func playRecentUpload(projectId: UUID, versionId: UUID) async {
+        if currentVersion?.id == versionId {
+            togglePlayPause()
+            return
+        }
+        guard let mix = await fetchOwnMix(projectId: projectId, versionId: versionId) else {
+            // Couldn't load it (signed out, offline): republish the truth.
+            publishWidgetSnapshot()
+            NowPlayingStore.reloadRecentUploadsWidgets()
+            return
+        }
+        let (version, project) = mix
+        play(
+            version: version,
+            trackName: project.title,
+            artworkUrl: project.displayArtworkUrl,
+            visualizerUrl: project.visualizerUrl
+        )
+    }
+
+    /// Loads one of the user's own mixes (and its song) by id — the widget
+    /// only carries ids, never the rows themselves.
+    func fetchOwnMix(projectId: UUID, versionId: UUID) async -> (Version, Project)? {
+        await AuthService.shared.ensureFreshToken()
+        async let projectFetch = SupabaseService.shared.fetchProject(id: projectId)
+        async let versionsFetch = SupabaseService.shared.fetchVersions(projectId: projectId)
+        guard let project = try? await projectFetch,
+              let versions = try? await versionsFetch,
+              let version = versions.first(where: { $0.id == versionId }) else { return nil }
+        return (version, project)
     }
 
     /// Lightweight update of just the playback rate (used by the status observer).

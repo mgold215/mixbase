@@ -23,6 +23,9 @@ struct NowPlayingSnapshot: Codable {
     var artistName: String?
     var artworkUrl: String?
     var projectId: UUID?
+    /// The exact mix playing — lets the Recent Uploads widget mark the right
+    /// row. Optional so snapshots written by older builds still decode.
+    var versionId: UUID? = nil
     var isPlaying: Bool
     var updatedAt: Date
 
@@ -35,15 +38,25 @@ struct NowPlayingSnapshot: Codable {
             && artistName == other.artistName
             && artworkUrl == other.artworkUrl
             && projectId == other.projectId
+            && versionId == other.versionId
             && isPlaying == other.isPlaying
     }
 }
 
-/// What the Studio Stats widget renders — the Home tab's three counters.
-struct StudioStatsSnapshot: Codable {
-    var projects: Int
-    var mixing: Int
-    var pipeline: Int
+/// One row of the Recent Uploads widget: a song's newest mix.
+struct RecentUpload: Codable, Equatable {
+    var projectId: UUID
+    var versionId: UUID
+    var title: String
+    var versionName: String
+    var uploadedAt: Date
+    var artworkUrl: String?
+}
+
+/// What the Recent Uploads widget renders — the three newest uploads, newest
+/// first. Written by HomeView after each dashboard load.
+struct RecentUploadsSnapshot: Codable {
+    var uploads: [RecentUpload]
     var updatedAt: Date
 }
 
@@ -56,11 +69,19 @@ enum NowPlayingStore {
     static let appGroupId = "group.com.moodmixformat.mixbase"
 
     /// WidgetKit "kind" identifiers — must match the widget configurations.
+    /// The Recent Uploads widget keeps the old Studio Stats kind on purpose:
+    /// a widget already on someone's Home Screen turns into the new one in
+    /// place instead of disappearing.
     static let nowPlayingWidgetKind = "MixbaseNowPlayingWidget"
     static let statsWidgetKind = "MixbaseStudioStatsWidget"
+    static var recentUploadsWidgetKind: String { statsWidgetKind }
+
+    /// How many uploads the widget lists.
+    static let recentUploadsLimit = 3
 
     private static let nowPlayingKey = "widget.nowPlaying"
-    private static let statsKey = "widget.studioStats"
+    private static let recentUploadsKey = "widget.recentUploads"
+    private static let recentArtUrlKeyPrefix = "widget.recentArtUrl."
     private static let artworkUrlKey = "widget.artworkUrl"
     private static let artworkFilename = "widget-artwork.jpg"
 
@@ -86,27 +107,43 @@ enum NowPlayingStore {
         return try? JSONDecoder().decode(NowPlayingSnapshot.self, from: data)
     }
 
-    // MARK: - Studio stats snapshot
+    // MARK: - Recent uploads snapshot
 
-    /// Saves the stats and reports whether they actually changed, so callers
-    /// only burn a widget reload when the numbers moved.
+    /// Saves the list and reports whether it actually changed, so callers
+    /// only burn a widget reload when something the widget shows moved.
     @discardableResult
-    static func saveStats(_ snapshot: StudioStatsSnapshot) -> Bool {
+    static func saveRecentUploads(_ uploads: [RecentUpload]) -> Bool {
         guard let defaults else { return false }
-        if let current = loadStats(),
-           current.projects == snapshot.projects,
-           current.mixing == snapshot.mixing,
-           current.pipeline == snapshot.pipeline {
-            return false
-        }
+        if let current = loadRecentUploads(), current.uploads == uploads { return false }
+        let snapshot = RecentUploadsSnapshot(uploads: uploads, updatedAt: Date())
         guard let data = try? JSONEncoder().encode(snapshot) else { return false }
-        defaults.set(data, forKey: statsKey)
+        defaults.set(data, forKey: recentUploadsKey)
         return true
     }
 
-    static func loadStats() -> StudioStatsSnapshot? {
-        guard let data = defaults?.data(forKey: statsKey) else { return nil }
-        return try? JSONDecoder().decode(StudioStatsSnapshot.self, from: data)
+    static func loadRecentUploads() -> RecentUploadsSnapshot? {
+        guard let data = defaults?.data(forKey: recentUploadsKey) else { return nil }
+        return try? JSONDecoder().decode(RecentUploadsSnapshot.self, from: data)
+    }
+
+    /// Small cover thumbnails for the widget rows, one file per slot. The URL
+    /// is remembered per slot so a row never shows another song's cover.
+    static func hasRecentArtwork(slot: Int, urlString: String) -> Bool {
+        defaults?.string(forKey: recentArtUrlKeyPrefix + "\(slot)") == urlString
+    }
+
+    static func saveRecentArtwork(data: Data, slot: Int, urlString: String) {
+        guard let dir = containerURL,
+              let jpeg = downsampledJPEG(from: data, maxDimension: 240) else { return }
+        let fileURL = dir.appendingPathComponent("widget-recent-\(slot).jpg")
+        guard (try? jpeg.write(to: fileURL, options: .atomic)) != nil else { return }
+        defaults?.set(urlString, forKey: recentArtUrlKeyPrefix + "\(slot)")
+    }
+
+    static func loadRecentArtworkData(slot: Int, matching urlString: String) -> Data? {
+        guard hasRecentArtwork(slot: slot, urlString: urlString),
+              let dir = containerURL else { return nil }
+        return try? Data(contentsOf: dir.appendingPathComponent("widget-recent-\(slot).jpg"))
     }
 
     // MARK: - Artwork cache
@@ -156,9 +193,9 @@ enum NowPlayingStore {
         #endif
     }
 
-    static func reloadStatsWidgets() {
+    static func reloadRecentUploadsWidgets() {
         #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadTimelines(ofKind: statsWidgetKind)
+        WidgetCenter.shared.reloadTimelines(ofKind: recentUploadsWidgetKind)
         #endif
     }
 }
