@@ -16,6 +16,10 @@ struct mixBaseApp: App {
         PlayPauseWidgetIntent.performer = {
             AudioService.shared.handleWidgetPlayPause()
         }
+        // Same hook for the Recent Uploads widget's per-row play buttons.
+        PlayRecentUploadIntent.performer = { projectId, versionId in
+            await AudioService.shared.playRecentUpload(projectId: projectId, versionId: versionId)
+        }
     }
 
     var body: some Scene {
