@@ -189,6 +189,12 @@ struct PlayerView: View {
             .task {
                 await seedQueueIfNeeded()
             }
+            // The widget's "Mix Note" button (mixbase://mix-note): open the
+            // notes sheet once the requested mix is playing and its real row
+            // has loaded (playingOwnVersion).
+            .onAppear { openPendingMixNote() }
+            .onChange(of: audioService.pendingMixNoteVersionId) { _, _ in openPendingMixNote() }
+            .onChange(of: allVersions.map(\.id)) { _, _ in openPendingMixNote() }
             .sheet(isPresented: $showQueue) {
                 QueueSheet(isLoading: isLoading)
             }
@@ -589,6 +595,14 @@ struct PlayerView: View {
     private var playingOwnVersion: Version? {
         guard let current = audioService.currentVersion else { return nil }
         return allVersions.first { $0.id == current.id }
+    }
+
+    private func openPendingMixNote() {
+        guard let pending = audioService.pendingMixNoteVersionId,
+              let own = playingOwnVersion, own.id == pending else { return }
+        audioService.pendingMixNoteVersionId = nil
+        showQueue = false
+        showNotes = true
     }
 
     // MARK: - Track List (nothing playing)

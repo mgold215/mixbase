@@ -489,6 +489,41 @@ struct HomeView: View {
         }
     }
 
+    /// The Recent Uploads widget's rows plus their cover thumbnails. The
+    /// widget never touches the network, so the covers are fetched here and
+    /// downscaled into the shared App Group.
+    private func publishRecentUploads() {
+        let byId = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let uploads: [RecentUpload] = latestVersions.values
+            .sorted { $0.createdAt > $1.createdAt }
+            .prefix(NowPlayingStore.recentUploadsLimit)
+            .compactMap { version in
+                guard let project = byId[version.projectId] else { return nil }
+                return RecentUpload(
+                    projectId: project.id,
+                    versionId: version.id,
+                    title: project.title,
+                    versionName: version.displayName,
+                    uploadedAt: version.createdAt,
+                    artworkUrl: project.displayArtworkUrl
+                )
+            }
+        let listChanged = NowPlayingStore.saveRecentUploads(uploads)
+
+        Task {
+            var changed = listChanged
+            for (slot, upload) in uploads.enumerated() {
+                guard let urlString = upload.artworkUrl,
+                      !NowPlayingStore.hasRecentArtwork(slot: slot, urlString: urlString),
+                      let url = URL(string: urlString),
+                      let response = try? await URLSession.shared.data(from: url) else { continue }
+                NowPlayingStore.saveRecentArtwork(data: response.0, slot: slot, urlString: urlString)
+                changed = true
+            }
+            if changed { NowPlayingStore.reloadRecentUploadsWidgets() }
+        }
+    }
+
     private func loadDashboardData() async {
         isLoading = true
 
@@ -533,17 +568,9 @@ struct HomeView: View {
             }
             loadFailed = false
 
-            // Feed the Studio Stats widget; only ask WidgetKit to re-render
-            // when the counters actually moved.
-            let stats = StudioStatsSnapshot(
-                projects: projects.count,
-                mixing: mixingCount,
-                pipeline: releases.count,
-                updatedAt: Date()
-            )
-            if NowPlayingStore.saveStats(stats) {
-                NowPlayingStore.reloadStatsWidgets()
-            }
+            // Feed the Recent Uploads widget: each song's newest mix, newest
+            // first. Only ask WidgetKit to re-render when the list moved.
+            publishRecentUploads()
         } catch {
             // Keep whatever data we already have; only flag the failure so the
             // banner shows when the screen would otherwise be empty.

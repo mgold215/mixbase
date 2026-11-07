@@ -25,3 +25,41 @@ struct PlayPauseWidgetIntent: AudioPlaybackIntent {
         return .result()
     }
 }
+
+// MARK: - PlayRecentUploadIntent
+// The play/pause button on each row of the Recent Uploads widget. Same trick
+// as PlayPauseWidgetIntent: an AudioPlaybackIntent compiled into both targets
+// runs in the APP's process, so the mix starts without opening mixBASE. The
+// row's ids travel as strings (AppIntent parameters); the app-installed hook
+// fetches the mix and plays it — or toggles it when it's already the one up.
+
+struct PlayRecentUploadIntent: AudioPlaybackIntent {
+
+    static let title: LocalizedStringResource = "Play Recent Upload"
+    static let description = IntentDescription("Plays one of your recent uploads in mixBase.")
+    static let isDiscoverable = false
+
+    @Parameter(title: "Project ID")
+    var projectId: String
+
+    @Parameter(title: "Mix ID")
+    var versionId: String
+
+    init() {}
+
+    init(projectId: UUID, versionId: UUID) {
+        self.projectId = projectId.uuidString
+        self.versionId = versionId.uuidString
+    }
+
+    /// Installed by the app at launch; nil in the widget process.
+    static var performer: (@MainActor (_ projectId: UUID, _ versionId: UUID) async -> Void)?
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if let project = UUID(uuidString: projectId), let version = UUID(uuidString: versionId) {
+            await Self.performer?(project, version)
+        }
+        return .result()
+    }
+}

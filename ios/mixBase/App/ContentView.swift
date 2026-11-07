@@ -37,6 +37,9 @@ struct ContentView: View {
             case "new-project":
                 selectedTab = 1
                 openNewProject = true
+            case "mix-note":
+                selectedTab = 2
+                openMixNote(from: url)
             default: break
             }
         }
@@ -48,6 +51,45 @@ struct ContentView: View {
         // Keep the five-tab layout from collapsing below a usable size.
         .frame(minWidth: 960, minHeight: 640)
         #endif
+    }
+
+    // MARK: - Widget "Mix Note"
+    // mixbase://mix-note?project=<id>&version=<id> targets one upload; with no
+    // ids it means "the mix that's playing", else the newest upload. The mix
+    // is started if it isn't already up (notes stamp against the playhead),
+    // then PlayerView opens the notes sheet for it.
+    private func openMixNote(from url: URL) {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func param(_ name: String) -> UUID? {
+            guard let value = items.first(where: { $0.name == name })?.value else { return nil }
+            return UUID(uuidString: value)
+        }
+
+        var target: (project: UUID, version: UUID)?
+        if let project = param("project"), let version = param("version") {
+            target = (project, version)
+        } else if let current = audioService.currentVersion {
+            target = (current.projectId, current.id)
+        } else if let newest = NowPlayingStore.loadRecentUploads()?.uploads.first {
+            target = (newest.projectId, newest.versionId)
+        }
+        guard let target else { return }
+
+        audioService.pendingMixNoteVersionId = target.version
+        guard audioService.currentVersion?.id != target.version else { return }
+        Task { @MainActor in
+            guard let mix = await audioService.fetchOwnMix(projectId: target.project, versionId: target.version) else {
+                audioService.pendingMixNoteVersionId = nil
+                return
+            }
+            let (version, project) = mix
+            audioService.play(
+                version: version,
+                trackName: project.title,
+                artworkUrl: project.displayArtworkUrl,
+                visualizerUrl: project.visualizerUrl
+            )
+        }
     }
 
     // MARK: - Main Tab View

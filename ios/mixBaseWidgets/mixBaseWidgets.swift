@@ -10,7 +10,7 @@ import SwiftUI
 struct MixbaseWidgetBundle: WidgetBundle {
     var body: some Widget {
         NowPlayingWidget()
-        StudioStatsWidget()
+        RecentUploadsWidget()
     }
 }
 
