@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import sharp from 'sharp'
-import { readHandwritingSheet, signatureFromLettering, stackLockup, titleForHandwriting } from '../src/lib/handwriting-sheet.ts'
+import { pickSignatureRow, readHandwritingSheet, signatureFromLettering, stackLockup, titleForHandwriting } from '../src/lib/handwriting-sheet.ts'
 import {
   COVER, OUTPAINT_SIZES, buildOutpaintRequest, finishOutpaint, isOwnStudioKey, pickLetteringPosition, signatureKey,
 } from '../src/lib/cassette-studio.ts'
@@ -42,9 +42,11 @@ const svg = (w, h, body) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/200
 // A handwriting sheet: a looping "signature" stroke on line 1, then 36
 // separated marks in three rows of 13 / 13 / 10 (shapes alternate so no two
 // neighbours merge). Ink on unevenly lit paper.
-function sheetSvg(perRow) {
-  let body = '<path d="M80 120 C 140 40, 200 200, 260 110 S 380 60, 440 130 S 560 170, 640 100" stroke="#151515" stroke-width="14" fill="none" stroke-linecap="round"/>'
-  let y = 260
+// The name goes on the top line (the default) or the bottom line (nameAt 'bottom').
+function sheetSvg(perRow, nameAt = 'top') {
+  const name = dy => `<g transform="translate(0 ${dy})"><path d="M80 120 C 140 40, 200 200, 260 110 S 380 60, 440 130 S 560 170, 640 100" stroke="#151515" stroke-width="14" fill="none" stroke-linecap="round"/></g>`
+  let body = nameAt === 'top' ? name(0) : ''
+  let y = nameAt === 'top' ? 260 : 60
   for (const n of perRow) {
     for (let i = 0; i < n; i++) {
       const x = 70 + i * 62
@@ -54,9 +56,11 @@ function sheetSvg(perRow) {
     }
     y += 130
   }
-  return svg(1000, 720, `
+  if (nameAt === 'bottom') body += name(y - 60)
+  const H = Math.max(720, y + 200)
+  return svg(1000, H, `
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef0f2"/><stop offset="1" stop-color="#c2c6ca"/></linearGradient></defs>
-    <rect width="1000" height="720" fill="url(#g)"/>${body}`).jpeg({ quality: 90 }).toBuffer()
+    <rect width="1000" height="${H}" fill="url(#g)"/>${body}`).jpeg({ quality: 90 }).toBuffer()
 }
 
 // ── Sheet ───────────────────────────────────────────────────────────────────
@@ -79,8 +83,28 @@ console.log('handwriting sheet: nothing to type')
   check('letters only (26) is accepted too', letters.ok && letters.glyphs.length === 26 && letters.glyphs[25].char === 'Z')
   const short = await readHandwritingSheet(await sheetSvg([13, 12, 10]))
   check('a miscount is refused with the numbers, never guessed', !short.ok && short.found === 35 && short.expected === 36, JSON.stringify(short.ok ? 'ok?!' : short))
+  check('…naming every line\'s count and which line was the name', !short.ok && /\(13 · 12 · 10\)/.test(short.error) && /top line/.test(short.error), short.ok ? 'ok?!' : short.error)
   const one = await readHandwritingSheet(await svg(800, 300, '<rect width="800" height="300" fill="#eee"/><path d="M50 150 L700 150" stroke="#111" stroke-width="16"/>').jpeg().toBuffer())
-  check('one line alone is refused with what to write', !one.ok && /first line/.test(one.error))
+  check('one line alone is refused with what to write', !one.ok && /own line/.test(one.error))
+
+  // The name on the BOTTOM line (the owner's whiteboard, 2026-11-07: four
+  // rows of letters, the name last) reads exactly like the name on top.
+  const below = await readHandwritingSheet(await sheetSvg([8, 9, 9, 10], 'bottom'))
+  check('name on the bottom line: the sheet is read', below.ok, below.ok ? '' : below.error)
+  if (below.ok) {
+    check('…36 letters labelled A–Z then 0–9 from the top rows', below.glyphs.length === 36 && below.glyphs.map(g => g.char).join('') === 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    check('…the bottom line is the signature, kept whole', below.signature.width > 500 && below.signature.height < 220, `${below.signature.width}x${below.signature.height}`)
+  }
+  const hash = await readHandwritingSheet(await sheetSvg([8, 9, 9, 11], 'bottom'))
+  check('an extra mark on a letter line (the #) is refused with each line\'s count', !hash.ok && hash.found === 37 && /\(8 · 9 · 9 · 11\)/.test(hash.error) && /bottom line/.test(hash.error), hash.ok ? 'ok?!' : hash.error)
+  // Which end is the name, from the shapes alone (boxes: x0,y0,x1,y1).
+  const caps = (y, n) => ({ glyphs: Array.from({ length: n }, (_, i) => ({ x0: 10 + i * 40, y0: y, x1: 38 + i * 40, y1: y + 50 })), y0: y, y1: y + 50 })
+  const joined = y => ({ glyphs: [{ x0: 10, y0: y, x1: 400, y1: y + 60 }], y0: y, y1: y + 60 })
+  const lower = y => ({ glyphs: Array.from({ length: 13 }, (_, i) => ({ x0: 10 + i * 30, y0: i % 4 === 0 ? y : y + 20, x1: 30 + i * 30, y1: y + 50 })), y0: y, y1: y + 50 })
+  check('a joined-up name is found at either end', pickSignatureRow([joined(0), caps(100, 13), caps(200, 13), caps(300, 10)]) === 'top' && pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), joined(300)]) === 'bottom')
+  check('a lowercase name (most letters short) is found at the bottom', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), lower(300)]) === 'bottom')
+  check('all capitals: the end that leaves 36 shapes is the name', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), caps(300, 7)]) === 'bottom' && pickSignatureRow([caps(0, 7), caps(100, 13), caps(200, 13), caps(300, 10)]) === 'top')
+  check('nothing to go on: the top line', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), caps(300, 13)]) === 'top')
 }
 
 console.log('\nsignature from an earlier lettering')
