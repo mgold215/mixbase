@@ -16,6 +16,10 @@ struct ContentView: View {
     // consumes it and opens the New Project sheet.
     @State private var openNewProject = false
 
+    // Raised by the widget's Tracks / Collections shortcuts; ProjectsView
+    // consumes it and switches to that section (0 = Tracks, 1 = Collections).
+    @State private var openProjectsSegment: Int?
+
     var body: some View {
         Group {
             if authService.isAuthenticated {
@@ -31,6 +35,12 @@ struct ContentView: View {
             switch url.host?.lowercased() {
             case "home": selectedTab = 0
             case "projects": selectedTab = 1
+            case "tracks":
+                selectedTab = 1
+                openProjectsSegment = 0
+            case "collections":
+                selectedTab = 1
+                openProjectsSegment = 1
             case "player": selectedTab = 2
             case "artwork": selectedTab = 3
             case "pipeline": selectedTab = 4
@@ -100,7 +110,7 @@ struct ContentView: View {
                     .tabItem { Image(systemName: "house"); Text("Home") }
                     .tag(0)
 
-                ProjectsView(openNewProject: $openNewProject)
+                ProjectsView(openNewProject: $openNewProject, openSegment: $openProjectsSegment)
                     .tabItem { Image(systemName: "square.grid.2x2"); Text("Projects") }
                     .tag(1)
 

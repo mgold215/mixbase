@@ -16,6 +16,10 @@ struct ProjectsView: View {
     // for the New Project sheet; consumed (reset to false) here.
     @Binding var openNewProject: Bool
 
+    // Set by ContentView when a widget shortcut (mixbase://tracks or
+    // mixbase://collections) asks for a section; consumed below.
+    @Binding var openSegment: Int?
+
     // Segment selection: 0 = Tracks, 1 = Collections
     @State private var selectedSegment = 0
 
@@ -164,7 +168,15 @@ struct ProjectsView: View {
         }
         .onAppear {
             if openNewProject { consumeNewProjectRequest() }
+            consumeSegmentRequest()
         }
+        .onChange(of: openSegment) { _, _ in consumeSegmentRequest() }
+    }
+
+    private func consumeSegmentRequest() {
+        guard let segment = openSegment else { return }
+        selectedSegment = segment
+        openSegment = nil
     }
 
     private func consumeNewProjectRequest() {

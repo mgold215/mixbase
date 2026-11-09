@@ -4,8 +4,9 @@ import UIKit
 
 // MARK: - Recent Uploads widget
 // Your three newest uploads (each song's newest mix) as big cover-art tiles,
-// each with a play/pause button on the cover, plus "Mix Note" to jot a note
-// on a mix. Replaced the Studio Stats
+// each with a play/pause button on the cover and a note button to jot a mix
+// note on it, "New Project" in the header and, on the large size, shortcuts
+// to Tracks / Collections / Player along the bottom. Replaced the Studio Stats
 // counters (2026-11-07) but keeps that widget's kind, so a widget already on
 // the Home Screen turns into this one in place.
 //
@@ -196,10 +197,16 @@ struct RecentUploadsWidgetView: View {
                 emptyHint
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
+                Spacer(minLength: 0)
             } else {
+                // Takes all the height left above the shortcuts.
                 tilesRow(maxSide: 200, playDiameter: 34, showsDetails: true)
             }
-            Spacer(minLength: 0)
+            HStack(spacing: 10) {
+                actionCard(icon: "music.note.list", label: "Tracks", link: "mixbase://tracks")
+                actionCard(icon: "square.stack", label: "Collections", link: "mixbase://collections")
+                actionCard(icon: "play.circle.fill", label: "Player", link: "mixbase://player")
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) { MBTheme.background }
@@ -211,7 +218,53 @@ struct RecentUploadsWidgetView: View {
         HStack {
             MBWordmark(size: wordmarkSize)
             Spacer()
-            mixNotePill()
+            newProjectPill
+        }
+    }
+
+    /// Jumps straight into the New Project sheet (mixbase://new-project —
+    /// ContentView routes it, ProjectsView opens the sheet).
+    private var newProjectPill: some View {
+        Group {
+            if let url = URL(string: "mixbase://new-project") {
+                Link(destination: url) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("New Project")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(MBTheme.teal)
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private func actionCard(icon: String, label: String, link: String) -> some View {
+        let card = VStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 17))
+                .foregroundColor(MBTheme.teal)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(MBTheme.text.opacity(0.7))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(MBTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+        return Group {
+            if let url = URL(string: link) {
+                Link(destination: url) { card }
+            } else {
+                card
+            }
         }
     }
 
@@ -240,6 +293,11 @@ struct RecentUploadsWidgetView: View {
                     playButton(for: upload, diameter: playDiameter)
                         .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
                         .padding(showsDetails ? 7 : 5)
+                }
+                // Medium has no room under the tile for the Note button, so
+                // it sits on the cover's other corner.
+                .overlay(alignment: .bottomLeading) {
+                    if !showsDetails { coverNoteButton(for: upload, diameter: playDiameter).padding(5) }
                 }
             Text(upload.title)
                 .font(.system(size: showsDetails ? 13 : 11, weight: .semibold))
@@ -277,6 +335,22 @@ struct RecentUploadsWidgetView: View {
         .buttonStyle(.plain)
     }
 
+    private func coverNoteButton(for upload: RecentUpload, diameter: CGFloat) -> some View {
+        Group {
+            if let url = mixNoteURL(for: upload) {
+                Link(destination: url) {
+                    ZStack {
+                        Circle().fill(.black.opacity(0.6))
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: diameter * 0.4, weight: .semibold))
+                            .foregroundColor(MBTheme.teal)
+                    }
+                    .frame(width: diameter, height: diameter)
+                }
+            }
+        }
+    }
+
     /// "Note" under a large tile — opens the app's notes sheet for this mix.
     private func noteLink(for upload: RecentUpload) -> some View {
         Group {
@@ -293,16 +367,6 @@ struct RecentUploadsWidgetView: View {
                     .padding(.vertical, 4)
                     .overlay(Capsule().stroke(MBTheme.teal.opacity(0.6), lineWidth: 1))
                 }
-            }
-        }
-    }
-
-    /// "+ Mix Note" — a note on the mix that's playing (or, with nothing
-    /// playing, the newest upload). ContentView decides which.
-    private func mixNotePill() -> some View {
-        Group {
-            if let url = URL(string: "mixbase://mix-note") {
-                Link(destination: url) { mixNoteLabel(compact: false) }
             }
         }
     }
