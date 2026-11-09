@@ -27,7 +27,8 @@ export const maxDuration = 60
 //   The handwriting sheet: A–Z and 0–9 in capitals with a gap between each,
 //   and your name on its own line, top or bottom (src/lib/handwriting-sheet.ts).
 //   Nothing to type — the letters are labelled by their order.
-//   → { signature: { url }, added, letters: { known, total } }  or 422 { error, found, expected }
+//   → { signature: { url }, added, ignored, letters: { known, total } }  or 422 { error, found, expected }
+//   (ignored = stray shapes that were not letters and were left out, e.g. a # before the digits)
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
     let glyphs: GlyphFile[] = []
     try { glyphs = await listGlyphs(userId) } catch { /* counts below fall back to this sheet */ }
     const counts = glyphCoverage(glyphs.length ? glyphs : sheet.glyphs.map(g => ({ char: g.char } as GlyphFile)))
-    return NextResponse.json({ signature: { url: sigUrl }, added: sheet.glyphs.length, letters: { known: knownCount(counts), total: SHEET.length } })
+    return NextResponse.json({ signature: { url: sigUrl }, added: sheet.glyphs.length, ignored: sheet.ignored, letters: { known: knownCount(counts), total: SHEET.length } })
   } catch (err) {
     console.error('[cassette-studio/setup] sheet save failed:', err instanceof Error ? err.message : err)
     await removeStudio(written)

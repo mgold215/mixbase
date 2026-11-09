@@ -7,8 +7,10 @@
 //                 (pickSignatureRow decides: the line that looks like a name —
 //                 joined-up or lowercase — else the one that leaves 36 shapes)
 //   other lines   A–Z then 0–9 in capitals, a gap between every character,
-//                 broken over as many lines as you like, nothing else on the
-//                 sheet (a # or a dash would be taken for a letter)
+//                 broken over as many lines as you like. One or two stray
+//                 shapes (the owner's "#" before the digits, a dash) are
+//                 found and left out by handwriting-align.ts — when it can
+//                 tell them from the letters; otherwise the sheet is refused
 //
 // The letters are labelled by ORDER (the 36 shapes on the letter lines are
 // A, B, C … 9), so nothing is typed. If the count is not 36 (or 26, letters
@@ -28,12 +30,13 @@ import { cropLettering, extractHandwriting, type Lettering } from './handwriting
 import {
   glyphPng, isGlyphChar, labelGlyphs, letteringAlpha, segmentGlyphs, type GlyphRow, type TaughtGlyph,
 } from './handwriting-glyphs.ts'
+import { findExtraMarks, MAX_EXTRA_MARKS, readsInOrder } from './handwriting-align.ts'
 
 export const SHEET_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 export const SHEET_DIGITS = '0123456789'
 
 export type SheetResult =
-  | { ok: true; signature: Lettering; glyphs: TaughtGlyph[] }
+  | { ok: true; signature: Lettering; glyphs: TaughtGlyph[]; /** stray shapes that were not letters, left out */ ignored: number }
   | { ok: false; error: string; found: number; expected: number }
 
 /** Read a handwriting sheet photo (see the top of this file). */
@@ -51,17 +54,40 @@ export async function readHandwritingSheet(photo: Buffer): Promise<SheetResult> 
     }
   }
   const signatureAt = pickSignatureRow(rows)
-  const letterRows = signatureAt === 'top' ? rows.slice(1) : rows.slice(0, -1)
+  let letterRows = signatureAt === 'top' ? rows.slice(1) : rows.slice(0, -1)
   const signatureRow = signatureAt === 'top' ? rows[0] : rows[rows.length - 1]
-  const count = letterRows.reduce((n, r) => n + r.glyphs.length, 0)
-  const chars = count === expected ? SHEET_LETTERS + SHEET_DIGITS
+  let count = letterRows.reduce((n, r) => n + r.glyphs.length, 0)
+  let chars = count === expected ? SHEET_LETTERS + SHEET_DIGITS
     : count === SHEET_LETTERS.length ? SHEET_LETTERS
       : null
+  let ignored = 0
+  if (!chars) {
+    // A shape or two too many: find the ones that are not letters at all
+    // (a "#", a dash) and leave them out — only when that is clear.
+    const base = count > expected ? SHEET_LETTERS + SHEET_DIGITS : count > SHEET_LETTERS.length ? SHEET_LETTERS : null
+    const extra = base ? await findExtraMarks(alpha, width, letterRows.flatMap(r => r.glyphs), base) : null
+    if (base && extra) {
+      const drop = new Set(extra.dropped)
+      let at = 0
+      letterRows = letterRows
+        .map(r => {
+          const start = at
+          at += r.glyphs.length
+          const glyphs = r.glyphs.filter((_, i) => !drop.has(start + i))
+          return { glyphs, y0: Math.min(...glyphs.map(g => g.y0)), y1: Math.max(...glyphs.map(g => g.y1)) }
+        })
+        .filter(r => r.glyphs.length > 0)
+      chars = base
+      count = base.length
+      ignored = extra.dropped.length
+    }
+  }
   if (!chars) {
     const perRow = letterRows.map(r => r.glyphs.length).join(' · ')
+    const unsure = count > expected ? ', and I could not tell which shape is the extra one' : ''
     return {
       ok: false,
-      error: `I found ${count} shapes on the letter lines (${perRow}) but expected 36: A–Z then 0–9 and nothing else (no # or dashes). Leave a clear gap between characters and write them in order. Your name was read from the ${signatureAt} line.`,
+      error: `I found ${count} shapes on the letter lines (${perRow}) but expected 36: A–Z then 0–9 and nothing else (no # or dashes)${unsure}. Leave a clear gap between characters and write them in order. Your name was read from the ${signatureAt} line.`,
       found: count,
       expected,
     }
@@ -72,12 +98,24 @@ export async function readHandwritingSheet(photo: Buffer): Promise<SheetResult> 
   for (const r of letterRows) { lines.push(chars.slice(at, at + r.glyphs.length)); at += r.glyphs.length }
   const labelled = labelGlyphs(letterRows, lines.join('\n'))
   if (!labelled.ok) return { ok: false, error: labelled.error, found: count, expected: chars.length }
+  // The count can come out right for the wrong reason (a sloping line cut in
+  // two, a name taken for letters). Labels that do not read as written are
+  // refused rather than taught: a wrong letter is worse than none.
+  const order = await readsInOrder(alpha, width, labelled.glyphs, chars)
+  if (!order.ok) {
+    return {
+      ok: false,
+      error: `I counted ${count} shapes but they do not read as A–Z then 0–9 in order. Photograph the sheet straight-on with the lines level, a clear gap between characters, and nothing else on it.`,
+      found: count,
+      expected,
+    }
+  }
   const glyphs: TaughtGlyph[] = []
   for (const g of labelled.glyphs) {
     glyphs.push({ char: g.char, unit: g.unit, base: g.base, width: g.x1 - g.x0 + 1, height: g.y1 - g.y0 + 1, png: await glyphPng(alpha, width, g) })
   }
   const signature = await cropRow(alpha, width, height, signatureRow)
-  return { ok: true, signature, glyphs }
+  return { ok: true, signature, glyphs, ignored }
 }
 
 /**
@@ -96,9 +134,11 @@ export function pickSignatureRow(rows: GlyphRow[]): 'top' | 'bottom' {
   const a = nameLikeness(first), b = nameLikeness(last)
   if ((a >= 1) !== (b >= 1)) return b >= 1 ? 'bottom' : 'top'
   const total = rows.reduce((n, r) => n + r.glyphs.length, 0)
+  // "Leaves 36 (or 26) shapes" allows the stray marks findExtraMarks can take out.
   const fits = (sig: GlyphRow): boolean => {
     const n = total - sig.glyphs.length
-    return n === SHEET_LETTERS.length + SHEET_DIGITS.length || n === SHEET_LETTERS.length
+    const near = (want: number) => n >= want && n <= want + MAX_EXTRA_MARKS
+    return near(SHEET_LETTERS.length + SHEET_DIGITS.length) || near(SHEET_LETTERS.length)
   }
   const topFits = fits(first), bottomFits = fits(last)
   if (topFits !== bottomFits) return bottomFits ? 'bottom' : 'top'
@@ -107,17 +147,17 @@ export function pickSignatureRow(rows: GlyphRow[]): 'top' | 'bottom' {
 
 /** ≥ 1 when a line of writing looks like a name rather than spaced capitals (see pickSignatureRow). */
 function nameLikeness(row: GlyphRow): number {
-  const h = Math.max(1, row.y1 - row.y0 + 1)
   const heights = row.glyphs.map(g => g.y1 - g.y0 + 1).sort((a, b) => a - b)
   // The tall letters' height: the 80th percentile, so one flourish or a
-  // descender does not make every other letter look short.
+  // descender does not make every other letter look short — and not the
+  // line's whole extent, which a sloping line stretches.
   const tall = Math.max(1, heights[Math.min(heights.length - 1, Math.floor(heights.length * 0.8))])
   let widest = 0, short = 0
   for (const g of row.glyphs) {
     widest = Math.max(widest, g.x1 - g.x0 + 1)
     if (g.y1 - g.y0 + 1 < tall * 0.72) short++
   }
-  const joined = widest / h / 2                      // one shape twice as wide as the line is tall
+  const joined = widest / tall / 2                   // one shape twice as wide as the letters are tall
   const lowercase = row.glyphs.length >= 4 ? short / row.glyphs.length / 0.4 : 0  // 40 % of the letters stop short of the tall ones
   return Math.max(joined, lowercase)
 }
