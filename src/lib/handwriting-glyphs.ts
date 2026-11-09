@@ -120,11 +120,20 @@ export function segmentGlyphs(alpha: Uint8Array, W: number, H: number): GlyphRow
   }
 
   // Rows: letters whose centres sit within most of a letter-height of the
-  // row's running centre belong to it.
-  const live = blobs.filter(b => b.alive).sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1))
+  // row's running centre belong to it. A hand-held photo's lines slope a
+  // little, and a long sloping line (a signature, a row of letters) would be
+  // cut into pieces, so the slope that lines the centres up best is taken
+  // out of every centre first (the boxes themselves are left as written).
+  // Rules: a stroke far wider than it is tall and well under a letter's
+  // height (a frame edge, an underline, a table edge) is not writing.
+  const live = blobs.filter(b => b.alive && !((b.x1 - b.x0 + 1) >= 8 * (b.y1 - b.y0 + 1) && (b.y1 - b.y0 + 1) < typical * 0.6))
+  if (live.length === 0) return []
+  const slope = lineSlope(live, W, typical)
+  const level = (b: GlyphBox): number => (b.y0 + b.y1) / 2 - slope * ((b.x0 + b.x1) / 2 - W / 2)
+  live.sort((a, b) => level(a) - level(b))
   const rows: { glyphs: Blob[]; cys: number[] }[] = []
   for (const g of live) {
-    const cy = (g.y0 + g.y1) / 2
+    const cy = level(g)
     const h = g.y1 - g.y0 + 1
     let home: typeof rows[number] | null = null
     for (const row of rows) {
@@ -140,6 +149,31 @@ export function segmentGlyphs(alpha: Uint8Array, W: number, H: number): GlyphRow
       return { glyphs, y0: Math.min(...glyphs.map(g => g.y0)), y1: Math.max(...glyphs.map(g => g.y1)) }
     })
     .sort((a, b) => a.y0 - b.y0)
+}
+
+/**
+ * The slope (dy/dx) of the lines of writing: the one, within ±12°, that puts
+ * the most pairs of shape centres within a third of a letter height of each
+ * other once it is taken out. Level writing gives 0; ties go to the smaller
+ * tilt.
+ */
+function lineSlope(blobs: GlyphBox[], W: number, typical: number): number {
+  if (blobs.length < 4) return 0
+  const cx = blobs.map(b => (b.x0 + b.x1) / 2 - W / 2)
+  const cy = blobs.map(b => (b.y0 + b.y1) / 2)
+  const near = typical * 0.35
+  let best = 0, bestDeg = 0, bestScore = -1
+  for (let deg = -12; deg <= 12; deg += 0.25) {
+    const s = Math.tan(deg * Math.PI / 180)
+    const ys = cx.map((x, i) => cy[i] - s * x).sort((a, b) => a - b)
+    let score = 0, j = 0
+    for (let i = 0; i < ys.length; i++) {
+      while (ys[i] - ys[j] > near) j++
+      score += i - j
+    }
+    if (score > bestScore || (score === bestScore && Math.abs(deg) < Math.abs(bestDeg))) { bestScore = score; best = s; bestDeg = deg }
+  }
+  return best
 }
 
 // ── Labelling ───────────────────────────────────────────────────────────────

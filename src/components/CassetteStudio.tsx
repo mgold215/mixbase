@@ -992,7 +992,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
         </div>
         {needsSheet && (
           <p className="text-[10px] text-[#777] leading-snug">
-            Handwriting sheet, once: on plain paper write <span className="text-[#ccc]">A–Z</span> then <span className="text-[#ccc]">0–9</span> in capitals with a gap between every character, over as many lines as you like, and <span className="text-[#ccc]">moodmixformat</span> on its own line at the top or the bottom. Nothing else on the sheet (no # or dashes). Photograph it flat. After that every song title is written in your hand automatically.
+            Handwriting sheet, once: on plain paper write <span className="text-[#ccc]">A–Z</span> then <span className="text-[#ccc]">0–9</span> in capitals with a gap between every character, over as many lines as you like, and <span className="text-[#ccc]">moodmixformat</span> on its own line at the top or the bottom. Nothing else on the sheet. Photograph it flat. After that every song title is written in your hand automatically.
           </p>
         )}
         {setup?.title && setup.title.missing.length > 0 && !needsSheet && (

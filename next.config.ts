@@ -71,6 +71,8 @@ const nextConfig: NextConfig = {
       './node_modules/@ffprobe-installer/**',
     ],
     '/api/cassette-studio/motion': ['./node_modules/@ffmpeg-installer/**'],
+    // The handwriting-sheet reader compares stray shapes with the same Futura type.
+    '/api/cassette-studio/setup': ['./src/fonts/**/*.ttf'],
   },
 
   // Keep the ffmpeg binary wrappers unbundled — their exported paths resolve

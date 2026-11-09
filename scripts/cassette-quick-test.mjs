@@ -23,6 +23,9 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import sharp from 'sharp'
 import { pickSignatureRow, readHandwritingSheet, signatureFromLettering, stackLockup, titleForHandwriting } from '../src/lib/handwriting-sheet.ts'
+import { readsInOrder } from '../src/lib/handwriting-align.ts'
+import { extractHandwriting } from '../src/lib/handwriting.ts'
+import { letteringAlpha, segmentGlyphs } from '../src/lib/handwriting-glyphs.ts'
 import {
   COVER, OUTPAINT_SIZES, buildOutpaintRequest, finishOutpaint, isOwnStudioKey, pickLetteringPosition, signatureKey,
 } from '../src/lib/cassette-studio.ts'
@@ -63,10 +66,65 @@ function sheetSvg(perRow, nameAt = 'top') {
     <rect width="1000" height="${H}" fill="url(#g)"/>${body}`).jpeg({ quality: 90 }).toBuffer()
 }
 
+// A sheet written in TYPE — the bundled Futura Medium, slanted, so it is
+// not the Bold the stray-mark finder compares with — because the finder
+// needs real letter shapes (rects and circles all look alike to it). Rows
+// of characters, the name on the top or bottom line, optional stray marks
+// (`extras`: { row, at, kind: 'hash' | 'dash' | 'O' }) and an optional tilt
+// of the whole writing (degrees), as a hand-held photo has.
+const FUTURA_MEDIUM = join(process.cwd(), 'src/fonts/FuturaBook.ttf')
+const typedCache = new Map()
+async function typedGlyph(ch) {
+  if (typedCache.has(ch)) return typedCache.get(ch)
+  const png = await sharp({ text: { text: `<span foreground="#151515">${ch}</span>`, fontfile: FUTURA_MEDIUM, font: 'Futura Medium 78', dpi: 72, rgba: true } }).png().toBuffer()
+  const slanted = await sharp(png).affine([[1, 0.16], [0, 1]], { background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+  const out = { png: slanted, ...(await sharp(slanted).metadata()) }
+  typedCache.set(ch, out)
+  return out
+}
+async function strayMark(kind) {
+  const ink = '#151515'
+  const body = kind === 'hash'
+    ? '<path d="M30 8 L22 92 M60 8 L52 92 M8 36 L80 36 M4 66 L76 66" stroke="' + ink + '" stroke-width="10" fill="none" stroke-linecap="round"/>'
+    : kind === 'dash'
+      ? '<path d="M6 50 L60 50" stroke="' + ink + '" stroke-width="10" fill="none" stroke-linecap="round"/>'
+      : '<ellipse cx="40" cy="50" rx="30" ry="40" stroke="' + ink + '" stroke-width="10" fill="none"/>'
+  const png = await svg(90, 100, body).png().toBuffer()
+  return { png, ...(await sharp(png).metadata()) }
+}
+async function typedSheet(rows, { nameAt = 'top', extras = [], tilt = 0 } = {}) {
+  const W = 1500, rowH = 140, top = 70
+  const H = top + (rows.length + 1) * rowH + 40
+  const comps = []
+  const name = `<path d="M80 60 C 140 -20, 200 140, 260 50 S 380 0, 440 70 S 560 110, 640 40" stroke="#151515" stroke-width="14" fill="none" stroke-linecap="round"/>`
+  const nameRow = nameAt === 'top' ? 0 : rows.length
+  comps.push({ input: await svg(700, 140, name).png().toBuffer(), left: 60, top: top + nameRow * rowH })
+  for (let r = 0; r < rows.length; r++) {
+    const y = top + (r + (nameAt === 'top' ? 1 : 0)) * rowH
+    const items = [...rows[r]].map(ch => ({ ch }))
+    for (const e of extras.filter(e => e.row === r).sort((a, b) => b.at - a.at)) items.splice(e.at, 0, { mark: e.kind })
+    let x = 60
+    for (const it of items) {
+      const g = it.ch ? await typedGlyph(it.ch) : await strayMark(it.mark)
+      comps.push({ input: g.png, left: x, top: y + Math.max(0, 100 - g.height) })
+      x += g.width + 34
+    }
+  }
+  let ink = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer()
+  if (tilt) ink = await sharp(ink).rotate(tilt, { background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+  const im = await sharp(ink).metadata()
+  const paper = `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef0f2"/><stop offset="1" stop-color="#c8ccd0"/></linearGradient></defs><rect width="${im.width}" height="${im.height}" fill="url(#g)"/>`
+  return svg(im.width, im.height, paper).composite([{ input: ink }]).jpeg({ quality: 90 }).toBuffer()
+}
+const order = res => res.ok ? res.glyphs.map(g => g.char).join('') : res.error
+
 // ── Sheet ───────────────────────────────────────────────────────────────────
 console.log('handwriting sheet: nothing to type')
 {
-  const res = await readHandwritingSheet(await sheetSvg([13, 13, 10]))
+  // Sheets that are READ carry letter shapes (typed, slanted): shapes that
+  // look nothing like letters — rects and circles — are refused by the
+  // order guard even when they count right, which is what it is for.
+  const res = await readHandwritingSheet(await typedSheet(['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ', '0123456789']))
   check('a full sheet is read', res.ok, res.ok ? '' : res.error)
   if (res.ok) {
     check('36 letters taught', res.glyphs.length === 36, String(res.glyphs.length))
@@ -79,8 +137,10 @@ console.log('handwriting sheet: nothing to type')
     for (let i = 3; i < raw.data.length; i += 4) if (raw.data[i] > 128) ink++
     check('…with its ink and none of the letters under it', ink > 3000 && raw.info.height < 220, `${ink} ink px`)
   }
-  const letters = await readHandwritingSheet(await sheetSvg([13, 13]))
-  check('letters only (26) is accepted too', letters.ok && letters.glyphs.length === 26 && letters.glyphs[25].char === 'Z')
+  const letters = await readHandwritingSheet(await typedSheet(['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ']))
+  check('letters only (26) is accepted too', letters.ok && letters.glyphs.length === 26 && letters.glyphs[25].char === 'Z', order(letters))
+  const marks = await readHandwritingSheet(await sheetSvg([13, 13, 10]))
+  check('36 shapes that are not letters at all are refused, not taught', !marks.ok && /do not read as A–Z/.test(marks.error), order(marks))
   const short = await readHandwritingSheet(await sheetSvg([13, 12, 10]))
   check('a miscount is refused with the numbers, never guessed', !short.ok && short.found === 35 && short.expected === 36, JSON.stringify(short.ok ? 'ok?!' : short))
   check('…naming every line\'s count and which line was the name', !short.ok && /\(13 · 12 · 10\)/.test(short.error) && /top line/.test(short.error), short.ok ? 'ok?!' : short.error)
@@ -89,14 +149,14 @@ console.log('handwriting sheet: nothing to type')
 
   // The name on the BOTTOM line (the owner's whiteboard, 2026-11-07: four
   // rows of letters, the name last) reads exactly like the name on top.
-  const below = await readHandwritingSheet(await sheetSvg([8, 9, 9, 10], 'bottom'))
+  const below = await readHandwritingSheet(await typedSheet(['ABCDEFGH', 'IJKLMNOPQ', 'RSTUVWXYZ', '0123456789'], { nameAt: 'bottom' }))
   check('name on the bottom line: the sheet is read', below.ok, below.ok ? '' : below.error)
   if (below.ok) {
     check('…36 letters labelled A–Z then 0–9 from the top rows', below.glyphs.length === 36 && below.glyphs.map(g => g.char).join('') === 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
     check('…the bottom line is the signature, kept whole', below.signature.width > 500 && below.signature.height < 220, `${below.signature.width}x${below.signature.height}`)
   }
   const hash = await readHandwritingSheet(await sheetSvg([8, 9, 9, 11], 'bottom'))
-  check('an extra mark on a letter line (the #) is refused with each line\'s count', !hash.ok && hash.found === 37 && /\(8 · 9 · 9 · 11\)/.test(hash.error) && /bottom line/.test(hash.error), hash.ok ? 'ok?!' : hash.error)
+  check('an extra shape among shapes that are not letters cannot be told apart: refused with each line\'s count', !hash.ok && hash.found === 37 && /\(8 · 9 · 9 · 11\)/.test(hash.error) && /could not tell/.test(hash.error) && /bottom line/.test(hash.error), hash.ok ? 'ok?!' : hash.error)
   // Which end is the name, from the shapes alone (boxes: x0,y0,x1,y1).
   const caps = (y, n) => ({ glyphs: Array.from({ length: n }, (_, i) => ({ x0: 10 + i * 40, y0: y, x1: 38 + i * 40, y1: y + 50 })), y0: y, y1: y + 50 })
   const joined = y => ({ glyphs: [{ x0: 10, y0: y, x1: 400, y1: y + 60 }], y0: y, y1: y + 60 })
@@ -105,6 +165,32 @@ console.log('handwriting sheet: nothing to type')
   check('a lowercase name (most letters short) is found at the bottom', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), lower(300)]) === 'bottom')
   check('all capitals: the end that leaves 36 shapes is the name', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), caps(300, 7)]) === 'bottom' && pickSignatureRow([caps(0, 7), caps(100, 13), caps(200, 13), caps(300, 10)]) === 'top')
   check('nothing to go on: the top line', pickSignatureRow([caps(0, 13), caps(100, 13), caps(200, 10), caps(300, 13)]) === 'top')
+}
+
+console.log('\nstray marks on the sheet: found, not guessed')
+{
+  const ROWS = ['ABCDEFGH', 'IJKLMNOPQ', 'RSTUVWXYZ', '0123456789']
+  const ALL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const plain = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'bottom' }))
+  check('a typed sheet, name at the bottom, reads with nothing left out', plain.ok && plain.glyphs.length === 36 && plain.ignored === 0 && order(plain) === ALL, order(plain))
+  const hashed = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'bottom', extras: [{ row: 3, at: 0, kind: 'hash' }] }))
+  check('a # before the digits is left out and the 36 letters labelled in order', hashed.ok && hashed.ignored === 1 && order(hashed) === ALL, order(hashed))
+  const two = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'top', extras: [{ row: 2, at: 9, kind: 'dash' }, { row: 3, at: 0, kind: 'hash' }] }))
+  check('a dash after Z and a # before 0 are both left out', two.ok && two.ignored === 2 && order(two) === ALL, two.ok ? `ignored ${two.ignored} ${order(two)}` : order(two))
+  const three = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'top', extras: [{ row: 0, at: 0, kind: 'dash' }, { row: 2, at: 9, kind: 'dash' }, { row: 3, at: 0, kind: 'hash' }] }))
+  check('three stray marks are too many: refused with the counts', !three.ok && three.found === 39 && /\(9 · 9 · 10 · 11\)/.test(three.error), order(three))
+  const oh = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'bottom', extras: [{ row: 3, at: 0, kind: 'O' }] }))
+  check('an extra letter-like shape is never taken for a stray mark on a guess', !oh.ok ? /could not tell/.test(oh.error) : (oh.ignored === 1 && order(oh) === ALL), oh.ok ? `ignored ${oh.ignored} ${order(oh)}` : order(oh))
+  const tilted = await readHandwritingSheet(await typedSheet(ROWS, { nameAt: 'bottom', extras: [{ row: 3, at: 0, kind: 'hash' }], tilt: 4 }))
+  check('the same sheet photographed 4° off reads the same', tilted.ok && tilted.ignored === 1 && order(tilted) === ALL, tilted.ok ? `ignored ${tilted.ignored} ${order(tilted)}` : order(tilted))
+  // The order guard: labels moved one place do not read as written.
+  const lifted = await extractHandwriting(await typedSheet(ROWS, { nameAt: 'top' }))
+  const { alpha, width, height } = await letteringAlpha(lifted.png)
+  const rows = segmentGlyphs(alpha, width, height)
+  const glyphs = rows.slice(1).flatMap(r => r.glyphs)
+  const right = await readsInOrder(alpha, width, glyphs, ALL)
+  const wrong = await readsInOrder(alpha, width, glyphs, ALL.slice(1) + ALL[0])
+  check('letters in order read as written; shifted by one they do not', glyphs.length === 36 && right.ok && !wrong.ok, JSON.stringify({ right, wrong }))
 }
 
 console.log('\nsignature from an earlier lettering')
