@@ -756,83 +756,188 @@ export function letteringPlacement(
   return { left, top, width: lw, height: lh }
 }
 
+/** The soft shade laid under the ink so it reads on a busy or mid-toned patch. */
+export type Halo = { color: string; strength: number }
+/** How a lettering is inked on one cover: its colour and its halo (null = none). */
+export type Ink = { color: string; halo: Halo | null }
+
+const hex2 = (v: number) => clamp8(v).toString(16).padStart(2, '0')
+const toHex = (r: number, g: number, b: number) => `#${hex2(r)}${hex2(g)}${hex2(b)}`
+const fromHex = (hex: string): [number, number, number] => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
+const isHex = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
+
 /**
- * The ink colour for the lettering. A '#rrggbb' is used as given; anything
- * else means 'auto': read the brightness of the patch of `art` the writing
- * lands on (`rect`, from letteringPlacement) and pick ink-black on a bright
- * patch, marker-white on a dark one.
+ * The ink for a lettering on THIS cover, read from the picture so the writing
+ * belongs to it instead of sitting on top:
+ *
+ *   colour  a '#rrggbb' is used as given. 'auto' picks light or dark by the
+ *           patch the writing lands on (`rect`, from letteringPlacement) —
+ *           light unless the patch is bright — and then leans that ink
+ *           toward the cover's own highlights (or its own shadows), so on a
+ *           gold picture the white is a warm cream and on a night scene it is
+ *           a cool one.
+ *   halo    a soft shade of the patch's own colour (darkened under light ink,
+ *           lightened under dark ink), stronger the less the ink stands off
+ *           the patch and the busier the patch is. On a calm, contrasting
+ *           patch it is barely there.
  */
+export async function resolveInk(
+  art: Buffer,
+  rect: { left: number; top: number; width: number; height: number },
+  color?: string,
+): Promise<Ink> {
+  const meta = await sharp(art).metadata()
+  const W = meta.width ?? COVER, H = meta.height ?? COVER
+  const left = Math.max(0, Math.min(W - 1, rect.left)), top = Math.max(0, Math.min(H - 1, rect.top))
+  const area = { left, top, width: Math.max(1, Math.min(W - left, rect.width)), height: Math.max(1, Math.min(H - top, rect.height)) }
+  const { channels } = await sharp(art).extract(area).removeAlpha().stats()
+  const mean: [number, number, number] = [channels[0].mean, channels[1].mean, channels[2].mean]
+  const L = luma(mean[0], mean[1], mean[2])
+  const sd = luma(channels[0].stdev, channels[1].stdev, channels[2].stdev)
+
+  let ink: string
+  if (isHex(color)) {
+    ink = color
+  } else {
+    // Whichever stands off the patch more, with a lean toward light (cream
+    // handwriting is the house look): light up to a mid-tone, dark on anything paler.
+    const light = L <= 150
+    // The cover's own highlights (or shadows): the brightest (darkest) 4% of a thumbnail.
+    const T = 96
+    const thumb = await sharp(art).resize(T, T, { fit: 'fill' }).removeAlpha().raw().toBuffer()
+    const px: { l: number; i: number }[] = []
+    for (let i = 0; i < T * T; i++) px.push({ l: luma(thumb[i * 3], thumb[i * 3 + 1], thumb[i * 3 + 2]), i })
+    px.sort((a, b) => (light ? b.l - a.l : a.l - b.l))
+    let r = 0, g = 0, b = 0
+    const n = Math.max(1, Math.round(T * T * 0.04))
+    for (let k = 0; k < n; k++) { r += thumb[px[k].i * 3]; g += thumb[px[k].i * 3 + 1]; b += thumb[px[k].i * 3 + 2] }
+    r /= n; g /= n; b /= n
+    // That tone at the ink's own brightness with a third of its colour taken
+    // out (a neon sign must not dye the title), then about half-way from the
+    // plain ink to it.
+    const base = fromHex(light ? AUTO_LIGHT : AUTO_DARK)
+    const want = luma(base[0], base[1], base[2])
+    const k = want / Math.max(1, luma(r, g, b))
+    const tone = [r, g, b].map(v => Math.min(255, v * k) * 0.7 + want * 0.3)
+    const lean = 0.55
+    ink = toHex(
+      base[0] + (tone[0] - base[0]) * lean,
+      base[1] + (tone[1] - base[1]) * lean,
+      base[2] + (tone[2] - base[2]) * lean,
+    )
+  }
+
+  const [ir, ig, ib] = fromHex(ink)
+  const Li = luma(ir, ig, ib)
+  const lightInk = Li >= L
+  const contrast = Math.abs(Li - L) / 255
+  const need = Math.max(clamp((0.62 - contrast) / 0.45, 0, 1), clamp((sd - 10) / 45, 0, 1) * 0.8)
+  const strength = Math.round(clamp(0.16 + 0.56 * need, 0.16, 0.72) * 100) / 100
+  const haloColor = lightInk
+    ? toHex(mean[0] * 0.2, mean[1] * 0.2, mean[2] * 0.2)
+    : toHex(mean[0] + (255 - mean[0]) * 0.78, mean[1] + (255 - mean[1]) * 0.78, mean[2] + (255 - mean[2]) * 0.78)
+  return { color: ink, halo: { color: haloColor, strength } }
+}
+
+/** The ink colour alone (see resolveInk). */
 export async function resolveLetteringColor(
   art: Buffer,
   rect: { left: number; top: number; width: number; height: number },
   color?: string,
 ): Promise<string> {
-  if (color && /^#[0-9a-f]{6}$/i.test(color)) return color
-  const { channels } = await sharp(art).extract(rect).stats()
-  const l = luma(channels[0].mean, channels[1].mean, channels[2].mean)
-  return l > 165 ? AUTO_DARK : AUTO_LIGHT
+  return (await resolveInk(art, rect, color)).color
 }
 
 /**
- * Colour the extracted handwriting: RGB = `color` everywhere, alpha = the ink
- * × 0.96. These are exactly the pixels applyLettering lays on the cover; at
- * the lettering's NATIVE size unless `size` is given — the still resizes it
- * onto the cover, the moving cover keeps the native-size PNG and scales it per
- * video format (letteringRect in cassette-motion-scene.ts).
- * `color` must already be resolved to '#rrggbb' (resolveLetteringColor, or the
- * colour applyLettering returns); anything else falls back to marker-white
- * rather than throwing. Returns PNG.
+ * Colour the extracted handwriting: RGB = `color`, alpha = the ink × 0.96,
+ * over its `halo` when one is given (a soft shade spreading about one stroke
+ * around the letters). These are exactly the pixels applyLettering lays on
+ * the cover; at the lettering's NATIVE size unless `size` is given — the
+ * still resizes it onto the cover, the moving cover keeps the native-size PNG
+ * and scales it per video format (letteringRect in cassette-motion-scene.ts).
+ * `color` must already be resolved to '#rrggbb' (resolveInk, or the colour
+ * applyLettering returns); anything else falls back to marker-white rather
+ * than throwing. Returns PNG.
  */
 export async function tintLettering(
   lettering: Buffer,
   color: string,
   size?: { width: number; height: number },
+  halo?: Halo | null,
 ): Promise<Buffer> {
-  const hex = /^#[0-9a-f]{6}$/i.test(color) ? color : AUTO_LIGHT
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
+  const [r, g, b] = fromHex(isHex(color) ? color : AUTO_LIGHT)
   let img = sharp(lettering).ensureAlpha()
   if (size) img = img.resize(size.width, size.height, { fit: 'fill' })
   const { data: a, info } = await img.extractChannel(3).raw().toBuffer({ resolveWithObject: true })
-  const n = info.width * info.height
+  const { width: W, height: H } = info
+  const n = W * H
   const rgba = Buffer.alloc(n * 4)
-  for (let i = 0; i < n; i++) {
-    rgba[i * 4] = r; rgba[i * 4 + 1] = g; rgba[i * 4 + 2] = b
-    rgba[i * 4 + 3] = Math.round(a[i] * 0.96)
+  if (!halo || !isHex(halo.color) || halo.strength <= 0) {
+    for (let i = 0; i < n; i++) {
+      rgba[i * 4] = r; rgba[i * 4 + 1] = g; rgba[i * 4 + 2] = b
+      rgba[i * 4 + 3] = Math.round(a[i] * 0.96)
+    }
+    return sharp(rgba, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer()
   }
-  return sharp(rgba, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer()
+  // Two blurs of the ink: a tight one that edges every stroke and a wide one
+  // that settles the whole word into the picture. Sized by the lettering's
+  // width, so the halo is the same at any scale it is drawn at.
+  const raw = { raw: { width: W, height: H, channels: 1 as const } }
+  const blurred = async (sigma: number) => {
+    const { data, info: bi } = await sharp(a, raw).blur(Math.max(0.5, sigma)).toColourspace('b-w').raw().toBuffer({ resolveWithObject: true })
+    return { data, c: bi.channels }
+  }
+  const [tight, wide] = await Promise.all([blurred(W * 0.0042), blurred(W * 0.014)])
+  const [hr, hg, hb] = fromHex(halo.color)
+  for (let i = 0; i < n; i++) {
+    const ia = (a[i] / 255) * 0.96
+    const ha = Math.min(1, (0.62 * tight.data[i * tight.c] + 0.38 * wide.data[i * wide.c]) / 255 * 1.9) * halo.strength
+    const oa = ia + ha * (1 - ia)
+    if (oa <= 0) continue
+    const k = (ha * (1 - ia)) / oa
+    rgba[i * 4] = Math.round(r + (hr - r) * k)
+    rgba[i * 4 + 1] = Math.round(g + (hg - g) * k)
+    rgba[i * 4 + 2] = Math.round(b + (hb - b) * k)
+    rgba[i * 4 + 3] = Math.round(oa * 255)
+  }
+  return sharp(rgba, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer()
 }
 
 /**
  * Lay the extracted handwriting (white RGB + ink alpha) over the cover.
- * `color` is a hex or 'auto' — auto reads the brightness of the patch the
- * writing lands on and picks marker-white or ink-black. Returns the resolved
- * colour, so the caller can tint the same lettering for the moving cover.
+ * `color` is a hex or 'auto' (see resolveInk). Returns the resolved colour and
+ * halo, so the caller can tint the same lettering for the moving cover.
  */
 export async function applyLettering(
   art: Buffer,
   lettering: Buffer,
   opts: { color?: string; position?: LetteringPosition; size?: LetteringSize } = {},
-): Promise<{ jpeg: Buffer; color: string }> {
+): Promise<{ jpeg: Buffer; color: string; halo: Halo | null }> {
   const meta = await sharp(art).metadata()
   const W = meta.width ?? COVER, H = meta.height ?? COVER
   const lm = await sharp(lettering).metadata()
   const place = letteringPlacement(W, H, lm.width ?? 1, lm.height ?? 1, opts.position ?? 'bottom-left', opts.size ?? 'medium')
-  const color = await resolveLetteringColor(art, place, opts.color)
-  const overlay = await tintLettering(lettering, color, { width: place.width, height: place.height })
+  const ink = await resolveInk(art, place, opts.color)
+  const overlay = await tintLettering(lettering, ink.color, { width: place.width, height: place.height }, ink.halo)
   const jpeg = await sharp(art).composite([{ input: overlay, left: place.left, top: place.top }]).jpeg({ quality: 92, chromaSubsampling: '4:2:0' }).toBuffer()
-  return { jpeg, color }
+  return { jpeg, color: ink.color, halo: ink.halo }
 }
 
 // ── Automatic lettering spot ───────────────────────────────────────────────
 
+/** How much a spot must beat bottom-centre by before the lettering moves there. */
+const SPOT_COST: Record<LetteringPosition, number> = {
+  'bottom-center': 0, 'bottom-left': 8, 'bottom-right': 8, 'top-center': 36, 'top-left': 40, 'top-right': 40,
+}
+
 /**
- * Where the handwriting reads best on THIS cover: of the six lettering
- * positions, the one whose patch is calmest (lowest brightness variation —
- * sky, a wall, an out-of-focus background, never a busy street sign) and
- * clear of the cassette. Near-ties go to the order a designer would try them:
- * bottom-centre first (the signature over the title, under the picture — the
- * owner's reference cover), then bottom-left, bottom-right, top-centre,
- * top-left, top-right.
+ * Where the handwriting reads best on THIS cover. The house style is the
+ * signature over the title at bottom-centre, under the picture (the owner's
+ * reference cover); it moves only when that patch is clearly busier than
+ * another, or the cassette is there. "Busy" is fine detail — edges, faces,
+ * foliage — not a soft gradient: lettering sits happily on a lit tabletop or
+ * a sky that changes tone, and badly on a pattern. Near-ties go bottom
+ * before top, centre before corners.
  */
 export async function pickLetteringPosition(
   art: Buffer, avoid: Box | null, nativeW: number, nativeH: number, size: LetteringSize = 'medium',
@@ -842,12 +947,12 @@ export async function pickLetteringPosition(
   const SMALL = 300
   const k = SMALL / Math.max(W, H)
   const sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k))
-  const small = await sharp(art).resize(sw, sh, { fit: 'fill' }).greyscale().raw().toBuffer()
-  const order: LetteringPosition[] = ['bottom-center', 'bottom-left', 'bottom-right', 'top-center', 'top-left', 'top-right']
+  const base = sharp(art).resize(sw, sh, { fit: 'fill' }).greyscale()
+  const [small, soft] = await Promise.all([base.clone().raw().toBuffer(), base.clone().blur(2.2).raw().toBuffer()])
   const pad = W * 0.02
   let best: LetteringPosition = 'bottom-center'
   let bestScore = Infinity
-  order.forEach((pos, rank) => {
+  for (const pos of LETTERING_POSITIONS) {
     const r = letteringPlacement(W, H, nativeW, nativeH, pos, size)
     let overlap = 0
     if (avoid) {
@@ -857,16 +962,23 @@ export async function pickLetteringPosition(
     }
     const x0 = Math.floor(r.left * k), y0 = Math.floor(r.top * k)
     const x1 = Math.min(sw, Math.ceil((r.left + r.width) * k)), y1 = Math.min(sh, Math.ceil((r.top + r.height) * k))
-    let n = 0, sum = 0, sq = 0
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = small[y * sw + x]; sum += v; sq += v * v; n++ }
+    let n = 0, sum = 0, sq = 0, fine = 0
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const v = small[y * sw + x]
+        sum += v; sq += v * v; n++
+        fine += Math.abs(v - soft[y * sw + x])
+      }
+    }
     const mean = n ? sum / n : 0
     const sd = n ? Math.sqrt(Math.max(0, sq / n - mean * mean)) : 0
-    // Overlapping the cassette is all but disqualifying; rank breaks near-ties
-    // (4 grey levels of calm per step, so bottom-centre holds unless another
-    // spot is clearly calmer).
-    const score = sd + overlap * 400 + rank * 4
+    const detail = n ? fine / n : 0
+    // Overlapping the cassette is all but disqualifying. Detail counts for
+    // less than it looks like it should: the halo carries the writing over
+    // ripples and brushwork (the owner's reference sits on carved ornament).
+    const score = detail * 3 + sd * 0.3 + overlap * 400 + SPOT_COST[pos]
     if (score < bestScore) { bestScore = score; best = pos }
-  })
+  }
   return best
 }
 

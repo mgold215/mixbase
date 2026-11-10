@@ -26,10 +26,13 @@
 // scripts/cassette-quick-test.mjs drives it directly under Node.
 
 import sharp from 'sharp'
-import { cropLettering, extractHandwriting, type Lettering } from './handwriting.ts'
+import { components, cropLettering, extractHandwriting, type Lettering } from './handwriting.ts'
 import {
-  glyphPng, isGlyphChar, labelGlyphs, letteringAlpha, segmentGlyphs, type GlyphRow, type TaughtGlyph,
+  glyphPng, isGlyphChar, labelGlyphs, letteringAlpha, resizeField, segmentGlyphs, type GlyphRow, type TaughtGlyph,
 } from './handwriting-glyphs.ts'
+import {
+  cropField, lineBody, lineSlopeOf, PEN_SCALE, repen, shearLevel, strokeWidthOf, type Field,
+} from './handwriting-pen.ts'
 import { findExtraMarks, MAX_EXTRA_MARKS, readsInOrder } from './handwriting-align.ts'
 
 export const SHEET_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -114,7 +117,7 @@ export async function readHandwritingSheet(photo: Buffer): Promise<SheetResult> 
   for (const g of labelled.glyphs) {
     glyphs.push({ char: g.char, unit: g.unit, base: g.base, width: g.x1 - g.x0 + 1, height: g.y1 - g.y0 + 1, png: await glyphPng(alpha, width, g) })
   }
-  const signature = await cropRow(alpha, width, height, signatureRow)
+  const signature = await neatSignature(await cropRow(alpha, width, height, signatureRow))
   return { ok: true, signature, glyphs, ignored }
 }
 
@@ -171,7 +174,23 @@ export async function signatureFromLettering(png: Buffer): Promise<Lettering | n
   const { alpha, width, height } = await letteringAlpha(png)
   const rows = segmentGlyphs(alpha, width, height)
   if (rows.length < 2) return null
-  return cropRow(alpha, width, height, rows[0])
+  return neatSignature(await cropRow(alpha, width, height, rows[0]))
+}
+
+/**
+ * A signature as it is kept: levelled (a line of handwriting climbs or drops;
+ * the name should sit straight over the title) and without what is not part
+ * of it (tidyLine). The pen and the letters are untouched.
+ */
+export async function neatSignature(sig: Lettering): Promise<Lettering> {
+  const raw = await letteringAlpha(sig.png)
+  const field = { alpha: raw.alpha, width: raw.width, height: raw.height }
+  const level = tidyLine(shearLevel(field, lineSlopeOf(field)))
+  try {
+    return await cropLettering(level.alpha, level.width, level.height, sig.strokeWidth)
+  } catch {
+    return sig
+  }
 }
 
 /** One row of an alpha field as its own lettering: ink outside the row's glyph boxes is dropped. */
@@ -190,8 +209,12 @@ async function cropRow(alpha: Uint8Array, W: number, H: number, row: GlyphRow): 
 
 // ── The title as it is written ──────────────────────────────────────────────
 
-/** Longest line a title is set on before it breaks onto a second line. */
-const TITLE_LINE = 16
+/**
+ * Longest line a title is set on before it breaks onto a second line. A
+ * lockup is drawn at a share of the cover's WIDTH, so a long single line
+ * means small letters: two short lines keep them at a size that reads.
+ */
+const TITLE_LINE = 13
 
 /**
  * The song title the way the artist writes titles: capitals, accents
@@ -221,35 +244,157 @@ export function titleForHandwriting(title: string): { text: string; dropped: str
 
 // ── Lockup ──────────────────────────────────────────────────────────────────
 
+/** The signature's small letters, as a share of the title's capital height. */
+const SIG_X = 0.7
+/** Its tallest strokes (the d, the f, the t) never stand taller than this share of a capital. */
+const SIG_TALL = 1.12
+/** The signature's pen against the title's: a touch lighter, so the name sits behind the title. */
+const SIG_WEIGHT = 0.88
+/** Baseline of the signature to the top of the title, in capital heights. */
+const LOCKUP_GAP = 0.44
+/** A short title is set up to this much larger so it holds its own under the name. */
+const SHORT_TITLE_BOOST = 1.3
+/**
+ * The lockup is never narrower than this many capital heights (clear margin
+ * is added either side). It is drawn at a share of the cover's width, so
+ * without a floor a short name over a short title would come out huge and a
+ * long one small; with it the letters land within about a third of one size.
+ */
+const MIN_LOCKUP_CAPS = 9
+
+/** What stackLockup needs to know about a composed title (composeHandwriting returns it). */
+export type TitleMetrics = { cap: number; stroke: number }
+
+/**
+ * A signature made ready to sit over a title: levelled (handwriting climbs),
+ * traced to the title's pen weight and scaled so its small letters are SIG_X
+ * of a capital. `cap` and `stroke` are the title's, in the title's pixels.
+ */
+export async function prepareSignature(png: Buffer, cap: number, stroke: number): Promise<(Field & { baseline: number }) | null> {
+  const raw = await letteringAlpha(png)
+  const level = tidyLine(shearLevel({ alpha: raw.alpha, width: raw.width, height: raw.height }, lineSlopeOf({ alpha: raw.alpha, width: raw.width, height: raw.height })))
+  const body = lineBody(level)
+  if (!body) return null
+  const xh = Math.max(1, body.baseline - body.top + 1)
+  const tall = Math.max(xh, body.baseline - body.inkTop + 1)
+  // Its size against the title: the small letters at SIG_X of a capital,
+  // unless that would stand its tall strokes above SIG_TALL of one.
+  const k = cap * Math.min(SIG_X / xh, SIG_TALL / tall)
+  const natural = strokeWidthOf(level)
+  const want = (stroke * SIG_WEIGHT) / k
+  // Finer only: a signature already lighter than the title's pen is left alone.
+  const inset = natural > want * 1.1 ? (natural - want) / 2 : 0
+  const drawn = repen(level, inset, { stroke: natural, hi: true })
+  const ink = cropField(drawn.field)
+  if (!ink) return null
+  const scale = k / PEN_SCALE
+  const set = await resizeField(ink, ink.width * scale, ink.height * scale)
+  const baseline = ((body.baseline + 1 - drawn.inset) * PEN_SCALE - ink.top) * scale
+  return { ...set, baseline }
+}
+
+/**
+ * A level line of writing without what is not part of it: specks, and marks
+ * that float wholly under its baseline (the top of a letter from the line
+ * below, caught when a climbing line was cut out of its photo). A real
+ * descender is joined to its letter and stays.
+ */
+function tidyLine(field: Field): Field {
+  const body = lineBody(field)
+  if (!body) return field
+  const { alpha, width: W, height: H } = field
+  const mask = new Uint8Array(W * H)
+  for (let i = 0; i < W * H; i++) mask[i] = alpha[i] > 60 ? 1 : 0
+  const { labels, areas, boxes } = components(mask, W, H)
+  if (areas.length === 0) return field
+  const xh = Math.max(1, body.baseline - body.top + 1)
+  const stroke = strokeWidthOf(field)
+  const drop = new Uint8Array(areas.length)
+  let dropped = false
+  for (let k = 0; k < areas.length; k++) {
+    const under = boxes[k][1] > body.baseline + xh * 0.12
+    const speck = areas[k] < stroke * stroke * 0.3
+    if (under || speck) { drop[k] = 1; dropped = true }
+  }
+  if (!dropped) return field
+  const out = Uint8Array.from(alpha)
+  // Soft edge pixels around a dropped mark (alpha ≤ 60) go with it: clear its box.
+  for (let k = 0; k < areas.length; k++) {
+    if (!drop[k]) continue
+    const [x0, y0, x1, y1] = boxes[k]
+    for (let y = Math.max(0, y0 - 2); y <= Math.min(H - 1, y1 + 2); y++) {
+      for (let x = Math.max(0, x0 - 2); x <= Math.min(W - 1, x1 + 2); x++) {
+        const l = labels[y * W + x]
+        if (l === 0 || drop[l - 1]) out[y * W + x] = 0
+      }
+    }
+  }
+  return { alpha: out, width: W, height: H }
+}
+
 /**
  * Stack the signature over the title into one lettering (white RGB + ink
- * alpha), centred on one axis (the lockup sits bottom-centre on the cover,
- * as on the owner's reference): the signature at 85% of the title's height,
- * a small gap between. Either may be missing; with neither there is nothing
- * to letter.
+ * alpha), centred on one axis (the lockup sits bottom-centre on the cover, as
+ * on the owner's reference). The signature is levelled, traced to the
+ * title's pen and sized against the title's capitals (prepareSignature); a
+ * short title is set a little larger so it is not lost under a long name.
+ * `title` says how tall the title's capitals are and how wide its stroke
+ * (composeHandwriting's result); without it the title is taken to be one
+ * line of capitals as tall as its image. Either image may be missing; with
+ * neither there is nothing to letter.
  */
-export async function stackLockup(top: Buffer | null, bottom: Buffer | null): Promise<Lettering | null> {
+export async function stackLockup(top: Buffer | null, bottom: Buffer | null, title?: TitleMetrics): Promise<Lettering | null> {
   if (!top && !bottom) return null
-  if (!top || !bottom) {
-    const only = (top ?? bottom)!
-    const { alpha, width, height } = await letteringAlpha(only)
-    return cropLettering(alpha, width, height, 6)
+  if (!bottom) {
+    // The name alone: levelled, otherwise as written.
+    const raw = await letteringAlpha(top!)
+    const level = tidyLine(shearLevel({ alpha: raw.alpha, width: raw.width, height: raw.height }, lineSlopeOf({ alpha: raw.alpha, width: raw.width, height: raw.height })))
+    return cropLettering(level.alpha, level.width, level.height, Math.max(3, strokeWidthOf(level)))
   }
-  const bm = await sharp(bottom).metadata()
-  const tm = await sharp(top).metadata()
-  const bw = bm.width ?? 1, bh = bm.height ?? 1
-  const th = Math.max(1, Math.round(bh * 0.85))
-  const tw = Math.max(1, Math.round((tm.width ?? 1) * (th / (tm.height ?? 1))))
-  const gap = Math.round(bh * 0.12)
-  const W = Math.max(bw, tw), H = th + gap + bh
-  const topPng = await sharp(top).resize(tw, th, { fit: 'fill', kernel: 'lanczos3' }).png().toBuffer()
-  const { data } = await sharp({ create: { width: W, height: H, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } } })
-    .composite([
-      { input: topPng, left: Math.round((W - tw) / 2), top: 0 },
-      { input: bottom, left: Math.round((W - bw) / 2), top: th + gap },
-    ])
-    .raw().toBuffer({ resolveWithObject: true })
-  const alpha = new Uint8Array(W * H)
-  for (let i = 0; i < W * H; i++) alpha[i] = data[i * 4 + 3]
-  return cropLettering(alpha, W, H, 6)
+  const t = await letteringAlpha(bottom)
+  if (!top) return cropLettering(t.alpha, t.width, t.height, title?.stroke ?? 6)
+
+  let cap = title?.cap ?? t.height
+  let stroke = title?.stroke ?? cap / 8.5
+  let tf: Field = { alpha: t.alpha, width: t.width, height: t.height }
+  let sig = await prepareSignature(top, cap, stroke)
+  if (!sig) return cropLettering(t.alpha, t.width, t.height, stroke)
+  // A title much narrower than the name: enlarge it (and measure the name against the larger capitals).
+  const boost = Math.max(1, Math.min(SHORT_TITLE_BOOST, (sig.width * 0.62) / Math.max(1, tf.width)))
+  if (boost > 1.04) {
+    tf = await resizeField(tf, tf.width * boost, tf.height * boost)
+    cap *= boost
+    stroke *= boost
+    // The name keeps its size against the ORIGINAL capitals and a pen between the two.
+    sig = (await prepareSignature(top, cap / boost, stroke / Math.sqrt(boost))) ?? sig
+  }
+
+  // The title's own first capital line starts at its image top (cropLettering
+  // crops to the ink, plus a hair of padding).
+  const below = sig.height - sig.baseline // what hangs under the name's baseline
+  const gap = Math.max(cap * LOCKUP_GAP, below + cap * 0.14)
+  const titleTop = Math.round(sig.baseline + gap)
+  const W = Math.max(sig.width, tf.width)
+  const H = titleTop + tf.height
+  const canvas = new Uint8Array(W * H)
+  const lay = (f: Field, left: number, y0: number) => {
+    for (let y = 0; y < f.height; y++) {
+      const yy = y0 + y
+      if (yy < 0 || yy >= H) continue
+      for (let x = 0; x < f.width; x++) {
+        const v = f.alpha[y * f.width + x]
+        if (v > canvas[yy * W + left + x]) canvas[yy * W + left + x] = v
+      }
+    }
+  }
+  lay(sig, Math.round((W - sig.width) / 2), 0)
+  lay(tf, Math.round((W - tf.width) / 2), titleTop)
+  const tight = await cropLettering(canvas, W, H, stroke)
+  const floor = Math.round(cap * MIN_LOCKUP_CAPS)
+  if (tight.width >= floor) return tight
+  const side = Math.round((floor - tight.width) / 2)
+  const png = await sharp(tight.png)
+    .extend({ left: side, right: floor - tight.width - side, top: 0, bottom: 0, background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .png().toBuffer()
+  return { png, width: floor, height: tight.height, strokeWidth: tight.strokeWidth }
 }

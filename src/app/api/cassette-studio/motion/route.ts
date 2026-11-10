@@ -3,7 +3,7 @@ import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { freeRenderLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { isFreeFormat } from '@/lib/free-render'
-import { CoverError, findMotionSources, loadCoverProject, makeMovingCover } from '@/lib/cassette-pipeline'
+import { CoverError, findMotionSources, loadCoverProject, makeMovingCover, MADE_BEFORE_MOTION } from '@/lib/cassette-pipeline'
 
 // Cassette Studio — moving cover. A no-AI animated loop of the project's
 // current Cassette Studio cover: the reels turn, the camera drifts with
@@ -34,7 +34,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const src = await findMotionSources(userId, project)
-    return NextResponse.json({ available: src.ok, reason: src.ok ? null : src.reason })
+    // A Studio cover with no cassette layer still moves: as the picture set in
+    // slow motion (makeMovingCover falls back to it).
+    const available = src.ok || src.reason === MADE_BEFORE_MOTION
+    return NextResponse.json({ available, reason: available ? null : src.ok ? null : src.reason })
   } catch (err) {
     console.error('[cassette-studio/motion] lookup failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ error: 'Could not check this cover. Please try again.' }, { status: 500 })

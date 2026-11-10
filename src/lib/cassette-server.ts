@@ -31,6 +31,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { isOwnStudioKey as isOwnKey, signatureKey, studioPrefix } from '@/lib/cassette-studio'
 import { GLYPH_CHARS, parseGlyphKey, type GlyphSample } from '@/lib/handwriting-glyphs'
 import { signatureFromLettering } from '@/lib/handwriting-sheet'
+import { ART_MODELS, artModelInputs, type ArtModel, type ArtModelId } from '@/lib/cassette-art'
 
 export { studioPrefix, isOwnStudioKey } from '@/lib/cassette-studio'
 
@@ -211,16 +212,29 @@ function replicateToken(): string {
 
 type Prediction = { status?: string; output?: unknown; error?: unknown; detail?: string; urls?: { get?: string } }
 
-function firstUrl(output: unknown): string | null {
-  if (typeof output === 'string') return output
-  if (Array.isArray(output) && typeof output[0] === 'string') return output[0]
+/** Every output file URL of a prediction (models return one string, a list, or an object). */
+function outputUrls(output: unknown): string[] {
+  if (typeof output === 'string') return [output]
+  if (Array.isArray(output)) return output.filter((v): v is string => typeof v === 'string')
   if (output && typeof output === 'object') {
     for (const k of ['image', 'url', 'output']) {
       const v = (output as Record<string, unknown>)[k]
-      if (typeof v === 'string') return v
+      if (typeof v === 'string') return [v]
     }
   }
-  return null
+  return []
+}
+
+export type ReplicateOptions = {
+  /** How long a prediction that is still running is polled for (default 150 s). */
+  budgetMs?: number
+  /**
+   * false → the create call returns at once and the prediction is polled.
+   * For models that take minutes: holding the create call open (`Prefer:
+   * wait`) past its own deadline would lose the prediction's id, and with it
+   * an image that was paid for.
+   */
+  wait?: boolean
 }
 
 /**
@@ -230,15 +244,21 @@ function firstUrl(output: unknown): string | null {
  * richer tuned input first, the documented core last. Any other failure
  * throws.
  */
-export async function runReplicate(model: string, inputs: Record<string, unknown>[], tag: string): Promise<Buffer> {
+export async function runReplicate(model: string, inputs: Record<string, unknown>[], tag: string, opts: ReplicateOptions = {}): Promise<Buffer> {
+  return (await runReplicateAll(model, inputs, tag, opts))[0]
+}
+
+/** runReplicate for models that return several files: every output, in order (at least one). */
+export async function runReplicateAll(model: string, inputs: Record<string, unknown>[], tag: string, opts: ReplicateOptions = {}): Promise<Buffer[]> {
   const token = replicateToken()
   const endpoint = `https://api.replicate.com/v1/models/${model}/predictions`
+  const wait = opts.wait !== false
   let prediction: Prediction | null = null
   let lastStatus = 0
   for (const input of inputs) {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(wait ? { Prefer: 'wait' } : {}) },
       body: JSON.stringify({ input }),
       signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
     })
@@ -255,10 +275,10 @@ export async function runReplicate(model: string, inputs: Record<string, unknown
   }
   if (!prediction) throw new Error(`${tag}: ${model} rejected every input shape (last ${lastStatus})`)
 
-  let url = prediction.status === 'succeeded' ? firstUrl(prediction.output) : null
-  if (!url && prediction.urls?.get) {
-    const deadline = Date.now() + POLL_BUDGET_MS
-    while (!url && Date.now() < deadline) {
+  let urls = prediction.status === 'succeeded' ? outputUrls(prediction.output) : []
+  if (urls.length === 0 && prediction.urls?.get) {
+    const deadline = Date.now() + (opts.budgetMs ?? POLL_BUDGET_MS)
+    while (urls.length === 0 && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 3000))
       let p: Prediction
       try {
@@ -267,14 +287,20 @@ export async function runReplicate(model: string, inputs: Record<string, unknown
       } catch {
         continue
       }
-      if (p.status === 'succeeded') url = firstUrl(p.output)
-      else if (p.status === 'failed' || p.status === 'canceled') throw new Error(`${tag}: ${String(p.error ?? 'prediction failed')}`.slice(0, 500))
+      if (p.status === 'succeeded') {
+        urls = outputUrls(p.output)
+        if (urls.length === 0) break
+      } else if (p.status === 'failed' || p.status === 'canceled') {
+        throw new Error(`${tag}: ${String(p.error ?? 'prediction failed')}`.slice(0, 500))
+      }
     }
   }
-  if (!url) throw new Error(`${tag}: no output (status ${prediction.status ?? 'unknown'})`)
-  const img = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
-  if (!img.ok) throw new Error(`${tag}: output download failed (${img.status})`)
-  return Buffer.from(await img.arrayBuffer())
+  if (urls.length === 0) throw new Error(`${tag}: no output (status ${prediction.status ?? 'unknown'})`)
+  return Promise.all(urls.map(async url => {
+    const img = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+    if (!img.ok) throw new Error(`${tag}: output download failed (${img.status})`)
+    return Buffer.from(await img.arrayBuffer())
+  }))
 }
 
 /**
@@ -306,6 +332,46 @@ export async function fillScene(imageUrl: string, maskUrl: string, prompt: strin
     { prompt, image: imageUrl, mask: maskUrl, steps: 50, output_format: 'png', safety_tolerance: 2, prompt_upsampling: false, seed },
     { prompt, image: imageUrl, mask: maskUrl },
   ], 'scene')
+}
+
+// ── Art engine (cassette-art.ts) ────────────────────────────────────────────
+
+export type TakeSet = { model: ArtModel; takes: Buffer[] }
+
+/**
+ * Draw `count` takes of the cover from the cassette reference photo and the
+ * full prompt. Models are tried best-first (ART_MODELS) — a model that is
+ * unavailable, refuses the prompt or errors hands over to the next — unless
+ * `only` pins one. A model that returns one image per call is called `count`
+ * times in parallel, and whatever succeeds is kept. Throws StudioUnavailable
+ * when Replicate is not configured, Error when no model produced a take.
+ */
+export async function generateTakes(referenceUrl: string, prompt: string, count: number, only?: ArtModelId): Promise<TakeSet> {
+  replicateToken() // fail fast (StudioUnavailable) before any model is tried
+  const models = only ? ART_MODELS.filter(m => m.id === only) : ART_MODELS
+  let lastErr: unknown = null
+  for (const model of models) {
+    const opts = { wait: false, budgetMs: model.budgetMin * 60_000 }
+    try {
+      let takes: Buffer[]
+      if (model.perCall >= count) {
+        takes = await runReplicateAll(model.slug, artModelInputs(model.id, prompt, referenceUrl, count), 'takes', opts)
+      } else {
+        const runs = await Promise.allSettled(
+          Array.from({ length: count }, () => runReplicateAll(model.slug, artModelInputs(model.id, prompt, referenceUrl, 1), 'takes', opts)),
+        )
+        takes = runs.flatMap(r => (r.status === 'fulfilled' ? r.value : []))
+        const failed = runs.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined
+        if (takes.length === 0 && failed) throw failed.reason
+      }
+      if (takes.length > 0) return { model, takes: takes.slice(0, count) }
+      lastErr = new Error(`${model.slug} returned no image`)
+    } catch (err) {
+      lastErr = err
+      console.error(`[cassette-studio] takes: ${model.slug} failed, trying the next model:`, err instanceof Error ? err.message : err)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('no art model produced a take')
 }
 
 // ── Request intake ──────────────────────────────────────────────────────────

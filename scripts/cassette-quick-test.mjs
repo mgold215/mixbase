@@ -214,7 +214,8 @@ console.log('\nsignature from an earlier lettering')
 console.log('\nthe title as it is written')
 {
   check('capitals', titleForHandwriting('Not 2 Late').text === 'NOT 2 LATE')
-  check('accents stripped, curly quote straightened', titleForHandwriting('Café ’Til Dawn').text === "CAFE 'TIL DAWN", titleForHandwriting('Café ’Til Dawn').text)
+  check('accents stripped, curly quote straightened', titleForHandwriting('Café ’Til Dawn').text.replace('\n', ' ') === "CAFE 'TIL DAWN", titleForHandwriting('Café ’Til Dawn').text)
+  check('up to 13 characters stay on one line; longer breaks at the space nearest the middle', titleForHandwriting('Capital Hill').text === 'CAPITAL HILL' && titleForHandwriting('9am in Rosslyn').text === '9AM IN\nROSSLYN', titleForHandwriting('9am in Rosslyn').text)
   const emoji = titleForHandwriting('Night 🌙 Drive')
   check('unwritable characters dropped and reported', emoji.text === 'NIGHT DRIVE' && emoji.dropped.length === 1, JSON.stringify(emoji))
   const long = titleForHandwriting('Everything You Never Said To Me')
@@ -224,16 +225,52 @@ console.log('\nthe title as it is written')
 
 console.log('\nlockup: signature over title')
 {
-  const sig = await svg(600, 120, '<path d="M20 60 C 150 0, 300 120, 580 50" stroke="#fff" stroke-width="12" fill="none"/>').png().toBuffer()
-  const title = await svg(400, 160, '<rect x="10" y="10" width="380" height="140" fill="#fff"/>').png().toBuffer()
-  const lock = await stackLockup(sig, title)
-  check('stacks both into one lettering', lock && lock.height > 160 + 100 && lock.height < 160 + 160, lock ? `${lock.width}x${lock.height}` : 'null')
+  // A "name" of eight stems standing on a line that climbs 8.5° (handwriting
+  // does), with a stray mark floating under it (the top of a letter from the
+  // line below, caught when the line was cut out); a title of capital-height bars.
+  let stems = ''
+  for (let i = 0; i < 8; i++) { const x = 40 + i * 70; const foot = 170 - 0.15 * x; stems += `<rect x="${x}" y="${foot - 70}" width="14" height="70" fill="#fff"/>` }
+  const sig = await svg(600, 220, `${stems}<rect x="300" y="170" width="26" height="26" fill="#fff"/>`).png().toBuffer()
+  const title = await svg(400, 160, '<rect x="10" y="10" width="60" height="140" fill="#fff"/><rect x="120" y="10" width="60" height="140" fill="#fff"/><rect x="230" y="10" width="60" height="140" fill="#fff"/><rect x="330" y="10" width="60" height="140" fill="#fff"/>').png().toBuffer()
+  const lock = await stackLockup(sig, title, { cap: 140, stroke: 18 })
+  check('stacks both into one lettering', lock && lock.height > 140 + 80 && lock.height < 140 * 3, lock ? `${lock.width}x${lock.height}` : 'null')
   const raw = await sharp(lock.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  const a = (x, y) => raw.data[(y * raw.info.width + x) * 4 + 3]
-  check('…title at the bottom, centred on the lockup', a(Math.round(raw.info.width / 2), raw.info.height - 20) > 200 && a(20, raw.info.height - 20) < 50)
-  check('…signature on top', (() => { let n = 0; for (let x = 0; x < raw.info.width; x++) for (let y = 0; y < 60; y++) if (a(x, y) > 128) n++; return n > 200 })())
+  const W = raw.info.width, H = raw.info.height
+  const a = (x, y) => raw.data[(y * W + x) * 4 + 3]
+  // Rows: the name's ink, a clear gap, then the title's ink.
+  const rowInk = y => { let n = 0; for (let x = 0; x < W; x++) if (a(x, y) > 128) n++; return n }
+  let y = 0
+  while (y < H && rowInk(y) === 0) y++
+  const nameTop = y
+  while (y < H && rowInk(y) > 0) y++
+  const nameBottom = y - 1
+  while (y < H && rowInk(y) === 0) y++
+  const titleTop = y
+  check('…the name on top, a clear gap, the title under it', nameBottom > nameTop && titleTop > nameBottom + 20 && titleTop < H - 100, `${nameTop}-${nameBottom} / ${titleTop}`)
+  // Level: every stem now ends on the same row (they climbed 74px across the line before).
+  const feet = []
+  for (let x = 0; x < W; x++) { let foot = -1; for (let yy = nameBottom; yy >= nameTop; yy--) if (a(x, yy) > 128) { foot = yy; break } if (foot >= 0) feet.push(foot) }
+  check('…the name is levelled', feet.length > 40 && Math.max(...feet) - Math.min(...feet) <= 6, `${Math.min(...feet)}..${Math.max(...feet)}`)
+  // Sized against the title: stems (all body, no ascenders) at 0.7 of a capital; the title was
+  // set larger first (it is narrower than the name), so measure against the title as drawn.
+  const titleH = H - titleTop - 1
+  const ratio = (nameBottom - nameTop + 1) / titleH
+  check('…and sized against the capitals', ratio > 0.42 && ratio < 0.8, ratio.toFixed(2))
+  check('…the stray mark under the name is gone', (() => { for (let yy = nameBottom + 4; yy < titleTop - 2; yy++) if (rowInk(yy) > 0) return false; return true })())
+  // Centred on one axis.
+  const span = y0 => { let x0 = W, x1 = -1; for (let yy = y0; yy < y0 + 30; yy++) for (let x = 0; x < W; x++) if (a(x, yy) > 128) { if (x < x0) x0 = x; if (x > x1) x1 = x } return (x0 + x1) / 2 }
+  check('…both centred on the lockup', Math.abs(span(nameTop + 10) - W / 2) < W * 0.06 && Math.abs(span(titleTop + 10) - W / 2) < W * 0.03, `${span(nameTop + 10)} ${span(titleTop + 10)} of ${W}`)
   check('one part alone passes through', (await stackLockup(null, title))?.height > 100 && (await stackLockup(sig, null))?.width > 400)
   check('nothing → nothing', (await stackLockup(null, null)) === null)
+  // Drawn at a share of the cover's width, so the lockup has a floor: a short
+  // name over a short title is not blown up to fill it.
+  const tiny = await svg(120, 160, '<rect x="10" y="10" width="100" height="140" fill="#fff"/>').png().toBuffer()
+  const shortSig = await svg(200, 100, '<rect x="10" y="20" width="14" height="70" fill="#fff"/><rect x="60" y="20" width="14" height="70" fill="#fff"/><rect x="110" y="20" width="14" height="70" fill="#fff"/><rect x="160" y="20" width="14" height="70" fill="#fff"/>').png().toBuffer()
+  const small = await stackLockup(shortSig, tiny, { cap: 140, stroke: 18 })
+  const sm = await sharp(small.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  let inkL = sm.info.width, inkR = -1
+  for (let y = 0; y < sm.info.height; y++) for (let x = 0; x < sm.info.width; x++) if (sm.data[(y * sm.info.width + x) * 4 + 3] > 128) { if (x < inkL) inkL = x; if (x > inkR) inkR = x }
+  check('a short lockup is never narrower than nine capitals, its ink centred in the margin', small.width >= 140 * 9 && small.width === sm.info.width && Math.abs(inkL - (sm.info.width - 1 - inkR)) <= 3 && inkL > 100, `${small.width} ink ${inkL}..${inkR}`)
 }
 
 console.log('\nautomatic lettering spot')

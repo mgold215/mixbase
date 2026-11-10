@@ -877,6 +877,35 @@ final class MixbaseAPI {
         return try decoder.decode(CassetteRenderResult.self, from: data)
     }
 
+    /// Other takes: make another of the pictures a one-click run drew this
+    /// song's cover (scene = take — no new generation). `takePath` is a
+    /// `QuickJob.takes` path, sent as it came; the title is lettered like any
+    /// other render (`letteringPath` nil = an unlettered cover). The server
+    /// applies the result to the project.
+    func renderTake(
+        projectId: UUID,
+        takePath: String,
+        letteringPath: String?,
+        color: String,
+        position: String,
+        size: String
+    ) async throws -> CassetteRenderResult {
+        var fields: [MultipartField] = [
+            MultipartField(name: "project_id", value: projectId.postgresString),
+            MultipartField(name: "scene", value: "take"),
+            MultipartField(name: "take", value: takePath),
+        ]
+        if let letteringPath, !letteringPath.isEmpty {
+            fields.append(MultipartField(name: "lettering", value: letteringPath))
+        }
+        fields.append(MultipartField(name: "color", value: color))
+        fields.append(MultipartField(name: "position", value: position))
+        fields.append(MultipartField(name: "size", value: size))
+
+        let data = try await requestMultipart(path: "/api/cassette-studio/render", fields: fields, files: [])
+        return try decoder.decode(CassetteRenderResult.self, from: data)
+    }
+
     // MARK: - Cover looks (owner-only; filters + adjustments on a Studio cover)
     // The look is applied server-side to the cover's UNFILTERED base, so
     // re-filtering never stacks. The key carries the look; the server is the
@@ -1180,10 +1209,12 @@ final class MixbaseAPI {
     }
 
     // MARK: - One click (owner-only)
-    // Describe a scene → the cover (the real cassette, the artist's
-    // handwriting) plus Canvas and YouTube moving scenes, all applied to the
-    // song server-side (/api/cassette-studio/quick, src/lib/cassette-quick.ts).
-    // The run continues in the background; poll quickJob(id:).
+    // One button → the cover (a picture idea drawn around the cassette,
+    // lettered in the artist's handwriting) plus Canvas and YouTube moving
+    // scenes, all applied to the song server-side
+    // (/api/cassette-studio/quick, src/lib/cassette-quick.ts). An idea of the
+    // artist's own is optional. The run continues in the background; poll
+    // quickJob(id:).
 
     struct QuickClip: Decodable, Equatable {
         let format: String          // "canvas" | "youtube"
@@ -1203,9 +1234,19 @@ final class MixbaseAPI {
         let id: String
         let status: String          // "running" | "done" | "error"
         let stage: String
-        /// brief / cover / canvas / youtube → pending | running | done | failed
+        /// brief / cover / canvas / youtube → pending | running | done | failed | skipped
         let steps: [String: String]
         let sceneLabel: String?
+        /// The picture idea in one sentence.
+        let idea: String?
+        /// The pictures drawn for this cover (2048px JPEGs). Absent or empty
+        /// on an older or classic-engine cover.
+        let takes: [StudioFile]?
+        /// Index into `takes` of the one that is the cover now. var: Other
+        /// takes makes another of them the cover after the run.
+        var take: Int?
+        /// The image model that drew them; nil = the classic engine made the cover.
+        let model: String?
         // var: Adjust the title re-letters the cover after the run, and the
         // view mirrors the new cover onto the run it shows.
         var artworkUrl: String?
@@ -1226,6 +1267,10 @@ final class MixbaseAPI {
             case stage
             case steps
             case sceneLabel = "scene_label"
+            case idea
+            case takes
+            case take
+            case model
             case artworkUrl = "artwork_url"
             case finalizedArtworkUrl = "finalized_artwork_url"
             case lettering
@@ -1242,7 +1287,9 @@ final class MixbaseAPI {
         let size: String
     }
 
-    /// Start a one-click run for this song from a scene description.
+    /// Start a one-click run for this song. `description` is the artist's own
+    /// idea for the cover and is optional: sent empty (""), the idea comes
+    /// from the song's title.
     func startQuick(projectId: UUID, description: String) async throws -> QuickJob {
         struct Response: Decodable { let job: QuickJob }
         let data = try await requestData(

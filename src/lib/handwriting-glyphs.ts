@@ -2,11 +2,14 @@
 //
 // The artist's lettering photos are cut into single letters, each letter is
 // told what it is (from the text the artist types alongside the photo), and
-// the letters are kept as a bank. A title typed later is laid out from those
-// letters: scaled to one common x-height, set on a baseline, spaced the way
-// the pen spaced them, with a little jitter and a different sample of a
-// letter each time it repeats so a word never looks stamped. No font, no AI,
-// no synthesis — every stroke in a typed title is a stroke the artist drew.
+// the letters are kept as a bank. A title typed later is set from those
+// letters the way a sign-writer would set it: every capital the same height,
+// all of them standing on one level line, drawn with one pen weight
+// (handwriting-pen.ts — a fat marker's letters are traced finer, never
+// redrawn) and spaced by the white between the shapes rather than by their
+// boxes. A different sample of a letter is used each time it repeats, so a
+// word never looks stamped. No font, no AI, no synthesis — every letter in a
+// typed title is the shape the artist drew.
 //
 // Pure image maths over raw pixels plus sharp. No server-only imports —
 // scripts/handwriting-glyphs-test.mjs drives it directly under Node.
@@ -28,8 +31,9 @@
 // Parsed back with parseGlyphKey, which pins the shape (and the owner, via
 // the prefix) before a key is ever read.
 
-import sharp, { type OverlayOptions } from 'sharp'
+import sharp from 'sharp'
 import { components, cropLettering, extractHandwriting, type Lettering } from './handwriting.ts'
+import { cropField, insetFor, PEN_SCALE, repen, strokeWidthOf, type Field } from './handwriting-pen.ts'
 
 // ── Keys ────────────────────────────────────────────────────────────────────
 
@@ -182,8 +186,29 @@ export type LabelledGlyph = GlyphBox & { char: string; unit: number; base: numbe
 
 const X_HEIGHT_CHARS = new Set('acemnorsuvwxz')
 const CAP_HEIGHT_CHARS = new Set('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789bdfhklt')
+/** Capitals and digits: each is its own measure of the cap height (see labelGlyphs). */
+const CAPITALS = new Set('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 const DESCENDERS = new Set('gjpqy,;()/')
 const FLOATERS = new Set("'*\"")
+
+/** Cap height over x-height, the proportion every sample's `unit` assumes. */
+export const CAP_OVER_X = 1.45
+
+/**
+ * A straight line through points that a few strays cannot pull off course
+ * (Theil–Sen: the median of the slopes between every pair, then the median
+ * height). A row of letters has one or two that hang below the line — a J, a
+ * Q's tail, the artist's looped Y — and the line must run under the others.
+ */
+export function robustLine(xs: number[], ys: number[]): (x: number) => number {
+  const n = Math.min(xs.length, ys.length)
+  if (n === 0) return () => 0
+  const slopes: number[] = []
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (xs[j] !== xs[i]) slopes.push((ys[j] - ys[i]) / (xs[j] - xs[i]))
+  const slope = n >= 3 && slopes.length ? median(slopes) : 0
+  const level = median(Array.from({ length: n }, (_, i) => ys[i] - slope * xs[i]))
+  return (x: number) => level + slope * x
+}
 
 /** The lines of a taught text: trimmed, blank lines dropped, runs of spaces collapsed. */
 export function textLines(text: string): string[] {
@@ -199,9 +224,17 @@ export type LabelResult =
  * Every line must have exactly as many shapes as it has non-space
  * characters, or the artist is told which line disagreed and by how much —
  * guessing which shape is which letter would teach wrong letters silently.
- * Each row's x-height (unit) and baseline come from the letters that define
- * them (x-height letters, non-descending letters), with fallbacks for rows
- * that have none.
+ * Each row's x-height (unit) comes from the letters that define it (x-height
+ * letters, else capitals), and its baseline is a LINE fitted under the
+ * letters (robustLine) — handwriting climbs and drops across a page, and one
+ * level baseline for a sloping row would hang every letter at a different
+ * height once they are set side by side.
+ *
+ * Capitals and digits go further: each is its own measure. A capital that
+ * sits on the line is scaled by its OWN height and stood on its OWN foot, so
+ * a C written a little smaller than the D beside it comes out the same
+ * height on the same line. One that hangs below the line (a J, a looped Y)
+ * keeps its tail: it is measured from the line up.
  */
 export function labelGlyphs(rows: GlyphRow[], text: string): LabelResult {
   const lines = textLines(text)
@@ -238,11 +271,25 @@ export function labelGlyphs(rows: GlyphRow[], text: string): LabelResult {
     const heights = (pick: (c: string) => boolean) => labelled.filter(g => pick(g.char)).map(g => g.y1 - g.y0 + 1)
     const xh = heights(c => X_HEIGHT_CHARS.has(c))
     const ch = heights(c => CAP_HEIGHT_CHARS.has(c))
-    const unit = xh.length ? median(xh) : ch.length ? median(ch) / 1.45 : median(heights(() => true)) / 1.2
-    const sitters = labelled.filter(g => !DESCENDERS.has(g.char) && !FLOATERS.has(g.char)).map(g => g.y1)
-    const baseline = sitters.length ? median(sitters) : median(labelled.map(g => g.y1))
+    const unit = xh.length ? median(xh) : ch.length ? median(ch) / CAP_OVER_X : median(heights(() => true)) / 1.2
+    const mid = (g: GlyphBox) => (g.x0 + g.x1) / 2
+    let sitters = labelled.filter(g => !DESCENDERS.has(g.char) && !FLOATERS.has(g.char))
+    if (sitters.length === 0) sitters = labelled
+    const foot = robustLine(sitters.map(mid), sitters.map(g => g.y1))
+    const cap = unit * CAP_OVER_X
     for (const g of labelled) {
-      out.push({ ...g, unit: Math.max(1, Math.round(unit)), base: Math.max(0, Math.round(baseline - g.y0)) })
+      const line = foot(mid(g))
+      const h = g.y1 - g.y0 + 1
+      let u = unit, base = line - g.y0
+      if (CAPITALS.has(g.char)) {
+        // Hangs below the line by more than a seventh of a capital → it has a tail.
+        const hangs = g.y1 - line > cap * 0.14
+        const own = hangs ? line - g.y0 : h
+        if (!hangs) base = h
+        // Its own height is its measure, unless it is no capital's height at all (a stray size).
+        if (own >= cap * 0.7 && own <= cap * 1.4) u = own / CAP_OVER_X
+      }
+      out.push({ ...g, unit: Math.max(1, Math.round(u)), base: Math.max(0, Math.round(base)) })
     }
   }
   return { ok: true, glyphs: out }
@@ -302,28 +349,186 @@ export async function teachGlyphs(source: { photo: Buffer } | { lettering: Buffe
 export type GlyphSample = { char: string; unit: number; base: number; png: Buffer }
 export type ComposeAlign = 'left' | 'center' | 'right'
 
+/**
+ * The pen a title is set with: the stroke as a share of the capital height.
+ * 'marker' leaves every letter exactly as it was written.
+ */
+export const PEN_STYLES = ['fine', 'medium', 'bold', 'marker'] as const
+export type PenStyle = (typeof PEN_STYLES)[number]
+const PEN_RATIO: Record<Exclude<PenStyle, 'marker'>, number> = { fine: 1 / 10.5, medium: 1 / 7.8, bold: 1 / 6.2 }
+export function isPenStyle(v: unknown): v is PenStyle {
+  return typeof v === 'string' && (PEN_STYLES as readonly string[]).includes(v)
+}
+
 /** Longest title that can be typed, and the most lines. */
 export const MAX_TYPED_CHARS = 60
 export const MAX_TYPED_LINES = 3
 
-/** Common x-height every sample is scaled to in the composed lettering, px. */
-const UNIT = 110
+/** Height every capital is drawn at in the composed lettering, px. */
+export const CAP = 168
+/** Baseline to baseline of a stacked title. */
+const LEADING = CAP * 1.42
+/** The white a letter keeps to its neighbour when both sides are straight (H next to I). */
+const TRACK = CAP * 0.17
+/** How far into a letter's open side (under a T's arm, inside a C) its neighbour is let in. */
+const DEPTH = CAP * 0.3
+/** How much of that openness is taken up by moving the letters together. */
+const KERN = 0.8
+/** Two letters never come closer than this, on any line of the pen. */
+const CLEAR = CAP * 0.08
+/** The gap between words. */
+const WORD = CAP * 0.58
 
 export type ComposeResult =
-  | { ok: true; lettering: Lettering }
+  | {
+      ok: true
+      lettering: Lettering
+      /** Height of a capital and width of the pen stroke, in the lettering's own pixels. */
+      cap: number
+      stroke: number
+    }
   | { ok: false; missing: string[] }
 
+/** One letter ready to be set: its ink at the composed size and where its baseline is. */
+type SetGlyph = {
+  alpha: Uint8Array
+  width: number
+  height: number
+  /** Baseline, px down from the glyph's top. */
+  base: number
+  /** Per row of the cap band (0 = cap line … CAP-1 = just above the baseline): the first and last ink column, or -1. */
+  left: Int16Array
+  right: Int16Array
+  stroke: number
+}
+
+/** Scale an alpha field (lanczos). Sharp widens a one-channel image to RGB unless told otherwise: the result is read back as one channel. */
+export async function resizeField(field: Field, width: number, height: number): Promise<Field> {
+  const w = Math.max(1, Math.round(width)), h = Math.max(1, Math.round(height))
+  const { data, info } = await sharp(Buffer.from(field.alpha.buffer, field.alpha.byteOffset, field.alpha.length), {
+    raw: { width: field.width, height: field.height, channels: 1 },
+  }).resize(w, h, { fit: 'fill', kernel: 'lanczos3' }).toColourspace('b-w').raw().toBuffer({ resolveWithObject: true })
+  const alpha = new Uint8Array(w * h)
+  const c = info.channels
+  for (let i = 0; i < w * h; i++) alpha[i] = data[i * c]
+  return { alpha, width: w, height: h }
+}
+
 /**
- * Set `text` in the artist's hand from `bank`. A character with no sample of
- * its own borrows the other case (a capital written once serves as both);
- * anything still missing is reported instead of guessed. Deterministic for a
- * given seed: the same seed picks the same samples and the same jitter.
+ * A sample as it is set: traced with the pen (handwriting-pen.ts), scaled so
+ * a capital is exactly CAP tall, with the profiles the spacing reads.
+ */
+async function prepareGlyph(sample: GlyphSample, pen: PenStyle): Promise<SetGlyph | null> {
+  const { alpha, width, height } = await letteringAlpha(sample.png)
+  const field: Field = { alpha, width, height }
+  const capNat = sample.unit * CAP_OVER_X
+  const natural = strokeWidthOf(field)
+  if (!natural) return null
+  let inset = 0
+  if (pen !== 'marker') {
+    const ratio = PEN_RATIO[pen]
+    // A pen already within a tenth of the weight asked for is left as it is.
+    if (Math.abs(natural / capNat - ratio) > ratio * 0.1) inset = insetFor(natural, capNat, ratio)
+  }
+  // Tracing finer must never change what the letter IS: if it comes apart, or
+  // the wall of a counter gives way (a 6 becoming a hook), less is taken off
+  // until it holds — and nothing at all if it never does.
+  const before = shapeOf(field, natural)
+  let drawn = repen(field, inset, { stroke: natural, hi: true })
+  for (let tries = 0; inset > 0 && tries < 3; tries++) {
+    const after = shapeOf(drawn.field, natural * PEN_SCALE)
+    if (after.parts <= before.parts && after.holes >= before.holes) break
+    inset = tries === 2 ? 0 : inset * 0.6
+    drawn = repen(field, inset, { stroke: natural, hi: true })
+  }
+  const ink = cropField(drawn.field)
+  if (!ink) return null
+  // Tracing finer takes the same off every edge: the letter is that much
+  // shorter at the top and the foot, and its baseline rises with the foot.
+  const capHi = Math.max(1, (capNat - 2 * drawn.inset) * PEN_SCALE)
+  const baseHi = (sample.base - drawn.inset) * PEN_SCALE - ink.top
+  const k = CAP / capHi
+  const set = await resizeField(ink, ink.width * k, ink.height * k)
+  const base = baseHi * k
+  const left = new Int16Array(CAP).fill(-1), right = new Int16Array(CAP).fill(-1)
+  const top = Math.round(base) - CAP // glyph row of the cap line
+  for (let r = 0; r < CAP; r++) {
+    const y = top + r
+    if (y < 0 || y >= set.height) continue
+    const row = y * set.width
+    for (let x = 0; x < set.width; x++) if (set.alpha[row + x] > 110) { left[r] = x; break }
+    for (let x = set.width - 1; x >= 0; x--) if (set.alpha[row + x] > 110) { right[r] = x; break }
+  }
+  return { alpha: set.alpha, width: set.width, height: set.height, base, left, right, stroke: drawn.to * PEN_SCALE * k }
+}
+
+/**
+ * How many separate pieces of ink a letter has and how many enclosed counters,
+ * ignoring specks (under a fifth of a stroke-width square). `stroke` is the
+ * pen width in the field's own pixels.
+ */
+function shapeOf(field: Field, stroke: number): { parts: number; holes: number } {
+  const { alpha, width: W, height: H } = field
+  // One pixel of paper all round, so the outside is one region.
+  const w = W + 2, h = H + 2
+  const ink = new Uint8Array(w * h), paper = new Uint8Array(w * h).fill(1)
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (alpha[y * W + x] > 127) { ink[(y + 1) * w + x + 1] = 1; paper[(y + 1) * w + x + 1] = 0 }
+    }
+  }
+  const speck = Math.max(4, stroke * stroke * 0.2)
+  const parts = components(ink, w, h).areas.filter(a => a >= speck).length
+  const bg = components(paper, w, h)
+  let holes = 0
+  for (let k = 0; k < bg.areas.length; k++) {
+    const b = bg.boxes[k]
+    const outside = b[0] === 0 || b[1] === 0 || b[2] === w - 1 || b[3] === h - 1
+    if (!outside && bg.areas[k] >= Math.max(3, speck * 0.05)) holes++
+  }
+  return { parts, holes }
+}
+
+/**
+ * The gap to leave between the boxes of two letters (px, may be negative: a T
+ * tucks over an L). The white between two shapes is what the eye spaces by,
+ * so the gap is the tracking less most of the openness the two facing sides
+ * already have, and never so little that ink comes within CLEAR of ink.
+ */
+export function letterGap(a: { width: number; right: Int16Array }, b: { left: Int16Array }): number {
+  let open = 0, n = 0, tight = Infinity
+  for (let r = 0; r < CAP; r++) {
+    const ra = a.right[r] < 0 ? DEPTH : Math.min(DEPTH, a.width - 1 - a.right[r])
+    const lb = b.left[r] < 0 ? DEPTH : Math.min(DEPTH, b.left[r])
+    open += ra + lb
+    n++
+    // Ink facing ink within a few rows of each other is what can collide.
+    if (a.right[r] < 0) continue
+    for (let d = -3; d <= 3; d++) {
+      const q = r + d
+      if (q < 0 || q >= CAP || b.left[q] < 0) continue
+      const room = a.width - 1 - a.right[r] + b.left[q]
+      if (room < tight) tight = room
+    }
+  }
+  let gap = TRACK - KERN * (n ? open / n : 0)
+  if (tight !== Infinity) gap = Math.max(gap, CLEAR - tight)
+  return Math.max(-DEPTH, Math.min(TRACK, gap))
+}
+
+/**
+ * Set `text` in the artist's hand from `bank` (see the top of this file). A
+ * character with no sample of its own borrows the other case (a capital
+ * written once serves as both); anything still missing is reported instead
+ * of guessed. Deterministic for a given seed: the same seed picks the same
+ * samples.
  */
 export async function composeHandwriting(
-  text: string, bank: GlyphSample[], opts: { align?: ComposeAlign; seed?: number } = {},
+  text: string, bank: GlyphSample[], opts: { align?: ComposeAlign; seed?: number; pen?: PenStyle } = {},
 ): Promise<ComposeResult> {
   const lines = textLines(text).slice(0, MAX_TYPED_LINES)
   const align = opts.align ?? 'center'
+  const pen = opts.pen ?? 'medium'
   const r = rng(opts.seed ?? 1)
   const byChar = new Map<string, GlyphSample[]>()
   for (const s of bank) {
@@ -342,72 +547,68 @@ export async function composeHandwriting(
   if (missing.size) return { ok: false, missing: [...missing] }
   if (lines.length === 0) return { ok: false, missing: [] }
 
-  // Lay each glyph out: scale to the common x-height, sit it on the line's
-  // baseline, advance by its width plus a pen-gap, tilt it a touch.
-  type Placed = { png: Buffer; x: number; y: number; w: number; h: number }
-  const LINE = UNIT * 2.5
+  const prepared = new Map<GlyphSample, SetGlyph | null>()
+  const prepare = async (s: GlyphSample) => {
+    if (!prepared.has(s)) prepared.set(s, await prepareGlyph(s, pen))
+    return prepared.get(s)!
+  }
+
+  type Placed = { g: SetGlyph; x: number; line: number }
   const placed: Placed[] = []
   const lineWidths: number[] = []
-  const lineStarts: number[] = []
   const lastPick = new Map<string, number>()
-  const cache = new Map<string, { width: number; height: number }>()
-  const sizeOf = async (s: GlyphSample) => {
-    const k = `${s.char}:${s.unit}:${s.base}:${s.png.length}`
-    let m = cache.get(k)
-    if (!m) { const meta = await sharp(s.png).metadata(); m = { width: meta.width ?? 1, height: meta.height ?? 1 }; cache.set(k, m) }
-    return m
-  }
+  let above = 0, below = 0
   for (let li = 0; li < lines.length; li++) {
-    const baseline = UNIT * 1.7 + li * LINE
     let x = 0
-    lineStarts.push(placed.length)
+    let prev: SetGlyph | null = null
+    let space = false
     for (const c of lines[li]) {
-      if (c === ' ') { x += UNIT * 0.7; continue }
+      if (c === ' ') { space = true; continue }
       const samples = samplesFor(c)!
       // A repeated letter prefers a sample it did not use last time.
       let pick = Math.floor(r() * samples.length)
       if (samples.length > 1 && lastPick.get(c) === pick) pick = (pick + 1 + Math.floor(r() * (samples.length - 1))) % samples.length
       lastPick.set(c, pick)
-      const s = samples[pick]
-      const size = await sizeOf(s)
-      const k = UNIT / s.unit
-      const w = Math.max(1, Math.round(size.width * k)), h = Math.max(1, Math.round(size.height * k))
-      const tilt = (r() - 0.5) * 4
-      let png = await sharp(s.png).resize(w, h, { fit: 'fill', kernel: 'lanczos3' }).png().toBuffer()
-      let pw = w, ph = h
-      if (Math.abs(tilt) > 0.4) {
-        png = await sharp(png).rotate(tilt, { background: { r: 255, g: 255, b: 255, alpha: 0 } }).png().toBuffer()
-        const meta = await sharp(png).metadata()
-        pw = meta.width ?? w; ph = meta.height ?? h
-      }
-      const baseJitter = (r() - 0.5) * UNIT * 0.08
-      const y = baseline - s.base * k + baseJitter - (ph - h) / 2
-      placed.push({ png, x: x - (pw - w) / 2, y, w: pw, h: ph })
-      x += w + UNIT * (0.1 + r() * 0.08)
+      const g = await prepare(samples[pick])
+      if (!g) continue
+      if (prev) x += space ? WORD : letterGap(prev, g)
+      placed.push({ g, x, line: li })
+      x += g.width
+      prev = g
+      space = false
+      if (li === 0) above = Math.max(above, g.base)
+      if (li === lines.length - 1) below = Math.max(below, g.height - g.base)
     }
     lineWidths.push(x)
   }
-  lineStarts.push(placed.length)
+  if (placed.length === 0) return { ok: false, missing: [] }
 
   const maxW = Math.max(...lineWidths)
-  const pad = UNIT * 0.5
+  const pad = Math.round(CAP * 0.3)
   const W = Math.ceil(maxW + pad * 2)
-  const H = Math.ceil(lines.length * LINE + UNIT)
-  const layers: OverlayOptions[] = []
-  for (let li = 0; li < lines.length; li++) {
-    const shift = align === 'left' ? 0 : align === 'right' ? maxW - lineWidths[li] : (maxW - lineWidths[li]) / 2
-    for (let i = lineStarts[li]; i < lineStarts[li + 1]; i++) {
-      const p = placed[i]
-      layers.push({ input: p.png, left: Math.round(p.x + pad + shift), top: Math.round(p.y) })
+  const first = Math.ceil(Math.max(above, CAP) + pad)
+  const H = Math.ceil(first + (lines.length - 1) * LEADING + below + pad)
+  const canvas = new Uint8Array(W * H)
+  let strokeSum = 0
+  for (const p of placed) {
+    const shift = align === 'left' ? 0 : align === 'right' ? maxW - lineWidths[p.line] : (maxW - lineWidths[p.line]) / 2
+    const left = Math.round(p.x + pad + shift)
+    const top = Math.round(first + p.line * LEADING - p.g.base)
+    strokeSum += p.g.stroke
+    for (let y = 0; y < p.g.height; y++) {
+      const yy = top + y
+      if (yy < 0 || yy >= H) continue
+      for (let x = 0; x < p.g.width; x++) {
+        const xx = left + x
+        if (xx < 0 || xx >= W) continue
+        const v = p.g.alpha[y * p.g.width + x]
+        if (v > canvas[yy * W + xx]) canvas[yy * W + xx] = v
+      }
     }
   }
-  const canvas = sharp({ create: { width: W, height: H, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } } })
-  const { data, info } = await canvas.composite(layers).raw().toBuffer({ resolveWithObject: true })
-  const n = info.width * info.height
-  const alpha = new Uint8Array(n)
-  for (let i = 0; i < n; i++) alpha[i] = data[i * 4 + 3]
-  const lettering = await cropLettering(alpha, info.width, info.height, UNIT * 0.22)
-  return { ok: true, lettering }
+  const stroke = strokeSum / placed.length
+  const lettering = await cropLettering(canvas, W, H, stroke)
+  return { ok: true, lettering, cap: CAP, stroke }
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

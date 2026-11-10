@@ -22,9 +22,11 @@ import {
   applyLettering, artworkStamp, buildFillRequest, cassetteCoverStamp, composeLayers, filteredCoverKey, finalizedCoverKey, finishCover,
   layerKey, motionLayerFiles, parseFinalizedCover, parseSourcePath, parseStudioMotionKey, pickLetteringPosition, placeSubject, plateKey,
   tintLettering, titleKey,
-  type Box, type CoverLayers, type LetteringPosition, type LetteringSize, type Placement,
+  type Box, type CoverLayers, type Halo, type LetteringPosition, type LetteringSize, type Placement,
 } from '@/lib/cassette-studio'
 import { CASSETTE_SCENES, scenePrompt } from '@/lib/cassette-scenes'
+import { finishTake } from '@/lib/cassette-art'
+import { stillLoop } from '@/lib/still-loop'
 import {
   decodeForFilter, filterRawToJpeg, gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings, type RawImage,
 } from '@/lib/cover-filters'
@@ -59,12 +61,17 @@ export async function loadCoverProject(userId: string, projectId: string): Promi
 export type CoverJob = {
   userId: string
   project: CoverProject
-  /** A preset id, 'custom', 'photo' or 'keep' (re-letter the current artwork). Never 'random' — resolve it first. */
+  /**
+   * A preset id, 'custom', 'photo', 'keep' (re-letter the current artwork) or
+   * 'take' (a picture the art engine drew — cassette-art.ts). Never 'random' — resolve it first.
+   */
   scene: string
-  /** The custom setting (scene = 'custom'). */
+  /** The custom setting (scene = 'custom'); the idea's short name (scene = 'take'). */
   setting: string
-  /** studio/<uid>/subject-<ts>.png; ignored for scene = 'keep'. */
+  /** studio/<uid>/subject-<ts>.png; ignored for scene = 'keep' and 'take'. */
   subjectPath: string
+  /** studio/<uid>/take-<projectId>-<run>-<i>.jpg (scene = 'take'). */
+  takePath?: string
   /** The artist's own background (scene = 'photo'). */
   background: Buffer | null
   /** studio/<uid>/lettering-<projectId>-<ts>.png, or '' for an unlettered cover. */
@@ -116,7 +123,9 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
   let position: LetteringPosition = job.position === 'auto' ? 'bottom-left' : job.position
   let coverBox: Box | null = null
   const projectId = project.id
-  const isAiScene = scene !== 'photo' && scene !== 'keep'
+  // A take was already drawn (and counted) by the run that made it: turning
+  // it into the cover, like re-lettering, is not another generation.
+  const isAiScene = scene !== 'photo' && scene !== 'keep' && scene !== 'take'
   let background = job.background
 
   const seed = (Math.random() * 2147483647) >>> 0
@@ -145,6 +154,18 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
       if (!res.ok) throw new CoverError('Could not load the current artwork.', 400)
       art = Buffer.from(await res.arrayBuffer())
       artPath = ''
+    } else if (scene === 'take') {
+      if (!job.takePath) throw new CoverError('Choose a take first.', 400)
+      let take: Buffer
+      try {
+        take = await downloadStudio(job.takePath)
+      } catch {
+        throw new CoverError('That take is no longer available. Make the cover again.', 404)
+      }
+      art = await finishTake(take, seed)
+      // The same name as every Studio cover, so it files as generated artwork
+      // and the moving cover knows it (no plate/layer → the still set in motion).
+      artPath = `${projectId}/ai-cassette-${stamp}.jpg`
     } else {
       const subject = await downloadStudio(job.subjectPath)
       const meta = await sharp(subject).metadata()
@@ -208,7 +229,7 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
       // The same ink in the same resolved colour ('auto' included), at the
       // lettering's native size: the moving cover's title card. Keyed by the
       // FINALIZED stamp, which on scene=keep differs from the cover's.
-      motionPending.push(saveTitle(userId, stamp, lettering, out.color, position, size, motionSaved))
+      motionPending.push(saveTitle(userId, stamp, lettering, out.color, out.halo, position, size, motionSaved))
     }
 
     // ── 3. Save + point the project at it ───────────────────────────────────
@@ -230,7 +251,8 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
       artwork_url: artworkUrl,
       finalized_artwork_url: finalizedUrl,
       scene,
-      scene_label: CASSETTE_SCENES.find(s => s.id === scene)?.label ?? (scene === 'custom' ? setting : scene === 'photo' ? 'Your photo' : null),
+      scene_label: CASSETTE_SCENES.find(s => s.id === scene)?.label
+        ?? (scene === 'custom' || scene === 'take' ? (setting || null) : scene === 'photo' ? 'Your photo' : null),
       prompt_used: prompt,
       color: usedColor,
       position: letteringPath ? position : null,
@@ -262,11 +284,11 @@ async function saveMotionFile(path: string, bytes: Buffer, contentType: string, 
 
 /** The coloured title card for a finalized stamp. Never throws. */
 async function saveTitle(
-  userId: string, fstamp: string, lettering: Buffer, color: string,
+  userId: string, fstamp: string, lettering: Buffer, color: string, halo: Halo | null,
   position: LetteringPosition, size: LetteringSize, saved: string[],
 ): Promise<void> {
   try {
-    const png = await tintLettering(lettering, color)
+    const png = await tintLettering(lettering, color, undefined, halo)
     await saveMotionFile(titleKey(userId, fstamp, position, size), png, 'image/png', saved)
   } catch (err) {
     console.error('[cassette-studio] title layer not saved:', err instanceof Error ? err.message : err)
@@ -512,6 +534,10 @@ export async function makeMovingCover(
     console.error('[cassette-studio/motion] lookup failed:', err instanceof Error ? err.message : err)
     throw new CoverError(MOTION_FAILED, 502)
   }
+  // A Studio cover with no cassette layer of its own (drawn whole by the art
+  // engine, or made before layers were kept): the picture itself, set gently
+  // in motion.
+  if (!src.ok && src.reason === MADE_BEFORE_MOTION) return makeStillCover(userId, project, format, withTitle, source)
   if (!src.ok) throw new CoverError(src.reason, 400)
 
   // Fetch and prepare everything BEFORE taking an encoder slot — a slow
@@ -562,6 +588,49 @@ export async function makeMovingCover(
     title: `${withTitle ? 'Moving cover' : 'Cassette playing'} · ${FREE_FORMATS[format].label}`,
     sourceImageUrl: withTitle ? (project.finalized_artwork_url ?? project.artwork_url) : project.artwork_url,
     settings: { source, format, title: withTitle },
+  })
+  if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
+  return stored
+}
+
+/**
+ * The project's cover as a still set in motion (still-loop.ts: a slow floating
+ * drift with live grain, seamless) in `format`, saved like a moving cover.
+ * With the title → the lettered cover; without → the clean artwork.
+ */
+async function makeStillCover(
+  userId: string, project: CoverProject, format: FreeFormatId, withTitle: boolean, source: string,
+): Promise<{ id: string; video_url: string }> {
+  const url = withTitle ? (project.finalized_artwork_url ?? project.artwork_url) : project.artwork_url
+  const key = storagePathFromUrl(url, ARTWORK_BUCKET)
+  if (!key) throw new CoverError(NOT_A_STUDIO_COVER, 400)
+  let cover: Buffer
+  try {
+    cover = await downloadStudio(key)
+  } catch (err) {
+    console.error('[cassette-studio/motion] cover download failed:', err instanceof Error ? err.message : err)
+    throw new CoverError(MOTION_FAILED, 502)
+  }
+  if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
+  let bytes: Buffer
+  try {
+    const { width, height } = FREE_FORMATS[format]
+    bytes = await stillLoop(cover, { width, height })
+  } catch (err) {
+    console.error('[cassette-studio/motion] still loop failed:', err instanceof Error ? err.message : err)
+    throw new CoverError(MOTION_FAILED, 502)
+  } finally {
+    releaseTranscodeSlot()
+  }
+  const stored = await storeVisualizer({
+    userId,
+    projectId: project.id,
+    bytes,
+    contentType: 'video/mp4',
+    kind: 'free',
+    title: `${withTitle ? 'Moving cover' : 'Cover in motion'} · ${FREE_FORMATS[format].label}`,
+    sourceImageUrl: url,
+    settings: { source, format, title: withTitle, motion: 'drift' },
   })
   if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
   return stored
