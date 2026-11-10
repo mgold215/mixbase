@@ -67,20 +67,21 @@ struct CassetteStudioView: View {
         // typing: setting a typed title from the glyph bank.
         // teaching: learning letters from a photo. sheet: reading the handwriting sheet.
         // quickTitle: Adjust the title under a one-click result (re-letter, no AI).
-        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, sheet, quickTitle
+        // quickTake: Other takes under a one-click result (another picture the run drew becomes the cover, no AI).
+        case load, subject, library, lettering, typing, teaching, render, reletter, look, motion, sheet, quickTitle, quickTake
     }
 
-    // One click: example scenes (tap fills the box) and the steps shown while it runs.
+    // One click: nudges for the optional idea box (tap fills it) — a way of
+    // making the picture, not a scene — and the steps shown while it runs.
     private static let quickIdeas = [
-        "Rainy rooftop in Tokyo at night, neon signs",
-        "Desert motel at dusk, pink sky",
-        "Diner counter at 3am, red neon outside",
-        "Snowy windowsill, warm lamp light",
-        "Car dashboard on a night highway",
+        "As an old master oil painting",
+        "As a night photo with flash",
+        "As a 1970s sci-fi paperback",
+        "As a Japanese woodblock print",
     ]
 
     private static let quickSteps: [(id: String, label: String)] = [
-        ("brief", "Writing the shot"),
+        ("brief", "The idea"),
         ("cover", "Cover, with your handwriting"),
         ("canvas", "Canvas (9:16)"),
         ("youtube", "YouTube (16:9)"),
@@ -221,6 +222,8 @@ struct CassetteStudioView: View {
     @State private var quickPosition: String?
     @State private var quickSize: String?
     @State private var quickTitleError: String?
+    // Other takes under a one-click result: why the tapped take did not become the cover.
+    @State private var quickTakeError: String?
     // The project's CURRENT cover can already move (its layers were saved).
     @State private var canMove = false
 
@@ -232,10 +235,11 @@ struct CassetteStudioView: View {
     @State private var sheetPick: PhotosPickerItem?
     @State private var sheetError: String?
     @State private var manualOpen = false
-    // The result's Title and Look editors and the Setup card stay folded until
-    // asked for: one box, one button, one result on screen.
+    // The result's Title and Look editors, its Other takes and the Setup card
+    // stay folded until asked for: one box, one button, one result on screen.
     @State private var quickTitleOpen = false
     @State private var quickLookOpen = false
+    @State private var quickTakesOpen = false
     @State private var setupOpen = false
     @State private var pollToken = 0
     // The cover and clips already handed to the song screen, so polling
@@ -1272,15 +1276,17 @@ struct CassetteStudioView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .foregroundColor(Color(hex: "#2dd4bf"))
-                Text("Describe the scene")
+                Text("Make the cover")
                     .font(.headline)
                     .foregroundColor(Color(hex: "#f0f0f0"))
             }
 
-            TextField("e.g. rainy rooftop in Tokyo at night, neon signs reflecting in puddles", text: $quickText, axis: .vertical)
+            // An idea of your own is optional. Three lines so the placeholder
+            // reads in full on a phone.
+            TextField("Your own idea, if you have one. Leave it empty and the idea comes from the song's title.", text: $quickText, axis: .vertical)
                 .font(.subheadline)
                 .foregroundColor(Color(hex: "#f0f0f0"))
-                .lineLimit(2...4)
+                .lineLimit(3...4)
                 .padding(10)
                 .background(Color(hex: "#161616"))
                 .cornerRadius(10)
@@ -1314,7 +1320,7 @@ struct CassetteStudioView: View {
             .buttonStyle(.plain)
             .disabled(!canMakeIt)
 
-            Text("Your cassette and your handwriting in that scene, then the scene filmed for Canvas and YouTube. About 3–5 minutes.")
+            Text("A picture with an idea, drawn around your cassette and lettered in your handwriting, then set in motion for Canvas and YouTube. About 4–6 minutes; you can leave this open.")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1340,8 +1346,10 @@ struct CassetteStudioView: View {
         .padding(.horizontal)
     }
 
+    // The idea is optional (left empty, it comes from the song's title), so
+    // the cassette is all a run needs.
     private var canMakeIt: Bool {
-        !isWorking && quickReady && quickText.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3
+        !isWorking && quickReady
     }
 
     private func quickProgress(_ job: MixbaseAPI.QuickJob) -> some View {
@@ -1352,7 +1360,7 @@ struct CassetteStudioView: View {
                     stepIcon(state)
                     Text(step.label)
                         .font(.caption)
-                        .foregroundColor(state == "pending" ? Color(hex: "#555555") : Color(hex: "#cccccc"))
+                        .foregroundColor(state == "pending" || state == "skipped" ? Color(hex: "#555555") : Color(hex: "#cccccc"))
                     if step.id == "brief", let label = job.sceneLabel {
                         Text("· \(label)")
                             .font(.caption)
@@ -1360,6 +1368,14 @@ struct CassetteStudioView: View {
                             .lineLimit(1)
                     }
                 }
+            }
+
+            // The picture idea, in one sentence.
+            if let idea = job.idea, !idea.isEmpty {
+                Text(idea)
+                    .font(.caption)
+                    .foregroundColor(Color(hex: "#bbbbbb"))
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if job.isRunning {
@@ -1401,7 +1417,7 @@ struct CassetteStudioView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
-                    Text("\(clip.format == "youtube" ? "YouTube" : "Canvas") · \(clip.kind == "cinematic" ? (clip.model ?? "cinematic") : "cassette loop")")
+                    Text(quickClipCaption(clip, job: job))
                         .font(.caption2)
                         .foregroundColor(.gray)
                     quickSaveRow(url: clip.videoUrl, video: true)
@@ -1410,13 +1426,20 @@ struct CassetteStudioView: View {
 
             if !job.isRunning, job.artworkUrl != nil {
                 // The editors stay folded: the title (when this song has
-                // handwriting) and the look.
+                // handwriting), the look, and the other takes (when the run
+                // drew more than one picture).
                 HStack(spacing: 8) {
                     if job.lettering != nil {
                         foldChip("Title", open: quickTitleOpen) { quickTitleOpen.toggle() }
                     }
                     foldChip("Look", open: quickLookOpen) { quickLookOpen.toggle() }
+                    if (job.takes?.count ?? 0) > 1 {
+                        foldChip("Other takes", open: quickTakesOpen) { quickTakesOpen.toggle() }
+                    }
                     Spacer(minLength: 0)
+                }
+                if quickTakesOpen, let takes = job.takes, takes.count > 1 {
+                    quickTakesControls(job: job, takes: takes)
                 }
                 if quickTitleOpen, let lettering = job.lettering {
                     quickTitleControls(job: job, lettering: lettering)
@@ -1462,10 +1485,27 @@ struct CassetteStudioView: View {
                 .font(.caption)
                 .foregroundColor(.red)
         default:
+            // pending, or skipped (a clip the run was not asked to make)
             Image(systemName: "circle")
                 .font(.caption)
                 .foregroundColor(Color(hex: "#444444"))
         }
+    }
+
+    /// "Canvas · cover in motion": a clip's format and how it was made. A loop
+    /// under a drawn cover (the run names its image model) is that picture set
+    /// in motion; the classic engine's loop is the cassette's reels turning.
+    private func quickClipCaption(_ clip: MixbaseAPI.QuickClip, job: MixbaseAPI.QuickJob) -> String {
+        let format = clip.format == "youtube" ? "YouTube" : "Canvas"
+        let made: String
+        if clip.kind == "cinematic" {
+            made = clip.model ?? "cinematic"
+        } else if job.model != nil {
+            made = "cover in motion"
+        } else {
+            made = "cassette loop"
+        }
+        return "\(format) · \(made)"
     }
 
     /// Everything the one click needs is in place — a cassette and a full
@@ -1746,6 +1786,84 @@ struct CassetteStudioView: View {
         .disabled(isWorking)
     }
 
+    /// Other takes after a run: every picture it drew, the cover now outlined.
+    /// Tapping another makes it the cover (scene = take, no new generation),
+    /// lettered the way the title is set now. The clips keep the picture
+    /// they were filmed from.
+    private func quickTakesControls(job: MixbaseAPI.QuickJob, takes: [MixbaseAPI.StudioFile]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Other takes")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                if busy == .quickTake {
+                    ProgressView().tint(Color(hex: "#2dd4bf")).controlSize(.small)
+                    Text("Updating…")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(takes.enumerated()), id: \.offset) { index, take in
+                        quickTakeTile(job: job, index: index, take: take)
+                    }
+                }
+                .padding(2)
+            }
+
+            Text("Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were filmed from.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let quickTakeError {
+                Text(quickTakeError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// One take in the row. The one that is the cover now is outlined and
+    /// takes no taps; the others dim while anything is working.
+    private func quickTakeTile(job: MixbaseAPI.QuickJob, index: Int, take: MixbaseAPI.StudioFile) -> some View {
+        let current = index == job.take
+        let number = index + 1
+        return Button(action: { Task { await chooseQuickTake(job: job, index: index) } }) {
+            AsyncImage(url: Self.quickTakeThumbURL(take.url)) { image in
+                image.resizable().aspectRatio(1, contentMode: .fill)
+            } placeholder: {
+                Color(hex: "#1a1a1a").overlay(ProgressView().tint(.gray))
+            }
+            .frame(width: 72, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(current ? Color(hex: "#2dd4bf") : Color(hex: "#333333"), lineWidth: current ? 3 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+        .allowsHitTesting(!current)
+        .opacity(isWorking && !current ? 0.5 : 1)
+        .accessibilityLabel(Text(current ? "Take \(number), the cover now" : "Use take \(number) as the cover"))
+        .accessibilityAddTraits(current ? .isSelected : [])
+    }
+
+    /// A small version of a public Storage image: the takes are 2048px JPEGs
+    /// and the row shows them at 72pt (thumb() on the web).
+    private static func quickTakeThumbURL(_ url: String) -> URL? {
+        let original = "/storage/v1/object/public/"
+        guard url.contains(original) else { return URL(string: url) }
+        let resized = url.replacingOccurrences(of: original, with: "/storage/v1/render/image/public/")
+        return URL(string: resized + "?width=300&height=300&quality=70")
+    }
+
     /// Save row under a one-click result: a spinner while saving, "Saved"
     /// after, else the save button — the moving cover's three states.
     @ViewBuilder
@@ -1863,14 +1981,18 @@ struct CassetteStudioView: View {
     }
 
     private func makeIt() {
+        // The idea is optional: left empty, it comes from the song's title.
         let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.count >= 3, !quickRunning else { return }
+        guard !quickRunning else { return }
         quickError = nil
         // A new run letters its own title; the adjustments start over from it.
         quickColor = nil
         quickPosition = nil
         quickSize = nil
         quickTitleError = nil
+        // It draws its own takes too: that fold closes.
+        quickTakesOpen = false
+        quickTakeError = nil
         Task {
             do {
                 let job = try await MixbaseAPI.shared.startQuick(projectId: projectId, description: text)
@@ -2340,6 +2462,61 @@ struct CassetteStudioView: View {
             quickTitleError = error.localizedDescription
         }
         busy = nil
+    }
+
+    /// Other takes: another picture the run drew becomes the cover (scene =
+    /// take, no new generation), lettered the way the title is set now, then
+    /// mirrored onto the run shown exactly like Adjust the title. The clips
+    /// keep the picture they were filmed from.
+    private func chooseQuickTake(job: MixbaseAPI.QuickJob, index: Int) async {
+        guard busy == nil else { return }
+        guard let takes = job.takes, takes.indices.contains(index), index != job.take else { return }
+        let takePath = takes[index].path
+        let color = quickColor ?? "auto"
+        // A different picture has a different calm spot: the server finds it
+        // unless a spot was chosen.
+        let position = quickPosition ?? "auto"
+        let size = quickSize ?? job.title?.size ?? "medium"
+        busy = .quickTake
+        quickTakeError = nil
+        do {
+            let result = try await MixbaseAPI.shared.renderTake(
+                projectId: projectId,
+                takePath: takePath,
+                letteringPath: job.lettering?.path,
+                color: color,
+                position: position,
+                size: size
+            )
+            var shown = job
+            shown.take = index
+            shown.artworkUrl = result.artworkUrl
+            shown.finalizedArtworkUrl = result.finalizedArtworkUrl
+            if job.lettering != nil {
+                shown.title = MixbaseAPI.QuickTitle(color: result.color, position: position == "auto" ? nil : position, size: size)
+            }
+            quickJob = shown
+            let cover = result.finalizedArtworkUrl ?? result.artworkUrl
+            announcedCover = cover
+            coverUrl = cover
+            onRendered(result.artworkUrl, result.finalizedArtworkUrl)
+            hasRendered = true
+            // A drawn cover moves too (the picture itself, set in motion).
+            canMove = true
+            // A moving cover made from the old picture no longer matches.
+            motionUrl = nil
+            motionError = nil
+            savedMotion = false
+            await applyRememberedLook()
+        } catch {
+            quickTakeError = error.localizedDescription
+            busy = nil
+            return
+        }
+        // The cover is applied and shown; the look editor starts over on the
+        // new picture without holding the rest of the studio on that read.
+        busy = nil
+        await loadLook()
     }
 
     /// Small preview of a picked photo (ImageIO, so it works the same on iOS
