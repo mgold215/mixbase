@@ -7,6 +7,7 @@ import { parsePlacement, LETTERING_POSITIONS, LETTERING_SIZES, type LetteringPos
 import { isSceneId, MAX_CUSTOM_SETTING } from '@/lib/cassette-scenes'
 import { CoverError, loadCoverProject, makeStudioCover, randomSceneId } from '@/lib/cassette-pipeline'
 import { syncQuickCover } from '@/lib/cassette-quick'
+import { parseTakeKey } from '@/lib/cassette-art'
 
 export const runtime = 'nodejs'
 export const maxDuration = 180
@@ -15,7 +16,10 @@ export const maxDuration = 180
 //
 //   project_id   uuid, owned by the caller
 //   subject      studio/<userId>/subject-<ts>.png   (required unless scene=keep)
-//   scene        a preset id | 'random' | 'custom' | 'photo' | 'keep'
+//   scene        a preset id | 'random' | 'custom' | 'photo' | 'keep' | 'take'
+//   take         studio/<userId>/take-<projectId>-<run>-<i>.jpg when scene=take:
+//                one of the pictures the one-click run drew for THIS song
+//                becomes its cover (no new generation)
 //   setting      free text when scene=custom
 //   background   image file when scene=photo
 //   lettering    studio/<userId>/lettering-<projectId>-<ts>.png, optional
@@ -53,14 +57,18 @@ export async function POST(request: NextRequest) {
   let scene = str('scene') || 'random'
   if (scene === 'random') scene = randomSceneId()
   const isAiScene = isSceneId(scene) || scene === 'custom'
-  if (!isAiScene && scene !== 'photo' && scene !== 'keep') {
+  if (!isAiScene && scene !== 'photo' && scene !== 'keep' && scene !== 'take') {
     return NextResponse.json({ error: 'Unknown scene' }, { status: 400 })
+  }
+  const takePath = scene === 'take' ? str('take') : ''
+  if (scene === 'take' && parseTakeKey(takePath, userId)?.projectId !== projectId) {
+    return NextResponse.json({ error: 'Take not found' }, { status: 404 })
   }
   const setting = scene === 'custom' ? str('setting').trim().slice(0, MAX_CUSTOM_SETTING) : ''
   if (scene === 'custom' && !setting) return NextResponse.json({ error: 'Describe the scene first.' }, { status: 400 })
 
   const subjectPath = str('subject')
-  if (scene !== 'keep' && !isOwnStudioKey(subjectPath, userId, 'subject')) {
+  if (scene !== 'keep' && scene !== 'take' && !isOwnStudioKey(subjectPath, userId, 'subject')) {
     return NextResponse.json({ error: 'Add a cassette photo first.' }, { status: 400 })
   }
   const letteringPath = str('lettering')
@@ -87,10 +95,12 @@ export async function POST(request: NextRequest) {
     const result = await makeStudioCover({
       userId, project, scene, setting, subjectPath, background, letteringPath, color, position, size,
       reflection: str('reflection') === '1', placement,
+      ...(takePath ? { takePath } : {}),
     })
-    // Adjust the title after a one-click run: the run a client reloads must
-    // show the cover as it is now, not the one the run made.
+    // Adjust the title, or another take chosen, after a one-click run: the run
+    // a client reloads must show the cover as it is now, not the one the run made.
     if (scene === 'keep') syncQuickCover(userId, projectId, { ...result, size })
+    if (scene === 'take') syncQuickCover(userId, projectId, { ...result, ...(letteringPath ? { size } : {}), takePath })
     return NextResponse.json(result)
   } catch (err) {
     if (err instanceof CoverError) return NextResponse.json({ error: err.message }, { status: err.status })

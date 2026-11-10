@@ -37,10 +37,12 @@
 //      blobs at least a couple of stroke-widths square; an i-dot or a full
 //      stop is about one stroke-width square and sits inside the writing's
 //      box; specks on the paper are far smaller or far away.
-//   5. Repair — a morphological closing of a quarter stroke-width bridges
-//      hairline breaks, and enclosed holes smaller than a stroke-width (glare)
-//      are filled. A letter's counter (the hole in an o) is larger than that
-//      and stays open.
+//   5. Repair — a small morphological closing bridges hairline breaks, and
+//      the holes glare punched THROUGH a stroke are filled. A letter's counter
+//      (the hole in an o, the two in an 8) is never filled, however small a
+//      fat marker made it: a glare hole sits inside one stroke, so with the
+//      hole filled the ink there is one stroke thick; a counter sits between
+//      strokes, so filled it would be two strokes and the hole thick.
 //   6. Crop to the surviving ink + padding.
 
 import sharp from 'sharp'
@@ -248,14 +250,62 @@ export function inkMask(strength: Float32Array, W: number, H: number): { mask: U
   const kept = new Uint8Array(N)
   for (let i = 0; i < N; i++) if (labels[i] > 0 && keep[labels[i] - 1]) kept[i] = 1
 
-  // Repair: close hairline breaks (a quarter stroke-width each way), then fill
-  // the holes glare punched through strokes — enclosed gaps under a
-  // stroke-width across. A counter (the hole in an o, an e, an a) is wider
-  // than the stroke that draws it and is left open.
+  // Repair: close hairline breaks (a quarter stroke-width each way), then
+  // settle every small enclosed gap of the ORIGINAL ink one way or the other:
+  // a glare hole is filled, a counter is put back exactly as it was written
+  // (the closing alone would seal the counters of a fat marker's 8, B or a).
   const rc = Math.max(1, Math.min(12, Math.round(sw * 0.25)))
-  const closed = erode(dilate(kept, W, H, rc), W, H, rc)
-  const mask = fillSmallHoles(closed, W, H, 0.7 * sw2, 1.2 * sw)
+  const mask = erode(dilate(kept, W, H, rc), W, H, rc)
+  const holes = classifyHoles(kept, W, H, sw)
+  for (let i = 0; i < N; i++) {
+    if (holes[i] === GLARE) mask[i] = 1
+    else if (holes[i] === COUNTER) mask[i] = 0
+  }
   return { mask, strokeWidth: sw, tLo: tLow, tHi: Math.max(tLow + 8, t * 1.25) }
+}
+
+const GLARE = 1
+const COUNTER = 2
+
+/**
+ * The small enclosed gaps of an ink mask, each marked GLARE (a hole punched
+ * through one stroke: fill it) or COUNTER (the inside of a letter: keep it).
+ * Told apart by how thick the ink would be with the gap filled: about one
+ * stroke for glare, two strokes and the gap for a counter. Gaps larger than a
+ * stroke-width across are counters without asking and are left unmarked (0).
+ */
+export function classifyHoles(mask: Uint8Array, W: number, H: number, sw: number): Uint8Array {
+  const N = W * H
+  const bg = new Uint8Array(N)
+  for (let i = 0; i < N; i++) bg[i] = mask[i] ? 0 : 1
+  const { labels, areas, boxes } = components(bg, W, H)
+  const small = new Uint8Array(areas.length)
+  let any = false
+  for (let k = 0; k < areas.length; k++) {
+    const b = boxes[k]
+    const touchesBorder = b[0] === 0 || b[1] === 0 || b[2] === W - 1 || b[3] === H - 1
+    if (touchesBorder || areas[k] > 0.7 * sw * sw) continue
+    if (b[2] - b[0] + 1 > 1.2 * sw || b[3] - b[1] + 1 > 1.2 * sw) continue
+    small[k] = 1
+    any = true
+  }
+  const out = new Uint8Array(N)
+  if (!any) return out
+  const filled = Uint8Array.from(mask)
+  for (let i = 0; i < N; i++) if (labels[i] && small[labels[i] - 1]) filled[i] = 1
+  const dist = chamfer(filled, W, H)
+  const deepest = new Float32Array(areas.length)
+  for (let i = 0; i < N; i++) {
+    const k = labels[i] - 1
+    if (k >= 0 && small[k] && dist[i] > deepest[k]) deepest[k] = dist[i]
+  }
+  // One stroke thick → at most half a stroke-width from the nearest edge;
+  // 0.8 leaves room for a stroke that swells where the pen slowed.
+  for (let i = 0; i < N; i++) {
+    const k = labels[i] - 1
+    if (k >= 0 && small[k]) out[i] = deepest[k] <= 0.8 * sw ? GLARE : COUNTER
+  }
+  return out
 }
 
 /** Typical stroke width of an ink mask, in pixels (3..160). */

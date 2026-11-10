@@ -4,15 +4,24 @@ import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { isOwnStudioKey, listStudio } from '@/lib/cassette-server'
-import { getQuickJob, latestQuickJob, publicJob, startQuickJob } from '@/lib/cassette-quick'
+import { getQuickJob, latestQuickJob, publicJob, startQuickJob, type QuickFormat } from '@/lib/cassette-quick'
+import { isArtModelId, MAX_SCENE, MAX_TAKES } from '@/lib/cassette-art'
 
 export const runtime = 'nodejs'
 
-// Cassette Studio — ONE CLICK (src/lib/cassette-quick.ts): describe a scene,
-// get the cover (real cassette, your handwriting) plus Canvas and YouTube
-// moving scenes, all applied to the song.
+// Cassette Studio — ONE CLICK (src/lib/cassette-quick.ts): one button makes
+// the cover (an idea drawn around your cassette, lettered in your
+// handwriting) plus Canvas and YouTube moving scenes, all applied to the song.
 //
-// POST /api/cassette-studio/quick   JSON { project_id, description }
+// POST /api/cassette-studio/quick   JSON { project_id, description? }
+//   description  the artist's own idea for the cover, optional: left empty,
+//                the idea comes from the song's title
+//   Optional, for the owner's own experiments (the screens never send them):
+//   prompt       an exact scene brief, drawn as written (no art direction)
+//   formats      which clips to make: any of 'canvas', 'youtube' (default both;
+//                [] = the cover only)
+//   takes        how many takes to draw, 1–4 (default 3)
+//   model        pin one image model (see ART_MODELS) instead of best-first
 //   → 202 { job }   the run continues in the background; poll GET
 //   → 409 { error, job }   this owner already has a run going (that job)
 // GET  /api/cassette-studio/quick?job=<id>          → { job }
@@ -21,7 +30,6 @@ export const runtime = 'nodejs'
 //
 // Owner-only (404 otherwise), like every Cassette Studio route.
 
-const MIN_DESCRIPTION = 3
 const MAX_DESCRIPTION = 400
 
 export async function POST(request: NextRequest) {
@@ -37,10 +45,27 @@ export async function POST(request: NextRequest) {
   const projectId = canonicalUuid(body.project_id)
   if (!projectId) return NextResponse.json({ error: 'Valid project_id is required' }, { status: 400 })
   const description = typeof body.description === 'string' ? body.description.trim().replace(/\s+/g, ' ') : ''
-  if (description.length < MIN_DESCRIPTION) return NextResponse.json({ error: 'Describe the scene first.' }, { status: 400 })
-  if (description.length > MAX_DESCRIPTION) return NextResponse.json({ error: `Keep the description under ${MAX_DESCRIPTION} characters.` }, { status: 400 })
+  if (description.length > MAX_DESCRIPTION) return NextResponse.json({ error: `Keep the idea under ${MAX_DESCRIPTION} characters.` }, { status: 400 })
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim().replace(/\s+/g, ' ') : ''
+  if (prompt.length > MAX_SCENE) return NextResponse.json({ error: `Keep the prompt under ${MAX_SCENE} characters.` }, { status: 400 })
+  let formats: QuickFormat[] | undefined
+  if (body.formats !== undefined) {
+    if (!Array.isArray(body.formats) || body.formats.some(f => f !== 'canvas' && f !== 'youtube')) {
+      return NextResponse.json({ error: 'formats must be a list of canvas and/or youtube' }, { status: 400 })
+    }
+    formats = [...new Set(body.formats as QuickFormat[])]
+  }
+  let takes: number | undefined
+  if (body.takes !== undefined) {
+    if (typeof body.takes !== 'number' || !Number.isInteger(body.takes) || body.takes < 1 || body.takes > MAX_TAKES) {
+      return NextResponse.json({ error: `takes must be a whole number from 1 to ${MAX_TAKES}` }, { status: 400 })
+    }
+    takes = body.takes
+  }
+  if (body.model !== undefined && !isArtModelId(body.model)) return NextResponse.json({ error: 'Unknown model' }, { status: 400 })
+  const model = isArtModelId(body.model) ? body.model : undefined
 
-  const { data: project } = await supabaseAdmin.from('mb_projects').select('id, title').eq('id', projectId).eq('user_id', userId).single()
+  const { data: project } = await supabaseAdmin.from('mb_projects').select('id, title, genre').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   let subjectPath: string | null = null
@@ -52,9 +77,11 @@ export async function POST(request: NextRequest) {
   }
   if (!subjectPath) return NextResponse.json({ error: 'Add a photo of your cassette first.' }, { status: 400 })
 
+  const row = project as { title?: string | null; genre?: string | null }
   const started = startQuickJob({
-    userId, projectId, description, subjectPath,
-    title: (project as { title?: string | null }).title ?? '',
+    userId, projectId, description, subjectPath, formats, takes, model,
+    title: row.title ?? '', genre: row.genre ?? null,
+    ...(prompt ? { prompt } : {}),
   })
   if (!started.ok) {
     if (started.code === 'user_busy') {
