@@ -44,6 +44,9 @@ export type ConceptRequest = {
   /** The artist's own idea, if they typed one. */
   idea?: string
   genre?: string | null
+  /** Tempo and key, when the song has them: a slow minor song and a fast major one want different pictures. */
+  bpm?: number | null
+  key?: string | null
   /** Ideas already used on this artist's recent covers: do something else. */
   avoid?: string[]
 }
@@ -155,6 +158,8 @@ export async function writeCoverConcept(req: ConceptRequest, random: () => numbe
     `Song title: ${title || '(untitled)'}`,
     idea ? `The musician's own idea for this cover: ${idea}` : 'The musician gave no idea of their own: work from the title.',
     req.genre ? `Genre: ${clean(req.genre, 60)}` : '',
+    typeof req.bpm === 'number' && req.bpm > 0 ? `Tempo: ${Math.round(req.bpm)} BPM` : '',
+    req.key ? `Key: ${clean(req.key, 24)}` : '',
     `Three mediums to consider first (picked at random; choose another if the title clearly calls for it): ${pickMediums(random).map(m => m.split(':')[0]).join('; ')}.`,
     avoid.length ? `Already used on this musician's recent covers, so do something different: ${avoid.join(' | ')}` : '',
   ].filter(Boolean).join('\n')

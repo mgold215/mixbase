@@ -157,6 +157,8 @@ export type QuickRequest = {
   projectId: string
   title: string
   genre?: string | null
+  bpm?: number | null
+  key?: string | null
   /** The artist's own idea for the cover; '' → the idea comes from the title. */
   description: string
   subjectPath: string
@@ -228,7 +230,10 @@ async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }
     // ── 1. Concept ────────────────────────────────────────────────────────
     const concept = req.prompt?.trim()
       ? promptConcept(req.prompt, req.title)
-      : await writeCoverConcept({ title: req.title, idea: job.description, genre: req.genre })
+      : await writeCoverConcept({
+          title: req.title, idea: job.description, genre: req.genre, bpm: req.bpm, key: req.key,
+          avoid: await recentIdeas(job.userId),
+        })
     update(job, { scene_label: concept.label, idea: concept.idea })
     setStep(job, 'brief', 'done')
 
@@ -277,6 +282,32 @@ async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }
     if (!(err instanceof CoverError)) console.error('[cassette-quick] run failed:', err instanceof Error ? err.message : err)
     for (const s of ['brief', 'cover', 'canvas', 'youtube'] as const) if (job.steps[s] === 'running' || job.steps[s] === 'pending') setStep(job, s, 'failed')
     update(job, { status: 'error', error: msg, stage: msg })
+  }
+}
+
+/**
+ * The ideas this artist's recent one-click covers used, newest first, so the
+ * next one is told to do something else. Read back from the clips each run
+ * saved (their titles are "<idea> · Canvas" / "<idea> · YouTube"). Best-effort.
+ */
+async function recentIdeas(userId: string): Promise<string[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('title')
+      .eq('user_id', userId)
+      .eq('settings->>source', 'cassette-quick')
+      .order('created_at', { ascending: false })
+      .limit(40)
+    if (error || !data) return []
+    const seen = new Set<string>()
+    for (const row of data as { title?: string | null }[]) {
+      const idea = (row.title ?? '').replace(/\s+·\s+(Canvas|YouTube)\s*$/, '').trim()
+      if (idea.length >= 3 && seen.size < 8) seen.add(idea)
+    }
+    return [...seen]
+  } catch {
+    return []
   }
 }
 

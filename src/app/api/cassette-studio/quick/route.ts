@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
   if (body.model !== undefined && !isArtModelId(body.model)) return NextResponse.json({ error: 'Unknown model' }, { status: 400 })
   const model = isArtModelId(body.model) ? body.model : undefined
 
-  const { data: project } = await supabaseAdmin.from('mb_projects').select('id, title, genre').eq('id', projectId).eq('user_id', userId).single()
+  const { data: project } = await supabaseAdmin.from('mb_projects').select('id, title, genre, bpm, key_signature').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   let subjectPath: string | null = null
@@ -77,10 +77,11 @@ export async function POST(request: NextRequest) {
   }
   if (!subjectPath) return NextResponse.json({ error: 'Add a photo of your cassette first.' }, { status: 400 })
 
-  const row = project as { title?: string | null; genre?: string | null }
+  const row = project as { title?: string | null; genre?: string | null; bpm?: number | null; key_signature?: string | null }
   const started = startQuickJob({
     userId, projectId, description, subjectPath, formats, takes, model,
     title: row.title ?? '', genre: row.genre ?? null,
+    bpm: typeof row.bpm === 'number' ? row.bpm : null, key: row.key_signature ?? null,
     ...(prompt ? { prompt } : {}),
   })
   if (!started.ok) {
