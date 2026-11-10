@@ -214,7 +214,8 @@ console.log('\nsignature from an earlier lettering')
 console.log('\nthe title as it is written')
 {
   check('capitals', titleForHandwriting('Not 2 Late').text === 'NOT 2 LATE')
-  check('accents stripped, curly quote straightened', titleForHandwriting('Café ’Til Dawn').text === "CAFE 'TIL DAWN", titleForHandwriting('Café ’Til Dawn').text)
+  check('accents stripped, curly quote straightened', titleForHandwriting('Café ’Til Dawn').text.replace('\n', ' ') === "CAFE 'TIL DAWN", titleForHandwriting('Café ’Til Dawn').text)
+  check('up to 13 characters stay on one line; longer breaks at the space nearest the middle', titleForHandwriting('Capital Hill').text === 'CAPITAL HILL' && titleForHandwriting('9am in Rosslyn').text === '9AM IN\nROSSLYN', titleForHandwriting('9am in Rosslyn').text)
   const emoji = titleForHandwriting('Night 🌙 Drive')
   check('unwritable characters dropped and reported', emoji.text === 'NIGHT DRIVE' && emoji.dropped.length === 1, JSON.stringify(emoji))
   const long = titleForHandwriting('Everything You Never Said To Me')
@@ -261,6 +262,15 @@ console.log('\nlockup: signature over title')
   check('…both centred on the lockup', Math.abs(span(nameTop + 10) - W / 2) < W * 0.06 && Math.abs(span(titleTop + 10) - W / 2) < W * 0.03, `${span(nameTop + 10)} ${span(titleTop + 10)} of ${W}`)
   check('one part alone passes through', (await stackLockup(null, title))?.height > 100 && (await stackLockup(sig, null))?.width > 400)
   check('nothing → nothing', (await stackLockup(null, null)) === null)
+  // Drawn at a share of the cover's width, so the lockup has a floor: a short
+  // name over a short title is not blown up to fill it.
+  const tiny = await svg(120, 160, '<rect x="10" y="10" width="100" height="140" fill="#fff"/>').png().toBuffer()
+  const shortSig = await svg(200, 100, '<rect x="10" y="20" width="14" height="70" fill="#fff"/><rect x="60" y="20" width="14" height="70" fill="#fff"/><rect x="110" y="20" width="14" height="70" fill="#fff"/><rect x="160" y="20" width="14" height="70" fill="#fff"/>').png().toBuffer()
+  const small = await stackLockup(shortSig, tiny, { cap: 140, stroke: 18 })
+  const sm = await sharp(small.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  let inkL = sm.info.width, inkR = -1
+  for (let y = 0; y < sm.info.height; y++) for (let x = 0; x < sm.info.width; x++) if (sm.data[(y * sm.info.width + x) * 4 + 3] > 128) { if (x < inkL) inkL = x; if (x > inkR) inkR = x }
+  check('a short lockup is never narrower than nine capitals, its ink centred in the margin', small.width >= 140 * 9 && small.width === sm.info.width && Math.abs(inkL - (sm.info.width - 1 - inkR)) <= 3 && inkL > 100, `${small.width} ink ${inkL}..${inkR}`)
 }
 
 console.log('\nautomatic lettering spot')

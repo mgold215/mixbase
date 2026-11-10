@@ -799,7 +799,9 @@ export async function resolveInk(
   if (isHex(color)) {
     ink = color
   } else {
-    const light = L <= 165
+    // Whichever stands off the patch more, with a lean toward light (cream
+    // handwriting is the house look): light up to a mid-tone, dark on anything paler.
+    const light = L <= 150
     // The cover's own highlights (or shadows): the brightest (darkest) 4% of a thumbnail.
     const T = 96
     const thumb = await sharp(art).resize(T, T, { fit: 'fill' }).removeAlpha().raw().toBuffer()
@@ -925,7 +927,7 @@ export async function applyLettering(
 
 /** How much a spot must beat bottom-centre by before the lettering moves there. */
 const SPOT_COST: Record<LetteringPosition, number> = {
-  'bottom-center': 0, 'bottom-left': 8, 'bottom-right': 8, 'top-center': 24, 'top-left': 28, 'top-right': 28,
+  'bottom-center': 0, 'bottom-left': 8, 'bottom-right': 8, 'top-center': 36, 'top-left': 40, 'top-right': 40,
 }
 
 /**
@@ -971,8 +973,10 @@ export async function pickLetteringPosition(
     const mean = n ? sum / n : 0
     const sd = n ? Math.sqrt(Math.max(0, sq / n - mean * mean)) : 0
     const detail = n ? fine / n : 0
-    // Overlapping the cassette is all but disqualifying.
-    const score = detail * 5 + sd * 0.3 + overlap * 400 + SPOT_COST[pos]
+    // Overlapping the cassette is all but disqualifying. Detail counts for
+    // less than it looks like it should: the halo carries the writing over
+    // ripples and brushwork (the owner's reference sits on carved ornament).
+    const score = detail * 3 + sd * 0.3 + overlap * 400 + SPOT_COST[pos]
     if (score < bestScore) { bestScore = score; best = pos }
   }
   return best

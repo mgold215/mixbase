@@ -25,6 +25,7 @@
 // Pure image maths over raw pixels plus sharp. No server-only imports —
 // scripts/cassette-quick-test.mjs drives it directly under Node.
 
+import sharp from 'sharp'
 import { components, cropLettering, extractHandwriting, type Lettering } from './handwriting.ts'
 import {
   glyphPng, isGlyphChar, labelGlyphs, letteringAlpha, resizeField, segmentGlyphs, type GlyphRow, type TaughtGlyph,
@@ -208,8 +209,12 @@ async function cropRow(alpha: Uint8Array, W: number, H: number, row: GlyphRow): 
 
 // ── The title as it is written ──────────────────────────────────────────────
 
-/** Longest line a title is set on before it breaks onto a second line. */
-const TITLE_LINE = 16
+/**
+ * Longest line a title is set on before it breaks onto a second line. A
+ * lockup is drawn at a share of the cover's WIDTH, so a long single line
+ * means small letters: two short lines keep them at a size that reads.
+ */
+const TITLE_LINE = 13
 
 /**
  * The song title the way the artist writes titles: capitals, accents
@@ -249,6 +254,13 @@ const SIG_WEIGHT = 0.88
 const LOCKUP_GAP = 0.44
 /** A short title is set up to this much larger so it holds its own under the name. */
 const SHORT_TITLE_BOOST = 1.3
+/**
+ * The lockup is never narrower than this many capital heights (clear margin
+ * is added either side). It is drawn at a share of the cover's width, so
+ * without a floor a short name over a short title would come out huge and a
+ * long one small; with it the letters land within about a third of one size.
+ */
+const MIN_LOCKUP_CAPS = 9
 
 /** What stackLockup needs to know about a composed title (composeHandwriting returns it). */
 export type TitleMetrics = { cap: number; stroke: number }
@@ -377,5 +389,12 @@ export async function stackLockup(top: Buffer | null, bottom: Buffer | null, tit
   }
   lay(sig, Math.round((W - sig.width) / 2), 0)
   lay(tf, Math.round((W - tf.width) / 2), titleTop)
-  return cropLettering(canvas, W, H, stroke)
+  const tight = await cropLettering(canvas, W, H, stroke)
+  const floor = Math.round(cap * MIN_LOCKUP_CAPS)
+  if (tight.width >= floor) return tight
+  const side = Math.round((floor - tight.width) / 2)
+  const png = await sharp(tight.png)
+    .extend({ left: side, right: floor - tight.width - side, top: 0, bottom: 0, background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .png().toBuffer()
+  return { png, width: floor, height: tight.height, strokeWidth: tight.strokeWidth }
 }
