@@ -53,6 +53,8 @@ const SUITES = [
   'visualizer-source-test.mjs',
   'film-finish-test.mjs',
   'cassette-studio-test.mjs',
+  'cassette-art-test.mjs',
+  'handwriting-pen-test.mjs',
   'handwriting-glyphs-test.mjs',
   'cassette-quick-test.mjs',
   'cover-filters-test.mjs',

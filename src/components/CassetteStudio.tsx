@@ -41,8 +41,15 @@ type QuickJob = {
   id: string
   status: 'running' | 'done' | 'error'
   stage: string
-  steps: Record<QuickStep, 'pending' | 'running' | 'done' | 'failed'>
+  steps: Record<QuickStep, 'pending' | 'running' | 'done' | 'failed' | 'skipped'>
   scene_label: string | null
+  /** The picture idea in one sentence. */
+  idea?: string | null
+  /** The takes drawn for this cover and which one is the cover (absent on a classic-engine cover). */
+  takes?: { path: string; url: string }[]
+  take?: number | null
+  /** The image model that drew them; null → the classic engine made the cover. */
+  model?: string | null
   artwork_url: string | null
   finalized_artwork_url: string | null
   /** The lettering the run composed (what Adjust the title re-applies). */
@@ -61,18 +68,25 @@ type Setup = {
   title: { text: string; missing: string[] } | null
 }
 const QUICK_STEPS: { id: QuickStep; label: string }[] = [
-  { id: 'brief', label: 'Writing the shot' },
+  { id: 'brief', label: 'The idea' },
   { id: 'cover', label: 'Cover, with your handwriting' },
   { id: 'canvas', label: 'Canvas (9:16)' },
   { id: 'youtube', label: 'YouTube (16:9)' },
 ]
+// Nudges for the optional idea box: a way of making the picture, not a scene.
 const QUICK_IDEAS = [
-  'Rainy rooftop in Tokyo at night, neon signs',
-  'Desert motel at dusk, pink sky',
-  'Diner counter at 3am, red neon outside',
-  'Snowy windowsill, warm lamp light',
-  'Car dashboard on a night highway',
+  'As an old master oil painting',
+  'As a night photo with flash',
+  'As a 1970s sci-fi paperback',
+  'As a Japanese woodblock print',
 ]
+
+/** A small version of a public Storage image (the takes are 2048px JPEGs; the strip shows them at 72px). */
+function thumb(url: string, edge = 300): string {
+  return url.includes('/storage/v1/object/public/')
+    ? `${url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')}?width=${edge}&height=${edge}&quality=70`
+    : url
+}
 
 // Moving cover formats — the ids and sizes of FREE_FORMATS in
 // src/lib/free-render.ts (POST /api/cassette-studio/motion validates them).
@@ -170,7 +184,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   // Cassette placement: 'auto' or one of CASSETTE_SPOTS (as "x,y"); width 'auto' or a fraction.
   const [spot, setSpot] = useState<'auto' | string>('auto')
   const [cassetteSize, setCassetteSize] = useState<'auto' | number>('auto')
-  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'typing' | 'teaching' | 'render' | 'reletter' | 'apply-look' | 'save-look'>('load')
+  const [busy, setBusy] = useState<null | 'load' | 'subject' | 'lettering' | 'typing' | 'teaching' | 'render' | 'reletter' | 'take' | 'apply-look' | 'save-look'>('load')
   const [error, setError] = useState('')
   const [lastScene, setLastScene] = useState<string | null>(null)
   const [hasRendered, setHasRendered] = useState(false)
@@ -222,6 +236,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   // asked for: one box, one button, one result on screen.
   const [quickTitleOpen, setQuickTitleOpen] = useState(false)
   const [quickLookOpen, setQuickLookOpen] = useState(false)
+  const [quickTakesOpen, setQuickTakesOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   // Clip URLs and the cover already handed to the page, so polling announces
   // each once; the page's callbacks via refs so a re-render of the page never
@@ -510,29 +525,34 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
 
   // Returns the cover it landed (after the remembered look, if any) or the
   // error it showed, so Adjust the title can mirror the result on the run.
-  async function render(mode: 'scene' | 'reletter', override?: Reletter): Promise<Landed | { error: string }> {
-    setBusy(mode === 'scene' ? 'render' : 'reletter')
+  // mode 'take': another picture the one-click run drew becomes the cover
+  // (scene = take, no new generation), lettered like the first.
+  async function render(mode: 'scene' | 'reletter' | 'take', override?: Reletter, takePath?: string): Promise<Landed | { error: string }> {
+    setBusy(mode === 'scene' ? 'render' : mode)
     setError('')
     setLookNote('')
     try {
       const form = new FormData()
       form.append('project_id', projectId)
-      form.append('scene', mode === 'reletter' ? 'keep' : scene)
+      form.append('scene', mode === 'reletter' ? 'keep' : mode === 'take' ? 'take' : scene)
+      if (mode === 'take' && takePath) form.append('take', takePath)
       if (subject) form.append('subject', subject)
-      if (scene === 'custom') form.append('setting', setting)
+      if (mode === 'scene' && scene === 'custom') form.append('setting', setting)
       if (mode === 'scene' && scene === 'photo' && bgFile) form.append('background', bgFile, 'background.jpg')
-      const letteringToSend = override?.lettering ?? (useLettering && letterPath ? letterPath : null)
+      const letteringToSend = override ? (override.lettering || null) : (useLettering && letterPath ? letterPath : null)
       if (letteringToSend) form.append('lettering', letteringToSend)
       form.append('color', override?.color ?? color)
       form.append('position', override?.position ?? position)
       form.append('size', override?.size ?? size)
-      if (glossy) form.append('reflection', '1')
-      if (spot !== 'auto') {
-        const [x, y] = spot.split(',')
-        form.append('place_x', x)
-        form.append('place_y', y)
+      if (mode === 'scene') {
+        if (glossy) form.append('reflection', '1')
+        if (spot !== 'auto') {
+          const [x, y] = spot.split(',')
+          form.append('place_x', x)
+          form.append('place_y', y)
+        }
+        if (cassetteSize !== 'auto') form.append('place_scale', String(cassetteSize))
       }
-      if (cassetteSize !== 'auto') form.append('place_scale', String(cassetteSize))
       const res = await fetch('/api/cassette-studio/render', { method: 'POST', body: form })
       const data = await readJson(res)
       if (!res.ok || !data?.artwork_url) throw new Error((data?.error as string) ?? 'Could not make the cover.')
@@ -591,6 +611,30 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
     // The poll already announced this cover to the page via onRendered.
     announcedCover.current = landed.finalized_artwork_url ?? landed.artwork_url
     setJob(j => (j ? { ...j, artwork_url: landed.artwork_url, finalized_artwork_url: landed.finalized_artwork_url, title: { color: landed.color, position: landed.position, size } } : j))
+  }
+
+  // Other takes: one of the other pictures this run drew becomes the cover,
+  // lettered the way the title is set now. The clips keep the picture they
+  // were filmed from.
+  async function chooseTake(index: number) {
+    const take = job?.takes?.[index]
+    if (!job || !take || index === job.take) return
+    setQuickTitleError('')
+    const size = quickSize ?? job.title?.size ?? 'medium'
+    const landed = await render('take', {
+      lettering: job.lettering?.path ?? '',
+      color: quickColor ?? 'auto',
+      // A different picture has a different calm spot: let the server find it unless one was chosen.
+      position: quickPosition ?? 'auto',
+      size,
+    }, take.path)
+    if ('error' in landed) { setQuickTitleError(landed.error); return }
+    announcedCover.current = landed.finalized_artwork_url ?? landed.artwork_url
+    setCanMove(true)
+    setJob(j => (j ? {
+      ...j, take: index, artwork_url: landed.artwork_url, finalized_artwork_url: landed.finalized_artwork_url,
+      title: j.lettering ? { color: landed.color, position: landed.position, size } : j.title,
+    } : j))
   }
 
   // "Save look" in Finish the look: bakes the look into the cover and updates
@@ -668,9 +712,10 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
     setQuickPosition(null)
     setQuickSize(null)
     setQuickTitleError('')
+    // The idea is optional: left empty, it comes from the song's title.
     const description = quickText.trim()
-    if (description.length < 3) { setQuickError('Describe the scene first.'); return }
     setQuickError('')
+    setQuickTakesOpen(false)
     try {
       const res = await fetch('/api/cassette-studio/quick', {
         method: 'POST',
@@ -800,15 +845,15 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
         <button onClick={onClose} className="text-[#555] hover:text-white" aria-label="Close Cassette Studio"><X size={14} /></button>
       </div>
 
-      {/* ONE CLICK — describe the scene, get the cover + Canvas + YouTube. */}
+      {/* ONE CLICK — one button makes the cover + Canvas + YouTube; an idea of your own is optional. */}
       <section className="space-y-2 rounded-xl border border-[#2dd4bf]/30 bg-[#081414] p-3">
-        <p className="flex items-center gap-1.5 text-xs font-semibold text-white"><Sparkles size={13} className="text-[#2dd4bf]" />Describe the scene</p>
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-white"><Sparkles size={13} className="text-[#2dd4bf]" />Make the cover</p>
         <textarea
           value={quickText}
           onChange={e => setQuickText(e.target.value.slice(0, 400))}
           rows={2}
           disabled={jobRunning}
-          placeholder="e.g. rainy rooftop in Tokyo at night, neon signs reflecting in puddles"
+          placeholder="Your own idea, if you have one. Leave it empty and the idea comes from the song's title."
           className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-2.5 py-2 text-xs text-white placeholder-[#555] focus:outline-none focus:border-[#2dd4bf]/50 resize-none disabled:opacity-60"
         />
         <div className="flex flex-wrap gap-1">
@@ -818,7 +863,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
         </div>
         <button
           onClick={makeIt}
-          disabled={jobRunning || !quickReady || quickText.trim().length < 3}
+          disabled={jobRunning || !quickReady}
           className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {jobRunning
@@ -826,7 +871,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
             : <><Sparkles size={13} />{job?.status === 'done' ? 'Make another' : 'Make it'} · cover + Canvas + YouTube</>}
         </button>
         <p className="text-[10px] text-[#777] leading-snug">
-          Your cassette and your handwriting in that scene, then the scene filmed for Canvas and YouTube. About 3–5 minutes; you can leave this open.
+A picture with an idea, drawn around your cassette and lettered in your handwriting, then set in motion for Canvas and YouTube. About 4–6 minutes; you can leave this open.
         </p>
         {quickError && <p className="text-red-400 text-xs">{quickError}</p>}
 
@@ -841,12 +886,13 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
                       : state === 'running' ? <span className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" />
                         : state === 'failed' ? <AlertCircle size={12} className="text-red-400" />
                           : <span className="w-3 h-3 rounded-full border border-[#333]" />}
-                    <span className={state === 'pending' ? 'text-[#555]' : 'text-[#ccc]'}>{st.label}</span>
+                    <span className={state === 'pending' || state === 'skipped' ? 'text-[#555]' : 'text-[#ccc]'}>{st.label}</span>
                     {st.id === 'brief' && job.scene_label && <span className="text-[#666] truncate">· {job.scene_label}</span>}
                   </li>
                 )
               })}
             </ul>
+            {job.idea && <p className="text-[11px] text-[#bbb] leading-snug">{job.idea}</p>}
             {job.status === 'running' && <p className="text-[10px] text-[#888]">{job.stage}</p>}
             {job.status === 'error' && job.error && <p className="text-red-400 text-xs">{job.error}</p>}
             {(shownCover || job.clips.length > 0) && (
@@ -862,7 +908,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
                 {job.clips.map(c => (
                   <div key={c.video_url} className="space-y-0.5">
                     <video src={c.video_url} muted loop autoPlay playsInline className={`rounded-lg bg-black ${c.format === 'youtube' ? 'w-56 aspect-video' : 'w-[72px] aspect-[9/16]'}`} />
-                    <p className="text-[9px] text-[#777]">{c.format === 'youtube' ? 'YouTube' : 'Canvas'} · {c.kind === 'cinematic' ? (c.model ?? 'cinematic') : 'cassette loop'}</p>
+                    <p className="text-[9px] text-[#777]">{c.format === 'youtube' ? 'YouTube' : 'Canvas'} · {c.kind === 'cinematic' ? (c.model ?? 'cinematic') : job.model ? 'cover in motion' : 'cassette loop'}</p>
                     {saveButton('quick', c.video_url, c.format, 'mp4')}
                   </div>
                 ))}
@@ -879,6 +925,29 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
                 <button onClick={() => setQuickLookOpen(v => !v)} className={`${chip(quickLookOpen)} inline-flex items-center gap-0.5`}>
                   {quickLookOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Look
                 </button>
+                {(job.takes?.length ?? 0) > 1 && (
+                  <button onClick={() => setQuickTakesOpen(v => !v)} className={`${chip(quickTakesOpen)} inline-flex items-center gap-0.5`}>
+                    {quickTakesOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Other takes
+                  </button>
+                )}
+              </div>
+            )}
+            {quickTakesOpen && job.status !== 'running' && (job.takes?.length ?? 0) > 1 && (
+              <div className="space-y-1.5 rounded-lg border border-[#1f2a2a] p-2">
+                <p className="text-[10px] font-semibold text-white">Other takes</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {job.takes!.map((t, i) => (
+                    <button key={t.path} onClick={() => void chooseTake(i)} disabled={working || i === job.take}
+                      aria-label={i === job.take ? `Take ${i + 1}, the cover now` : `Use take ${i + 1} as the cover`}
+                      className={`relative rounded-lg overflow-hidden border ${i === job.take ? 'border-[#2dd4bf]' : 'border-[#333] hover:border-[#2dd4bf]/60'} disabled:cursor-default`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={thumb(t.url)} alt="" className="w-[72px] h-[72px] object-cover bg-black" />
+                      {i === job.take && <span className="absolute bottom-0.5 right-0.5 rounded-full bg-[#2dd4bf] p-0.5"><Check size={9} className="text-black" /></span>}
+                    </button>
+                  ))}
+                  {busy === 'take' && <span className="self-center">{SPINNER}</span>}
+                </div>
+                <p className="text-[10px] text-[#666]">Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were filmed from.</p>
               </div>
             )}
             {quickTitleOpen && job.status !== 'running' && job.lettering && shownCover && (

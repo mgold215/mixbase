@@ -22,7 +22,7 @@ import {
   applyLettering, artworkStamp, buildFillRequest, cassetteCoverStamp, composeLayers, filteredCoverKey, finalizedCoverKey, finishCover,
   layerKey, motionLayerFiles, parseFinalizedCover, parseSourcePath, parseStudioMotionKey, pickLetteringPosition, placeSubject, plateKey,
   tintLettering, titleKey,
-  type Box, type CoverLayers, type LetteringPosition, type LetteringSize, type Placement,
+  type Box, type CoverLayers, type Halo, type LetteringPosition, type LetteringSize, type Placement,
 } from '@/lib/cassette-studio'
 import { CASSETTE_SCENES, scenePrompt } from '@/lib/cassette-scenes'
 import { finishTake } from '@/lib/cassette-art'
@@ -229,7 +229,7 @@ export async function makeStudioCover(job: CoverJob): Promise<CoverResult> {
       // The same ink in the same resolved colour ('auto' included), at the
       // lettering's native size: the moving cover's title card. Keyed by the
       // FINALIZED stamp, which on scene=keep differs from the cover's.
-      motionPending.push(saveTitle(userId, stamp, lettering, out.color, position, size, motionSaved))
+      motionPending.push(saveTitle(userId, stamp, lettering, out.color, out.halo, position, size, motionSaved))
     }
 
     // ── 3. Save + point the project at it ───────────────────────────────────
@@ -284,11 +284,11 @@ async function saveMotionFile(path: string, bytes: Buffer, contentType: string, 
 
 /** The coloured title card for a finalized stamp. Never throws. */
 async function saveTitle(
-  userId: string, fstamp: string, lettering: Buffer, color: string,
+  userId: string, fstamp: string, lettering: Buffer, color: string, halo: Halo | null,
   position: LetteringPosition, size: LetteringSize, saved: string[],
 ): Promise<void> {
   try {
-    const png = await tintLettering(lettering, color)
+    const png = await tintLettering(lettering, color, undefined, halo)
     await saveMotionFile(titleKey(userId, fstamp, position, size), png, 'image/png', saved)
   } catch (err) {
     console.error('[cassette-studio] title layer not saved:', err instanceof Error ? err.message : err)

@@ -18,7 +18,7 @@ import { extractHandwriting } from '../src/lib/handwriting.ts'
 import {
   COVER, FILL_SIZE, applyLettering, buildFillRequest, composeCover, composeLayers, finishCover, flattenLayers, isOwnStudioKey,
   parsePlacement, placeSubject, seeThrough, studioPrefix, trimSubject,
-  tintLettering, resolveLetteringColor, letteringPlacement, motionLayerFiles,
+  tintLettering, resolveInk, resolveLetteringColor, letteringPlacement, motionLayerFiles,
   plateKey, layerKey, titleKey, parseStudioMotionKey, cassetteCoverStamp, finalizedCoverStamp,
 } from '../src/lib/cassette-studio.ts'
 import { CASSETTE_SCENES, isSceneId, scenePrompt } from '../src/lib/cassette-scenes.ts'
@@ -246,8 +246,17 @@ console.log('\nlettering')
   const dark = await sharp({ create: { width: COVER, height: COVER, channels: 3, background: '#101418' } }).jpeg().toBuffer()
   const a = await applyLettering(bright, word)
   const b = await applyLettering(dark, word)
+  const rgbOf = hex => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
+  const lumOf = hex => { const [r, g, b] = rgbOf(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
   check('auto colour → ink-black on a bright cover', a.color === '#161616', a.color)
-  check('auto colour → marker-white on a dark cover', b.color === '#F4F1EA', b.color)
+  check('auto colour → a light ink on a dark cover', lumOf(b.color) > 215, b.color)
+  // The ink leans toward the cover's own light: warm on a warm picture, cool on a cool one.
+  const warmArt = await svg(COVER, COVER, `<rect width="${COVER}" height="${COVER}" fill="#2a1a10"/><circle cx="1500" cy="900" r="500" fill="#f2c060"/>`).jpeg().toBuffer()
+  const coolArt = await svg(COVER, COVER, `<rect width="${COVER}" height="${COVER}" fill="#101a2a"/><circle cx="1500" cy="900" r="500" fill="#60b0f2"/>`).jpeg().toBuffer()
+  const warm = rgbOf((await applyLettering(warmArt, word, { position: 'bottom-center' })).color)
+  const cool = rgbOf((await applyLettering(coolArt, word, { position: 'bottom-center' })).color)
+  check('auto ink leans warm on a warm cover and cool on a cool one', warm[0] > warm[2] + 12 && cool[2] > cool[0] + 12, `${warm} / ${cool}`)
+  check('…but stays an ink, not a colour', Math.max(...warm) - Math.min(...warm) < 80 && Math.max(...cool) - Math.min(...cool) < 80, `${warm} / ${cool}`)
   const c = await applyLettering(dark, word, { color: '#e03a3e', position: 'top-right' })
   check('explicit colour honoured', c.color === '#e03a3e')
   const r = await sharp(c.jpeg).raw().toBuffer({ resolveWithObject: true })
@@ -273,17 +282,36 @@ console.log('\nlettering')
   const sized = await sharp(await tintLettering(word, '#ffffff', { width: 300, height: 80 })).metadata()
   check('tint: optional resize', sized.width === 300 && sized.height === 80)
 
-  // The still's overlay IS tintLettering at the placed size: rebuild
-  // applyLettering's output from the exported pieces, byte for byte.
+  // The still's overlay IS tintLettering at the placed size with the resolved
+  // ink (colour + halo): rebuild applyLettering's output from the exported
+  // pieces, byte for byte — the moving cover's title card is made the same way.
   for (const [bgImg, opts] of [[dark, { color: '#e03a3e', position: 'top-right' }], [bright, {}], [dark, { position: 'bottom-center', size: 'large' }]]) {
     const out = await applyLettering(bgImg, word, opts)
     const place = letteringPlacement(COVER, COVER, 600, 160, opts.position, opts.size)
-    const colour = await resolveLetteringColor(bgImg, place, opts.color)
-    const overlay = await tintLettering(word, colour, { width: place.width, height: place.height })
+    const ink = await resolveInk(bgImg, place, opts.color)
+    const overlay = await tintLettering(word, ink.color, { width: place.width, height: place.height }, ink.halo)
     const manual = await sharp(bgImg).composite([{ input: overlay, left: place.left, top: place.top }]).jpeg({ quality: 92, chromaSubsampling: '4:2:0' }).toBuffer()
-    check(`applyLettering = placement + resolved colour + tintLettering (${opts.position ?? 'default'})`,
-      colour === out.color && Buffer.compare(manual, out.jpeg) === 0)
+    check(`applyLettering = placement + resolved ink + tintLettering (${opts.position ?? 'default'})`,
+      ink.color === out.color && JSON.stringify(ink.halo) === JSON.stringify(out.halo) && Buffer.compare(manual, out.jpeg) === 0)
+    check('…and the colour alone is what resolveLetteringColor returns', (await resolveLetteringColor(bgImg, place, opts.color)) === ink.color)
   }
+
+  // Halo: a soft shade of the patch under the ink. Around a stroke it is the
+  // halo's colour, on the stroke it is still the ink's, far away there is none.
+  const haloed = await sharp(await tintLettering(word, '#ffffff', undefined, { color: '#102030', strength: 0.6 })).raw().toBuffer({ resolveWithObject: true })
+  const hp = (x, y) => { const o = (y * 600 + x) * 4; return [haloed.data[o], haloed.data[o + 1], haloed.data[o + 2], haloed.data[o + 3]] }
+  const onStroke = hp(70, 75), beside = hp(92, 75), farAway = hp(300, 155) // the stroke's edge is at x≈87 on this row
+  check('halo: the stroke itself keeps the ink colour', onStroke[0] > 240 && onStroke[3] > 235, String(onStroke))
+  check('halo: just beside a stroke is the shade, partly opaque', beside[3] > 25 && beside[3] < 200 && beside[2] > beside[0] && beside[0] < 120, String(beside))
+  check('halo: far from any stroke there is nothing', farAway[3] < 12, String(farAway))
+  // Strength follows the patch: calm and contrasting → barely there; mid-toned and busy → strong.
+  let speckle = ''
+  for (let i = 0; i < 1400; i++) speckle += `<rect x="${(i * 53) % 3000}" y="${2300 + (i * 97) % 700}" width="24" height="24" fill="${i % 2 ? '#d8c8a0' : '#70603c'}"/>`
+  const busyMid = await svg(COVER, COVER, `<rect width="${COVER}" height="${COVER}" fill="#a89468"/>${speckle}`).jpeg().toBuffer()
+  const place = letteringPlacement(COVER, COVER, 600, 160, 'bottom-center', 'medium')
+  const calmInk = await resolveInk(dark, place, 'auto'), busyInk = await resolveInk(busyMid, place, 'auto')
+  check('halo: light on a calm dark patch, strong on a busy mid-toned one', calmInk.halo.strength <= 0.2 && busyInk.halo.strength >= 0.4, `${calmInk.halo.strength} / ${busyInk.halo.strength}`)
+  check('halo: darker than the patch under light ink', lumOf(busyInk.color) > 200 && lumOf(busyInk.halo.color) < 60, `${busyInk.color} ${busyInk.halo.color}`)
   check('resolveLetteringColor passes a hex through', (await resolveLetteringColor(bright, { left: 0, top: 0, width: 10, height: 10 }, '#123456')) === '#123456')
   check('resolveLetteringColor: auto on bright → ink-black', (await resolveLetteringColor(bright, { left: 0, top: 0, width: 10, height: 10 }, 'auto')) === '#161616')
 }

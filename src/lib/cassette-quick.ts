@@ -45,7 +45,7 @@ import {
 } from '@/lib/cassette-art'
 import { scenePrompt } from '@/lib/cassette-scenes'
 import { composeHandwriting } from '@/lib/handwriting-glyphs'
-import { stackLockup, titleForHandwriting } from '@/lib/handwriting-sheet'
+import { stackLockup, titleForHandwriting, type TitleMetrics } from '@/lib/handwriting-sheet'
 import { judgeTakes, promptConcept, writeCoverConcept, type CoverConcept } from '@/lib/cover-concept'
 import { filmStill, VideoUnavailable } from '@/lib/runway-video'
 import { seamlessLoop } from '@/lib/video-loop'
@@ -385,12 +385,13 @@ async function buildLettering(job: QuickJob, title: string): Promise<StudioFile 
   // signature (the first of two lines) can never mistake a title for one.
   const lines = signature ? text : text.replace(/\n/g, ' ')
   let titlePng: Buffer | null = null
+  let metrics: TitleMetrics | undefined
   let missing: string[] = []
   if (lines) {
     try {
       const bank = await loadGlyphBank(userId, lines)
-      const out = await composeHandwriting(lines, bank, { align: 'left', seed: (Math.random() * 2147483647) >>> 0 })
-      if (out.ok) titlePng = out.lettering.png
+      const out = await composeHandwriting(lines, bank, { align: 'center', seed: (Math.random() * 2147483647) >>> 0 })
+      if (out.ok) { titlePng = out.lettering.png; metrics = { cap: out.cap, stroke: out.stroke } }
       else missing = out.missing
     } catch (err) {
       console.error('[cassette-quick] title compose failed:', err instanceof Error ? err.message : err)
@@ -415,7 +416,7 @@ async function buildLettering(job: QuickJob, title: string): Promise<StudioFile 
     else if (!signature) job.notes.push('No handwriting on the cover yet: add your handwriting sheet once in Setup.')
   }
 
-  const lockup = await stackLockup(signature, titlePng)
+  const lockup = await stackLockup(signature, titlePng, metrics)
   if (!lockup) return null
   const ts = Date.now()
   const path = `${studioPrefix(userId)}lettering-${projectId}-${ts}.png`
