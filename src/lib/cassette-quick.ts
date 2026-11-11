@@ -525,7 +525,7 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
       const gate = await checkAndIncrementUsage(job.userId, 'video')
       if (gate.error || !gate.allowed) throw new VideoUnavailable('no video allowance')
       refund = () => refundUsage(job.userId, 'video', gate.month)
-      const shot = await filmStill(stillUrl, concept.motion, shape)
+      const shot = await filmStill(stillUrl, `${concept.motion} ${FILM_KEEP}`, shape)
       const loop = await seamlessLoop(shot.bytes, { width: size.width, height: size.height, fade: 0.8 })
       const stored = await storeVisualizer({
         userId: job.userId, projectId: job.projectId, bytes: loop, contentType: 'video/mp4', kind: 'ai', title, sourceImageUrl: artworkUrl,
@@ -572,6 +572,13 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
     await removeStudio(tmp)
   }
 }
+
+/**
+ * Added to every filming prompt. The first clip filmed under the new rules
+ * (2026-11-11) turned a small cassette green within a second: a video model
+ * redraws what it is not told to keep.
+ */
+const FILM_KEEP = 'The cassette stays exactly as it is in the first frame for the whole shot: the same clear shell, grey label and red, blue and yellow stripes, the same shape and place. Nothing new appears and nothing changes colour.'
 
 /**
  * Film the clips of a song's current cover (the artist has seen the cover

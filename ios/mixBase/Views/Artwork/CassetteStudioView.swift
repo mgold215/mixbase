@@ -76,7 +76,7 @@ struct CassetteStudioView: View {
     private static let quickIdeas = [
         "As a plain daylight photo",
         "As a night photo with flash",
-        "As a two-colour print",
+        "As a risograph print",
         "As a chalk drawing",
     ]
 

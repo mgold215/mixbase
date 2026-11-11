@@ -81,7 +81,7 @@ const QUICK_STEPS: { id: QuickStep; label: string }[] = [
 const QUICK_IDEAS = [
   'As a plain daylight photo',
   'As a night photo with flash',
-  'As a two-colour print',
+  'As a risograph print',
   'As a chalk drawing',
 ]
 
