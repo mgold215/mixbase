@@ -44,10 +44,11 @@ import {
   artPrompt, buildReference, DEFAULT_TAKES, MAX_TAKES, parseTakeKey, storeTake, takeKey, type ArtModelId,
 } from '@/lib/cassette-art'
 import { scenePrompt } from '@/lib/cassette-scenes'
+import { DEFAULT_MOTION } from '@/lib/scene-brief'
 import { composeHandwriting } from '@/lib/handwriting-glyphs'
 import { stackLockup, titleForHandwriting, type TitleMetrics } from '@/lib/handwriting-sheet'
-import { judgeTakes, promptConcept, writeCoverConcept, type CoverConcept } from '@/lib/cover-concept'
-import { filmStill, VideoUnavailable } from '@/lib/runway-video'
+import { chooseTake, critiqueTakes, judgeTakes, promptConcept, writeCoverConcept, type CoverConcept, type TakeChoice } from '@/lib/cover-concept'
+import { FILM_CREDITS_EACH, filmStill, VideoUnavailable } from '@/lib/runway-video'
 import { seamlessLoop } from '@/lib/video-loop'
 import { fitStill, stillLoop } from '@/lib/still-loop'
 import { storeVisualizer } from '@/lib/visualizer-store'
@@ -89,11 +90,15 @@ export type QuickJob = {
   updatedAt: number
 }
 
+/** What a run's clips are until they are filmed, and what filming them is expected to cost. */
+export type FilmOffer = { credits_each: number }
+
 /** What a client sees of a job (no user id). */
 export function publicJob(j: QuickJob) {
   const { userId: _userId, ...rest } = j
   void _userId
-  return rest
+  const film: FilmOffer = { credits_each: FILM_CREDITS_EACH }
+  return { ...rest, film }
 }
 
 const jobs = new Map<string, QuickJob>()
@@ -164,6 +169,8 @@ export type QuickRequest = {
   subjectPath: string
   /** An exact scene brief, used as written instead of an art-directed concept. */
   prompt?: string
+  /** The idea the artist chose from the ones they were shown (POST /ideas): drawn as it is. */
+  concept?: CoverConcept
   /** Which clips to make (default both). */
   formats?: QuickFormat[]
   /** How many takes to draw (default DEFAULT_TAKES). */
@@ -225,24 +232,15 @@ function setStep(job: QuickJob, step: QuickStep, state: StepState) {
 
 const FORMAT_LABEL: Record<QuickFormat, string> = { canvas: 'Canvas', youtube: 'YouTube' }
 
-/**
- * A run does not film its clips on its own (2026-11-11): two Veo 3.1 clips
- * cost about $6 of Runway credits, twelve times the cover itself, and were
- * spent before the artist had seen the cover. The clips are the cover set in
- * slow motion (no AI) until filming is asked for.
- */
-const AUTO_FILM = false
-class FilmingOff extends Error {}
-
 async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }): Promise<void> {
   try {
     // ── 1. Concept ────────────────────────────────────────────────────────
-    const concept = req.prompt?.trim()
+    const concept = req.concept ?? (req.prompt?.trim()
       ? promptConcept(req.prompt, req.title)
       : await writeCoverConcept({
           title: req.title, idea: job.description, genre: req.genre, bpm: req.bpm, key: req.key,
           avoid: await recentIdeas(job.userId),
-        })
+        }))
     update(job, { scene_label: concept.label, idea: concept.idea })
     setStep(job, 'brief', 'done')
 
@@ -280,8 +278,8 @@ async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }
 
     // ── 4. Clips ──────────────────────────────────────────────────────────
     if (req.formats.length) {
-      update(job, { stage: `Filming the ${req.formats.map(f => FORMAT_LABEL[f]).join(' and ')} scene${req.formats.length > 1 ? 's' : ''} (2–4 min)…` })
-      await Promise.all(req.formats.map(f => film(job, f, concept, cover.artwork_url)))
+      update(job, { stage: `Setting the cover in motion for ${req.formats.map(f => FORMAT_LABEL[f]).join(' and ')}…` })
+      await Promise.all(req.formats.map(f => film(job, f, concept, cover.artwork_url, 'loop')))
     }
 
     const failed = req.formats.filter(f => job.steps[f] === 'failed')
@@ -299,7 +297,7 @@ async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }
  * next one is told to do something else. Read back from the clips each run
  * saved (their titles are "<idea> · Canvas" / "<idea> · YouTube"). Best-effort.
  */
-async function recentIdeas(userId: string): Promise<string[]> {
+export async function recentIdeas(userId: string): Promise<string[]> {
   try {
     const { data, error } = await supabaseAdmin
       .from('mb_visualizers')
@@ -338,6 +336,19 @@ async function pruneTakes(userId: string, projectId: string): Promise<void> {
 }
 
 /**
+ * Both checks on a set of takes at once: the judge (is it the artist's
+ * cassette, is it a cover) and the critic (does it look AI-made), and the
+ * take they leave standing. Logged, so a run's choice can be read back.
+ */
+async function assess(reference: Buffer, takes: Buffer[], concept: CoverConcept, tag: string) {
+  const [verdict, critique] = await Promise.all([judgeTakes(reference, takes, concept), critiqueTakes(takes)])
+  const choice = chooseTake(takes.length, verdict, critique)
+  if (verdict.notes.length) console.log(`[cassette-quick] ${tag}:`, verdict.notes.join(' | '))
+  if (critique) console.log(`[cassette-quick] ${tag} look:`, critique.map((c, i) => `#${i} real ${c.real}/10${c.tells ? `: ${c.tells}` : ''}`).join(' | '), `-> #${choice.best}${choice.realOk ? '' : ' (not passing)'}`)
+  return { verdict, critique, choice }
+}
+
+/**
  * The drawn cover: takes from the art engine, the best one chosen and made
  * the project's cover. Counts once against the monthly artwork allowance
  * (refunded on failure). Throws CoverError for what the artist should read,
@@ -365,22 +376,23 @@ async function drawCover(
     const prompt = artPrompt(concept.scene)
 
     let set = await generateTakes(refUrl, prompt, count, req.model)
-    update(job, { stage: 'Choosing the best take…', model: set.model.label })
-    let verdict = await judgeTakes(reference, set.takes, concept)
-    if (verdict.notes.length) console.log('[cassette-quick] takes:', verdict.notes.join(' | '))
-    if (!verdict.usable && verdict.fix) {
-      // The cassette came out wrong in every take: one corrected redraw.
-      update(job, { stage: 'Redrawing: the cassette was not right yet…' })
+    update(job, { stage: 'Checking the takes…', model: set.model.label })
+    let { verdict, choice } = await assess(reference, set.takes, concept, 'takes')
+    if ((!choice.cassetteOk || !choice.realOk) && choice.fix) {
+      // No take is both the right cassette and something that passes for
+      // hand-made: one corrected redraw, told what gave the last ones away.
+      update(job, { stage: choice.cassetteOk ? 'Redrawing: it looked too computer-made…' : 'Redrawing: the cassette was not right yet…' })
       try {
-        const again = await generateTakes(refUrl, `${prompt}\n\nThe last attempt got this wrong, correct it: ${verdict.fix}`, Math.min(2, count), req.model)
-        const second = await judgeTakes(reference, again.takes, concept)
-        if (second.notes.length) console.log('[cassette-quick] redraw:', second.notes.join(' | '))
-        if (second.usable) { set = again; verdict = second }
+        const again = await generateTakes(refUrl, `${prompt}\n\nThe last attempt got this wrong, correct it: ${choice.fix}`, Math.min(2, count), req.model)
+        const second = await assess(reference, again.takes, concept, 'redraw')
+        const better = (c: TakeChoice) => (c.cassetteOk ? 2 : 0) + (c.realOk ? 1 : 0)
+        if (better(second.choice) > better(choice)) { set = again; verdict = second.verdict; choice = second.choice }
       } catch (err) {
         console.error('[cassette-quick] corrected redraw failed:', err instanceof Error ? err.message : err)
       }
-      if (!verdict.usable) job.notes.push('The cassette is not drawn quite like yours in this one. Make it again for another go.')
     }
+    if (!choice.cassetteOk) job.notes.push('The cassette is not drawn quite like yours in this one. Make it again for another go.')
+    else if (!choice.realOk) job.notes.push('This one still looks a little computer-made. Another idea may suit this song better.')
 
     await pruneTakes(userId, projectId)
     const takes: StudioFile[] = []
@@ -389,12 +401,12 @@ async function drawCover(
       await uploadStudio(path, await storeTake(set.takes[i]), 'image/jpeg')
       takes.push({ path, url: studioPublicUrl(path), createdAt: new Date(Number(run)).toISOString() })
     }
-    const best = Math.min(verdict.best, takes.length - 1)
+    const best = Math.min(choice.best, takes.length - 1)
     update(job, { takes, take: best, model: set.model.label, stage: 'Lettering the cover…' })
 
     const cover = await makeStudioCover({
       userId, project, scene: 'take', setting: concept.label, takePath: takes[best].path, subjectPath: '', background: null,
-      letteringPath: lettering?.path ?? '', color: 'auto', position: verdict.spot ?? 'auto', size: 'medium', reflection: false,
+      letteringPath: lettering?.path ?? '', color: 'auto', position: (best === verdict.best ? verdict.spot : null) ?? 'auto', size: 'medium', reflection: false,
       placement: {},
     })
     refund = null
@@ -465,25 +477,27 @@ async function buildLettering(job: QuickJob, title: string): Promise<StudioFile 
 }
 
 /**
- * One moving scene: extend the cover to the format's shape, film it, loop it,
- * save it, pin it. If it cannot be filmed, the same extended still is set
- * gently in motion instead (a classic cover gets its turning reels). Never throws.
+ * One moving scene for a format: the cover extended to its shape, then
+ *   mode 'loop'  set in slow motion with no AI (what every run makes: free,
+ *                and the artist has not seen the cover yet), or
+ *   mode 'film'  filmed by Runway and made a seamless loop (asked for
+ *                afterwards, POST /quick { film }: about 80 credits a clip).
+ * Saved and pinned either way. A clip that cannot be filmed leaves the one
+ * already pinned alone and says why. Never throws.
  */
-async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, artworkUrl: string): Promise<void> {
+async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, artworkUrl: string, mode: 'loop' | 'film'): Promise<void> {
   setStep(job, format, 'running')
   const shape: FrameShape = format === 'canvas' ? 'portrait' : 'landscape'
   const size = format === 'canvas' ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 }
   const tmp: string[] = []
   let refund: (() => Promise<unknown>) | null = null
-  let reason = ''
-  /** The cover extended to this format's shape, once there is one. */
-  let still: Buffer | null = null
-  let cover: Buffer | null = null
+  const landed = (clip: QuickClip) => { job.clips = [...job.clips.filter(c => c.format !== format), clip] }
   try {
     const key = storagePathFromUrl(artworkUrl, ARTWORK_BUCKET)
     if (!key) throw new Error('cover not found in storage')
-    cover = await downloadStudio(key)
+    const cover = await downloadStudio(key)
     const ts = `${Date.now()}-${format}`
+    let still: Buffer
     try {
       const req = await buildOutpaintRequest(cover, shape)
       const imgPath = `${studioPrefix(job.userId)}tmp-${ts}-wide.jpg`
@@ -500,75 +514,157 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
       console.error(`[cassette-quick] ${format} extension failed:`, err instanceof Error ? err.message : err)
       still = await fitStill(cover, size.width, size.height)
     }
-    if (!AUTO_FILM) throw new FilmingOff()
-    const stillPath = `${studioPrefix(job.userId)}tmp-${ts}-still.jpg`
-    tmp.push(stillPath)
-    const stillUrl = await uploadStudio(stillPath, still, 'image/jpeg')
+    const title = `${concept.label} · ${FORMAT_LABEL[format]}`
+    // What a later "film it" needs to pick the same picture up again.
+    const remembered = { idea: concept.idea.slice(0, 200), brief: concept.scene.slice(0, 1600), move: concept.motion.slice(0, 600) }
 
-    const gate = await checkAndIncrementUsage(job.userId, 'video')
-    if (gate.error || !gate.allowed) throw new VideoUnavailable('no video allowance')
-    refund = () => refundUsage(job.userId, 'video', gate.month)
-    const shot = await filmStill(stillUrl, concept.motion, shape)
-    const loop = await seamlessLoop(shot.bytes, { width: size.width, height: size.height, fade: 0.8 })
-    const stored = await storeVisualizer({
-      userId: job.userId,
-      projectId: job.projectId,
-      bytes: loop,
-      contentType: 'video/mp4',
-      kind: 'ai',
-      title: `${concept.label} · ${FORMAT_LABEL[format]}`,
-      sourceImageUrl: artworkUrl,
-      settings: { source: 'cassette-quick', format, model: shot.model },
-    })
-    if (!stored) throw new Error('saving the clip failed')
-    refund = null
-    await pin(job.userId, job.projectId, stored.video_url, format === 'youtube')
-    job.clips = [...job.clips, { format, video_url: stored.video_url, kind: 'cinematic', model: shot.model }]
-    setStep(job, format, 'done')
-    return
-  } catch (err) {
-    if (!(err instanceof FilmingOff)) {
-      reason = err instanceof VideoUnavailable ? 'cinematic video is not available right now' : 'the cinematic shot could not be made'
-      console.error(`[cassette-quick] ${format} cinematic failed:`, err instanceof Error ? err.message : err)
+    if (mode === 'film') {
+      const stillPath = `${studioPrefix(job.userId)}tmp-${ts}-still.jpg`
+      tmp.push(stillPath)
+      const stillUrl = await uploadStudio(stillPath, still, 'image/jpeg')
+      const gate = await checkAndIncrementUsage(job.userId, 'video')
+      if (gate.error || !gate.allowed) throw new VideoUnavailable('no video allowance')
+      refund = () => refundUsage(job.userId, 'video', gate.month)
+      const shot = await filmStill(stillUrl, concept.motion, shape)
+      const loop = await seamlessLoop(shot.bytes, { width: size.width, height: size.height, fade: 0.8 })
+      const stored = await storeVisualizer({
+        userId: job.userId, projectId: job.projectId, bytes: loop, contentType: 'video/mp4', kind: 'ai', title, sourceImageUrl: artworkUrl,
+        settings: { source: 'cassette-quick', format, model: shot.model, ...remembered },
+      })
+      if (!stored) throw new Error('saving the clip failed')
+      refund = null
+      await pin(job.userId, job.projectId, stored.video_url, format === 'youtube')
+      landed({ format, video_url: stored.video_url, kind: 'cinematic', model: shot.model })
+      job.notes.push(`${FORMAT_LABEL[format]}: filmed with ${shot.model}, about ${shot.credits} Runway credits.`)
+      setStep(job, format, 'done')
+      return
     }
+
+    // A classic cover has its own cassette layer: the reels turn. A drawn one is the still, drifting.
+    let stored: { id: string; video_url: string } | null
+    if (job.model === null) {
+      const project = await loadCoverProject(job.userId, job.projectId)
+      if (!project) throw new Error('project vanished')
+      stored = await makeMovingCover(job.userId, project, format, false, 'cassette-quick')
+    } else {
+      stored = await storeVisualizer({
+        userId: job.userId, projectId: job.projectId, bytes: await stillLoop(still, size), contentType: 'video/mp4', kind: 'free', title, sourceImageUrl: artworkUrl,
+        settings: { source: 'cassette-quick', format, title: false, motion: 'drift', ...remembered },
+      })
+    }
+    if (!stored) throw new Error('saving the loop failed')
+    await pin(job.userId, job.projectId, stored.video_url, format === 'youtube')
+    landed({ format, video_url: stored.video_url, kind: 'loop', model: null })
+    setStep(job, format, 'done')
+  } catch (err) {
+    console.error(`[cassette-quick] ${format} ${mode} failed:`, err instanceof Error ? err.message : err)
+    if (mode === 'film') {
+      const why = err instanceof VideoUnavailable
+        ? (/credit/i.test(err.message) ? 'your Runway account is out of credits' : 'Runway is not available right now')
+        : 'the shot did not come back'
+      job.notes.push(`${FORMAT_LABEL[format]} was not filmed: ${why}. The clip you had is still there.`)
+    } else {
+      job.notes.push(`${FORMAT_LABEL[format]} could not be made this time.`)
+    }
+    setStep(job, format, 'failed')
   } finally {
     if (refund) await refund()
     await removeStudio(tmp)
   }
+}
 
-  // Fallback (no AI). A classic cover has its own cassette layer: the reels turn.
-  try {
-    const project = await loadCoverProject(job.userId, job.projectId)
-    if (!project) throw new Error('project vanished')
-    let stored: { id: string; video_url: string } | null = null
-    let what = 'the cover in slow motion'
-    if (job.model === null) {
-      stored = await makeMovingCover(job.userId, project, format, false, 'cassette-quick')
-      what = 'the cassette loop'
-    } else {
-      const base = still ?? (cover ? await fitStill(cover, size.width, size.height) : null)
-      if (!base) throw new Error('no still to move')
-      const bytes = await stillLoop(base, size)
-      stored = await storeVisualizer({
-        userId: job.userId,
-        projectId: job.projectId,
-        bytes,
-        contentType: 'video/mp4',
-        kind: 'free',
-        title: `${concept.label} · ${FORMAT_LABEL[format]}`,
-        sourceImageUrl: artworkUrl,
-        settings: { source: 'cassette-quick', format, title: false, motion: 'drift' },
-      })
-      if (!stored) throw new Error('saving the loop failed')
+/**
+ * Film the clips of a song's current cover (the artist has seen the cover
+ * and asked for it). Its own background job, shaped like a run so a client
+ * follows it the same way: the cover steps are already done, and the newest
+ * run of that song, if this server still has it, carries over.
+ */
+export async function startFilmJob(args: { userId: string; projectId: string; formats: QuickFormat[] }): Promise<StartResult | { ok: false; code: 'no_cover' }> {
+  prune()
+  let running = 0
+  for (const j of jobs.values()) {
+    if (j.status !== 'running') continue
+    running++
+    if (j.userId === args.userId) return { ok: false, code: 'user_busy', existing: j }
+  }
+  if (running >= MAX_RUNNING) return { ok: false, code: 'server_busy' }
+  const project = await loadCoverProject(args.userId, args.projectId)
+  if (!project?.artwork_url) return { ok: false, code: 'no_cover' }
+  const last = latestQuickJob(args.userId, args.projectId)
+  const sameCover = last && last.artwork_url === project.artwork_url ? last : null
+  const concept = (await rememberedConcept(args.userId, args.projectId, project.artwork_url))
+    ?? { idea: sameCover?.idea ?? '', label: sameCover?.scene_label ?? 'Your cover', scene: 'The same picture, continued.', motion: DEFAULT_MOTION, source: 'prompt' as const }
+  const now = Date.now()
+  const job: QuickJob = {
+    id: randomUUID(),
+    userId: args.userId,
+    projectId: args.projectId,
+    description: sameCover?.description ?? '',
+    status: 'running',
+    stage: `Filming the ${args.formats.map(f => FORMAT_LABEL[f]).join(' and ')} scene${args.formats.length > 1 ? 's' : ''} (2–4 min)…`,
+    steps: {
+      brief: 'done', cover: 'done',
+      canvas: args.formats.includes('canvas') ? 'pending' : (sameCover?.steps.canvas ?? 'skipped'),
+      youtube: args.formats.includes('youtube') ? 'pending' : (sameCover?.steps.youtube ?? 'skipped'),
+    },
+    scene_label: concept.label,
+    idea: concept.idea || null,
+    takes: sameCover?.takes ?? [],
+    take: sameCover?.take ?? null,
+    model: sameCover ? sameCover.model : 'drawn',
+    artwork_url: project.artwork_url,
+    finalized_artwork_url: project.finalized_artwork_url ?? null,
+    lettering: sameCover?.lettering ?? null,
+    title: sameCover?.title ?? null,
+    clips: sameCover?.clips ?? [],
+    notes: [],
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+  jobs.set(job.id, job)
+  void (async () => {
+    try {
+      await Promise.all(args.formats.map(f => film(job, f, concept, project.artwork_url!, 'film')))
+      const failed = args.formats.filter(f => job.steps[f] === 'failed')
+      update(job, { status: 'done', stage: failed.length ? `Done, except ${failed.map(f => FORMAT_LABEL[f]).join(' and ')}.` : 'Done.' })
+    } catch (err) {
+      console.error('[cassette-quick] film job failed:', err instanceof Error ? err.message : err)
+      update(job, { status: 'error', error: 'Could not film it. Please try again.', stage: 'Could not film it. Please try again.' })
     }
-    await pin(job.userId, job.projectId, stored.video_url, format === 'youtube')
-    job.clips = [...job.clips, { format, video_url: stored.video_url, kind: 'loop', model: null }]
-    if (reason) job.notes.push(`${FORMAT_LABEL[format]}: ${reason}, so it is ${what} instead.`)
-    setStep(job, format, 'done')
-  } catch (err) {
-    console.error(`[cassette-quick] ${format} loop fallback failed:`, err instanceof Error ? err.message : err)
-    job.notes.push(`${FORMAT_LABEL[format]} could not be made this time.`)
-    setStep(job, format, 'failed')
+  })()
+  return { ok: true, job }
+}
+
+/** The idea and motion a run saved with this cover's clips, if it did. Best-effort. */
+async function rememberedConcept(userId: string, projectId: string, artworkUrl: string): Promise<CoverConcept | null> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('title, settings, source_image_url')
+      .eq('user_id', userId)
+      .eq('project_id', projectId)
+      .eq('settings->>source', 'cassette-quick')
+      .order('created_at', { ascending: false })
+      .limit(6)
+    if (error || !data) return null
+    const rows = (data as { title?: string | null; settings?: Record<string, unknown> | null; source_image_url?: string | null }[])
+      .filter(r => typeof r.settings?.move === 'string' && r.settings.move)
+    // The clips of this very cover first; another take of the same run shares its idea.
+    const row = rows.find(r => r.source_image_url === artworkUrl) ?? rows[0]
+    if (row) {
+      const st = row.settings ?? {}
+      return {
+        idea: typeof st.idea === 'string' ? st.idea : '',
+        label: (row.title ?? '').replace(/\s+·\s+(Canvas|YouTube)\s*$/, '').trim() || 'Your cover',
+        scene: typeof st.brief === 'string' && st.brief ? st.brief : 'The same picture, continued.',
+        motion: String(st.move),
+        source: 'claude',
+      }
+    }
+    return null
+  } catch {
+    return null
   }
 }
 

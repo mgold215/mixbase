@@ -19,12 +19,25 @@ export class VideoUnavailable extends Error {}
 
 export type ClipShape = 'portrait' | 'landscape'
 
-/** The models the Studio films with, best first, and how each is asked for each shape. */
-export const STUDIO_VIDEO_MODELS: { id: string; label: string; duration: number; ratio: Record<ClipShape, string> }[] = [
-  { id: 'veo3.1', label: 'Veo 3.1', duration: 8, ratio: { portrait: '1080:1920', landscape: '1920:1080' } },
-  { id: 'gen4.5', label: 'Gen-4.5', duration: 10, ratio: { portrait: '720:1280', landscape: '1280:720' } },
-  { id: 'gen4_turbo', label: 'Gen-4 Turbo', duration: 10, ratio: { portrait: '720:1280', landscape: '1280:720' } },
+/**
+ * The models the Studio films with, in the order they are tried, and what
+ * each costs. Runway bills API video by the second in credits (one credit =
+ * one US cent): Veo 3.1 is 40 a second with sound and 20 without, its Fast
+ * tier 15 and 10, Gen-4.5 12, Gen-4 Turbo 5. Every Studio clip is made a
+ * silent loop afterwards, so sound is never asked for, and the Fast tier
+ * goes first: an 8 second clip is about 80 credits instead of 320.
+ * (Until 2026-11-11 this was Veo 3.1 with sound by default, about $3.20 a
+ * clip, filmed automatically twice per run.)
+ */
+export const STUDIO_VIDEO_MODELS: { id: string; label: string; duration: number; creditsPerSecond: number; audio: boolean; ratio: Record<ClipShape, string> }[] = [
+  { id: 'veo3.1_fast', label: 'Veo 3.1 Fast', duration: 8, creditsPerSecond: 10, audio: true, ratio: { portrait: '1080:1920', landscape: '1920:1080' } },
+  { id: 'veo3.1', label: 'Veo 3.1', duration: 8, creditsPerSecond: 20, audio: true, ratio: { portrait: '1080:1920', landscape: '1920:1080' } },
+  { id: 'gen4.5', label: 'Gen-4.5', duration: 8, creditsPerSecond: 12, audio: false, ratio: { portrait: '720:1280', landscape: '1280:720' } },
+  { id: 'gen4_turbo', label: 'Gen-4 Turbo', duration: 8, creditsPerSecond: 5, audio: false, ratio: { portrait: '720:1280', landscape: '1280:720' } },
 ]
+
+/** What one clip is expected to cost, in Runway credits (the first model's rate). */
+export const FILM_CREDITS_EACH = STUDIO_VIDEO_MODELS[0].duration * STUDIO_VIDEO_MODELS[0].creditsPerSecond
 
 function apiKey(): string {
   const key = process.env.RUNWAY_API_KEY?.trim()
@@ -35,25 +48,27 @@ function apiKey(): string {
 /**
  * Film `imageUrl` (a public Supabase Storage URL) as a `shape` clip driven by
  * `promptText` (motion only — the image already defines the scene). Returns
- * the clip bytes and which model made it. Throws VideoUnavailable when the
+ * the clip bytes, which model made it and what it cost in credits. Throws VideoUnavailable when the
  * key is missing or the account is out of credits, Error for anything else.
  */
-export async function filmStill(imageUrl: string, promptText: string, shape: ClipShape): Promise<{ bytes: Buffer; model: string }> {
+export async function filmStill(imageUrl: string, promptText: string, shape: ClipShape): Promise<{ bytes: Buffer; model: string; credits: number }> {
   const key = apiKey()
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Runway-Version': VERSION }
   let taskId: string | null = null
   let used = ''
+  let credits = 0
   let lastErr = ''
   for (const m of STUDIO_VIDEO_MODELS) {
     const res = await fetch(`${RUNWAY_BASE}/image_to_video`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: m.id, promptImage: imageUrl, promptText: promptText.slice(0, 1000), duration: m.duration, ratio: m.ratio[shape] }),
+      // `audio` exists only on the Veo models (default true, and it doubles the price).
+      body: JSON.stringify({ model: m.id, promptImage: imageUrl, promptText: promptText.slice(0, 1000), duration: m.duration, ratio: m.ratio[shape], ...(m.audio ? { audio: false } : {}) }),
       signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
     })
     if (res.ok) {
       const task = await res.json().catch(() => null) as { id?: string } | null
-      if (task?.id) { taskId = task.id; used = m.label; break }
+      if (task?.id) { taskId = task.id; used = m.label; credits = m.duration * m.creditsPerSecond; break }
       lastErr = 'no task id'
       continue
     }
@@ -85,7 +100,7 @@ export async function filmStill(imageUrl: string, promptText: string, shape: Cli
       if (!url) throw new Error('runway returned no video')
       const vid = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
       if (!vid.ok) throw new Error(`runway video download failed (${vid.status})`)
-      return { bytes: Buffer.from(await vid.arrayBuffer()), model: used }
+      return { bytes: Buffer.from(await vid.arrayBuffer()), model: used, credits }
     }
     if (data?.status === 'FAILED') throw new Error(`runway task failed: ${String(data.failure ?? 'unknown')}`.slice(0, 300))
   }

@@ -22,7 +22,7 @@ import {
   ART_MODELS, CASSETTE_IDENTITY, DEFAULT_TAKES, MAX_SCENE, MAX_TAKES, TAKE_SIZE, artModelInputs, artPrompt, buildReference,
   finishTake, isArtModelId, parseTakeKey, storeTake, takeKey,
 } from '../src/lib/cassette-art.ts'
-import { MEDIUMS, judgeTakes, pickMediums, promptConcept, templateConcept, writeCoverConcept } from '../src/lib/cover-concept.ts'
+import { CASSETTE_PASS, MEDIUMS, REAL_PASS, chooseTake, critiqueTakes, judgeTakes, parseConcept, pickMediums, promptConcept, templateConcept, writeCoverConcept, writeCoverIdeas } from '../src/lib/cover-concept.ts'
 import { fitStill, stillLoop, stillLoopFilter } from '../src/lib/still-loop.ts'
 import { videoSeconds } from '../src/lib/video-loop.ts'
 import { COVER } from '../src/lib/cassette-studio.ts'
@@ -139,6 +139,8 @@ console.log('\nconcept without a model')
   const three = pickMediums(seeded(5))
   check('three different mediums from the list', three.length === 3 && new Set(three).size === 3 && three.every(m => MEDIUMS.includes(m)))
   check('the list has range and no medium that asks for writing', MEDIUMS.length >= 20 && !MEDIUMS.some(m => /manuscript|poster|typograph|lettering|newspaper|comic/i.test(m)))
+  check('no medium that invites the generated look', !MEDIUMS.some(m => /neon|glow|surreal|sci-?fi|science-fiction|tilt-shift|infrared|impossible|vast|epic|baroque/i.test(m)), MEDIUMS.filter(m => /neon|glow|surreal|vast/i.test(m)).join(' | '))
+  check('most mediums are photographs or prints of real things', MEDIUMS.filter(m => /photograph|scan|print|collage|drawing|sketch|engraving/i.test(m)).length >= MEDIUMS.length * 0.8)
   const t = templateConcept({ title: 'Belladonna' }, seeded(3))
   check('title alone: the scene is about the title, in a named medium', /Belladonna/.test(t.scene) && MEDIUMS.some(m => t.scene.includes(m)) && t.source === 'template', t.scene)
   check('…the cassette is the heart of it', /The cassette is the heart of it/.test(t.scene))
@@ -162,9 +164,42 @@ console.log('\nconcept without a model')
     const v = await judgeTakes(blank, [blank, blank], { idea: 'x' })
     check('no key: the first take is used and nothing is redrawn', v.best === 0 && v.usable === true && v.spot === null && v.fix === '' && v.source === 'first')
     check('no takes: nothing to judge', (await judgeTakes(blank, [], { idea: 'x' })).best === 0)
+    const ideas = await writeCoverIdeas({ title: 'Vitals' }, 3, seeded(4))
+    check('no key: three template ideas, each in a different medium', ideas.length === 3 && new Set(ideas.map(i => i.scene)).size === 3 && ideas.every(i => i.source === 'template'))
+    check('no key: the look check is skipped, not failed', (await critiqueTakes([blank, blank])) === null)
   } finally {
     if (key !== undefined) process.env.ANTHROPIC_API_KEY = key
   }
+}
+
+// ── The idea handed back, and the take that is chosen ───────────────────────
+console.log('\nchoosing the idea and the take')
+{
+  const scene = 'A 35mm photograph in plain daylight. The cassette lies half-buried in dry sand, small in the frame, lit by a low sun from the left.'
+  const c = parseConcept({ idea: ' The cassette half-buried in sand ', label: 'Buried In Sand', scene, motion: 'Slow push-in. The reels turn.', extra: 1 })
+  check('a chosen idea comes back as a concept', c !== null && c.idea === 'The cassette half-buried in sand' && c.scene === scene && c.motion.startsWith('Slow push-in'))
+  check('…and gets the default motion when it has none', /reels turn/.test(parseConcept({ idea: 'x', scene }).motion))
+  check('not an idea: refused', parseConcept(null) === null && parseConcept('x') === null && parseConcept({ idea: 'x', scene: 'too short' }) === null && parseConcept({ scene }) === null)
+  check('an over-long scene is cut to the limit', parseConcept({ idea: 'x', scene: 'a '.repeat(2000) }).scene.length <= MAX_SCENE)
+
+  const verdict = (marks, best = 0) => ({ best, usable: true, spot: 'bottom-center', fix: '', notes: [], scores: marks.map(([cassette, picture]) => ({ cassette, picture })), source: 'claude' })
+  const look = reals => reals.map(real => ({ real, tells: real < REAL_PASS ? 'glow and haze' : '', fix: real < REAL_PASS ? 'Take out the glow.' : '' }))
+  check('the marks that pass are 7 and 7', REAL_PASS === 7 && CASSETTE_PASS === 7)
+  let ch = chooseTake(3, verdict([[9, 9], [9, 7], [9, 6]]), look([3, 8, 9]))
+  check('the prettiest take loses when it looks AI-made', ch.best !== 0 && ch.cassetteOk && ch.realOk && ch.fix === '', JSON.stringify(ch))
+  check('…to the best of picture and look together', ch.best === 1 || ch.best === 2)
+  ch = chooseTake(3, verdict([[9, 9], [9, 8], [4, 9]]), look([4, 5, 9]))
+  check('none passes both: the right cassette that looks most real, and a redraw is asked for', ch.best === 1 && ch.cassetteOk && !ch.realOk && ch.fix === 'Take out the glow.', JSON.stringify(ch))
+  ch = chooseTake(2, verdict([[4, 9], [5, 8]], 0), look([9, 9]))
+  check('no take is the cassette: the judge\'s pick, flagged', ch.best === 0 && !ch.cassetteOk && ch.realOk)
+  ch = chooseTake(2, { ...verdict([[4, 9], [5, 8]], 1), fix: 'Three stripes: red, blue, yellow.' }, look([3, 3]))
+  check('…and both faults go into the redraw', !ch.cassetteOk && !ch.realOk && /stripes/.test(ch.fix) && /glow/.test(ch.fix), ch.fix)
+  ch = chooseTake(3, verdict([[9, 6], [9, 9], [9, 7]]), null)
+  check('the look check did not run: the best picture, as before', ch.best === 1 && ch.realOk && ch.cassetteOk)
+  ch = chooseTake(2, { best: 0, usable: true, spot: null, fix: '', notes: [], scores: [], source: 'first' }, look([4, 8]))
+  check('the judge did not run: the take that looks real', ch.best === 1 && ch.realOk)
+  ch = chooseTake(1, { best: 0, usable: true, spot: null, fix: '', notes: [], scores: [], source: 'first' }, null)
+  check('nothing ran: the first take, no redraw', ch.best === 0 && ch.cassetteOk && ch.realOk && ch.fix === '')
 }
 
 // ── Still loop ──────────────────────────────────────────────────────────────
