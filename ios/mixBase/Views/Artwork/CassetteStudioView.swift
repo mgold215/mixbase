@@ -74,10 +74,10 @@ struct CassetteStudioView: View {
     // One click: nudges for the optional idea box (tap fills it) — a way of
     // making the picture, not a scene — and the steps shown while it runs.
     private static let quickIdeas = [
-        "As an old master oil painting",
+        "As a plain daylight photo",
         "As a night photo with flash",
-        "As a 1970s sci-fi paperback",
-        "As a Japanese woodblock print",
+        "As a two-colour print",
+        "As a chalk drawing",
     ]
 
     private static let quickSteps: [(id: String, label: String)] = [
@@ -240,6 +240,11 @@ struct CassetteStudioView: View {
     @State private var quickTitleOpen = false
     @State private var quickLookOpen = false
     @State private var quickTakesOpen = false
+    // Ideas first: nothing is drawn (or paid for) until one of these is picked.
+    @State private var quickIdeaList: [MixbaseAPI.CoverIdea]?
+    @State private var quickIdeasBusy = false
+    @State private var quickIdeasShown: [String] = []
+    @State private var quickFilmOpen = false
     @State private var setupOpen = false
     @State private var pollToken = 0
     // The cover and clips already handed to the song screen, so polling
@@ -1300,11 +1305,14 @@ struct CassetteStudioView: View {
                 }
             }
 
-            Button(action: makeIt) {
+            Button(action: { findIdeas(more: false) }) {
                 HStack {
                     if quickRunning {
                         ProgressView().tint(Color(hex: "#080808"))
                         Text("Making it…")
+                    } else if quickIdeasBusy {
+                        ProgressView().tint(Color(hex: "#080808"))
+                        Text("Thinking of ideas…")
                     } else {
                         Image(systemName: "sparkles")
                         Text(quickJob?.status == "done" ? "Make another" : "Make it")
@@ -1314,13 +1322,17 @@ struct CassetteStudioView: View {
                 .foregroundColor(Color(hex: "#080808"))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(canMakeIt || quickRunning ? Color(hex: "#2dd4bf") : Color.gray.opacity(0.4))
+                .background(canMakeIt || quickRunning || quickIdeasBusy ? Color(hex: "#2dd4bf") : Color.gray.opacity(0.4))
                 .cornerRadius(12)
             }
             .buttonStyle(.plain)
             .disabled(!canMakeIt)
 
-            Text("A picture with an idea, drawn around your cassette and lettered in your handwriting, then set in motion for Canvas and YouTube. About 4–6 minutes; you can leave this open.")
+            if let ideas = quickIdeaList, !quickRunning {
+                quickIdeaPicker(ideas)
+            }
+
+            Text("You see three ideas in words first, and nothing is drawn until you pick one. The cover takes about 3 minutes, lettered in your handwriting and set in motion for Canvas and YouTube.")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1349,7 +1361,81 @@ struct CassetteStudioView: View {
     // The idea is optional (left empty, it comes from the song's title), so
     // the cassette is all a run needs.
     private var canMakeIt: Bool {
-        !isWorking && quickReady
+        !isWorking && !quickIdeasBusy && quickReady
+    }
+
+    /// The ideas, in words: tap one to draw it. Looking costs nothing.
+    private func quickIdeaPicker(_ ideas: [MixbaseAPI.CoverIdea]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Pick the one to draw")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+            ForEach(ideas) { idea in
+                Button(action: { makeIt(idea) }) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(idea.label)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Color(hex: "#2dd4bf"))
+                        Text(idea.idea)
+                            .font(.subheadline)
+                            .foregroundColor(Color(hex: "#dddddd"))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Color(hex: "#101818"))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color(hex: "#263232"), lineWidth: 1)
+                    )
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+                .disabled(quickIdeasBusy)
+            }
+            HStack(spacing: 8) {
+                smallChip("Other ideas", selected: false) { findIdeas(more: true) }
+                Text("Looking is free. Drawing one costs about 50 cents.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Filming, folded: what it is, what it costs, and the one button.
+    private func quickFilmControls(job: MixbaseAPI.QuickJob, film: MixbaseAPI.QuickFilm) -> some View {
+        let credits = film.creditsEach * 2
+        let dollars = String(format: "%.2f", Double(credits) / 100)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Film it")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#f0f0f0"))
+            Text("The clips above are this cover in slow motion, which is free. Filming turns them into real moving scenes with Runway. It uses about \(credits) Runway credits for both, roughly $\(dollars), and takes 2 to 4 minutes. Film it once you are happy with the cover.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: filmIt) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                    Text("Film Canvas + YouTube")
+                }
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(Color(hex: "#080808"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(isWorking ? Color.gray.opacity(0.4) : Color(hex: "#2dd4bf"))
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
+            .disabled(isWorking)
+        }
+        .padding(.top, 4)
     }
 
     private func quickProgress(_ job: MixbaseAPI.QuickJob) -> some View {
@@ -1436,7 +1522,13 @@ struct CassetteStudioView: View {
                     if (job.takes?.count ?? 0) > 1 {
                         foldChip("Other takes", open: quickTakesOpen) { quickTakesOpen.toggle() }
                     }
+                    if job.film != nil {
+                        foldChip("Film it", open: quickFilmOpen) { quickFilmOpen.toggle() }
+                    }
                     Spacer(minLength: 0)
+                }
+                if quickFilmOpen, let film = job.film {
+                    quickFilmControls(job: job, film: film)
                 }
                 if quickTakesOpen, let takes = job.takes, takes.count > 1 {
                     quickTakesControls(job: job, takes: takes)
@@ -1814,7 +1906,7 @@ struct CassetteStudioView: View {
                 .padding(2)
             }
 
-            Text("Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were filmed from.")
+            Text("Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were made from.")
                 .font(.caption2)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1980,8 +2072,26 @@ struct CassetteStudioView: View {
         }
     }
 
-    private func makeIt() {
-        // The idea is optional: left empty, it comes from the song's title.
+    /// Step 1: ask for ideas in words. `more` asks for different ones.
+    private func findIdeas(more: Bool) {
+        guard !quickRunning, !quickIdeasBusy else { return }
+        let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
+        quickError = nil
+        quickIdeasBusy = true
+        Task {
+            do {
+                let list = try await MixbaseAPI.shared.coverIdeas(projectId: projectId, description: text, shown: more ? quickIdeasShown : [])
+                quickIdeaList = list
+                quickIdeasShown = Array(((more ? quickIdeasShown : []) + list.map { $0.label }).suffix(12))
+            } catch {
+                quickError = error.localizedDescription
+            }
+            quickIdeasBusy = false
+        }
+    }
+
+    /// Step 2: draw the idea that was picked.
+    private func makeIt(_ concept: MixbaseAPI.CoverIdea) {
         let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !quickRunning else { return }
         quickError = nil
@@ -1990,12 +2100,14 @@ struct CassetteStudioView: View {
         quickPosition = nil
         quickSize = nil
         quickTitleError = nil
-        // It draws its own takes too: that fold closes.
+        // It draws its own takes too: those folds close.
         quickTakesOpen = false
+        quickFilmOpen = false
         quickTakeError = nil
         Task {
             do {
-                let job = try await MixbaseAPI.shared.startQuick(projectId: projectId, description: text)
+                let job = try await MixbaseAPI.shared.startQuick(projectId: projectId, description: text, concept: concept)
+                quickIdeaList = nil
                 applyQuick(job)
                 await pollQuick(job.id)
             } catch {
@@ -2005,6 +2117,22 @@ struct CassetteStudioView: View {
                     applyQuick(existing)
                     await pollQuick(existing.id)
                 }
+            }
+        }
+    }
+
+    /// Step 3, when asked: film the clips of the cover as it now is.
+    private func filmIt() {
+        guard !quickRunning else { return }
+        quickError = nil
+        quickFilmOpen = false
+        Task {
+            do {
+                let job = try await MixbaseAPI.shared.filmQuick(projectId: projectId)
+                applyQuick(job)
+                await pollQuick(job.id)
+            } catch {
+                quickError = error.localizedDescription
             }
         }
     }

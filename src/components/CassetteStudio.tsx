@@ -57,9 +57,13 @@ type QuickJob = {
   /** How the title was lettered: the resolved colour and spot, and the size. */
   title: { color: string | null; position: Position | null; size: Size } | null
   clips: { format: 'canvas' | 'youtube'; video_url: string; kind: 'cinematic' | 'loop'; model: string | null }[]
+  /** What filming a clip is expected to cost, in Runway credits (a credit is a cent). */
+  film?: { credits_each: number }
   notes: string[]
   error: string | null
 }
+// One idea for the cover (POST /api/cassette-studio/ideas), sent back as it came when chosen.
+type CoverIdea = { idea: string; label: string; scene: string; motion: string }
 // What the one-click flow will use (GET /api/cassette-studio/setup).
 type Setup = {
   cassette: StudioFile | null
@@ -75,10 +79,10 @@ const QUICK_STEPS: { id: QuickStep; label: string }[] = [
 ]
 // Nudges for the optional idea box: a way of making the picture, not a scene.
 const QUICK_IDEAS = [
-  'As an old master oil painting',
+  'As a plain daylight photo',
   'As a night photo with flash',
-  'As a 1970s sci-fi paperback',
-  'As a Japanese woodblock print',
+  'As a two-colour print',
+  'As a chalk drawing',
 ]
 
 /** A small version of a public Storage image (the takes are 2048px JPEGs; the strip shows them at 72px). */
@@ -237,6 +241,11 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   const [quickTitleOpen, setQuickTitleOpen] = useState(false)
   const [quickLookOpen, setQuickLookOpen] = useState(false)
   const [quickTakesOpen, setQuickTakesOpen] = useState(false)
+  // Ideas first: nothing is drawn (or paid for) until one of these is picked.
+  const [ideas, setIdeas] = useState<CoverIdea[] | null>(null)
+  const [ideasBusy, setIdeasBusy] = useState(false)
+  const [ideasShown, setIdeasShown] = useState<string[]>([])
+  const [quickFilmOpen, setQuickFilmOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   // Clip URLs and the cover already handed to the page, so polling announces
   // each once; the page's callbacks via refs so a re-render of the page never
@@ -706,30 +715,58 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
   }
 
   // ── One click ───────────────────────────────────────────────────────────
-  async function makeIt() {
-    // A new run letters its own title; the adjustments start over from it.
-    setQuickColor(null)
-    setQuickPosition(null)
-    setQuickSize(null)
-    setQuickTitleError('')
-    // The idea is optional: left empty, it comes from the song's title.
-    const description = quickText.trim()
+  // Step 1: ideas in words (free to look at). `more` asks for different ones.
+  async function findIdeas(more = false) {
+    setQuickError('')
+    setIdeasBusy(true)
+    try {
+      const res = await fetch('/api/cassette-studio/ideas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, description: quickText.trim(), shown: more ? ideasShown : [] }),
+      })
+      const data = await readJson(res)
+      const list = Array.isArray(data?.ideas) ? (data.ideas as CoverIdea[]).filter(i => i && typeof i.idea === 'string' && typeof i.scene === 'string') : []
+      if (!res.ok || list.length === 0) throw new Error((data?.error as string) ?? 'Could not come up with ideas. Try again.')
+      setIdeas(list)
+      setIdeasShown(prev => [...(more ? prev : []), ...list.map(i => i.label)].slice(-12))
+    } catch (err) {
+      setQuickError(err instanceof Error ? err.message : 'Could not come up with ideas. Try again.')
+    } finally {
+      setIdeasBusy(false)
+    }
+  }
+
+  // Step 2: draw the idea that was picked. Step 3 (film: true) films the cover as it now is.
+  async function startRun(body: Record<string, unknown>) {
     setQuickError('')
     setQuickTakesOpen(false)
+    setQuickFilmOpen(false)
     try {
       const res = await fetch('/api/cassette-studio/quick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, description }),
+        body: JSON.stringify({ project_id: projectId, ...body }),
       })
       const data = await readJson(res)
       const j = data?.job && typeof data.job === 'object' ? (data.job as QuickJob) : null
       if (!res.ok && !(res.status === 409 && j)) throw new Error((data?.error as string) ?? 'Could not start. Try again.')
       if (res.status === 409) setQuickError((data?.error as string) ?? '')
       if (j) setJob(j)
+      return !!j
     } catch (err) {
       setQuickError(err instanceof Error ? err.message : 'Could not start. Try again.')
+      return false
     }
+  }
+
+  async function makeIt(concept: CoverIdea) {
+    // A new run letters its own title; the adjustments start over from it.
+    setQuickColor(null)
+    setQuickPosition(null)
+    setQuickSize(null)
+    setQuickTitleError('')
+    if (await startRun({ description: quickText.trim(), concept })) setIdeas(null)
   }
 
   // Poll a running job; hand each result to the page the moment it lands.
@@ -862,16 +899,34 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
           ))}
         </div>
         <button
-          onClick={makeIt}
-          disabled={jobRunning || !quickReady}
+          onClick={() => void findIdeas(false)}
+          disabled={jobRunning || ideasBusy || !quickReady}
           className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-[#2dd4bf] text-[#0a0a0a] rounded-xl hover:bg-[#14b8a6] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {jobRunning
             ? <><span className="w-3 h-3 border border-black/30 border-t-black rounded-full animate-spin" />Making it…</>
-            : <><Sparkles size={13} />{job?.status === 'done' ? 'Make another' : 'Make it'} · cover + Canvas + YouTube</>}
+            : ideasBusy
+              ? <><span className="w-3 h-3 border border-black/30 border-t-black rounded-full animate-spin" />Thinking of ideas…</>
+              : <><Sparkles size={13} />{job?.status === 'done' ? 'Make another' : 'Make it'} · see three ideas first</>}
         </button>
+        {ideas && !jobRunning && (
+          <div className="space-y-1.5 rounded-lg border border-[#1f2a2a] bg-[#0a0a0a] p-2">
+            <p className="text-[10px] font-semibold text-white">Pick the one to draw</p>
+            {ideas.map(i => (
+              <button key={i.label + i.idea} onClick={() => void makeIt(i)} disabled={ideasBusy}
+                className="w-full rounded-lg border border-[#263232] px-2.5 py-2 text-left hover:border-[#2dd4bf]/60 disabled:opacity-50">
+                <span className="block text-[11px] font-semibold text-[#2dd4bf]">{i.label}</span>
+                <span className="block text-[11px] leading-snug text-[#ccc]">{i.idea}</span>
+              </button>
+            ))}
+            <div className="flex items-center justify-between gap-2">
+              <button onClick={() => void findIdeas(true)} disabled={ideasBusy} className={`${chip(false)} disabled:opacity-50`}>Other ideas</button>
+              <p className="text-[10px] text-[#666]">Looking is free. Drawing one costs about 50 cents.</p>
+            </div>
+          </div>
+        )}
         <p className="text-[10px] text-[#777] leading-snug">
-A picture with an idea, drawn around your cassette and lettered in your handwriting, then set in motion for Canvas and YouTube. About 4–6 minutes; you can leave this open.
+          You see the ideas in words first and nothing is drawn until you pick one. The cover takes about 3 minutes, lettered in your handwriting and set in motion for Canvas and YouTube.
         </p>
         {quickError && <p className="text-red-400 text-xs">{quickError}</p>}
 
@@ -930,6 +985,23 @@ A picture with an idea, drawn around your cassette and lettered in your handwrit
                     {quickTakesOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Other takes
                   </button>
                 )}
+                {job.film && (
+                  <button onClick={() => setQuickFilmOpen(v => !v)} className={`${chip(quickFilmOpen)} inline-flex items-center gap-0.5`}>
+                    {quickFilmOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}Film it
+                  </button>
+                )}
+              </div>
+            )}
+            {quickFilmOpen && job.status !== 'running' && job.film && shownCover && (
+              <div className="space-y-1.5 rounded-lg border border-[#1f2a2a] p-2">
+                <p className="text-[10px] font-semibold text-white">Film it</p>
+                <p className="text-[10px] text-[#888] leading-snug">
+                  The clips above are this cover in slow motion, which is free. Filming turns them into real moving scenes with Runway. It uses about {job.film.credits_each * 2} Runway credits for both, roughly ${((job.film.credits_each * 2) / 100).toFixed(2)}, and takes 2 to 4 minutes. Film it once you are happy with the cover.
+                </p>
+                <button onClick={() => void startRun({ film: true })} disabled={working}
+                  className="flex items-center gap-1 rounded-md bg-[#2dd4bf]/20 px-2 py-1 text-[10px] text-[#2dd4bf] hover:bg-[#2dd4bf]/30 disabled:opacity-50">
+                  <Sparkles size={10} />Film Canvas + YouTube
+                </button>
               </div>
             )}
             {quickTakesOpen && job.status !== 'running' && (job.takes?.length ?? 0) > 1 && (
@@ -947,7 +1019,7 @@ A picture with an idea, drawn around your cassette and lettered in your handwrit
                   ))}
                   {busy === 'take' && <span className="self-center">{SPINNER}</span>}
                 </div>
-                <p className="text-[10px] text-[#666]">Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were filmed from.</p>
+                <p className="text-[10px] text-[#666]">Tap one to make it the cover, with the same title. The Canvas and YouTube clips keep the picture they were made from.</p>
               </div>
             )}
             {quickTitleOpen && job.status !== 'running' && job.lettering && shownCover && (
