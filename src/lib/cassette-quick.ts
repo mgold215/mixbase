@@ -225,6 +225,15 @@ function setStep(job: QuickJob, step: QuickStep, state: StepState) {
 
 const FORMAT_LABEL: Record<QuickFormat, string> = { canvas: 'Canvas', youtube: 'YouTube' }
 
+/**
+ * A run does not film its clips on its own (2026-11-11): two Veo 3.1 clips
+ * cost about $6 of Runway credits, twelve times the cover itself, and were
+ * spent before the artist had seen the cover. The clips are the cover set in
+ * slow motion (no AI) until filming is asked for.
+ */
+const AUTO_FILM = false
+class FilmingOff extends Error {}
+
 async function run(job: QuickJob, req: QuickRequest & { formats: QuickFormat[] }): Promise<void> {
   try {
     // ── 1. Concept ────────────────────────────────────────────────────────
@@ -491,6 +500,7 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
       console.error(`[cassette-quick] ${format} extension failed:`, err instanceof Error ? err.message : err)
       still = await fitStill(cover, size.width, size.height)
     }
+    if (!AUTO_FILM) throw new FilmingOff()
     const stillPath = `${studioPrefix(job.userId)}tmp-${ts}-still.jpg`
     tmp.push(stillPath)
     const stillUrl = await uploadStudio(stillPath, still, 'image/jpeg')
@@ -517,8 +527,10 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
     setStep(job, format, 'done')
     return
   } catch (err) {
-    reason = err instanceof VideoUnavailable ? 'cinematic video is not available right now' : 'the cinematic shot could not be made'
-    console.error(`[cassette-quick] ${format} cinematic failed:`, err instanceof Error ? err.message : err)
+    if (!(err instanceof FilmingOff)) {
+      reason = err instanceof VideoUnavailable ? 'cinematic video is not available right now' : 'the cinematic shot could not be made'
+      console.error(`[cassette-quick] ${format} cinematic failed:`, err instanceof Error ? err.message : err)
+    }
   } finally {
     if (refund) await refund()
     await removeStudio(tmp)
@@ -551,7 +563,7 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
     }
     await pin(job.userId, job.projectId, stored.video_url, format === 'youtube')
     job.clips = [...job.clips, { format, video_url: stored.video_url, kind: 'loop', model: null }]
-    job.notes.push(`${FORMAT_LABEL[format]}: ${reason}, so it is ${what} instead.`)
+    if (reason) job.notes.push(`${FORMAT_LABEL[format]}: ${reason}, so it is ${what} instead.`)
     setStep(job, format, 'done')
   } catch (err) {
     console.error(`[cassette-quick] ${format} loop fallback failed:`, err instanceof Error ? err.message : err)
