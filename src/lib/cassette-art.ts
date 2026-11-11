@@ -170,7 +170,8 @@ export const CASSETTE_IDENTITY =
 const ART_RULES = [
   'The cassette belongs to the picture: lit by this scene\'s own light from the same direction as everything else, with the shadows, reflections, depth and focus that light would give it, and rendered in the same medium as the rest of the image. Its shell is clear plastic, so whatever is behind it shows faintly through the transparent parts.',
   'Compose it as a square album cover that still reads when it is tiny: one clear focal point, strong shapes, real depth. Keep the lower-centre of the frame calm and free of important detail (the title is added there afterwards).',
-  'No text, letters, numbers, captions, signatures, logos, watermarks, frames or borders anywhere in the image, apart from the small "A" on the cassette\'s label.',
+  'No text, letters, numbers, captions, signatures, logos, watermarks, frames or borders anywhere in the image, apart from the small "A" on the cassette\'s label.',  // 2026-11-11, the owner on the first drawn covers: "clear AI look", "very AI and fake looking".
+  'It must pass for something a person really photographed or made by hand, never for a generated image. True-to-life scale and physics: the cassette is its real size, about 10 cm wide, resting on or in something, never floating and never glowing. Ordinary light from one believable source, modest contrast, colours a little muted. Real materials with wear on them: dust, scuffs, fingerprints, uneven edges, grain, a little softness away from the point of focus. None of the generated look: no glow or bloom, no haze or shafts of light, no neon, no purple-and-teal or orange-and-teal colour, no waxy smoothness, no everything-sharp clarity, no perfect symmetry, no added moons, sparkles, particles or other decoration.',
 ]
 
 /** The full prompt for a take: the cassette's identity, the scene brief, the rules. */

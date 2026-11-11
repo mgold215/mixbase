@@ -4,7 +4,8 @@ import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { isOwnStudioKey, listStudio } from '@/lib/cassette-server'
-import { getQuickJob, latestQuickJob, publicJob, startQuickJob, type QuickFormat } from '@/lib/cassette-quick'
+import { getQuickJob, latestQuickJob, publicJob, startFilmJob, startQuickJob, type QuickFormat } from '@/lib/cassette-quick'
+import { parseConcept } from '@/lib/cover-concept'
 import { isArtModelId, MAX_SCENE, MAX_TAKES } from '@/lib/cassette-art'
 
 export const runtime = 'nodejs'
@@ -13,9 +14,18 @@ export const runtime = 'nodejs'
 // the cover (an idea drawn around your cassette, lettered in your
 // handwriting) plus Canvas and YouTube moving scenes, all applied to the song.
 //
-// POST /api/cassette-studio/quick   JSON { project_id, description? }
+// POST /api/cassette-studio/quick   JSON { project_id, description?, concept? }
 //   description  the artist's own idea for the cover, optional: left empty,
 //                the idea comes from the song's title
+//   concept      the idea the artist chose from POST /api/cassette-studio/ideas
+//                ({ idea, label, scene, motion }, sent back as it came): drawn
+//                as it is. Without one the server writes a single idea itself.
+//   A run makes the cover and sets it in slow motion for Canvas and YouTube
+//   (no AI video: free). Filming is asked for afterwards:
+// POST /api/cassette-studio/quick   JSON { project_id, film: true, formats? }
+//   films the clips of the song's CURRENT cover with Runway (about
+//   job.film.credits_each credits a clip) and pins them; the clip already
+//   pinned stays if a shot fails. Same 202 { job }, followed the same way.
 //   Optional, for the owner's own experiments (the screens never send them):
 //   prompt       an exact scene brief, drawn as written (no art direction)
 //   formats      which clips to make: any of 'canvas', 'youtube' (default both;
@@ -68,6 +78,23 @@ export async function POST(request: NextRequest) {
   const { data: project } = await supabaseAdmin.from('mb_projects').select('id, title, genre, bpm, key_signature').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
+  if (body.film === true) {
+    const started = await startFilmJob({ userId, projectId, formats: formats?.length ? formats : ['canvas', 'youtube'] })
+    if (!started.ok) {
+      if (started.code === 'no_cover') return NextResponse.json({ error: 'Make a cover first.' }, { status: 400 })
+      if (started.code === 'user_busy') {
+        return NextResponse.json({ error: 'You already have one being made — it will finish in a few minutes.', job: started.existing ? publicJob(started.existing) : null }, { status: 409 })
+      }
+      return NextResponse.json({ error: 'The studio is busy right now. Try again in a few minutes.' }, { status: 503, headers: { 'Retry-After': '60' } })
+    }
+    return NextResponse.json({ job: publicJob(started.job) }, { status: 202 })
+  }
+  let concept: ReturnType<typeof parseConcept> = null
+  if (body.concept !== undefined) {
+    concept = parseConcept(body.concept)
+    if (!concept) return NextResponse.json({ error: 'That idea could not be read. Ask for ideas again.' }, { status: 400 })
+  }
+
   let subjectPath: string | null = null
   try {
     subjectPath = (await listStudio(userId, 'subject-')).find(f => isOwnStudioKey(f.path, userId, 'subject'))?.path ?? null
@@ -83,6 +110,7 @@ export async function POST(request: NextRequest) {
     title: row.title ?? '', genre: row.genre ?? null,
     bpm: typeof row.bpm === 'number' ? row.bpm : null, key: row.key_signature ?? null,
     ...(prompt ? { prompt } : {}),
+    ...(concept ? { concept } : {}),
   })
   if (!started.ok) {
     if (started.code === 'user_busy') {
