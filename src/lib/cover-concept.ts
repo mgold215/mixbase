@@ -70,7 +70,7 @@ export const MEDIUMS: string[] = [
   'a photograph looking straight down at the ground: real texture, long natural shadows',
   'a medium-format still life on a table by a window: soft side light, real worn surfaces',
   'a macro photograph: very shallow focus, dust and fine scratches visible',
-  'a Polaroid photograph: soft faded colour, slightly careless framing',
+  'an instant-film photograph: soft faded colour, slightly careless framing, the picture filling the frame',
   'a documentary photograph on colour film: available light, visible grain, slightly faded colour',
   'a flatbed scan of real objects laid on the glass: flat hard light, dust specks, a black surround',
   'a museum catalogue photograph: one object on a plain backdrop with a soft shadow',
@@ -149,7 +149,7 @@ You will be asked for a number of ideas. Make each a different reading of the ti
 For each idea write:
 - idea: what the picture is, in plain words the musician will read before paying for it. One sentence, at most 110 characters, no quotes.
 - label: the idea in two to five words, Title Case.
-- scene: the brief for the image model, 80 to 140 words of concrete visual fact in this order: the medium, named as the real thing it is; the place and what is in it; where the cassette is, what has happened to it, where it sits in the frame and how much of the frame's width it fills (a quarter to a half, seen from close by); the light (its real source, direction, quality); the colours; the finish (grain, paper, lens, wear). Say "the cassette", never describe its design (the model is given a photo of it). No praise words (stunning, ethereal, cinematic, masterpiece), no resolution words, no camera brands. Never ask for text, lettering, logos or a second cassette. No recognisable real people, no brand names.
+- scene: the brief for the image model, 80 to 140 words of concrete visual fact in this order: the medium, named as the real thing it is; the place and what is in it; where the cassette is, what has happened to it, where it sits in the frame and how much of the frame's width it fills (a quarter to a half, seen from close by); the light (its real source, direction, quality); the colours; the finish (grain, paper, lens, wear). Say "the cassette", never describe its design (the model is given a photo of it). No praise words (stunning, ethereal, cinematic, masterpiece), no resolution words, no camera brands. The picture fills the whole square, edge to edge: never describe a border, a frame, a mount, or the white edge of a print or an instant photo. Never ask for text, lettering, logos or a second cassette. No recognisable real people, no brand names.
 - motion: two or three short sentences for a video model that will animate this exact picture. MOTION ONLY: one slow camera move (a push-in or a drift, never a cut), the small natural motion that belongs in this place, and the cassette's two reels turning slowly as if it is playing while the cassette itself holds its place. At most 320 characters.`
 
 const CONCEPT_ITEM = {
