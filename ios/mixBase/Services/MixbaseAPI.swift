@@ -1256,6 +1256,8 @@ final class MixbaseAPI {
         /// How the title was lettered: the resolved colour and spot, and the size.
         var title: QuickTitle?
         let clips: [QuickClip]
+        /// What filming a clip is expected to cost, in Runway credits (a credit is a cent).
+        let film: QuickFilm?
         let notes: [String]
         let error: String?
 
@@ -1276,9 +1278,29 @@ final class MixbaseAPI {
             case lettering
             case title
             case clips
+            case film
             case notes
             case error
         }
+    }
+
+    struct QuickFilm: Decodable, Equatable {
+        let creditsEach: Int
+
+        enum CodingKeys: String, CodingKey {
+            case creditsEach = "credits_each"
+        }
+    }
+
+    /// One idea for the cover, in words (POST /api/cassette-studio/ideas).
+    /// The chosen one is sent back as it came in `startQuick(concept:)`.
+    struct CoverIdea: Decodable, Equatable, Identifiable {
+        let idea: String
+        let label: String
+        let scene: String
+        let motion: String
+
+        var id: String { label + "|" + idea }
     }
 
     struct QuickTitle: Decodable, Equatable {
@@ -1287,15 +1309,43 @@ final class MixbaseAPI {
         let size: String
     }
 
-    /// Start a one-click run for this song. `description` is the artist's own
-    /// idea for the cover and is optional: sent empty (""), the idea comes
-    /// from the song's title.
-    func startQuick(projectId: UUID, description: String) async throws -> QuickJob {
+    /// Ideas for this song's cover, in words, before anything is drawn (text
+    /// only: looking is free). `description` is the artist's own idea and is
+    /// optional; `shown` are labels already shown, so "Other ideas" differ.
+    func coverIdeas(projectId: UUID, description: String, shown: [String]) async throws -> [CoverIdea] {
+        struct Response: Decodable { let ideas: [CoverIdea] }
+        let data = try await requestData(
+            path: "/api/cassette-studio/ideas",
+            method: "POST",
+            body: ["project_id": projectId.postgresString, "description": description, "shown": shown]
+        )
+        return try decoder.decode(Response.self, from: data).ideas
+    }
+
+    /// Draw the idea the artist picked: the cover, lettered, and set in slow
+    /// motion for Canvas and YouTube. `description` is their own words, if any.
+    func startQuick(projectId: UUID, description: String, concept: CoverIdea) async throws -> QuickJob {
         struct Response: Decodable { let job: QuickJob }
         let data = try await requestData(
             path: "/api/cassette-studio/quick",
             method: "POST",
-            body: ["project_id": projectId.postgresString, "description": description]
+            body: [
+                "project_id": projectId.postgresString,
+                "description": description,
+                "concept": ["idea": concept.idea, "label": concept.label, "scene": concept.scene, "motion": concept.motion],
+            ]
+        )
+        return try decoder.decode(Response.self, from: data).job
+    }
+
+    /// Film the Canvas and YouTube clips of the song's current cover with
+    /// Runway (asked for after the cover is seen; it spends Runway credits).
+    func filmQuick(projectId: UUID) async throws -> QuickJob {
+        struct Response: Decodable { let job: QuickJob }
+        let data = try await requestData(
+            path: "/api/cassette-studio/quick",
+            method: "POST",
+            body: ["project_id": projectId.postgresString, "film": true]
         )
         return try decoder.decode(Response.self, from: data).job
     }
