@@ -60,7 +60,9 @@ export type ConceptRequest = {
  * ("clear AI look", "very AI and fake looking"): every entry is something a
  * person could really have shot or made by hand, with its limits showing.
  * The ones that invite the generated look (vast sci-fi scenes, surreal
- * scale, glowing infrared, neon film stills, tilt-shift worlds) are gone.
+ * scale, glowing infrared, neon film stills, tilt-shift worlds) are gone,
+ * and so is anything that cannot show the cassette's red, blue and yellow
+ * stripes (black-and-white, one- and two-ink prints).
  */
 export const MEDIUMS: string[] = [
   'a 35mm colour photograph in plain daylight: natural colour, soft grain, nothing retouched',
@@ -69,18 +71,18 @@ export const MEDIUMS: string[] = [
   'a medium-format still life on a table by a window: soft side light, real worn surfaces',
   'a macro photograph: very shallow focus, dust and fine scratches visible',
   'a Polaroid photograph: soft faded colour, slightly careless framing',
-  'a black-and-white documentary photograph: available light, visible grain',
+  'a documentary photograph on colour film: available light, visible grain, slightly faded colour',
   'a flatbed scan of real objects laid on the glass: flat hard light, dust specks, a black surround',
   'a museum catalogue photograph: one object on a plain backdrop with a soft shadow',
   'an underwater photograph in shallow water: rippling light on the floor, a slight blue cast',
   'a night photograph lit by one streetlamp or one bare bulb: deep shadow, a single warm pool of light',
   'a photograph of an old screen in a dark room: scan lines, phosphor colour, a little moire',
   'a chalk pastel drawing on black paper: smudged edges, few colours, the paper tooth showing',
-  'a two-colour risograph print: slightly misregistered inks, coarse paper grain',
-  'a linocut print in one or two inks: carved marks, uneven ink coverage',
+  'a four-colour risograph print: slightly misregistered inks, coarse paper grain',
+  'a reduction linocut in four inks: carved marks, uneven ink coverage',
   'a cut-paper collage of old magazine photographs: visible paper edges and halftone dots',
-  'a cyanotype print: Prussian blue and white, brush-marked edges',
-  'a photocopied collage: harsh black and white, toner speckle, torn edges',
+  'a hand-tinted photograph: a soft monochrome print with a few colours brushed on by hand',
+  'a colour photocopy collage: flat washed-out colour, toner speckle, torn edges',
   'a gouache painting on paper: flat shapes, visible brush marks, a limited palette',
   'a pencil and watercolour field sketch on cream paper: loose line, uneven washes',
   'a hand-coloured scientific engraving on cream paper: fine hatching, delicate washes',
@@ -140,7 +142,7 @@ The rules that follow from them:
 3. RESTRAINT. One idea, two or three elements, plenty of quiet space. Ordinary light from a named real source: an overcast window, noon sun, one bare bulb, an on-camera flash. Colour that belongs to the place, a little muted. Imperfection is welcome: dust, wear, an uneven edge, a frame that is slightly off-centre.
 4. COME CLOSE. The cassette is the subject and must be recognisable when the cover is a thumbnail: it fills between a quarter and a half of the frame's width. Get that by putting the camera near it (a close view of the step, the drawer, the patch of ground it lies on), never by making it bigger than it is, and never by shrinking it into a wide view of the place.
 5. Read the title for a concrete, physical reading: a place, a material, a kind of weather, an object, a trace something leaves behind, a quiet visual pun a stranger gets in a second. If the musician gave their own idea, build on it faithfully and bring it inside these rules.
-6. The cassette stays whole, recognisable and mostly unobstructed, and there is only ever one. Never the old product shot either: a cassette standing on a ledge in front of a blurred background. Keep the lower-centre of the square calm, because the handwritten title is added there.
+6. The cassette stays whole, recognisable and mostly unobstructed, and there is only ever one. Its red, blue and yellow stripes are how people know it, so the picture must be able to show those three colours: never black-and-white, never a print in one or two inks. Never the old product shot either: a cassette standing on a ledge in front of a blurred background. Keep the lower-centre of the square calm, because the handwritten title is added there.
 
 You will be asked for a number of ideas. Make each a different reading of the title, in a different place and a different medium, so the musician has a real choice. Draft more than you need and throw away every one a designer would call AI art at a glance.
 
