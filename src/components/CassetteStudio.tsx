@@ -921,7 +921,7 @@ export default function CassetteStudio({ projectId, projectTitle, onRendered, on
             ))}
             <div className="flex items-center justify-between gap-2">
               <button onClick={() => void findIdeas(true)} disabled={ideasBusy} className={`${chip(false)} disabled:opacity-50`}>Other ideas</button>
-              <p className="text-[10px] text-[#666]">Looking is free. Drawing one costs about 50 cents.</p>
+              <p className="text-[10px] text-[#666]">Looking is free. Drawing one costs 50 to 75 cents.</p>
             </div>
           </div>
         )}

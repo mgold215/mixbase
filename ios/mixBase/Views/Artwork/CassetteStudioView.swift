@@ -1398,7 +1398,7 @@ struct CassetteStudioView: View {
             }
             HStack(spacing: 8) {
                 smallChip("Other ideas", selected: false) { findIdeas(more: true) }
-                Text("Looking is free. Drawing one costs about 50 cents.")
+                Text("Looking is free. Drawing one costs 50 to 75 cents.")
                     .font(.caption2)
                     .foregroundColor(.gray)
                     .fixedSize(horizontal: false, vertical: true)
