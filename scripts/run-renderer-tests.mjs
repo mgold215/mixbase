@@ -119,6 +119,7 @@ const SUITES = [
   'visualizer-transcode-test.mjs',
   'free-render-test.mjs',
   'cassette-motion-test.mjs',
+  'cover-motion-test.mjs',
   'video-test.mjs',
   'video-timeout-test.mjs',
 ]

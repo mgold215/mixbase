@@ -51,6 +51,8 @@ import { chooseTake, critiqueTakes, judgeTakes, promptConcept, writeCoverConcept
 import { FILM_CREDITS_EACH, filmStill, VideoUnavailable } from '@/lib/runway-video'
 import { seamlessLoop } from '@/lib/video-loop'
 import { fitStill, stillLoop } from '@/lib/still-loop'
+import { renderCoverMotion } from '@/lib/cover-motion-render'
+import { writeMotionRecipe, type MotionPlan } from '@/lib/cover-motion-direct'
 import { storeVisualizer } from '@/lib/visualizer-store'
 import {
   CoverError, loadCoverProject, makeMovingCover, makeStudioCover, type CoverProject, type CoverResult,
@@ -540,16 +542,29 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
       return
     }
 
-    // A classic cover has its own cassette layer: the reels turn. A drawn one is the still, drifting.
+    // A classic cover has its own cassette layer: the reels turn. A drawn one is one picture, set in motion.
     let stored: { id: string; video_url: string } | null
     if (job.model === null) {
       const project = await loadCoverProject(job.userId, job.projectId)
       if (!project) throw new Error('project vanished')
       stored = await makeMovingCover(job.userId, project, format, false, 'cassette-quick')
     } else {
+      // Its movement is designed for this picture (cover-motion.ts); the plain drift if that fails.
+      let bytes: Buffer
+      let motion: Record<string, unknown> = { motion: 'drift' }
+      try {
+        const plan = await planMotion(job, cover, concept)
+        bytes = await renderCoverMotion(still, plan.recipe, size)
+        motion = { motion: 'designed', recipe: plan.recipe, motion_model: plan.model }
+        const said = `How it moves: ${plan.recipe.summary}`
+        if (plan.model && plan.recipe.summary && !job.notes.includes(said)) job.notes.push(said)
+      } catch (err) {
+        console.error(`[cassette-quick] ${format} designed motion failed:`, err instanceof Error ? err.message : err)
+        bytes = await stillLoop(still, size)
+      }
       stored = await storeVisualizer({
-        userId: job.userId, projectId: job.projectId, bytes: await stillLoop(still, size), contentType: 'video/mp4', kind: 'free', title, sourceImageUrl: artworkUrl,
-        settings: { source: 'cassette-quick', format, title: false, motion: 'drift', ...remembered },
+        userId: job.userId, projectId: job.projectId, bytes, contentType: 'video/mp4', kind: 'free', title, sourceImageUrl: artworkUrl,
+        settings: { source: 'cassette-quick', format, title: false, ...motion, ...remembered },
       })
     }
     if (!stored) throw new Error('saving the loop failed')
@@ -571,6 +586,21 @@ async function film(job: QuickJob, format: QuickFormat, concept: CoverConcept, a
     if (refund) await refund()
     await removeStudio(tmp)
   }
+}
+
+// One motion plan per run: both clips of a cover move the same way, and the
+// picture is looked at once. Keyed by job, dropped a while after it is made.
+const motionPlans = new Map<string, Promise<MotionPlan>>()
+
+function planMotion(job: QuickJob, cover: Buffer, concept: CoverConcept): Promise<MotionPlan> {
+  let plan = motionPlans.get(job.id)
+  if (!plan) {
+    plan = writeMotionRecipe(cover, { idea: concept.idea, motion: concept.motion })
+    motionPlans.set(job.id, plan)
+    setTimeout(() => motionPlans.delete(job.id), 15 * 60_000).unref()
+    void plan.then(p => console.log(`[cassette-quick] motion plan by ${p.model ?? 'template'}: ${p.recipe.camera.move} + ${p.recipe.elements.map(e => e.kind).join(', ') || 'nothing'}`))
+  }
+  return plan
 }
 
 /**

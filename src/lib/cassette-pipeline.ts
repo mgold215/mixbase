@@ -26,7 +26,9 @@ import {
 } from '@/lib/cassette-studio'
 import { CASSETTE_SCENES, scenePrompt } from '@/lib/cassette-scenes'
 import { finishTake } from '@/lib/cassette-art'
-import { stillLoop } from '@/lib/still-loop'
+import { fitStill, stillLoop } from '@/lib/still-loop'
+import { parseMotionRecipe, type MotionRecipe } from '@/lib/cover-motion'
+import { renderCoverMotion } from '@/lib/cover-motion-render'
 import {
   decodeForFilter, filterRawToJpeg, gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings, type RawImage,
 } from '@/lib/cover-filters'
@@ -612,10 +614,15 @@ async function makeStillCover(
     throw new CoverError(MOTION_FAILED, 502)
   }
   if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
+  // The way a one-click run planned this very picture to move, when it did
+  // (no new plan is written here: that would be a paid look per tap).
+  const recipe = await rememberedMotion(userId, project.id, project.artwork_url)
   let bytes: Buffer
   try {
     const { width, height } = FREE_FORMATS[format]
-    bytes = await stillLoop(cover, { width, height })
+    bytes = recipe
+      ? await renderCoverMotion(await fitStill(cover, width, height), recipe, { width, height })
+      : await stillLoop(cover, { width, height })
   } catch (err) {
     console.error('[cassette-studio/motion] still loop failed:', err instanceof Error ? err.message : err)
     throw new CoverError(MOTION_FAILED, 502)
@@ -630,8 +637,28 @@ async function makeStillCover(
     kind: 'free',
     title: `${withTitle ? 'Moving cover' : 'Cover in motion'} · ${FREE_FORMATS[format].label}`,
     sourceImageUrl: url,
-    settings: { source, format, title: withTitle, motion: 'drift' },
+    settings: { source, format, title: withTitle, motion: recipe ? 'designed' : 'drift' },
   })
   if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
   return stored
+}
+
+/** The motion plan a one-click run saved with clips of this cover picture, if any. Best-effort. */
+async function rememberedMotion(userId: string, projectId: string, artworkUrl: string | null | undefined): Promise<MotionRecipe | null> {
+  if (!artworkUrl) return null
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('settings')
+      .eq('user_id', userId)
+      .eq('project_id', projectId)
+      .eq('source_image_url', artworkUrl)
+      .eq('settings->>motion', 'designed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (error || !data?.length) return null
+    return parseMotionRecipe((data[0] as { settings?: Record<string, unknown> | null }).settings?.recipe)
+  } catch {
+    return null
+  }
 }
