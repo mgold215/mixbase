@@ -58,7 +58,9 @@ export type ConceptRequest = {
  *
  * Rebuilt 2026-11-11 after the owner's verdicts on the first drawn covers
  * ("clear AI look", "very AI and fake looking"): every entry is something a
- * person could really have shot or made by hand, with its limits showing.
+ * person could really have shot or made, with its limits showing. Digital
+ * art is in on purpose (the owner the same day: "it doesn't always need to
+ * be true to life... maybe like digital art", pointing at their BUGONIA cover).
  * The ones that invite the generated look (vast sci-fi scenes, surreal
  * scale, glowing infrared, neon film stills, tilt-shift worlds) are gone,
  * and so is anything that cannot show the cassette's red, blue and yellow
@@ -77,6 +79,11 @@ export const MEDIUMS: string[] = [
   'an underwater photograph in shallow water: rippling light on the floor, a slight blue cast',
   'a night photograph lit by one streetlamp or one bare bulb: deep shadow, a single warm pool of light',
   'a photograph of an old screen in a dark room: scan lines, phosphor colour, a little moire',
+  'a stylised 3D render of an imagined place: tangible stone, glass and water, soft light from a source in the scene, shallow depth of field',
+  'a 3D render of a tiny world under glass: a small landscape built around one object, real materials, warm light',
+  'a digital painting of an invented place: painterly detail, one cohesive palette, light from within the scene',
+  'a designed digital illustration: bold flat shapes, a limited palette, a fine grain over everything',
+  'a digital collage of cut-out photographs on a plain coloured ground: hard edges, drop shadows, three colours',
   'a chalk pastel drawing on black paper: smudged edges, few colours, the paper tooth showing',
   'a four-colour risograph print: slightly misregistered inks, coarse paper grain',
   'a reduction linocut in four inks: carved marks, uneven ink coverage',
@@ -127,9 +134,11 @@ export function promptConcept(scene: string, title: string): CoverConcept {
  */
 export const OWNER_VERDICTS = `- APPROVED: the cassette half-buried in real sand, photographed from above in plain late sun, wind ripples spreading out from it like echoes. A real thing at its real size in a real place: someone could go and shoot it.
 - APPROVED: a chalk pastel drawing of an old hospital monitor whose green pulse line climbs over the cassette as its spike. One graphic idea, few elements, mostly dark, visibly drawn by hand.
+- APPROVED, and named as the kind of digital art they want more of: the cassette under an iridescent soap-bubble dome, standing on a tiny flat earth of seas and continents held in a stone bowl, inside a cave of porous honeycomb rock lit by seams of lava. Nothing in it is true to life. It works because it is ONE strange, specific world invented for that title, built from materials you could touch (stone, soap film, water, moss), in one warm palette, with its light and its mist coming from things in the scene, and the cassette large and exact in the middle of it.
 - LIKED, WITH RESERVATIONS: an old-master painting of gods at a feast lunging for the cassette. A strong idea, but a crowd of painted figures is where a generated picture gives itself away.
-- REJECTED as "very AI and fake looking": a cassette the size of an office tower standing in a city skyline at golden hour. Impossible scale pasted into a glossy photograph.
-- REJECTED as "clear AI look": the cassette among purple nightshade flowers under a huge glowing moon. Stock fantasy decoration: a moon, a glow, a purple haze.`
+- REJECTED as "very AI and fake looking": a cassette the size of an office tower standing in a city skyline at golden hour. An impossible thing pasted into an ordinary glossy photograph.
+- REJECTED as "clear AI look": the cassette among purple nightshade flowers under a huge glowing moon. Stock fantasy decoration: a moon, a glow, a purple haze.
+The musician, after the art direction had turned too literal: "It doesn't always need to be true to life. Just not clearly AI looking, maybe like digital art."`
 
 const CONCEPT_SYSTEM = `You are the art director for one musician's record covers. Every cover stars the same real object: the musician's own audio cassette tape, clear plastic with a grey label and red, blue and yellow stripes. That cassette is the brand. Each song gets a cover with one clear IDEA taken from its title, in which the cassette plays a part.
 
@@ -137,19 +146,19 @@ The pictures are drawn by an image model, and the one thing they must never do i
 ${OWNER_VERDICTS}
 
 The rules that follow from them:
-1. PLAUSIBLE. Write a picture a person could really have made. Best of all a photograph of the actual cassette at its actual size (about 10 cm wide), placed or found somewhere real and specific, staged the way a photographer with one prop could stage it. Or a physical handmade piece (a print, a drawing, a collage) with the limits of its medium showing. The idea comes from WHERE the cassette is and WHAT has happened to it there, never from magic.
-2. NEVER: a giant cassette or a miniature world (the cassette as a building, monument, sun, moon, island, vehicle); a floating, flying, glowing, melting or exploding cassette; moons, planets, galaxies, auroras; neon; mist, haze or shafts of light; anything that glows; purple-and-teal or orange-and-teal colour; golden-hour skylines; wet reflective streets; crystals, butterflies, feathers, roses, smoke; vast epic landscapes; crowds of figures, or faces and hands close up; a centred, symmetrical, spotlit hero shot; anything you would call dreamlike, ethereal, surreal, cinematic or epic.
-3. RESTRAINT. One idea, two or three elements, plenty of quiet space. Ordinary light from a named real source: an overcast window, noon sun, one bare bulb, an on-camera flash. Colour that belongs to the place, a little muted. Imperfection is welcome: dust, wear, an uneven edge, a frame that is slightly off-centre.
-4. COME CLOSE. The cassette is the subject and must be recognisable when the cover is a thumbnail: it fills between a quarter and a half of the frame's width. Get that by putting the camera near it (a close view of the step, the drawer, the patch of ground it lies on), never by making it bigger than it is, and never by shrinking it into a wide view of the place.
-5. Read the title for a concrete, physical reading: a place, a material, a kind of weather, an object, a trace something leaves behind, a quiet visual pun a stranger gets in a second. If the musician gave their own idea, build on it faithfully and bring it inside these rules.
+1. TWO KINDS OF PICTURE are welcome, and neither is the safe choice. (a) A photograph a person could really have taken: the actual cassette at its actual size (about 10 cm wide), placed or found somewhere real and specific. (b) An imagined world made as digital art: a stylised 3D render, a digital painting or a designed illustration, where impossible things are welcome. What makes (b) work is that the world is ONE strange, specific invention that belongs to this title and no other, built from materials you could touch, in one palette, with every light and every wisp of mist coming from something that is in the scene.
+2. WHAT READS AS AI, and is never written: stock decoration (a moon, planets, galaxies, auroras, roses, butterflies, feathers, crystals, sparkles, drifting particles); glow, haze or shafts of light with no source; neon; purple-and-teal or orange-and-teal colour; golden-hour skylines and wet reflective streets; an impossible thing pasted into an ordinary photograph (a giant cassette among real buildings); crowds of figures, or faces and hands close up; a generic epic vista; anything you would only call dreamlike, ethereal, cinematic or epic. The test for an imagined world: could you say in one plain sentence what the place is and why it belongs to this song? If it is only "pretty and mysterious", throw it away.
+3. RESTRAINT. One idea, a few elements, quiet space around them. In a photograph, ordinary light from a named real source and colour that belongs to the place. In an imagined world, one palette of two to four named colours and tangible surfaces. Imperfection is welcome in both: dust, wear, an uneven edge.
+4. COME CLOSE. The cassette is the subject and must be recognisable when the cover is a thumbnail: it fills between a quarter and a half of the frame's width. In a photograph get that by putting the camera near it (a close view of the step, the drawer, the patch of ground it lies on), never by making it bigger than it is. In an imagined world it may be any size the idea needs, as long as it fills that much of the frame.
+5. Read the title for a concrete reading: a place, a material, a kind of weather, an object, a myth, a trace something leaves behind, a quiet visual pun a stranger gets in a second. If the musician gave their own idea, build on it faithfully and bring it inside these rules.
 6. The cassette stays whole, recognisable and mostly unobstructed, and there is only ever one. Its red, blue and yellow stripes are how people know it, so the picture must be able to show those three colours: never black-and-white, never a print in one or two inks. Never the old product shot either: a cassette standing on a ledge in front of a blurred background. Keep the lower-centre of the square calm, because the handwritten title is added there.
 
-You will be asked for a number of ideas. Make each a different reading of the title, in a different place and a different medium, so the musician has a real choice. Draft more than you need and throw away every one a designer would call AI art at a glance.
+You will be asked for a number of ideas. Make each a different reading of the title, in a different place and a different medium, so the musician has a real choice. When you give three or more and the musician's own idea does not settle it, include at least one photograph and at least one imagined world as digital art. Draft more than you need and throw away every one a designer would call AI art at a glance.
 
 For each idea write:
 - idea: what the picture is, in plain words the musician will read before paying for it. One sentence, at most 110 characters, no quotes.
 - label: the idea in two to five words, Title Case.
-- scene: the brief for the image model, 80 to 140 words of concrete visual fact in this order: the medium, named as the real thing it is; the place and what is in it; where the cassette is, what has happened to it, where it sits in the frame and how much of the frame's width it fills (a quarter to a half, seen from close by); the light (its real source, direction, quality); the colours; the finish (grain, paper, lens, wear). Say "the cassette", never describe its design (the model is given a photo of it). No praise words (stunning, ethereal, cinematic, masterpiece), no resolution words, no camera brands. The picture fills the whole square, edge to edge: never describe a border, a frame, a mount, or the white edge of a print or an instant photo. Never ask for text, lettering, logos or a second cassette. No recognisable real people, no brand names.
+- scene: the brief for the image model, 80 to 140 words of concrete visual fact in this order: the medium, named as the real thing it is (for an imagined world say which: a stylised 3D render, a digital painting, a designed illustration); the place and what is in it, with its materials; where the cassette is, what has happened to it, where it sits in the frame and how much of the frame's width it fills (a quarter to a half, seen from close by); the light (its source in the scene, direction, quality); the colours; the finish (grain, paper, lens, wear). Say "the cassette", never describe its design (the model is given a photo of it). No praise words (stunning, ethereal, cinematic, masterpiece), no resolution words, no camera brands. The picture fills the whole square, edge to edge: never describe a border, a frame, a mount, or the white edge of a print or an instant photo. Never ask for text, lettering, logos or a second cassette. No recognisable real people, no brand names.
 - motion: two or three short sentences for a video model that will animate this exact picture. MOTION ONLY: one slow camera move (a push-in or a drift, never a cut), the small natural motion that belongs in this place, and the cassette's two reels turning slowly as if it is playing while the cassette itself holds its place. At most 320 characters.`
 
 const CONCEPT_ITEM = {
@@ -378,7 +387,7 @@ function mark(v: unknown): number {
 // design, and answers one question about each.
 
 export type TakeCritique = {
-  /** 0–10: how far the picture passes for something a person shot or made by hand. */
+  /** 0–10: how far the picture passes for something a person made (a photograph, or art with a style of its own; true to life or not). */
   real: number
   /** What gives it away, in a few words ('' when nothing does). */
   tells: string
@@ -391,31 +400,32 @@ export const REAL_PASS = 7
 /** ...and this on the judge's `cassette` mark. */
 export const CASSETTE_PASS = 7
 
-const CRITIC_SYSTEM = `You are the last check before a picture becomes a musician's record cover. The candidates were drawn by an image model. The musician rejects any cover that obviously looks AI-generated, so you answer one question about each candidate and nothing else: how much does it LOOK generated, to a design-literate person who sees it first as a small thumbnail and then up close?
+const CRITIC_SYSTEM = `You are the last check before a picture becomes a musician's record cover. The candidates were drawn by an image model. The musician rejects any cover that obviously looks AI-generated, so you answer one question about each candidate and nothing else: how much does it LOOK generated, to a design-literate person who sees it first as a small thumbnail and then up close? The question is never whether the picture is true to life. An imagined, surreal world is welcome when it reads as digital art somebody designed.
 
 Give each candidate a mark called real, from 0 to 10:
-10 = I would assume a person photographed this or made it by hand.
+10 = I would assume a person made this: photographed it, or drew, painted, modelled or digitally illustrated it with a style of their own.
 7 = believable; nothing gives it away at a glance, and only small things up close.
 5 = I would suspect it.
 3 = obviously generated.
 0 = a cliche of AI art.
 
 What gives a picture away (each lowers the mark):
-- Impossible or theatrical content shown as if photographed: an everyday object at an impossible size, objects that float or glow, weather and light arranged for drama.
-- The stock generated mood: glow, bloom, haze, shafts of light, neon, purple-and-teal or orange-and-teal colour, a saturated golden hour, everything crisp and high-contrast at once.
+- An impossible thing pasted into an otherwise ordinary photograph: an everyday object at an impossible size among real buildings, objects that float or glow in a real street.
+- The stock generated mood: glow, bloom, haze or shafts of light that come from nowhere, neon, purple-and-teal or orange-and-teal colour, a saturated golden hour, everything crisp and high-contrast at once.
+- An imagined world that is generic: nothing in it specific, a vista that is only pretty and mysterious, styles mixed within one picture.
 - Surfaces: waxy or airbrushed smoothness; every part equally sharp and equally detailed; texture that looks painted on; objects too clean and new, with no dust, wear or handling.
 - Composition: a perfectly centred, symmetrical, spotlit hero object; decoration added for prettiness (a moon, flowers, sparkles, drifting particles, a halo).
 - Faults on inspection: warped geometry, melted small parts, nonsense marks, wrong hands or faces, shadows and reflections that disagree with the light.
 - A handmade medium that is too perfect: brush, pencil or paper texture laid on evenly like a filter, impossible precision, no real edge to the sheet.
-What does NOT lower the mark: an unusual idea, a dark or plain picture, grain, blur, a small subject, an off-centre frame, a medium whose texture behaves like the real thing.
+What does NOT lower the mark: an unusual idea; an impossible or surreal world that is openly digital art, held in one consistent style, built from tangible materials, with light and mist that come from things in the scene; a dark or plain picture; grain, blur, a small subject, an off-centre frame; a medium whose texture behaves like the real thing.
 
 This musician's own verdicts, to calibrate against:
 ${OWNER_VERDICTS}
-Mark those roughly 9, 8, 6, 2 and 4.
+Mark those roughly 9, 8, 8, 6, 2 and 4, in that order.
 
 For each candidate also write:
 - tells: the two or three specific things in THIS picture that most give it away, at most 160 characters. An empty string if nothing does.
-- fix: when real is below 7, one sentence telling the image model what to change so the picture stops looking generated (for example: put the cassette at its real size on the ground instead of towering over the buildings; take out the moon and the glow and light it with one plain window). Otherwise an empty string.`
+- fix: when real is below 7, one sentence telling the image model what to change so the picture stops looking generated (for example: put the cassette at its real size on the ground instead of towering over the buildings; take out the moon and the glow and give the light a source in the scene). Otherwise an empty string.`
 
 const CRITIC_SCHEMA = {
   type: 'object',
@@ -511,7 +521,7 @@ export function chooseTake(count: number, verdict: TakeVerdict, critique: TakeCr
   if (both.length) return { best: top(both, i => picture(i) + real(i)), cassetteOk: true, realOk: true, fix: '' }
   if (right.length) {
     const best = top(right, i => real(i) * 2 + picture(i))
-    return { best, cassetteOk: true, realOk: false, fix: critique?.[best]?.fix || 'Make it look like a real photograph or a real handmade piece: plain natural light, the cassette at its real size, no glow, no haze, no added decoration.' }
+    return { best, cassetteOk: true, realOk: false, fix: critique?.[best]?.fix || 'Make it look made by a person, in one deliberate style: light that has a source in the scene, tangible materials, no stock decoration, no glow or haze from nowhere.' }
   }
   const best = Math.min(Math.max(0, verdict.best), n - 1)
   const looks = real(best) >= REAL_PASS
