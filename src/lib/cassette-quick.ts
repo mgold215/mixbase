@@ -703,7 +703,6 @@ export async function restoreQuickJob(userId: string, projectId: string): Promis
       const row = mine.find(r => r.settings?.format === format)
       if (row) clips.push({ format, video_url: row.video_url!, kind: row.kind === 'ai' ? 'cinematic' : 'loop', model: typeof row.settings?.model === 'string' ? row.settings.model : null })
     }
-    const told = mine[0] ?? rows[0]
     const letterings = (await listStudio(userId, `lettering-${projectId}-`).catch(() => [] as StudioFile[]))
       .filter(f => isOwnStudioKey(f.path, userId, 'lettering') && f.path.includes(`/lettering-${projectId}-`))
     const now = Date.now()
@@ -715,7 +714,8 @@ export async function restoreQuickJob(userId: string, projectId: string): Promis
       status: 'done',
       stage: 'Done.',
       steps: { brief: 'done', cover: 'done', canvas: clips.some(c => c.format === 'canvas') ? 'done' : 'skipped', youtube: clips.some(c => c.format === 'youtube') ? 'done' : 'skipped' },
-      scene_label: (told.title ?? '').replace(/\s+·\s+(Canvas|YouTube|Spotify Canvas)\s*$/, '').trim() || null,
+      // Named only by a clip of this cover: an older cover's name is not this picture's.
+      scene_label: (mine[0]?.title ?? '').replace(/\s+·\s+(Canvas|YouTube|Spotify Canvas)\s*$/, '').trim() || null,
       idea: mine[0] && typeof mine[0].settings?.idea === 'string' ? mine[0].settings.idea : null,
       takes: [],
       take: null,

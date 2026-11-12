@@ -614,7 +614,6 @@ async function makeStillCover(
     console.error('[cassette-studio/motion] cover download failed:', err instanceof Error ? err.message : err)
     throw new CoverError(MOTION_FAILED, 502)
   }
-  if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
   // The way this very picture was already planned to move, when it was; else
   // it is looked at now (one model call, a few cents) and the plan is kept
   // with the clip, so the next tap on the same cover costs nothing.
@@ -629,6 +628,8 @@ async function makeStillCover(
       console.error('[cassette-studio/motion] planning failed:', err instanceof Error ? err.message : err)
     }
   }
+  // Only now: the model's look above can take half a minute and needs no render slot.
+  if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
   let bytes: Buffer
   try {
     const { width, height } = FREE_FORMATS[format]
@@ -649,27 +650,29 @@ async function makeStillCover(
     kind: 'free',
     title: `${withTitle ? 'Moving cover' : 'Cover in motion'} · ${FREE_FORMATS[format].label}`,
     sourceImageUrl: url,
-    settings: recipe ? { source, format, title: withTitle, motion: 'designed', recipe } : { source, format, title: withTitle, motion: 'drift' },
+    // `cover` names the picture the plan was written for: a titled clip's source image is the lettered cover, not that picture.
+    settings: recipe ? { source, format, title: withTitle, motion: 'designed', recipe, cover: project.artwork_url } : { source, format, title: withTitle, motion: 'drift' },
   })
   if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
   return stored
 }
 
-/** The motion plan a one-click run saved with clips of this cover picture, if any. Best-effort. */
+/** The motion plan saved with a clip of this cover picture (by a one-click run or by this button), if any. Best-effort. */
 async function rememberedMotion(userId: string, projectId: string, artworkUrl: string | null | undefined): Promise<MotionRecipe | null> {
   if (!artworkUrl) return null
   try {
     const { data, error } = await supabaseAdmin
       .from('mb_visualizers')
-      .select('settings')
+      .select('settings, source_image_url')
       .eq('user_id', userId)
       .eq('project_id', projectId)
-      .eq('source_image_url', artworkUrl)
       .eq('settings->>motion', 'designed')
       .order('created_at', { ascending: false })
-      .limit(1)
-    if (error || !data?.length) return null
-    return parseMotionRecipe((data[0] as { settings?: Record<string, unknown> | null }).settings?.recipe)
+      .limit(12)
+    if (error || !data) return null
+    const rows = data as { settings?: Record<string, unknown> | null; source_image_url?: string | null }[]
+    const row = rows.find(r => r.source_image_url === artworkUrl || r.settings?.cover === artworkUrl)
+    return row ? parseMotionRecipe(row.settings?.recipe) : null
   } catch {
     return null
   }
