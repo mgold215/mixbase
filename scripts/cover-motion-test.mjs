@@ -33,7 +33,7 @@ import {
 } from '../src/lib/cover-motion.ts'
 import { cameraAt, createCoverMotion } from '../src/lib/cover-motion-scene.ts'
 import { renderCoverMotion } from '../src/lib/cover-motion-render.ts'
-import { MOTION_MODELS, MOTION_SCHEMA, MOTION_SYSTEM, writeMotionRecipe } from '../src/lib/cover-motion-direct.ts'
+import { HUB_SYMMETRY, MOTION_MODELS, MOTION_SCHEMA, MOTION_SYSTEM, refineSpins, writeMotionRecipe } from '../src/lib/cover-motion-direct.ts'
 
 const require = createRequire(import.meta.url)
 const FFMPEG = require('@ffmpeg-installer/ffmpeg').path
@@ -100,6 +100,11 @@ console.log('parseMotionRecipe')
   check('a path is capped at 16 points', long.elements[0].path.length === 16)
   check('the plain plan reads back as itself', JSON.stringify(parseMotionRecipe(templateRecipe())) === JSON.stringify(templateRecipe()))
   check('a plan with no usable element is still a plan', parseMotionRecipe({ ...FULL, elements: [] })?.elements.length === 0)
+  check('the plain plan adds nothing blind: a camera and grain only', templateRecipe().elements.length === 0 && templateRecipe().camera.move === 'push')
+  const reel = parseMotionRecipe({ ...FULL, elements: [wire('spin', { at: { x: 0.4, y: 0.3 }, radius: 0.03, laps: 2, amount: 0 })] }).elements[0]
+  check('a reel is kept though it has no amount, and carries no shape until one is found', reel?.kind === 'spin' && reel.laps === 2 && !('squash' in reel) && !('tilt' in reel))
+  const kept = parseMotionRecipe({ ...FULL, elements: [{ kind: 'spin', at: { x: 0.4, y: 0.3 }, radius: 0.03, laps: 2, squash: 0.2, tilt: 200 }] }).elements[0]
+  check('a stored reel keeps its found shape, in range', kept.squash === 0.4 && kept.tilt === 20)
 }
 
 // ── Square cover → frame ────────────────────────────────────────────────────
@@ -190,6 +195,8 @@ const planB = parseMotionRecipe({ ...FULL, elements: [wire('trace', { path: line
     wire('sweep', { area: { x: 0.2, y: 0.3, w: 0.6, h: 0.4 }, color: '#ffffff', amount: 0.9, angle: 20 }),
     wire('mist', { area: whole, color: '#e8e4dc', amount: 0.9 }),
     wire('trace', { path: line, color: '#d2ffb8', amount: 0.9, laps: 1 }),
+    wire('spin', { at: { x: 0.5, y: 0.5 }, radius: 0.12, laps: 1 }),
+    { ...wire('spin', { at: { x: 0.5, y: 0.5 }, radius: 0.12, laps: 1 }), look: 'flat', squash: 0.6, tilt: 30 },
   ]
   const silent = []
   for (const el of every) {
@@ -242,6 +249,59 @@ console.log('\nrender')
   check('60 frames of 270×480 (2 s at 30 fps)', frames === 60, `${frames}`)
 }
 
+// ── Reels ───────────────────────────────────────────────────────────────────
+// A cassette drawn as the covers show it: a dark window with two six-toothed
+// hubs, the right one seen at an angle (flattened and leaning).
+console.log('\nreels')
+{
+  const N = 700
+  const hub = (cx, cy, r, squash, tilt) => {
+    let g = `<g transform="translate(${cx} ${cy}) rotate(${tilt}) scale(1 ${squash})"><circle r="${r * 1.5}" fill="#161616"/><circle r="${r}" fill="#e9e6df"/><circle r="${r * 0.42}" fill="#1b1b1b"/>`
+    for (let i = 0; i < 6; i++) g += `<rect x="${-r * 0.13}" y="${-r * 1.02}" width="${r * 0.26}" height="${r * 0.5}" fill="#1b1b1b" transform="rotate(${i * 60 + 11})"/>`
+    return g + '</g>'
+  }
+  const A = { x: 250, y: 300, r: 30 }, B = { x: 450, y: 310, r: 30, squash: 0.7, tilt: 20 }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${N}" height="${N}"><rect width="${N}" height="${N}" fill="#6b6f66"/><rect x="150" y="150" width="400" height="60" fill="#d9d9d9"/><rect x="150" y="360" width="400" height="24" fill="#c33"/><rect x="150" y="384" width="400" height="24" fill="#36c"/>${hub(A.x, A.y, A.r, 1, 0)}${hub(B.x, B.y, B.r, B.squash, B.tilt)}</svg>`
+  const cover = await sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer()
+  const spin = (x, y, r = 0.045) => ({ kind: 'spin', at: { x, y }, radius: r, laps: 2 })
+  const base = { summary: '', camera: { move: 'still', amount: 0 }, grain: 0 }
+  // Aimed 1.5% of the cover off, the way a model points.
+  const out = await refineSpins(cover, { ...base, elements: [spin(A.x / N + 0.015, A.y / N - 0.012), spin(B.x / N - 0.013, B.y / N + 0.014), { kind: 'mist', area: whole, color: '#ffffff', amount: 0.3, angle: 0 }] })
+  const [a, b] = out.elements.filter(e => e.kind === 'spin')
+  const off = (e, t) => Math.hypot(e.at.x * N - t.x, e.at.y * N - t.y)
+  check('both reels are found, and the other elements are left alone', out.elements.length === 3 && out.elements[2].kind === 'mist')
+  check('the front-on reel is centred to within a pixel or two', a && off(a, A) < 2.5, a ? `${off(a, A).toFixed(2)} px of ${N}` : 'dropped')
+  check('…and found round', a && a.squash > 0.9, a ? `squash ${a.squash.toFixed(2)}` : '')
+  check('the reel seen at an angle is centred too', b && off(b, B) < 3, b ? `${off(b, B).toFixed(2)} px` : 'dropped')
+  const lean = b ? Math.min(Math.abs(b.tilt - B.tilt), 180 - Math.abs(b.tilt - B.tilt)) : 99
+  check('…with how flat it is and which way it leans', b && Math.abs(b.squash - B.squash) < 0.1 && lean < 12, b ? `squash ${b.squash.toFixed(2)} (true ${B.squash}), lean ${b.tilt.toFixed(0)}° (true ${B.tilt}°)` : '')
+  check('the reel stops before the label and the stripes', a && a.radius * N < A.r * 1.9 && a.radius * N > A.r * 0.6, a ? `radius ${(a.radius * N).toFixed(1)} px, hub ${A.r}` : '')
+  check('a found shape survives being stored and read back', JSON.stringify(parseMotionRecipe(JSON.parse(JSON.stringify(out))).elements) === JSON.stringify(out.elements))
+  const none = await refineSpins(cover, { ...base, elements: [spin(0.5, 0.82)] })
+  check('a reel aimed at no hub is dropped', none.elements.length === 0)
+  const lone = await refineSpins(cover, { ...base, elements: [spin(A.x / N, A.y / N), spin(0.5, 0.82)] })
+  check('one reel found of two asked: neither turns', lone.elements.length === 0)
+  const junk = await refineSpins(Buffer.from('not an image'), { ...base, elements: [spin(0.3, 0.4), { kind: 'mist', area: whole, color: '#ffffff', amount: 0.3, angle: 0 }] })
+  check('an unreadable cover: the reels go, the rest stays', junk.elements.length === 1 && junk.elements[0].kind === 'mist')
+  check('the symmetry bar is a real bar', HUB_SYMMETRY > 0.4 && HUB_SYMMETRY < 0.9)
+
+  // A turning reel changes the hub and nothing outside its disc.
+  const img = await loadImage(await sharp(Buffer.from(svg)).resize(540, 540).jpeg({ quality: 92 }).toBuffer())
+  const mk = els => createCoverMotion({ W: 270, H: 270, total: 48, seed: 1, still: img, recipe: { ...base, elements: els }, createLayer, grain: false })
+  const shot = (d, f) => { const c = createCanvas(270, 270), x = c.getContext('2d'); d(x, f); return Buffer.from(x.getImageData(0, 0, 270, 270).data) }
+  const plain = shot(mk([]), 5), turned = shot(mk([a]), 5)
+  let inside = 0, outside = 0
+  for (let y = 0; y < 270; y++) for (let x = 0; x < 270; x++) {
+    const i = (y * 270 + x) * 4, d = Math.abs(plain[i] - turned[i])
+    // The still camera zooms 1.02 about the centre.
+    const fx = 135 + (a.at.x * 270 - 135) * 1.02, fy = 135 + (a.at.y * 270 - 135) * 1.02
+    const r = Math.hypot(x - fx, y - fy) / (a.radius * 270 * 1.02)
+    if (r < 0.8) inside += d
+    else if (r > 1.25) outside += d
+  }
+  check('a turning reel moves the hub and touches nothing beyond it', inside > 0 && outside === 0, `inside ${inside}, outside ${outside}`)
+}
+
 // ── The model call ──────────────────────────────────────────────────────────
 console.log('\nthe designer')
 {
@@ -250,8 +310,9 @@ console.log('\nthe designer')
   const el = MOTION_SCHEMA.properties.elements.items.properties
   check('the schema offers every kind, look and camera move', ELEMENT_KINDS.every(k => el.kind.enum.includes(k)) && [...PARTICLE_LOOKS, ...GLOW_PACES, ...SHIMMER_LOOKS].every(l => el.look.enum.includes(l)) && CAMERA_MOVES.every(m => MOTION_SCHEMA.properties.camera.properties.move.enum.includes(m)))
   check('the brief explains every kind, look and move', [...ELEMENT_KINDS, ...PARTICLE_LOOKS, ...GLOW_PACES, ...SHIMMER_LOOKS, ...CAMERA_MOVES].every(w => new RegExp(`\\b${w}\\b`).test(MOTION_SYSTEM)))
-  check('the brief keeps the cassette and the title out of it', /cassette never wavers/.test(MOTION_SYSTEM) && /lower-centre of the cover holds the title/.test(MOTION_SYSTEM))
-  check('the brief asks for restraint and for motion with a source in the picture', /Restraint/.test(MOTION_SYSTEM) && /Motion comes from the picture/.test(MOTION_SYSTEM))
+  check('the brief keeps the cassette and the title out of it', /cassette's body never wavers/.test(MOTION_SYSTEM) && /lower-centre of the cover holds the title/.test(MOTION_SYSTEM))
+  check('the brief asks for movement you notice, with a source in the picture', /Very underwhelming/.test(MOTION_SYSTEM) && /Make it readable/.test(MOTION_SYSTEM) && /Motion comes from the picture/.test(MOTION_SYSTEM))
+  check('the brief asks for both reels on every cover', /BOTH reels/.test(MOTION_SYSTEM))
   check('two models, the second a stand-in', MOTION_MODELS.length === 2 && MOTION_MODELS[0] !== MOTION_MODELS[1])
   const saved = process.env.ANTHROPIC_API_KEY
   delete process.env.ANTHROPIC_API_KEY

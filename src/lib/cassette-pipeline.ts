@@ -29,6 +29,7 @@ import { finishTake } from '@/lib/cassette-art'
 import { fitStill, stillLoop } from '@/lib/still-loop'
 import { parseMotionRecipe, type MotionRecipe } from '@/lib/cover-motion'
 import { renderCoverMotion } from '@/lib/cover-motion-render'
+import { writeMotionRecipe } from '@/lib/cover-motion-direct'
 import {
   decodeForFilter, filterRawToJpeg, gradeEncoded, gradePixels, isIdentityFilter, type FilterSettings, type RawImage,
 } from '@/lib/cover-filters'
@@ -614,9 +615,20 @@ async function makeStillCover(
     throw new CoverError(MOTION_FAILED, 502)
   }
   if (!tryAcquireTranscodeSlot()) throw new CoverError('Server is busy rendering other videos — try again in a minute', 503)
-  // The way a one-click run planned this very picture to move, when it did
-  // (no new plan is written here: that would be a paid look per tap).
-  const recipe = await rememberedMotion(userId, project.id, project.artwork_url)
+  // The way this very picture was already planned to move, when it was; else
+  // it is looked at now (one model call, a few cents) and the plan is kept
+  // with the clip, so the next tap on the same cover costs nothing.
+  let recipe = await rememberedMotion(userId, project.id, project.artwork_url)
+  if (!recipe && project.artwork_url) {
+    try {
+      const plain = storagePathFromUrl(project.artwork_url, ARTWORK_BUCKET)
+      const plan = await writeMotionRecipe(plain && plain !== key ? await downloadStudio(plain) : cover)
+      recipe = plan.recipe
+      console.log(`[cassette-studio/motion] motion plan by ${plan.model ?? 'template'}: ${recipe.camera.move} + ${recipe.elements.map(e => e.kind).join(', ') || 'nothing'}`)
+    } catch (err) {
+      console.error('[cassette-studio/motion] planning failed:', err instanceof Error ? err.message : err)
+    }
+  }
   let bytes: Buffer
   try {
     const { width, height } = FREE_FORMATS[format]
@@ -637,7 +649,7 @@ async function makeStillCover(
     kind: 'free',
     title: `${withTitle ? 'Moving cover' : 'Cover in motion'} · ${FREE_FORMATS[format].label}`,
     sourceImageUrl: url,
-    settings: { source, format, title: withTitle, motion: recipe ? 'designed' : 'drift' },
+    settings: recipe ? { source, format, title: withTitle, motion: 'designed', recipe } : { source, format, title: withTitle, motion: 'drift' },
   })
   if (!stored) throw new CoverError('Rendered fine but saving failed — try again.', 500)
   return stored

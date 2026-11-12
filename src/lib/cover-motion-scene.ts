@@ -65,21 +65,21 @@ const luma = (hex: string) => { const [r, g, b] = rgb(hex); return 0.299 * r + 0
 export function cameraAt(move: MotionRecipe['camera']['move'], amount: number, t: number, W: number, H: number): { z: number; dx: number; dy: number } {
   const a = Math.min(1, Math.max(0, amount))
   // Room to move: the picture is always drawn a little larger than the frame.
-  const base = 1.03 + 0.05 * a
+  const base = 1.04 + 0.08 * a
   // A hand is never perfectly still: a faint higher harmonic under every move.
-  const hx = 0.0016 * W * a * loopSin(t, 3, 1.3), hy = 0.0012 * H * a * loopSin(t, 2, 0.7)
+  const hx = 0.002 * W * a * loopSin(t, 3, 1.3), hy = 0.0015 * H * a * loopSin(t, 2, 0.7)
   switch (move) {
     case 'push':
-      return { z: base + 0.034 * a * (1 - Math.cos(TAU * t)) / 2, dx: hx, dy: hy }
+      return { z: base + 0.07 * a * (1 - Math.cos(TAU * t)) / 2, dx: 0.006 * W * a * loopSin(t, 1, 0.9) + hx, dy: 0.005 * H * a * loopSin(t, 1, 2.3) + hy }
     case 'sway':
-      return { z: base, dx: 0.02 * W * a * loopSin(t, 1) + hx, dy: 0.004 * H * a * loopSin(t, 1, 1.9) + hy }
+      return { z: base + 0.01 * a * loopSin(t, 2, 0.5), dx: 0.032 * W * a * loopSin(t, 1) + hx, dy: 0.006 * H * a * loopSin(t, 1, 1.9) + hy }
     case 'rise':
-      return { z: base, dx: 0.004 * W * a * loopSin(t, 1, 0.6) + hx, dy: 0.02 * H * a * loopSin(t, 1) + hy }
+      return { z: base + 0.01 * a * loopSin(t, 2, 0.5), dx: 0.006 * W * a * loopSin(t, 1, 0.6) + hx, dy: 0.032 * H * a * loopSin(t, 1) + hy }
     case 'still':
       return { z: 1.02, dx: hx * 0.5, dy: hy * 0.5 }
     case 'float':
     default:
-      return { z: base + 0.012 * a * loopSin(t, 1), dx: 0.013 * W * a * loopSin(t, 1, 0.4) + hx, dy: 0.01 * H * a * loopSin(t, 1, 2.0) + hy }
+      return { z: base + 0.02 * a * loopSin(t, 1), dx: 0.022 * W * a * loopSin(t, 1, 0.4) + hx, dy: 0.017 * H * a * loopSin(t, 1, 2.0) + hy }
   }
 }
 
@@ -92,12 +92,13 @@ const PARTICLES: Record<string, {
   count: [number, number]; size: [number, number]; travel: [number, number]; lives: number[]
   alpha: [number, number]; wobble: number; streak: number; blend: GlobalCompositeOperation; edge: number
 }> = {
-  dust:    { count: [18, 110], size: [0.0012, 0.0042], travel: [0.02, 0.09], lives: [1, 1, 2],    alpha: [0.16, 0.6],  wobble: 0.012, streak: 0,     blend: 'screen', edge: 0.5 },
-  sand:    { count: [200, 900], size: [0.0006, 0.0015], travel: [0.2, 0.55], lives: [2, 3, 3, 4], alpha: [0.18, 0.5],  wobble: 0.004, streak: 0.0045, blend: 'source-over', edge: 0.25 },
+  dust:    { count: [26, 150], size: [0.0014, 0.0048], travel: [0.03, 0.13], lives: [1, 1, 2],    alpha: [0.25, 0.8],  wobble: 0.012, streak: 0,     blend: 'screen', edge: 0.5 },
+  sand:    { count: [200, 900], size: [0.0006, 0.0015], travel: [0.2, 0.55], lives: [2, 3, 3, 4], alpha: [0.3, 0.75],  wobble: 0.004, streak: 0.0045, blend: 'source-over', edge: 0.25 },
   snow:    { count: [35, 200], size: [0.0016, 0.006],  travel: [0.25, 0.5],  lives: [1, 2, 2],    alpha: [0.3, 0.85],  wobble: 0.02,  streak: 0,     blend: 'screen', edge: 0.25 },
   rain:    { count: [40, 240], size: [0.0006, 0.0012], travel: [0.6, 1.0],   lives: [4, 5, 6, 8], alpha: [0.1, 0.32],  wobble: 0,     streak: 0.05,  blend: 'screen', edge: 0.12 },
   embers:  { count: [10, 60],  size: [0.0012, 0.0036], travel: [0.14, 0.4],  lives: [1, 2, 2],    alpha: [0.5, 1],     wobble: 0.02,  streak: 0,     blend: 'lighter', edge: 0.3 },
   bubbles: { count: [6, 36],   size: [0.004, 0.014],   travel: [0.1, 0.3],   lives: [1, 1, 2],    alpha: [0.25, 0.6],  wobble: 0.012, streak: 0,     blend: 'screen', edge: 0.3 },
+  moths:   { count: [1, 5],    size: [0.0028, 0.0052], travel: [0.5, 1.0],   lives: [1],          alpha: [0.6, 0.95],  wobble: 0.05,  streak: 0,     blend: 'screen', edge: 0.16 },
 }
 
 /** A soft round dot of one colour, drawn once and stamped for every particle. */
@@ -210,13 +211,20 @@ function makeParticles(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'p
         // Its life: in over the first part, out over the last.
         const env = smooth(0, spec.edge, u) * (1 - smooth(1 - spec.edge, 1, u))
         if (env <= 0.004) continue
-        const wob = p.wobA * loopSin(t, p.wobC, p.wobP)
-        const along = (u - 0.5) * p.travel
+        let wob = p.wobA * loopSin(t, p.wobC, p.wobP)
+        let along = (u - 0.5) * p.travel
+        if (e.look === 'moths') {
+          // Never a straight line: it dips, doubles back and jitters.
+          wob += p.wobA * (0.8 * loopSin(t, p.wobC + 3, p.twP) + 0.35 * loopSin(t, p.twC + 9, p.wobP))
+          along += p.wobA * 0.9 * loopSin(t, p.wobC + 2, p.twP + 1)
+        }
         const x = p.x + dir.x * along - dir.y * wob
         const y = p.y + dir.y * along + dir.x * wob
         let a = p.alpha * env
         if (sand) a *= gust(x, y, t)
         if (e.look === 'dust' || e.look === 'embers') a *= 0.62 + 0.38 * loopSin(t, p.twC, p.twP)
+        // A moth is seen by its wings: it beats bright and dim many times a second.
+        if (e.look === 'moths') a *= 0.45 + 0.55 * Math.abs(loopSin(t, 36 + p.twC * 4, p.twP))
         if (spec.streak > 0) {
           const len = spec.streak * S * (0.5 + p.size / (spec.size[1] * S))
           ctx.globalAlpha = a
@@ -271,7 +279,7 @@ function makeGlow(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'glow' 
       g.addColorStop(0.35, rgba(e.color, 0.42))
       g.addColorStop(1, rgba(e.color, 0))
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = Math.min(1, 0.6 * e.amount * level(t))
+      ctx.globalAlpha = Math.min(1, 0.85 * e.amount * level(t))
       ctx.fillStyle = g
       ctx.fillRect(c.x - radius, c.y - radius, radius * 2, radius * 2)
     },
@@ -286,10 +294,12 @@ function makeShimmer(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'shi
   const layer = s.createLayer(w, h)
   const mask = featherMask(s.createLayer, w, h, false)
   const kx = s.still.width / W, ky = s.still.height / H
-  const water = e.look === 'water'
-  const A = e.amount * S * (water ? 0.0075 : 0.0034)
-  const l1 = S * (water ? 0.07 : 0.034), l2 = S * (water ? 0.027 : 0.013)
-  const c1 = water ? 2 : 3, c2 = water ? 3 : 5
+  // heat: fine fast waver. water: broader ripples. breeze: long slow bands,
+  // so leaves, grass and cloth lean one way and back instead of rippling.
+  const water = e.look === 'water', breeze = e.look === 'breeze'
+  const A = e.amount * S * (breeze ? 0.0085 : water ? 0.0095 : 0.0045)
+  const l1 = S * (breeze ? 0.42 : water ? 0.07 : 0.034), l2 = S * (breeze ? 0.17 : water ? 0.027 : 0.013)
+  const c1 = breeze ? 1 : water ? 2 : 3, c2 = breeze ? 2 : water ? 3 : 5
   const strip = water ? 3 : 2
   const r = frameRng(s.seed ^ salt, 0)
   const p1 = r() * TAU, p2 = r() * TAU
@@ -344,7 +354,7 @@ function makeSweep(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'sweep
       lc.globalCompositeOperation = 'destination-in'
       lc.drawImage(mask, 0, 0)
       ctx.globalCompositeOperation = 'screen'
-      ctx.globalAlpha = Math.min(1, 0.5 * e.amount * Math.sin(Math.PI * p))
+      ctx.globalAlpha = Math.min(1, 0.75 * e.amount * Math.sin(Math.PI * p))
       ctx.drawImage(layer.canvas, R.x, R.y)
     },
   }
@@ -373,7 +383,7 @@ function makeMist(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'mist' 
         const env = Math.sin(Math.PI * u) ** 2
         if (env <= 0.004) continue
         const along = (u - 0.5) * b.travel
-        ctx.globalAlpha = 0.3 * e.amount * b.alpha * env
+        ctx.globalAlpha = 0.42 * e.amount * b.alpha * env
         ctx.drawImage(sprite, b.x + dir.x * along - b.rx, b.y + dir.y * along - b.ry, b.rx * 2, b.ry * 2)
       }
     },
@@ -418,6 +428,60 @@ function makeTrace(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'trace
   }
 }
 
+/** A hard-edged disc with only its rim softened: what a turning reel is cut out with. */
+function discMask(createLayer: MotionLayerFactory, d: number): CanvasImageSource {
+  const l = createLayer(d, d)
+  const g = l.ctx.createRadialGradient(d / 2, d / 2, 0, d / 2, d / 2, d / 2)
+  g.addColorStop(0, 'rgba(255,255,255,1)')
+  g.addColorStop(0.86, 'rgba(255,255,255,1)')
+  g.addColorStop(1, 'rgba(255,255,255,0)')
+  l.ctx.fillStyle = g
+  l.ctx.fillRect(0, 0, d, d)
+  return l.canvas
+}
+
+function makeSpin(s: CoverMotionSetup, e: Extract<MotionElement, { kind: 'spin' }>): Drawer {
+  const { W, H } = s
+  const S = coverSquare(W, H).size
+  const c = pointToFrame(e.at, W, H)
+  const R = Math.max(3, e.radius * S)
+  const d = Math.ceil(R * 2) + 2
+  const layer = s.createLayer(d, d)
+  const disc = discMask(s.createLayer, d)
+  const kx = s.still.width / W, ky = s.still.height / H
+  // The reel's own plane: a circle seen at an angle is an ellipse leaning by `tilt`.
+  const squash = e.squash ?? 1, tilt = ((e.tilt ?? 0) * Math.PI) / 180
+  const mask = s.createLayer(d, d)
+  mask.ctx.translate(d / 2, d / 2)
+  mask.ctx.rotate(tilt)
+  mask.ctx.scale(1, squash)
+  mask.ctx.rotate(-tilt)
+  mask.ctx.drawImage(disc, -d / 2, -d / 2)
+  return {
+    anchored: true,
+    draw(ctx, t) {
+      const lc = layer.ctx
+      lc.reset()
+      lc.imageSmoothingQuality = 'high'
+      // The picture's own pixels, turned about the reel's centre in the
+      // reel's plane: lean, flatten, turn, and back (a tape plays anticlockwise).
+      lc.translate(d / 2, d / 2)
+      lc.rotate(tilt)
+      lc.scale(1, squash)
+      lc.rotate(-TAU * e.laps * t)
+      lc.scale(1, 1 / squash)
+      lc.rotate(-tilt)
+      lc.drawImage(s.still, (c.x - d / 2) * kx, (c.y - d / 2) * ky, d * kx, d * ky, -d / 2, -d / 2, d, d)
+      lc.setTransform(1, 0, 0, 1, 0, 0)
+      lc.globalCompositeOperation = 'destination-in'
+      lc.drawImage(mask.canvas, 0, 0)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.drawImage(layer.canvas, c.x - d / 2, c.y - d / 2)
+    },
+  }
+}
+
 function clampRect(r: FrameRect, W: number, H: number): FrameRect {
   const x = Math.min(W - 2, Math.max(0, r.x)), y = Math.min(H - 2, Math.max(0, r.y))
   return { x, y, w: Math.min(W - x, r.w), h: Math.min(H - y, r.h) }
@@ -443,10 +507,11 @@ export function createCoverMotion(s: CoverMotionSetup) {
       case 'sweep': return makeSweep(s, e, salt)
       case 'mist': return makeMist(s, e, salt)
       case 'trace': return makeTrace(s, e)
+      case 'spin': return makeSpin(s, e)
     }
   })
   // The picture's own wavering first, then its lights; in the air, haze behind what it carries.
-  const order = (e: MotionElement) => (e.kind === 'shimmer' ? 0 : e.kind === 'mist' ? 1 : 2)
+  const order = (e: MotionElement) => (e.kind === 'shimmer' ? 0 : e.kind === 'spin' ? 1 : e.kind === 'mist' ? 2 : 3)
   const sorted = drawers.map((d, i) => ({ d, k: order(recipe.elements[i]), i })).sort((a, b) => a.k - b.k || a.i - b.i).map(v => v.d)
   const anchored = sorted.filter(d => d.anchored), air = sorted.filter(d => !d.anchored)
 

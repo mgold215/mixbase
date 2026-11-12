@@ -673,6 +673,69 @@ export async function startFilmJob(args: { userId: string; projectId: string; fo
   return { ok: true, job }
 }
 
+/**
+ * A finished run, put back together from what it saved, for when this server
+ * no longer has it in memory (a deploy, three hours gone, another replica).
+ * Without this the result card vanished from both screens, and with it the
+ * only way to "Film it" (the owner, 2026-11-11: "Film it disappears after I
+ * edit artwork"). Null when the song was never made with one click, or has
+ * no cover. Never stored: it is rebuilt on each ask. Never throws.
+ */
+export async function restoreQuickJob(userId: string, projectId: string): Promise<QuickJob | null> {
+  try {
+    const project = await loadCoverProject(userId, projectId)
+    if (!project?.artwork_url) return null
+    const { data, error } = await supabaseAdmin
+      .from('mb_visualizers')
+      .select('title, kind, video_url, settings, source_image_url')
+      .eq('user_id', userId)
+      .eq('project_id', projectId)
+      .eq('settings->>source', 'cassette-quick')
+      .order('created_at', { ascending: false })
+      .limit(12)
+    if (error || !data?.length) return null
+    type Row = { title?: string | null; kind?: string | null; video_url?: string | null; settings?: Record<string, unknown> | null; source_image_url?: string | null }
+    const rows = data as Row[]
+    // Only the clips of the cover the song has now: an older cover's clips are not this result.
+    const mine = rows.filter(r => r.source_image_url === project.artwork_url && r.video_url)
+    const clips: QuickClip[] = []
+    for (const format of ['canvas', 'youtube'] as const) {
+      const row = mine.find(r => r.settings?.format === format)
+      if (row) clips.push({ format, video_url: row.video_url!, kind: row.kind === 'ai' ? 'cinematic' : 'loop', model: typeof row.settings?.model === 'string' ? row.settings.model : null })
+    }
+    const told = mine[0] ?? rows[0]
+    const letterings = (await listStudio(userId, `lettering-${projectId}-`).catch(() => [] as StudioFile[]))
+      .filter(f => isOwnStudioKey(f.path, userId, 'lettering') && f.path.includes(`/lettering-${projectId}-`))
+    const now = Date.now()
+    return {
+      id: `restored-${projectId}`,
+      userId,
+      projectId,
+      description: '',
+      status: 'done',
+      stage: 'Done.',
+      steps: { brief: 'done', cover: 'done', canvas: clips.some(c => c.format === 'canvas') ? 'done' : 'skipped', youtube: clips.some(c => c.format === 'youtube') ? 'done' : 'skipped' },
+      scene_label: (told.title ?? '').replace(/\s+·\s+(Canvas|YouTube|Spotify Canvas)\s*$/, '').trim() || null,
+      idea: mine[0] && typeof mine[0].settings?.idea === 'string' ? mine[0].settings.idea : null,
+      takes: [],
+      take: null,
+      model: /\/ai-cassette-/.test(project.artwork_url) ? 'drawn' : null,
+      artwork_url: project.artwork_url,
+      finalized_artwork_url: project.finalized_artwork_url ?? null,
+      lettering: letterings[0] ?? null,
+      title: null,
+      clips,
+      notes: [],
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    }
+  } catch (err) {
+    console.error('[cassette-quick] restoring a run failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** The idea and motion a run saved with this cover's clips, if it did. Best-effort. */
 async function rememberedConcept(userId: string, projectId: string, artworkUrl: string): Promise<CoverConcept | null> {
   try {

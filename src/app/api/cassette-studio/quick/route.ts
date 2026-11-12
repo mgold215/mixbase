@@ -4,7 +4,7 @@ import { canonicalUuid, isJsonObject } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { cassetteStudioLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-limit'
 import { isOwnStudioKey, listStudio } from '@/lib/cassette-server'
-import { getQuickJob, latestQuickJob, publicJob, startFilmJob, startQuickJob, type QuickFormat } from '@/lib/cassette-quick'
+import { getQuickJob, latestQuickJob, publicJob, restoreQuickJob, startFilmJob, startQuickJob, type QuickFormat } from '@/lib/cassette-quick'
 import { parseConcept } from '@/lib/cover-concept'
 import { isArtModelId, MAX_SCENE, MAX_TAKES } from '@/lib/cassette-art'
 
@@ -136,6 +136,7 @@ export async function GET(request: NextRequest) {
   }
   const projectId = canonicalUuid(request.nextUrl.searchParams.get('project_id'))
   if (!projectId) return NextResponse.json({ error: 'job or project_id is required' }, { status: 400 })
-  const job = latestQuickJob(userId, projectId)
+  // The run this server still holds; else the song's last result put back together from what it saved.
+  const job = latestQuickJob(userId, projectId) ?? await restoreQuickJob(userId, projectId)
   return NextResponse.json({ job: job ? publicJob(job) : null })
 }

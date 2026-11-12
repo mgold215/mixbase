@@ -22,15 +22,15 @@ export type MotionPoint = { x: number; y: number }
 /** A rectangle of the square cover, in fractions of its side. */
 export type MotionArea = { x: number; y: number; w: number; h: number }
 
-export const PARTICLE_LOOKS = ['dust', 'sand', 'snow', 'rain', 'embers', 'bubbles'] as const
+export const PARTICLE_LOOKS = ['dust', 'sand', 'snow', 'rain', 'embers', 'bubbles', 'moths'] as const
 export type ParticleLook = (typeof PARTICLE_LOOKS)[number]
 export const GLOW_PACES = ['breathe', 'flicker', 'pulse'] as const
 export type GlowPace = (typeof GLOW_PACES)[number]
-export const SHIMMER_LOOKS = ['heat', 'water'] as const
+export const SHIMMER_LOOKS = ['heat', 'water', 'breeze'] as const
 export type ShimmerLook = (typeof SHIMMER_LOOKS)[number]
 export const CAMERA_MOVES = ['float', 'push', 'sway', 'rise', 'still'] as const
 export type CameraMove = (typeof CAMERA_MOVES)[number]
-export const ELEMENT_KINDS = ['particles', 'glow', 'shimmer', 'sweep', 'mist', 'trace'] as const
+export const ELEMENT_KINDS = ['particles', 'glow', 'shimmer', 'sweep', 'mist', 'trace', 'spin'] as const
 export type ElementKind = (typeof ELEMENT_KINDS)[number]
 
 export type MotionElement =
@@ -38,7 +38,7 @@ export type MotionElement =
   | { kind: 'particles'; look: ParticleLook; area: MotionArea; color: string; amount: number; angle: number }
   /** A light that is already in the picture, made to breathe, flicker or beat. */
   | { kind: 'glow'; pace: GlowPace; at: MotionPoint; radius: number; color: string; amount: number }
-  /** The picture itself wavering inside an area: hot air, or water. */
+  /** The picture itself wavering inside an area: hot air, water, or leaves and cloth in a breeze. */
   | { kind: 'shimmer'; look: ShimmerLook; area: MotionArea; amount: number }
   /** One glint of light crossing an area once per loop (glass, a bubble, the cassette's shell). */
   | { kind: 'sweep'; area: MotionArea; color: string; amount: number; angle: number }
@@ -46,6 +46,8 @@ export type MotionElement =
   | { kind: 'mist'; area: MotionArea; color: string; amount: number; angle: number }
   /** A point of light running along a line that is drawn in the picture. */
   | { kind: 'trace'; path: MotionPoint[]; color: string; amount: number; laps: number }
+  /** A cassette reel turning about its centre, `laps` whole turns per loop. Seen at an angle it is an ellipse: `squash` is its short axis over its long one, `tilt` the long axis's lean in degrees (both found in the picture by refineSpins, never asked of a model). */
+  | { kind: 'spin'; at: MotionPoint; radius: number; laps: number; squash?: number; tilt?: number }
 
 export type MotionRecipe = {
   /** One plain sentence the artist can read: what moves. */
@@ -56,8 +58,8 @@ export type MotionRecipe = {
   elements: MotionElement[]
 }
 
-/** Most elements one plan may carry: more than this is a busy picture, not a designed one. */
-export const MAX_ELEMENTS = 5
+/** Most elements one plan may carry (the two reels are two of them): more than this is a busy picture, not a designed one. */
+export const MAX_ELEMENTS = 7
 const MAX_PATH = 16
 
 const num = (v: unknown, lo: number, hi: number, dflt: number): number => {
@@ -100,7 +102,7 @@ function element(v: unknown): MotionElement | null {
   const e = v as Record<string, unknown>
   const kind = oneOf(e.kind, ELEMENT_KINDS)
   const amount = num(e.amount, 0, 1, 0.4)
-  if (!kind || amount < 0.02) return null
+  if (!kind || (amount < 0.02 && kind !== 'spin')) return null
   const angle = ((num(e.angle, -3600, 3600, 0) % 360) + 360) % 360
   switch (kind) {
     case 'particles': {
@@ -127,6 +129,14 @@ function element(v: unknown): MotionElement | null {
       const path = (Array.isArray(e.path) ? e.path : []).map(point).filter((p): p is MotionPoint => p !== null).slice(0, MAX_PATH)
       return path.length >= 2 ? { kind, path, color: hexColor(e.color), amount, laps: Math.round(num(e.laps, 1, 3, 1)) } : null
     }
+    case 'spin': {
+      const at = point(e.at)
+      if (!at) return null
+      const spin: MotionElement = { kind, at, radius: num(e.radius, 0.005, 0.2, 0.03), laps: Math.round(num(e.laps, 1, 4, 2)) }
+      if (typeof e.squash === 'number' && Number.isFinite(e.squash)) spin.squash = num(e.squash, 0.4, 1, 1)
+      if (typeof e.tilt === 'number' && Number.isFinite(e.tilt)) spin.tilt = ((num(e.tilt, -3600, 3600, 0) % 180) + 180) % 180
+      return spin
+    }
   }
 }
 
@@ -151,13 +161,17 @@ export function parseMotionRecipe(v: unknown): MotionRecipe | null {
   }
 }
 
-/** The plan used when no model can be asked: the camera floats and dust hangs in the air. */
+/**
+ * The plan used when no model can be asked: the camera eases in and back
+ * over live grain. No elements: nothing has looked at the picture, and dust
+ * or sparks added blind are exactly the stock effect the owner cannot stand.
+ */
 export function templateRecipe(): MotionRecipe {
   return {
-    summary: 'The camera floats and a little dust hangs in the light.',
-    camera: { move: 'float', amount: 0.45 },
+    summary: 'The camera eases in and back.',
+    camera: { move: 'push', amount: 0.6 },
     grain: 0.4,
-    elements: [{ kind: 'particles', look: 'dust', area: { x: 0, y: 0, w: 1, h: 1 }, color: '#fff1d6', amount: 0.3, angle: 300 }],
+    elements: [],
   }
 }
 
