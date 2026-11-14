@@ -159,6 +159,13 @@ struct SignUpView: View {
                     updated: LegalContent.termsUpdated,
                     sections: LegalContent.terms
                 )
+                // A sheet's root: the Mac has no swipe to close it.
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { showTerms = false }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
             }
         }
     }

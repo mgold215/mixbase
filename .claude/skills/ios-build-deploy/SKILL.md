@@ -29,7 +29,7 @@ xcrun devicectl device install app -d E11A7247-ACED-5D35-94E0-B1F8641BD71C \
 
 - **"developer disk image" errors**: `xcrun devicectl device info ddiServices -d E11A7247-ACED-5D35-94E0-B1F8641BD71C`
 - **Install fails "device disconnected"**: retry the install immediately — it usually succeeds on the second attempt.
-- Signing is Apple Development (m.goldman215@gmail.com) with auto-provisioning; bundle ID `com.moodmixformat.mixbase`. `-allowProvisioningUpdates` handles cert refresh — don't send the user into Xcode for signing issues.
+- Signing is Apple Development (the owner's Apple ID) with auto-provisioning; bundle ID `com.moodmixformat.mixbase`. `-allowProvisioningUpdates` handles cert refresh — don't send the user into Xcode for signing issues.
 
 ## After success
 

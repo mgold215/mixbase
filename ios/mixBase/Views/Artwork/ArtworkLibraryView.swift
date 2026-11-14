@@ -469,6 +469,16 @@ struct ArtworkDetailSheet: View {
                             pinnedUrl: pinnedProject?.visualizerUrl,
                             pinnedWideUrl: pinnedProject?.visualizerWideUrl
                         )
+                        // Here the Visualizer is a sheet's root, not a pushed
+                        // screen: no back button, and on the Mac no swipe to
+                        // close either, so it needs a way out of its own.
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showVisualizer = false }
+                                    .foregroundColor(Color(hex: "#2dd4bf"))
+                                    .keyboardShortcut(.cancelAction)
+                            }
+                        }
                     }
                 }
             }

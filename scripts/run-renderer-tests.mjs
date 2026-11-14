@@ -120,6 +120,7 @@ const SUITES = [
   'free-render-test.mjs',
   'cassette-motion-test.mjs',
   'cover-motion-test.mjs',
+  'macos-sheet-close-test.mjs',
   'video-test.mjs',
   'video-timeout-test.mjs',
 ]

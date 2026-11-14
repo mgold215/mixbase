@@ -85,9 +85,15 @@ struct CoverViewerView: View {
             .background(Color.black.ignoresSafeArea())
             .navigationTitle(title)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                // .confirmationAction, not .navigationBarTrailing: this screen is
+                // a sheet, and a Mac sheet has no navigation bar. The Mac draws
+                // only the confirmation/cancellation placements (at the sheet's
+                // foot), so with the iPhone-only one there was no way out of
+                // this editor on macOS. Same top-right spot on iPhone. Esc closes it.
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .foregroundColor(Color(hex: "#2dd4bf"))
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             .task { await load() }
