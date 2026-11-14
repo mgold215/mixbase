@@ -80,6 +80,8 @@ const EXCLUDED = {
     'DROP POLICY only, on public.mb_feedback — no object is declared, so there is nothing for SCHEMA_SQL to carry. Same privilege-only ground as 018 and 036. The policy it drops (017 public_feedback_insert) is not in SCHEMA_SQL either, so a fresh bootstrap never creates the hole this removes and the two stay consistent: nothing to create, nothing to drop.',
   '038_storage_scope_uploads_to_owner.sql':
     'Documentation only — every statement is commented out, and it targets storage.objects, which lives in the storage schema this blob does not own (same ground as the 028/029 exclusions). Marked DO NOT APPLY YET: the scoping predicate it describes would break every iOS upload until the iOS storage key is folded, since a flat root key has a NULL first path segment.',
+  '044_storage_owner_scoped_read.sql':
+    'storage.objects RLS only (the mf-* SELECT policy scoped to the uploader), in the storage schema this blob has never owned, on the same ground as 014/028/029/038. db-init creates buckets through the Storage API, not their policies, so a fresh bootstrap never creates the bucket-wide read this replaces.',
   '034_mix_master_status.sql':
     'a data fix (UPDATE of retired WIP/Mix-Master statuses) plus an ALTER COLUMN SET DEFAULT — no object this parser accounts for. The new default IS carried: the blob\'s mb_versions create table says default \'Mix\', so a fresh bootstrap never mints a retired status, and there is no old data in a fresh database to retrofit.',
   '039_drop_unused_tables.sql':

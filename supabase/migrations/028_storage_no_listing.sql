@@ -35,7 +35,7 @@
 -- established EMPIRICALLY, on a Supabase branch or a throwaway probe bucket,
 -- not by reasoning. Reasoning is what produced this file.
 --
--- Superseded-by: nothing yet. Kept only as the record of a refuted approach.
+-- Superseded-by: 044_storage_owner_scoped_read.sql (applied 2026-11-14).
 --
 -- 2026-11-14 re-check: the hole is still open (anon POST /object/list/mf-audio
 -- with the publishable key -> 200 with rows). Note every client upload sends
