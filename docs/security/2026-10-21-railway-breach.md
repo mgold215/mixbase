@@ -62,6 +62,32 @@ broken every installed copy. The fix:
 
 ## Checklist
 
+### Status, 2026-11-14 (checked live, not from this file)
+
+- **Not done:** legacy anon + service_role keys are still ENABLED, and still in
+  active use. Supabase edge logs (24 h) show HS256 `service_role` traffic from
+  the mixBase server (Railway, `node`), the trading bot (Railway,
+  `python-requests`) and a script on the owner's Mac (`python-requests`, Comcast),
+  plus legacy-anon traffic from the mixBase server (`jose`). Step 1 (create a
+  secret key) has not happened, so nothing can move off the legacy keys yet.
+- Other services holding a Supabase key: `trading-agents-watchdog`
+  (SUPABASE_SERVICE_ROLE_KEY), `mixmash-api` (SUPABASE_SERVICE_ROLE_KEY),
+  `email-agents` + `spotify-data` (SUPABASE_KEY). All must move before step 11.
+- **Done:** user sessions are ES256 (JWT signing keys migrated); every app
+  build in use sends the publishable key.
+- **Done 2026-11-14:** staging stripped of every production credential
+  (service key, management token, JWT secret, Replicate, Sentry auth token,
+  unused MIXBASE_PASSWORD/SESSION_SECRET); staging now runs on the
+  publishable key only. Its health check needs the service key, so new
+  staging deploys now fail (by design); the last good staging deployment
+  (2f402eac, same commit as prod) is still running and should be removed.
+- **Done 2026-11-14:** production's SUPABASE_JWT_SECRET, MIXBASE_PASSWORD and
+  SESSION_SECRET deleted; NEXT_PUBLIC_SUPABASE_ANON_KEY switched to the
+  publishable key. Deploy 020b36e4 healthy (admin_power true).
+- Full-history secret scan (gitleaks) of all five public repos: no service
+  keys or provider keys were ever committed; only the public anon key and
+  test placeholders.
+
 Do these in order. ☐ = still to do.
 
 ### Phase 1 — now (no downtime)

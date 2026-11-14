@@ -36,6 +36,20 @@
 -- not by reasoning. Reasoning is what produced this file.
 --
 -- Superseded-by: nothing yet. Kept only as the record of a refuted approach.
+--
+-- 2026-11-14 re-check: the hole is still open (anon POST /object/list/mf-audio
+-- with the publishable key -> 200 with rows). Note every client upload sends
+-- `x-upsert: true` (iOS SupabaseService.uploadRequest, web NewProjectForm /
+-- ProjectClient / ArtworkGenerator), and an upsert needs the SELECT policy on
+-- the new row as well. Candidate shape, NOT yet rehearsed:
+--   drop the three "Public read mf-*" policies, then
+--   create policy "mf owners read own files" on storage.objects for select
+--     to authenticated using (bucket_id in ('mf-artwork','mf-audio','mf-video')
+--     and owner_id = (select auth.uid())::text);
+-- Storage stamps owner_id with the uploader's JWT sub, so a user's own upload
+-- (and its RETURNING) stays readable while anon / other-user listing returns
+-- nothing. Rehearse it with a real signed-in upload (x-upsert on) against a
+-- throwaway bucket or a Supabase branch before touching the mf-* buckets.
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- THE HOLE

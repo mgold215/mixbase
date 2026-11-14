@@ -41,4 +41,4 @@ This repo uses a Next.js version with **breaking changes vs. training data**. Be
 
 - Always use the API or CLI; Playwright/DevTools MCP are last resorts.
 - Never tell the user to do something manually, and never say something can't be done without attempting it first.
-- moodmixformat, LLC already exists (EIN 39-2854188) — never suggest forming an entity.
+- moodmixformat, LLC already exists — never suggest forming an entity.
