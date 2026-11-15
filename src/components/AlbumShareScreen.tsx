@@ -7,23 +7,21 @@ import type { AlbumShareData } from '@/lib/album-share'
 // src/lib/album-share.ts.
 export default function AlbumShareScreen({ data }: { data: AlbumShareData }) {
   return (
-    <div className="min-h-screen bg-black flex flex-col">
-      {/* Header — matches the single-track share page */}
-      <header
-        className="relative z-50 flex-shrink-0 h-12 border-b flex items-center px-5"
-        style={{ backgroundColor: 'var(--nav-bg)', borderColor: 'var(--border)' }}
-      >
+    <div className="share-screen relative bg-black flex flex-col">
+      {/* Header — matches the single-track share page: it floats over the
+          backdrop, so the picture runs to the top of the screen */}
+      <header className="share-header absolute inset-x-0 top-0 z-50 h-12 flex items-center px-5">
         <span className="font-[family-name:var(--font-jost)] flex items-baseline gap-0">
-          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--text)' }}>mix</span>
-          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: 'var(--accent)' }}>BASE</span>
+          <span className="text-[15px] font-bold tracking-[0.04em] text-white">mix</span>
+          <span className="text-[15px] font-bold tracking-[0.04em]" style={{ color: '#2dd4bf' }}>BASE</span>
         </span>
 
         <span className="ml-auto text-[13px] font-[family-name:var(--font-jost)] tracking-wide">
-          <span style={{ color: 'var(--accent)' }}>{data.artistName}</span>
+          <span style={{ color: '#2dd4bf' }}>{data.artistName}</span>
           {' '}
           <span className="text-white">{data.typeLabel.toLowerCase()}</span>
           {' '}
-          <span style={{ color: 'var(--text-muted)' }}>share</span>
+          <span className="text-white/50">share</span>
         </span>
       </header>
 
@@ -35,6 +33,7 @@ export default function AlbumShareScreen({ data }: { data: AlbumShareData }) {
         tracks={data.tracks}
         sourceId="album-share-player"
         footnote="Shared privately via mixBASE"
+        underHeader
       />
     </div>
   )

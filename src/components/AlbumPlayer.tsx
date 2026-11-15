@@ -1,18 +1,18 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import Image from 'next/image'
 import { Play, Pause, SkipBack, SkipForward, Download, MessageSquare, ChevronDown, PenLine, RotateCcw } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
 import { audioProxyUrl, formatDuration } from '@/lib/supabase'
 import { audioDownloadFileName } from '@/lib/download'
-import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
 import ShareWaveform from '@/components/ShareWaveform'
 import FeedbackForm from '@/components/FeedbackForm'
-import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
+import { ShareBackdrop, ShareCover, ShareTitle, stageStyle } from '@/components/ShareStage'
+import { fetchPeaks, useArtPalette, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
 
 // Full-album player used by both the public /album/<artist>/<title>/<token>
 // page and the logged-in collection view: the current track's visualizer loop
@@ -57,6 +57,9 @@ type Props = {
   sourceId?: string
   /** small line under the tracklist, e.g. "Shared privately via mixBASE" */
   footnote?: string | null
+  /** The public album page floats its header OVER the backdrop, so the
+   *  picture runs to the top of the screen; the content then starts below it. */
+  underHeader?: boolean
 }
 
 // One-tap reactions offered when the album ends (public page only). Ordinary
@@ -68,7 +71,7 @@ const REACTIONS = [
   { emoji: '🔁', label: 'On repeat' },
 ] as const
 
-export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tracks, sourceId = 'album-player', footnote }: Props) {
+export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tracks, sourceId = 'album-player', footnote, underHeader = false }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const drawerRef = useRef<HTMLDivElement>(null)
@@ -81,7 +84,6 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [accent, setAccent] = useState<[number, number, number]>([139, 92, 246])
   // Set when a track change should start playback once the new src is committed
   // (row click, next/prev, auto-advance) — a plain src swap alone stays paused.
   const pendingPlay = useRef(false)
@@ -102,6 +104,10 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
 
   const current: AlbumPlayerTrack | undefined = tracks[index]
   const displayArt = current?.artworkUrl ?? coverUrl
+  // The page is lit in the current track's cover colours (share-palette.ts);
+  // they cross-fade when the track changes.
+  const palette = useArtPalette(displayArt ?? null)
+  const accent = palette.accent
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
   const accentA = (a: number) => `rgba(${accent[0]},${accent[1]},${accent[2]},${a})`
   // The current track's loop fills the page: the 9:16 one on a phone, the
@@ -140,13 +146,6 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
     if (!v) return
     v.play().catch(() => {})
   }, [isPlaying, index, loopUrl])
-
-  // Accent colour follows the current track's artwork.
-  useEffect(() => {
-    if (displayArt) {
-      extractDominantColor(displayArt).then(setAccent).catch(() => {})
-    }
-  }, [displayArt])
 
   // Claim the lock-screen / headphone transport for THIS player: without this,
   // "next" from the lock screen drives PlayerContext's app-wide queue instead
@@ -494,8 +493,9 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
   return (
     <div
       ref={rootRef}
-      className="relative flex-1 flex flex-col overflow-hidden"
-      style={{ '--energy': 0 } as React.CSSProperties}
+      className="share-stage relative flex-1 flex flex-col overflow-hidden"
+      data-backdrop={hasLoop ? 'loop' : 'art'}
+      style={stageStyle(palette)}
     >
       {currentPlayable && (
         <audio
@@ -510,82 +510,32 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       {/* Equalizer bars for the playing row */}
       <style>{`@keyframes mb-eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }`}</style>
 
-      {/* ── Backdrop: the current track's loop full-screen, else its art, drifting ── */}
-      <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transition: 'transform 0.6s ease-out' }}>
-        {hasLoop ? (
-          <video
-            ref={vizVideoRef}
-            key={loopUrl}
-            src={loopUrl!}
-            poster={displayArt ?? undefined}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ transform: 'scale(1.04)' }}
-          />
-        ) : displayArt ? (
-          <Image
-            key={displayArt}
-            src={displayArt} alt="" fill unoptimized
-            className="object-cover share-drift transition-opacity duration-700"
-            style={{ filter: 'blur(18px) saturate(1.6) brightness(0.45)' }}
-          />
-        ) : (
-          <div
-            className="absolute inset-0 share-drift"
-            style={{ background: accentCss, filter: 'blur(60px) brightness(0.25)' }}
-          />
-        )}
-        <div className="absolute inset-0" style={{
-          background: `
-            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,${hasLoop ? 0.4 : 0.5}) 60%, rgba(0,0,0,${hasLoop ? 0.82 : 0.88}) 100%),
-            radial-gradient(ellipse 80% 60% at 50% 50%, ${accentA(0.14)} 0%, transparent 70%)
-          `,
-        }} />
-        {/* An accent wash that brightens with the music */}
-        <div className="absolute inset-0" style={{
-          background: `radial-gradient(ellipse 60% 50% at 35% 55%, ${accentA(0.32)} 0%, transparent 70%)`,
-          opacity: 'calc(var(--energy) * 0.9)',
-        }} />
-      </div>
+      {/* ── Backdrop: the current track's loop full-screen, else its art, drifting —
+          under three lights in that cover's colours (ShareStage) ── */}
+      <ShareBackdrop innerRef={backdropRef} videoRef={vizVideoRef} loopUrl={loopUrl} artUrl={displayArt ?? null} palette={palette} />
 
       {/* ── Content ── */}
-      <div className="relative z-10 flex-1 w-full max-w-6xl mx-auto px-5 sm:px-8 py-8 sm:py-10 flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-14">
+      <div className={`relative z-10 flex-1 w-full max-w-6xl mx-auto px-5 sm:px-8 ${underHeader ? 'pt-20 sm:pt-[5.5rem]' : 'pt-8 sm:pt-10'} pb-8 sm:pb-10 flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-14`}>
 
         {/* Now playing */}
         <div className="flex flex-col items-center gap-6 lg:flex-1 lg:min-w-0">
-          <div
-            className={`share-in relative ${hasLoop ? 'w-44 h-44 sm:w-56 sm:h-56 xl:w-72 xl:h-72' : 'w-52 h-52 sm:w-64 sm:h-64 xl:w-80 xl:h-80'} rounded-2xl overflow-hidden flex-shrink-0`}
-            style={{ animationDelay: '80ms', boxShadow: `0 32px 80px ${accentA(0.4)}, 0 8px 32px rgba(0,0,0,0.7)` }}
-          >
-            <div
-              className="absolute inset-0"
-              style={{ transform: 'scale(calc(1 + var(--energy) * 0.035))', transition: 'transform 90ms linear' }}
-            >
-              {current.artworkUrl ?? coverUrl ? (
-                <Image
-                  key={displayArt ?? current.id}
-                  src={(current.artworkUrl ?? coverUrl)!}
-                  alt={current.title} fill className="object-cover" unoptimized
-                />
-              ) : (
-                <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-                  <CassetteIcon size={64} className="text-[#333]" />
-                </div>
-              )}
-            </div>
-          </div>
+          <ShareCover
+            artUrl={displayArt ?? null}
+            alt={current.title}
+            sizeClass={hasLoop ? 'w-44 h-44 sm:w-56 sm:h-56 xl:w-72 xl:h-72' : 'w-52 h-52 sm:w-64 sm:h-64 xl:w-80 xl:h-80'}
+          />
+
+          {/* Title + transport share a soft pool of shade so they read on any backdrop */}
+          <div className="share-pool w-full flex flex-col items-center gap-6">
 
           <div className="share-in text-center max-w-sm" style={{ animationDelay: '260ms' }}>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-white/35 mb-1.5">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-white/55 mb-2" style={{ textShadow: '0 1px 10px rgba(0,0,0,0.7)' }}>
               {typeLabel} · {title}
             </p>
-            <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate" style={{ textShadow: '0 2px 18px rgba(0,0,0,0.6)' }}>{current.title}</h1>
+            {/* Keyed by track so the letters arrive again on every change. */}
+            <ShareTitle key={current.id} title={current.title} size="compact" />
             {/* Artist stays in its natural case — no uppercase transform here */}
-            <p className="text-sm text-white/40 mt-1 truncate">{artistName}</p>
+            <p className="text-sm text-white/65 mt-2 truncate" style={{ textShadow: '0 1px 10px rgba(0,0,0,0.7)' }}>{artistName}</p>
           </div>
 
           {/* Waveform + transport */}
@@ -640,10 +590,11 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
               </button>
               <button
                 onClick={togglePlay}
-                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
+                className="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full flex items-center justify-center share-play hover:scale-105 active:scale-95 disabled:opacity-40"
                 disabled={!currentPlayable}
                 style={{
-                  background: `linear-gradient(180deg, ${accentCss}, ${accentA(0.7)})`,
+                  backgroundColor: accentCss,
+                backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(0,0,0,0.18))',
                   boxShadow: `0 0 calc(40px + var(--energy) * 50px) ${accentA(0.5)}, 0 0 calc(var(--energy) * 120px) ${accentA(0.35)}, inset 0 1px 0 rgba(255,255,255,0.2)`,
                 }}
                 title={isPlaying ? 'Pause' : 'Play'}
@@ -660,6 +611,8 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                 <SkipForward size={24} fill="currentColor" />
               </button>
             </div>
+          </div>
+
           </div>
 
           {/* When the album ends (public page): one tap says what you thought */}
