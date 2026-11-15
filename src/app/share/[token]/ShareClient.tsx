@@ -1,19 +1,17 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import Image from 'next/image'
 import { Play, Pause, MessageSquare, ChevronDown, Download, PenLine, RotateCcw } from 'lucide-react'
-import CassetteIcon from '@/components/CassetteIcon'
 import { versionDisplayLabel } from '@/lib/mix-status'
 import { audioProxyUrl, displayArtworkUrl, formatDuration } from '@/lib/supabase'
-import { extractDominantColor } from '@/lib/audio-analysis'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay } from '@/lib/audio-coordinator'
 import { audioDownloadFileName } from '@/lib/download'
 import FeedbackForm from '@/components/FeedbackForm'
 import ShareWaveform from '@/components/ShareWaveform'
-import { fetchPeaks, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
+import { ShareBackdrop, ShareCover, ShareTitle, stageStyle } from '@/components/ShareStage'
+import { fetchPeaks, useArtPalette, useAudioEnergy, useParallax, usePortrait } from '@/lib/share-fx'
 
 // The public share page renders ONLY these version fields. The loader
 // (src/lib/track-share.ts) selects exactly this set and deliberately omits
@@ -69,7 +67,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [accent, setAccent] = useState<[number, number, number]>([139, 92, 246])
   const [showFeedback, setShowFeedback] = useState(false)
   const [ended, setEnded] = useState(false)
   const [reactionSent, setReactionSent] = useState<string | null>(null)
@@ -94,6 +91,9 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
   const loopUrl = portrait ? (loopPortrait ?? loopWide) : (loopWide ?? loopPortrait)
   const title: string = project?.title ?? 'Untitled'
   const audioUrl = audioProxyUrl(version.audio_url)
+  // The page is lit in the cover's own colours (src/lib/share-palette.ts).
+  const palette = useArtPalette(artworkUrl)
+  const accent = palette.accent
   const accentCss = `rgb(${accent[0]},${accent[1]},${accent[2]})`
   const accentA = (a: number) => `rgba(${accent[0]},${accent[1]},${accent[2]},${a})`
   // Original-quality download, when the artist enabled it on this mix. The
@@ -112,13 +112,6 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
     if (!v) return
     v.play().catch(() => {})
   }, [isPlaying, loopUrl])
-
-  // Extract accent colour from artwork
-  useEffect(() => {
-    if (artworkUrl) {
-      extractDominantColor(artworkUrl).then(setAccent).catch(() => {})
-    }
-  }, [artworkUrl])
 
   // ── Waveform peaks ─────────────────────────────────────────────────────────
   // The server decodes the mix once and keeps the peaks on the row; a long mix
@@ -293,8 +286,9 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
   return (
     <div
       ref={rootRef}
-      className="relative flex-1 flex flex-col overflow-hidden"
-      style={{ '--energy': 0 } as React.CSSProperties}
+      className="share-stage relative flex-1 flex flex-col overflow-hidden"
+      data-backdrop={hasLoop ? 'loop' : 'art'}
+      style={stageStyle(palette)}
     >
       <audio
         ref={audioRef}
@@ -304,94 +298,28 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
         style={{ position: 'fixed', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
       />
 
-      {/* ── Backdrop: the visualizer loop full-screen, else the art, drifting ── */}
-      <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transition: 'transform 0.6s ease-out' }}>
-        {hasLoop ? (
-          <video
-            ref={vizVideoRef}
-            key={loopUrl}
-            src={loopUrl!}
-            poster={artworkUrl ?? undefined}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ transform: 'scale(1.04)' }}
-          />
-        ) : artworkUrl ? (
-          <Image
-            src={artworkUrl} alt="" fill unoptimized
-            className="object-cover share-drift"
-            style={{ filter: 'blur(18px) saturate(1.6) brightness(0.5)' }}
-          />
-        ) : (
-          <div
-            className="absolute inset-0 share-drift"
-            style={{ background: accentCss, filter: 'blur(60px) brightness(0.25)' }}
-          />
-        )}
-        {/* Vignette + an accent wash that brightens with the music */}
-        <div className="absolute inset-0" style={{
-          background: `
-            radial-gradient(ellipse 90% 80% at 50% 45%, transparent 0%, rgba(0,0,0,${hasLoop ? 0.35 : 0.45}) 60%, rgba(0,0,0,${hasLoop ? 0.8 : 0.85}) 100%),
-            radial-gradient(ellipse 80% 60% at 50% 50%, ${accentA(0.18)} 0%, transparent 70%)
-          `,
-        }} />
-        <div className="absolute inset-0" style={{
-          background: `radial-gradient(ellipse 60% 50% at 50% 55%, ${accentA(0.35)} 0%, transparent 70%)`,
-          opacity: 'calc(var(--energy) * 0.9)',
-        }} />
-      </div>
+      {/* ── Backdrop: the visualizer loop full-screen, else the art, drifting —
+          under three lights in the cover's colours (ShareStage) ── */}
+      <ShareBackdrop innerRef={backdropRef} videoRef={vizVideoRef} loopUrl={loopUrl} artUrl={artworkUrl} palette={palette} />
 
-      {/* ── Main player ── */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-10 gap-7">
+      {/* ── Main player — the top padding clears the header, which floats over the backdrop ── */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pt-[5.5rem] pb-10 gap-7">
 
-        {/* Artwork — breathes with the music */}
-        <div
-          className={`share-in relative ${coverSize} rounded-2xl overflow-hidden flex-shrink-0`}
-          style={{
-            animationDelay: '80ms',
-            boxShadow: `0 32px 80px ${accentA(0.45)}, 0 8px 32px rgba(0,0,0,0.7)`,
-          }}
-        >
-          <div
-            className="absolute inset-0"
-            style={{ transform: 'scale(calc(1 + var(--energy) * 0.035))', transition: 'transform 90ms linear' }}
-          >
-            {artworkUrl ? (
-              <Image src={artworkUrl} alt={title} fill className="object-cover" unoptimized priority />
-            ) : (
-              <div className="absolute inset-0 bg-[#1a1a1a] flex items-center justify-center">
-                <CassetteIcon size={64} className="text-[#333]" />
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Artwork — hangs in the air, breathes with the music */}
+        <ShareCover artUrl={artworkUrl} alt={title} sizeClass={coverSize} priority />
+
+        {/* Title + controls share a soft pool of shade so they read on any backdrop */}
+        <div className="share-pool w-full flex flex-col items-center gap-7">
 
         {/* Title + meta — the artist's own handwriting when there is one */}
         <div className="share-in text-center" style={{ animationDelay: '260ms' }}>
-          {letteringUrl ? (
-            <>
-              <div className="relative mx-auto h-16 sm:h-24 w-[min(84vw,620px)]">
-                <Image
-                  src={letteringUrl} alt={title} fill unoptimized
-                  className="object-contain"
-                  style={{ filter: 'drop-shadow(0 2px 12px rgba(0,0,0,0.6))' }}
-                />
-              </div>
-              <h1 className="sr-only">{title}</h1>
-            </>
-          ) : (
-            <h1 className="text-2xl sm:text-3xl font-bold text-white leading-tight" style={{ textShadow: '0 2px 18px rgba(0,0,0,0.6)' }}>{title}</h1>
-          )}
-          <p className="text-sm text-white/45 mt-2">
-            <span className="text-white/70">{artistName}</span>
-            <span className="mx-2 text-white/25">·</span>
+          <ShareTitle title={title} letteringUrl={letteringUrl} />
+          <p className="text-sm text-white/60 mt-3" style={{ textShadow: '0 1px 10px rgba(0,0,0,0.7)' }}>
+            <span className="text-white/85">{artistName}</span>
+            <span className="mx-2 text-white/35">·</span>
             {versionDisplayLabel(version)}
             {version.status && (
-              <span className="ml-2 text-white/25">· {version.status}</span>
+              <span className="ml-2 text-white/40">· {version.status}</span>
             )}
           </p>
         </div>
@@ -401,7 +329,7 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
           {/* Waveform */}
           <div className="relative">
             <div className="flex items-center gap-3">
-              <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 text-right shrink-0">
+              <span className="text-[11px] font-mono text-white/70 tabular-nums w-10 text-right shrink-0" style={{ textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>
                 {formatDuration(Math.floor(currentTime))}
               </span>
               <div className="flex-1 h-14">
@@ -420,7 +348,7 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
                   />
                 )}
               </div>
-              <span className="text-[11px] font-mono text-white/30 tabular-nums w-10 shrink-0">
+              <span className="text-[11px] font-mono text-white/50 tabular-nums w-10 shrink-0" style={{ textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}>
                 {duration > 0 ? `−${formatDuration(Math.max(0, Math.floor(duration - currentTime)))}` : '--:--'}
               </span>
             </div>
@@ -444,9 +372,10 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
             <button
               onClick={togglePlay}
               aria-label={isPlaying ? 'Pause' : 'Play'}
-              className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+              className="w-20 h-20 rounded-full flex items-center justify-center share-play hover:scale-105 active:scale-95"
               style={{
-                background: `linear-gradient(180deg, ${accentCss}, ${accentA(0.7)})`,
+                backgroundColor: accentCss,
+                backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(0,0,0,0.18))',
                 boxShadow: `0 0 calc(40px + var(--energy) * 50px) ${accentA(0.55)}, 0 0 calc(var(--energy) * 120px) ${accentA(0.35)}, inset 0 1px 0 rgba(255,255,255,0.2)`,
               }}
             >
@@ -471,6 +400,8 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
               </a>
             </div>
           )}
+        </div>
+
         </div>
 
         {/* When the song ends: one tap says what you thought */}
@@ -531,7 +462,9 @@ export default function ShareClient({ version, artistName, letteringUrl }: Props
       <div
         ref={drawerRef}
         className="share-in relative z-10 flex-shrink-0 border-t border-white/10"
-        style={{ animationDelay: '700ms', background: 'rgba(6,4,16,0.88)', backdropFilter: 'blur(24px)' }}
+        // The bar is the foot of the screen now (the page no longer reserves
+        // the app's tab-bar height): keep it clear of the home indicator.
+        style={{ animationDelay: '700ms', background: 'rgba(6,4,16,0.88)', backdropFilter: 'blur(24px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         <button
           onClick={() => setShowFeedback(v => !v)}

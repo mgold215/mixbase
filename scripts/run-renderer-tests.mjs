@@ -100,6 +100,7 @@ const SUITES = [
   'thumb-drive-test.mjs',
   'tracks-duration-heal-test.mjs',
   'share-duration-heal-test.mjs',
+  'share-palette-test.mjs',
   'write-route-guards-test.mjs',
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
