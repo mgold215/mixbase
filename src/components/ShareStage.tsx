@@ -12,7 +12,7 @@ import { PENDING_PALETTE, mix, rgbCss, rgbTriplet, type SharePalette } from '@/l
 // src/lib/share-fx.ts; the motion itself is CSS in globals.css (".share-…"),
 // so nothing here runs per frame.
 //
-// Rules this file keeps (see CLAUDE.md → Public share pages):
+// Rules this file keeps (see .claude/skills/share-pages/SKILL.md → The alive layer):
 //   · Anything that changes every frame changes only opacity or transform. A
 //     blur is drawn once and then faded or moved, never re-blurred.
 //   · The owner's handwriting is shown as written. Effects are light ON it

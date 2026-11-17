@@ -1,6 +1,6 @@
 ---
 name: upload-audio-architecture
-description: Non-negotiable constraints for the upload, storage, and audio-playback pipeline. Consult BEFORE editing anything touching uploads, TUS, signed URLs, Supabase Storage buckets, <audio> elements, WaveformPlayer, the audio proxy, or middleware public paths — even for seemingly unrelated refactors that brush these files. Violations here break production silently.
+description: Non-negotiable constraints for the upload, storage, and audio-playback pipeline. Consult BEFORE editing anything touching uploads, TUS, signed URLs, Supabase Storage buckets, <audio> elements, the audio proxy, or middleware public paths — even for seemingly unrelated refactors that brush these files. Violations here break production silently.
 ---
 
 # Upload & Audio Architecture
@@ -15,6 +15,8 @@ Valid upload paths only:
 - **≤ 50 MB** → `POST /api/upload-url` returns a short-lived Supabase signed URL; the browser PUTs **directly to Supabase**. Railway never sees the bytes.
 - **> 50 MB** → TUS chunked via `tus-js-client` with `endpoint: '/api/tus'` and `chunkSize: 8 * 1024 * 1024`. Each 8 MB chunk fits under the 10 MB wall.
 - Signed-URL 413 → auto-retry via TUS (already implemented in `ProjectClient.tsx`).
+- The routing lives in `ProjectClient.tsx` `handleUpload()` and `projects/new/page.tsx`; the signed-URL route is `src/app/api/upload-url/route.ts`.
+- TUS proxy: `POST /api/tus` creates the session at Supabase with the service-role key (bypasses size limits), `PATCH /api/tus/<uploadId>` proxies one 8 MB chunk, `HEAD /api/tus/<uploadId>` checks the resume offset. The client loads `tus-js-client` by dynamic import.
 
 **The 8 MB chunk size is not arbitrary.** Raising it above ~10 MB breaks large uploads with truncated chunks. Flag any change to this value.
 
@@ -27,7 +29,7 @@ Valid upload paths only:
 
 ## 3. Always use audioProxyUrl()
 
-Supabase public URLs don't reliably return `Accept-Ranges`, so browsers can't seek or read duration. Every `<audio src=...>` and every `WaveformPlayer` audio URL must go through `audioProxyUrl(version.audio_url)` (from `src/lib/supabase.ts`), which routes playback through `/api/audio/[...path]` — a proxy that forwards Range headers and returns proper 206s. Applies to any NEW page that plays audio, not just the existing ones.
+Supabase public URLs don't reliably return `Accept-Ranges`, so browsers can't seek or read duration. Every `<audio src=...>` must go through `audioProxyUrl(version.audio_url)` (from `src/lib/supabase.ts`), which routes playback through `/api/audio/[...path]` (`src/app/api/audio/[...path]/route.ts`) — a proxy that forwards Range headers and returns proper 206s. Applies to any NEW page that plays audio, not just the existing ones. `scripts/archived-playback-test.mjs` checks it.
 
 ## 4. Bucket limits: SQL only, never the Storage API
 
@@ -43,7 +45,7 @@ Supabase public URLs don't reliably return `Accept-Ranges`, so browsers can't se
 
 1. Are any file bytes PUT/POSTed to a Railway endpoint outside the two valid paths? 
 2. Did `chunkSize` change from `8 * 1024 * 1024`?
-3. Any raw Supabase audio URL reaching an `<audio>`/`WaveformPlayer`?
+3. Any raw Supabase audio URL reaching an `<audio>`?
 4. Did `PUBLIC_PATHS` in `src/proxy.ts` gain `/api/tus` or lose `/api/audio`?
 5. Any bucket-limit change going through the Storage API instead of SQL?
 

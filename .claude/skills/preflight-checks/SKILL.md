@@ -35,6 +35,7 @@ Run it whenever the change touches `src/lib/` or any API route. It's fast and ha
 | `src/lib/infra/`, `/api/infra/*` | `node scripts/test-infra.mjs <staging-url> <admin-email> <admin-pass>` |
 | auth, middleware (`src/proxy.ts`), cookies | `node scripts/verify-token-test.mjs && node scripts/auth-errors-test.mjs` (also in `npm test`) |
 | share pages / public routes | `node scripts/share-projection-test.mjs` |
+| `CLAUDE.md`, `AGENTS.md`, anything under `.claude/` | `node scripts/agent-docs-test.mjs` (also in `npm test`): size budgets, the skills table, and that every file these documents name exists |
 | Full user flows / UI | `npm run test:e2e` (staging by default; `BASE_URL=http://localhost:3000` for local) |
 
 ## Commit hygiene

@@ -16,7 +16,7 @@ Valid patterns only:
 - Client uses tus-js-client with `endpoint: '/api/tus'` and `chunkSize: 8 * 1024 * 1024`
 
 ### 2. No raw Supabase audio URLs in JSX
-Every `<audio src=...>` or `WaveformPlayer audioUrl=...` must use `audioProxyUrl(version.audio_url)`.
+Every `<audio src=...>` must use `audioProxyUrl(version.audio_url)`.
 Files to check: `ProjectClient.tsx`, `ShareClient.tsx`, `player/page.tsx`, any new pages.
 
 ### 3. TUS chunk size must stay at 8 MB

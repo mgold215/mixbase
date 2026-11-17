@@ -12,7 +12,7 @@
 
 const RAILWAY_GQL = 'https://backboard.railway.app/graphql/v2'
 
-// Known defaults from CLAUDE.md — overridable via env.
+// Known defaults from AGENTS.md (Environments) — overridable via env.
 const DEFAULT_PROJECT_ID = '9ff29ad4-39cd-45d5-a0e9-5cbd4ffa2227'
 const DEFAULT_PROD_URL = 'https://mixbase-production.up.railway.app'
 const DEFAULT_STAGING_URL = 'https://mixbase-staging.up.railway.app'
