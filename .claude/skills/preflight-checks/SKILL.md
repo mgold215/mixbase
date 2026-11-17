@@ -54,7 +54,7 @@ Run one with `node scripts/<name>-test.mjs`.
 | `npm run test:e2e` | Playwright against staging; `BASE_URL=http://localhost:3000` for local |
 | `node scripts/test-upload.mjs <base-url>` | Broken: it sends no sign-in, and the upload route requires one |
 
-A remote session cannot reach staging or production over the network, so none of these run there. Use the `debugging-production` skill for what can be checked, and say plainly in the report what was not.
+Staging has had no working deploy since 2026-11-14 (it has no Supabase key), and a remote session cannot reach staging or production over the network, so none of these run there. Use the `debugging-production` skill for what can be checked, and say plainly in the report what was not.
 
 ## Before saying "done"
 

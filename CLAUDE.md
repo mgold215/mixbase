@@ -15,5 +15,5 @@
 
 - Invoke the matching skill before working in its area. The table is in `AGENTS.md` → Where the detail lives.
 - `upload-arch-reviewer`: run before committing any change to uploads, storage or audio playback.
-- `post-deploy-test`: a sanity pass on staging after pushing `tst`. It is not a gate on merging.
+- `post-deploy-test`: a sanity pass on staging after pushing `tst`. It is not a gate on merging, and it cannot pass while staging has no credentials.
 - `exec-ceo`, `exec-cfo`, `exec-cto`, `exec-chro`: the daily executive meeting (`exec-daily-meeting` skill).

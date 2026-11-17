@@ -7,7 +7,7 @@ description: Post-push sanity pass against staging after a git push origin tst â
 
 Runs after a `git push origin tst`. Its job is a quick sanity pass â€” NOT a gate on promotion. Per project policy, promotion to `main` happens as soon as the PR's required checks (Build & Lint, Secret Scanning) are green; do not hold the merge waiting on staging observations, and do not loop on staging indefinitely.
 
-A remote session cannot reach staging over the network (see the `debugging-production` skill). If the polls below fail to connect rather than returning a status, report that and stop: it says nothing about the deploy.
+**Staging currently has no working deploy.** Its Supabase key was removed after the Railway breach, so its health check fails and every deploy since 2026-11-14 is marked FAILED (see the `debugging-production` skill). Until staging has credentials of its own, the steps below cannot pass: report that in one line and stop. A remote session also cannot reach staging over the network.
 
 ## Steps
 
