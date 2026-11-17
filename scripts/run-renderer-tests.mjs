@@ -83,6 +83,7 @@ const SUITES = [
   'rate-limit-key-test.mjs',
   'release-pipeline-test.mjs',
   'loudness-test.mjs',
+  'mix-check-test.mjs',
   'loudness-compare-test.mjs',
   'loudness-auto-test.mjs',
   'master-recommendations-test.mjs',

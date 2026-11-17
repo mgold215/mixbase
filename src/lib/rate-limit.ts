@@ -130,6 +130,11 @@ export const chatLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 })
 // any real session; the cap bounds a runaway client loop, not spend.
 export const mixNoteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
 
+// Mix Check decodes and analyses a whole mix on the server (several seconds of
+// CPU), and a run on a song with an unmeasured previous version does it twice.
+// 30/h is far above listening-speed use and still bounds a stuck client.
+export const mixCheckLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
+
 // Mix Session ticks (PATCH /api/mix-session/notes/[id]): 300 per hour per
 // user. Its own bucket, not mixNoteLimiter — ticking off a long list (and
 // un-ticking a slip) during one sitting would burn the note-writing budget,

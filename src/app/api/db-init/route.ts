@@ -168,6 +168,31 @@ alter table public.mb_feedback
 alter table public.mb_versions
   add column if not exists waveform_peaks jsonb;
 
+-- Migration 045: Mix Check — the measured report on a mix, and the reference
+-- tracks (measurements only) it is judged against
+alter table public.mb_versions
+  add column if not exists mix_check jsonb;
+
+create table if not exists public.mb_mix_references (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  family text not null,
+  artist text not null,
+  title text not null,
+  source text not null check (source in ('preview', 'full')),
+  summary jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists mb_mix_references_track
+  on public.mb_mix_references (coalesce(user_id::text, ''), family, lower(artist), lower(title));
+
+alter table public.mb_mix_references enable row level security;
+
+drop policy if exists "users_read_own_mix_references" on public.mb_mix_references;
+create policy "users_read_own_mix_references" on public.mb_mix_references
+  for select using (user_id = auth.uid());
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),

@@ -142,6 +142,35 @@ export function isMissingWaveformPeaksColumn(error: { message?: string } | null)
   return !!error?.message && /waveform_peaks/.test(error.message)
 }
 
+// ── mb_versions.mix_check (migration 045) ───────────────────────────────────────
+// The stored Mix Check report. GET|POST /api/versions/[id]/mix-check read the
+// column with the version; on the missing-column error they heal and retry, so
+// a deploy that beats the migration cannot 404 every mix. The reference-track
+// table of the same migration has no heal (a table with a policy is not a plain
+// column add): until it exists a check simply has no genre references.
+
+const MIX_CHECK_SQL =
+  "alter table public.mb_versions add column if not exists mix_check jsonb; notify pgrst, 'reload schema';"
+
+let mixCheckEnsured: Promise<boolean> | null = null
+
+export function ensureVersionMixCheckColumn(): Promise<boolean> {
+  if (!mixCheckEnsured) {
+    mixCheckEnsured = runQuery(MIX_CHECK_SQL, 'mb_versions.mix_check column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) mixCheckEnsured = null
+        return ok
+      })
+  }
+  return mixCheckEnsured
+}
+
+/** True when a PostgREST error is the missing mix_check column failure. */
+export function isMissingMixCheckColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /mix_check/.test(error.message)
+}
+
 // ── mb_feedback.resolved_at (migration 041) ─────────────────────────────────────
 // The Mix Session's done tick on a note. GET /api/mix-session reads it and
 // PATCH /api/mix-session/notes/[id] writes it; both catch the missing-column

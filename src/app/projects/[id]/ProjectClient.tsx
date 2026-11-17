@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, type ChangeEvent, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlayer } from '@/contexts/PlayerContext'
 import Link from 'next/link'
@@ -8,6 +8,8 @@ import dynamic from 'next/dynamic'
 import { StatusBadge, StatusPipeline } from '@/components/StatusBadge'
 import ArtworkGenerator from '@/components/ArtworkGenerator'
 import MasterCheck, { writeLoudnessCache } from '@/components/MasterCheck'
+import MixCheck from '@/components/MixCheck'
+import { MIX_CHECK_AUTHOR } from '@/lib/mix-check-findings.ts'
 import { formatDuration, formatFileSize, STATUSES, STATUS_CONFIG, audioProxyUrl, type Project, type Version, type Feedback } from '@/lib/supabase'
 import { normalizeStatus, versionDisplayLabel, versionKind, type MixStatus } from '@/lib/mix-status'
 import { loudnessFromRow, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
@@ -916,6 +918,19 @@ export default function ProjectClient({ project, initialVersions, initialRelease
     setVersions(prev => prev.map(v => (v.id === versionId ? { ...v, ...row } : v)))
   }
 
+  // Mix Check wrote (or replaced) its notes on a mix: swap them into the page's
+  // own copy so the scrubber markers and the notes list show them at once.
+  const handleMixNotes = useCallback((versionId: string, notes: Feedback[]) => {
+    setVersions(prev => prev.map(v => {
+      if (v.id !== versionId) return v
+      const others = (v.mb_feedback ?? []).filter(f => f.reviewer_name !== MIX_CHECK_AUTHOR)
+      const held = (v.mb_feedback ?? []).filter(f => f.reviewer_name === MIX_CHECK_AUTHOR)
+      // Unchanged set (the usual case on page load): keep the same object so nothing re-renders.
+      if (held.length === notes.length && held.every(h => notes.some(n => n.id === h.id))) return v
+      return { ...v, mb_feedback: [...others, ...notes] }
+    }))
+  }, [])
+
   // The instrumental plays through the app's ONE shared <audio> element (the
   // same engine every mix uses), so it keeps playing in the mini player after
   // this view closes — a page-local <audio> element died with the modal.
@@ -1139,6 +1154,8 @@ export default function ProjectClient({ project, initialVersions, initialRelease
                 loudness={loudnessFromRow(currentMix)}
                 previousMeasured={previousMeasuredFor(0)}
                 onMeasured={handleMeasured}
+                ownerTools={ownerTools}
+                onMixNotes={handleMixNotes}
               />
             )}
 
@@ -1566,6 +1583,9 @@ type CurrentMixCardProps = {
   /** Nearest older mix that has one, for the delta. */
   previousMeasured: { loudness: LoudnessInput; label: string } | null
   onMeasured: (versionId: string, row: VersionLoudnessRow) => void
+  /** The platform owner's tools (Mix Check) are shown. */
+  ownerTools: boolean
+  onMixNotes: (versionId: string, notes: Feedback[]) => void
 }
 
 function CurrentMixCard({
@@ -1573,7 +1593,7 @@ function CurrentMixCard({
   currentUrl, currentTime, duration, isPlaying, seek, togglePlay, playUrl,
   savedNoteKey, summaries, summaryLoading, summaryError,
   onUpdateStatus, onUpdateNotes, onSummarizeFeedback, onToggleAllowDownload,
-  shareEnabled, loudness, previousMeasured, onMeasured,
+  shareEnabled, loudness, previousMeasured, onMeasured, ownerTools, onMixNotes,
 }: CurrentMixCardProps) {
   const vUrl = audioProxyUrl(version.audio_url)
   const isActive = currentUrl === vUrl
@@ -1789,6 +1809,17 @@ function CurrentMixCard({
           previousLabel={previousMeasured?.label ?? null}
           onMeasured={row => onMeasured(version.id, row)}
         />
+
+        {/* What is measurably wrong with the mix, written into its notes. */}
+        {ownerTools && (
+          <MixCheck
+            key={version.id}
+            versionId={version.id}
+            projectId={version.project_id}
+            onNotes={notes => onMixNotes(version.id, notes)}
+            onJump={goToTimestamp}
+          />
+        )}
 
         {/* Status */}
         <div className="flex gap-1.5 flex-wrap">
