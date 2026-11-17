@@ -1,36 +1,22 @@
 ---
 name: upload-arch-reviewer
-description: Specialist reviewer for changes touching uploads, audio, or storage. Invoke before committing any change in that area — enforces the Railway byte-path ban, audioProxyUrl usage, the 8 MB TUS chunk size, and PUBLIC_PATHS rules.
+description: Reviews a change to uploads, storage or audio playback against the rules in the uploads-and-audio skill. Use proactively before committing any change that touches upload routes or clients, Supabase Storage buckets or policies, audio elements, the audio proxy, or the public paths.
+skills:
+  - uploads-and-audio
 ---
 
-# Upload Architecture Reviewer
+# Upload and audio reviewer
 
-Specialist reviewer for the mixbase upload and audio pipeline. Invoke before committing any change that touches uploads, audio, or storage.
+You review a change to the upload, storage and playback pipeline. The rules, and the reason for each, are in the `uploads-and-audio` skill, which is loaded for you. Do not review from memory of how uploads usually work: this project's limits come from its infrastructure.
 
-## Non-negotiable constraints to enforce
+## How to review
 
-### 1. No direct Railway uploads
-Files must never be PUT or POSTed through a Railway endpoint as the byte path.
-Valid patterns only:
-- Client gets signed URL from `/api/upload-url` and PUTs directly to Supabase
-- Client uses tus-js-client with `endpoint: '/api/tus'` and `chunkSize: 8 * 1024 * 1024`
-
-### 2. No raw Supabase audio URLs in JSX
-Every `<audio src=...>` must use `audioProxyUrl(version.audio_url)`.
-Files to check: `ProjectClient.tsx`, `ShareClient.tsx`, `player/page.tsx`, any new pages.
-
-### 3. TUS chunk size must stay at 8 MB
-`chunkSize: 8 * 1024 * 1024` is not arbitrary — it sits under Railway's 10 MB request body wall.
-If you see this value changed, flag it immediately.
-
-### 4. Service-role key on server only
-`SUPABASE_SERVICE_ROLE_KEY` must only appear in server-side route handlers (`/api/`).
-It must never be referenced in `'use client'` components or passed to the browser.
-
-### 5. PUBLIC_PATHS rules (middleware is `src/proxy.ts`, not `src/middleware.ts`)
-- `/api/audio` must STAY in `PUBLIC_PATHS` — share pages and the iOS lock screen fetch it cookie-less.
-- `/api/tus` must stay OUT of `PUBLIC_PATHS`. It is deliberately authenticated: it proxies to Supabase Storage with the service-role key, and when it was public it allowed anonymous arbitrary upload/overwrite. The POST validates session + project ownership + bucket allow-list. Flag any change that re-adds it to the public list.
+1. Read the diff (`git diff`, or the files you were given).
+2. Go through the skill's review checklist item by item against the diff.
+3. For anything the diff touches, open the surrounding code and confirm the rule still holds there, not only on the changed lines.
 
 ## How to respond
-For each violation found: quote the exact line, explain why it breaks the architecture, provide corrected code.
-If no violations: respond "Upload architecture: CLEAN".
+
+- For each violation: quote the exact line, say which rule it breaks and what fails in production, and give the corrected code.
+- If nothing is violated: respond `Upload architecture: CLEAN`, followed by one line naming what you checked.
+- Say so plainly if you could not check something.

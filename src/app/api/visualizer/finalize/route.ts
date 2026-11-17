@@ -42,7 +42,7 @@ async function probeClip(bytes: Uint8Array): Promise<ClipProbe> {
 // POST /api/visualizer/finalize — index a visualizer the client already
 // uploaded DIRECTLY to mf-video via a signed URL from /api/upload-url. The
 // bytes never traverse Railway (10 MB proxy wall — see
-// upload-audio-architecture), so full-resolution exports of any size land
+// the uploads-and-audio skill), so full-resolution exports of any size land
 // here as a small JSON claim: { projectId, storagePath, title?, settings?,
 // sourceImageUrl? }.
 //

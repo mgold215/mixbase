@@ -1,6 +1,6 @@
 ---
 name: ios-build-deploy
-description: Build, ship and install the native iOS and macOS apps entirely from the CLI. Use for ANY work in ios/ or macos/ - shipping to TestFlight, building and installing on Matt's iPhone, the Mac build, adding a Swift file, sheets on the Mac, "developer disk image" or provisioning errors. Never tell the user to open Xcode; everything here is scriptable. For App Store submissions and the store listing use the app-store-connect skill.
+description: Builds, ships and installs the native iOS and macOS apps entirely from the command line - TestFlight on merge, the Mac build that shares the iOS source, building onto the owner's iPhone, and the rules shared Swift code must follow. Use before any work in ios/ or macos/, when adding a Swift file or a sheet, and for "developer disk image", provisioning or TestFlight upload errors. Never send the owner to Xcode. For App Store submissions and the store listing use the app-store-connect skill.
 ---
 
 # iOS and macOS: build, ship, install (CLI only)
@@ -12,6 +12,7 @@ description: Build, ship and install the native iOS and macOS apps entirely from
 - Any `ios/` change on `main` triggers `.github/workflows/ios-testflight.yml`: a cloud-signed archive on a GitHub macOS runner, uploaded to TestFlight (secrets `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_API_KEY_P8_BASE64`). Matt's phone auto-updates via TestFlight.
 - Any `macos/` or `ios/mixBase/` change triggers `.github/workflows/macos-testflight.yml` (same cloud-signed pattern). Matt's Mac auto-updates via the TestFlight app.
 - `.github/workflows/macos-app.yml` compiles BOTH platforms on PRs and pushes to `main` touching `macos/` or `ios/mixBase/`, and uploads an ad-hoc-signed `mixBase-macOS.zip` artifact.
+- A remote session cannot compile Swift. For a change under `ios/mixBase/` or `macos/`, the `macos-app.yml` run on the pull request is the only compile it gets before reaching the owner's devices: wait for it to pass before merging, and say in the report that nothing was run on a real phone.
 - If every TestFlight upload starts failing with "train version … is closed", the marketing version needs a bump: see the `app-store-connect` skill.
 
 Backup: the launchd auto-deploy on the Mac (`scripts/ios-autodeploy-install.sh`). A manual cable build is only for tight iteration.

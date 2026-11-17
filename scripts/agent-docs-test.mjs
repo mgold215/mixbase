@@ -14,12 +14,16 @@
 //   - the Next.js block `next dev` maintains in AGENTS.md is missing or doubled
 //   - a skill is missing its name or description, or is too long to load well
 //   - a skill exists that AGENTS.md's table does not list (nobody would find
-//     it), or the table lists one that does not exist
+//     it), or AGENTS.md points at one that does not exist
+//   - a skill's reference file sends the reader on to another file
+//   - an agent definition preloads a skill that does not exist
+//   - a registered test suite is missing from the map in preflight-checks
 //   - any of these files names a file in this repository that is not there
 //
 // Fail-first witness (RUN and confirmed): with the 2026-11-17 CLAUDE.md and
 // AGENTS.md put back, this suite fails on the size budget, the longest line,
-// the doubled Next.js heading and the skills the table does not list.
+// the doubled Next.js heading and the skills the table does not list. With a
+// suite name deleted from the preflight-checks table, it fails on that too.
 //
 // Run: node scripts/agent-docs-test.mjs  (also part of `npm test`)
 
@@ -36,9 +40,11 @@ const BUDGET = {
 }
 /** A line longer than this is a paragraph hiding in a bullet. */
 const LONGEST_LINE = 500
-/** Claude Code's own limits for a skill (code.claude.com/docs/en/skills). */
+/** The published limits for a skill (platform.claude.com → Agent Skills → best practices). */
 const SKILL_BODY_LINES = 500
-const SKILL_DESCRIPTION_CHARS = 1536
+const SKILL_DESCRIPTION_CHARS = 1024
+/** A reference file longer than this needs a table of contents at its top. */
+const REFERENCE_NEEDS_CONTENTS = 100
 
 const WHERE_IT_GOES = 'move the detail into the feature\'s skill (AGENTS.md → Keeping these files small)'
 
@@ -92,10 +98,24 @@ for (const name of skills) {
   const problems = [
     field('name') !== name && `name is "${field('name')}", the folder is "${name}"`,
     !field('description') && 'no description, so nothing tells a session when to read it',
+    field('description') && !/\bUse (before|when|every time|proactively)\b/.test(field('description')) && 'the description says what the skill covers but not when to use it ("Use before…", "Use when…")',
     field('description').length > SKILL_DESCRIPTION_CHARS && `description is ${field('description').length} characters (cut off after ${SKILL_DESCRIPTION_CHARS})`,
     body > SKILL_BODY_LINES && `body is ${body} lines (limit ${SKILL_BODY_LINES}): move reference detail into a file beside SKILL.md`,
   ].filter(Boolean)
   check(`${name}: name, description and length`, problems.length === 0, problems.join('; '))
+
+  // Reference files sit one level below SKILL.md. A reference that points on
+  // to another file tends to be read in part, or not at all.
+  for (const file of readdirSync(join(ROOT, SKILLS_DIR, name)).filter(f => f.endsWith('.md') && f !== 'SKILL.md')) {
+    const ref = read(`${SKILLS_DIR}/${name}/${file}`)
+    const onward = [...ref.matchAll(/\]\(([^)#\s]+\.md)(?:#[^)]*)?\)/g)].map(m => m[1])
+    const refProblems = [
+      !text.includes(`](${file})`) && 'SKILL.md does not link to it, so nothing leads a reader there',
+      onward.length > 0 && `it links on to ${onward.join(', ')}: link every reference file from SKILL.md instead`,
+      ref.split('\n').length > REFERENCE_NEEDS_CONTENTS && !/^## Contents$/m.test(ref) && `it is over ${REFERENCE_NEEDS_CONTENTS} lines with no "## Contents" list at the top`,
+    ].filter(Boolean)
+    check(`${name}/${file}: a reference one level below SKILL.md`, refProblems.length === 0, refProblems.join('; '))
+  }
 }
 
 // The table in AGENTS.md is how a session (or an agent that has no skills)
@@ -109,6 +129,35 @@ const unlisted = skills.filter(s => !listed.includes(s))
 const gone = listed.filter(s => !skills.includes(s))
 check('every skill is listed in that table', unlisted.length === 0, `add a row for: ${unlisted.join(', ')}`)
 check('every row in that table is a skill that exists', gone.length === 0, `no such skill: ${gone.join(', ')}`)
+const pointed = [...new Set([...agents.matchAll(/→ `([a-z0-9-]+)`$/gm)].map(m => m[1]))]
+const deadPointers = pointed.filter(s => !skills.includes(s))
+check('every bullet in AGENTS.md that ends "→ `skill`" names a skill that exists', pointed.length > 0 && deadPointers.length === 0, `no such skill: ${deadPointers.join(', ')}`)
+
+// Agent definitions: each says when to use it, and any skill it preloads exists.
+const AGENTS_DIR = '.claude/agents'
+for (const file of readdirSync(join(ROOT, AGENTS_DIR)).filter(f => f.endsWith('.md')).sort()) {
+  const text = read(`${AGENTS_DIR}/${file}`)
+  const front = text.match(/^---\n([\s\S]*?)\n---\n/)
+  const name = front?.[1].match(/^name:\s*(.+)$/m)?.[1].trim()
+  const preloads = front ? [...front[1].matchAll(/^\s+-\s+([a-z0-9-]+)\s*$/gm)].map(m => m[1]) : []
+  const problems = [
+    !front && 'no frontmatter',
+    front && name !== file.replace(/\.md$/, '') && `name is "${name}", the file is "${file}"`,
+    front && !/^description:\s*\S/m.test(front[1]) && 'no description',
+    ...preloads.filter(s => !skills.includes(s)).map(s => `preloads a skill that does not exist: ${s}`),
+  ].filter(Boolean)
+  check(`agent ${file.replace(/\.md$/, '')}`, problems.length === 0, problems.join('; '))
+}
+
+// The map of "which suites cover which area" must name every suite the runner
+// runs, or it quietly stops being the place to look.
+const runner = read('scripts/run-renderer-tests.mjs')
+const suitesBlock = runner.slice(runner.indexOf('const SUITES = ['), runner.indexOf(']', runner.indexOf('const SUITES = [')))
+const registered = [...suitesBlock.matchAll(/'([a-z0-9-]+)-test\.mjs'/g)].map(m => m[1])
+const preflight = read(`${SKILLS_DIR}/preflight-checks/SKILL.md`)
+const unmapped = registered.filter(s => !preflight.includes('`' + s + '`'))
+check('the runner\'s suite list was read', registered.length >= 80, `only ${registered.length} found`)
+check('preflight-checks names every registered suite', unmapped.length === 0, `add to its table: ${unmapped.join(', ')}`)
 
 // ── C. Nothing points at a file that is not there ────────────────────────────
 console.log('\nagent-docs: every file these documents name exists\n')

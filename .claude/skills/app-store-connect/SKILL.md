@@ -1,6 +1,6 @@
 ---
 name: app-store-connect
-description: App Store Connect work for mixBASE without a Mac - the store listing (copy, screenshots), creating and submitting a version, resubmitting to App Review, territory availability, and what got the app approved. Read BEFORE any App Store submission, listing or screenshot change, a "not available in your country or region" report, a reply to App Review, or after a version is approved (the version number must be bumped). For building and installing the app use the ios-build-deploy skill.
+description: App Store Connect work for mixBASE without a Mac - the store listing (copy, screenshots), creating and submitting a version, resubmitting to App Review, territory availability, and what got the app approved. Use before any App Store submission, listing or screenshot change, a "not available in your country or region" report, a reply to App Review, or after a version is approved (the version number must be bumped). For building and installing the app use the ios-build-deploy skill.
 ---
 
 # App Store Connect

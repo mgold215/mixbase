@@ -7,11 +7,13 @@ description: Post-push sanity pass against staging after a git push origin tst �
 
 Runs after a `git push origin tst`. Its job is a quick sanity pass — NOT a gate on promotion. Per project policy, promotion to `main` happens as soon as the PR's required checks (Build & Lint, Secret Scanning) are green; do not hold the merge waiting on staging observations, and do not loop on staging indefinitely.
 
+A remote session cannot reach staging over the network (see the `debugging-production` skill). If the polls below fail to connect rather than returning a status, report that and stop: it says nothing about the deploy.
+
 ## Steps
 
 ### 1. Wait for staging deploy (max 3 min)
 Poll `https://mixbase-staging.up.railway.app/api/health` every 15 seconds.
-Expect HTTP 200 with body `{"ok":true}`.
+Expect HTTP 200 with a body that includes `"ok":true` and `"db":"ok"`.
 On timeout: report it, but this does not block the PR merge — staging deploy lag is a Railway concern, not a code gate.
 
 ### 2. Verify app loads
@@ -23,13 +25,11 @@ On failure: diagnose → fix → commit to `tst` → `git push origin tst` → r
 git log -1 --stat --name-only
 ```
 
-### 4. Conditional upload/audio test
-If changed files include any of: `tus`, `audio`, `upload-url`, `upload-audio`, `upload`:
-```
-SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY node scripts/test-upload.mjs https://mixbase-staging.up.railway.app
-```
-All test groups must pass (TUS session creation, chunk upload, storage size verification, audio proxy Range requests).
-On failure: diagnose → fix → commit → push → restart from Step 1.
+### 4. Conditional upload/audio check
+If changed files include any of: `tus`, `audio`, `upload-url`, `upload`, `storage`:
+- Run the `upload-arch-reviewer` agent on the change.
+- Request a known mix through `/api/audio/...` with a `Range` header and expect a 206.
+- `scripts/test-upload.mjs` cannot be used: it sends no sign-in and the upload route requires one (see the `uploads-and-audio` skill). Say in the report that a real signed-in upload was not exercised.
 
 ### 5. Route smoke tests
 For each modified page or API route in the changed files:

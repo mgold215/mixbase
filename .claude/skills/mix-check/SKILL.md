@@ -1,6 +1,6 @@
 ---
 name: mix-check
-description: Mix Check, the owner-only whole-song mix analysis (no AI) on web and in the app - measures a mix, compares it with the previous version, the artist's catalog and genre references, and writes its findings into the mix notes. Read BEFORE changing or answering anything about mix analysis, loudness or balance findings, "Mix Check" notes, genre references (mb_mix_references), or a check that seems to vanish mid-run.
+description: Mix Check, the owner-only whole-song mix analysis (no AI) on web and in the app - measures a mix, compares it with the previous version, the artist's catalog and genre references, and writes its findings into the mix notes. Use before changing or answering anything about mix analysis, loudness or balance findings, "Mix Check" notes, genre references (mb_mix_references), or a check that seems to vanish mid-run.
 ---
 
 # Mix Check
@@ -73,7 +73,7 @@ Found by the first live test, 2026-11-17.
 
 ## Tested live (2026-11-17)
 
-With a throwaway admin account (the Studio's method: `ADMIN_USER_IDS` + the `studio-qa` edge function, all removed afterwards; see the `cassette-studio` skill):
+With a throwaway admin account (`ADMIN_USER_IDS` + the `studio-qa` edge function, all removed afterwards; the method is in the `debugging-production` skill):
 
 - A project whose two versions pointed at CATALYST MASTER 4 and 5 gave the same 7 notes as the offline run in about 13 s (7 s once the previous version is measured).
 - A re-run kept the one note that had been ticked off and replaced the rest.

@@ -21,7 +21,7 @@ import { vizSaveLimiter, checkUserLimit, rateLimitHeaders } from '@/lib/rate-lim
 // Since PR #113 the full-resolution save is two independent steps: the browser
 // PUTs the rendered video straight to the PUBLIC mf-video bucket via a signed
 // URL from /api/upload-url (bytes never traverse Railway — see
-// upload-audio-architecture), then POSTs a small JSON claim to
+// the uploads-and-audio skill), then POSTs a small JSON claim to
 // /api/visualizer/finalize, and ONLY that claim writes the mb_visualizers row.
 //
 // /api/visualizer/finalize closes every SERVER-side way that sequence can leave

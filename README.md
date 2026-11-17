@@ -7,21 +7,18 @@ across a Next.js web app and a native SwiftUI iOS app.
 
 - **Prod:** https://mixbase.app · **Staging:** https://mixbase-staging.up.railway.app
 - **Stack:** Next.js 16 (App Router, React 19) · Supabase (Postgres + Auth + Storage) ·
-  Railway (hosting) · Stripe (billing) · Replicate / Runway / Anthropic (AI) · Sentry
+  Railway (hosting) · Replicate / Runway / Anthropic (AI) · Sentry
+- **Free:** there are no paid plans, on the website or in the apps.
 
 ## Architecture notes
 
-- **Auth:** middleware (`src/proxy.ts`) verifies the `sb-access-token` JWT locally
-  against `SUPABASE_JWT_SECRET`, refreshes when expired, and injects `X-User-Id`.
-  Routes read identity from that header only — never from the request body. A
-  `Authorization: Bearer <token>` header is also accepted (for the iOS app).
-- **Uploads never route file bytes through Railway** (its proxy truncates bodies
-  over 10 MB). Files ≤50 MB use a signed URL direct to Supabase; larger files use
-  TUS chunked upload through `/api/tus` (8 MB chunks). Both paths are authenticated.
-- **Audio** is served through `/api/audio/[...path]` so Range requests work
-  (seeking/duration). Always wrap Supabase audio URLs with `audioProxyUrl()`.
-- **iOS** (`ios/`) is a fully native SwiftUI app with its own `AVPlayer` engine — not
-  a WebView wrapper. **macOS** (`macos/`) is an internal infra-monitoring dashboard.
+- **Web** is a Next.js app; **iOS** (`ios/`) is a fully native SwiftUI app with its own
+  `AVPlayer` engine, not a WebView wrapper; **macOS** (`macos/`) builds the same app from
+  the iOS source tree, plus a separate infrastructure control panel.
+- A feature's logic lives in a server route that both the web and the apps call.
+- The rules that are easy to break (uploads and storage limits, auth, database changes,
+  deploys) are written once, in `AGENTS.md` and the notes under `.claude/skills/`.
+  Start there before changing anything.
 
 ## Development
 
@@ -30,7 +27,7 @@ npm install
 npm run dev            # http://localhost:3000
 npm run lint           # must pass before every push
 npm run build          # must pass before every push
-npm test               # renderer + JWT smoke tests (no network/secrets needed)
+npm test               # every unit suite (Node 22+; no network/secrets needed)
 npm run test:e2e       # Playwright (targets staging by default; BASE_URL to override)
 ```
 
@@ -42,9 +39,8 @@ the required variables.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Admin DB/auth/storage access (bypasses RLS) |
-| `SUPABASE_JWT_SECRET` | staging+prod | Local JWT signature verification (auth-bypass risk if unset) |
+| `SUPABASE_JWT_SECRET` | legacy | Verifies old HS256 tokens; removed once JWT signing keys are in use |
 | `NEXT_PUBLIC_SUPABASE_URL` / `..._ANON_KEY` | yes | Client Supabase access |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs | if billing | Subscriptions |
 | `ANTHROPIC_API_KEY` / `REPLICATE_API_TOKEN` / `RUNWAY_API_KEY` | optional | AI features |
 | `SUPABASE_MANAGEMENT_TOKEN` | optional | Runtime schema self-heal + `/api/db-init` |
 | `NEXT_PUBLIC_SENTRY_DSN` | optional | Error monitoring (not a secret) |
@@ -67,8 +63,7 @@ survive a deploy that races the migration, as idempotent runtime self-heals in
 
 ## Testing
 
-- `npm test` runs `scripts/verify-token-test.mjs`, `scripts/finalize-test.mjs`, and
-  `scripts/video-test.mjs` — self-contained, exercising the real JWT-verify,
-  artwork (sharp + opentype), and video (bundled ffmpeg) code paths.
-- `scripts/test-upload.mjs <url>` and `scripts/test-infra.mjs <url> <email> <pass>`
-  smoke-test a deployed instance.
+- `npm test` runs every unit suite in `scripts/*-test.mjs` (auth, uploads, database
+  rules, artwork, video, share pages and more) with no network or secrets.
+- `scripts/test-infra.mjs <url> <email> <pass>` smoke-tests a deployed instance.
+- `.claude/skills/preflight-checks/SKILL.md` lists which suites cover which area.

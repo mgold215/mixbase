@@ -1,6 +1,6 @@
 ---
 name: share-pages
-description: The public share pages - a song at /listen/... or /share/<token>, an album at /album/... - with their link card, waveform, colours taken from the cover, and the music-driven "alive" layer. Read BEFORE changing or answering anything about share links, share tokens or a token-scoped route, the link preview card, waveform peaks, the page's colours or backdrop, the title or cover effects, or listener feedback on a share page.
+description: The public share pages - a song at /listen/... or /share/<token>, an album at /album/... - with their link card, waveform, colours taken from the cover, and the music-driven "alive" layer. Use before changing or answering anything about share links, share tokens or a token-scoped route, the link preview card, waveform peaks, the page's colours or backdrop, the title or cover effects, or listener feedback on a share page.
 ---
 
 # Public share pages
@@ -21,7 +21,7 @@ Shipped 2026-11-04. These pages are public: anything exposed here is exposed to 
 
 - Used by `POST /api/share/<token>/duration`, `GET /api/share/<token>/peaks`, and `POST /api/feedback` (which accepts `share_token` + `project_id` for album pages, or `version_id`).
 - Never add a token-scoped route with its own resolver.
-- `/api/share/` is a public PREFIX in `src/proxy.ts`: anything added under it is public and must gate on the token itself.
+- `/api/share/` is a public prefix in `src/proxy.ts`: anything added under it is public and must gate on the token itself.
 
 ## Link card
 
@@ -29,7 +29,9 @@ Shipped 2026-11-04. These pages are public: anything exposed here is exposed to 
 
 ## Waveform
 
-`GET /api/share/<token>/peaks[?project=]` decodes the mix once (ffmpeg → mono PCM → 200 peaks, `src/lib/waveform-peaks.ts`), persists write-once in `mb_versions.waveform_peaks` (migration 043; db-init + `ensureVersionWaveformPeaksColumn` heal), and answers 202 while decoding (`fetchPeaks` polls). Drawn by `ShareWaveform` (canvas, pointer + keyboard seek). The `/player` screen and the iOS player draw the same peaks.
+`GET /api/share/<token>/peaks[?project=]` decodes the mix once (ffmpeg → mono PCM → 200 peaks, `src/lib/waveform-peaks.ts`), persists write-once in `mb_versions.waveform_peaks` (migration 043; db-init + `ensureVersionWaveformPeaksColumn` heal), and answers 202 while decoding (`fetchPeaks` polls). Drawn by `ShareWaveform` (canvas, pointer + keyboard seek).
+
+The `/player` screen and the iOS player draw the same peaks (real since 2026-11-04; before that `/player` drew decoration seeded by the project id). A shimmer means the peaks are still loading. Even bars mean the mix could not be read.
 
 ## Public-only extras
 

@@ -16,7 +16,7 @@ import {
 // WHY THIS EXISTS
 // The full-resolution save path is: /api/upload-url signs a key → the browser
 // PUTs the bytes DIRECTLY to the PUBLIC mf-video bucket (they never traverse
-// Railway; see upload-audio-architecture) → the browser POSTs a small JSON
+// Railway; see the uploads-and-audio skill) → the browser POSTs a small JSON
 // claim to /api/visualizer/finalize, and only that claim writes the row.
 //
 // /api/visualizer/finalize closes every SERVER-side way that sequence can leave

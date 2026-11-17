@@ -11,8 +11,8 @@ The owner on the old drift, 2026-11-12: "all the video did was slightly move aro
 | Cover | Motion |
 |---|---|
 | Classic cover with its own layers | `makeMovingCover`: reel hubs turn, two-plane camera drift, per-frame grain |
-| Drawn cover (art engine) | Designed motion: a plan written for that cover, drawn over its real pixels |
-| Any failure, or a cover older than layer persistence | `stillLoop`: the still itself in a slow floating drift with live grain |
+| A cover with no layers of its own (drawn by the art engine, or older than layer persistence) | Designed motion: a plan written for that cover, drawn over its real pixels (`makeStillCover`) |
+| Planning or drawing the designed motion fails | `stillLoop`: the still itself in a slow floating drift with live grain |
 
 ## Classic moving cover
 

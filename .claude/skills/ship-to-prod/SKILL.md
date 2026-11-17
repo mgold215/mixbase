@@ -1,6 +1,6 @@
 ---
 name: ship-to-prod
-description: The one correct way to deploy mixbase to production. Use this EVERY time finished work needs to go live — the user says "push", "deploy", "ship", "push to main", "release", or a code change is complete and should reach prod. Direct pushes to main are rejected by branch protection (HTTP 403); this PR-based path is the only vehicle that lands on main.
+description: The one way to deploy mixBASE to production - a pull request from tst to main, merged as soon as the two required checks are green. Use every time finished work should go live, when the owner says push, deploy, ship or release, and when a push to main is rejected (403).
 ---
 
 # Ship to Prod
@@ -15,7 +15,7 @@ Do NOT babysit staging. The user does not check staging, and merging is not gate
 
 Run the `preflight-checks` skill (at minimum `npm run lint` and `npm run build` — both must pass). Never push code that fails either.
 
-Gate in a **clean worktree**, never the main checkout, with `NODE_ENV` unset — untracked tool junk in the checkout and an exported `NODE_ENV=production` (strips devDeps on install) have each produced thousands of phantom lint errors (2026-08-19 and 08-20). If lint suddenly reports thousands of errors on code CI says is green, suspect the environment, not the code.
+Gate in a **clean worktree**, never the main checkout, with `NODE_ENV` unset — untracked tool junk in the checkout and an exported `NODE_ENV=production` (strips devDeps on install) have each produced thousands of phantom lint errors (2026-08-19 and 08-20).
 
 ### 2. Get the work onto `tst`
 
@@ -38,7 +38,7 @@ On network failure, retry up to 4 times with backoff (2s, 4s, 8s, 16s).
 
 ### 4. Open the PR `tst` → `main`
 
-Use the GitHub MCP tools (there is no `gh` CLI in remote sessions):
+Use the GitHub MCP tools (in a remote session the `gh` CLI has no usable login):
 
 - `mcp__github__create_pull_request` — owner `mgold215`, repo `mixbase`, head `tst`, base `main`.
 - If creation fails because a PR already exists for `tst`, find it with `mcp__github__list_pull_requests` and reuse it — pushing to `tst` already updated it.
@@ -51,7 +51,7 @@ If a check fails: read the logs (`mcp__github__get_job_logs`), fix the cause loc
 
 ### 6. Report
 
-Tell the user what shipped and that the merge triggered the production deploy (https://mixbase.app).
+Tell the owner what shipped and that the merge triggered the production deploy (https://mixbase.app). A change under `ios/` or `macos/` also starts the TestFlight builds. To confirm the deploy finished and the site is healthy, use the `debugging-production` skill.
 
 ## Never
 

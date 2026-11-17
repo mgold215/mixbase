@@ -1,6 +1,6 @@
 ---
 name: cassette-studio
-description: Cassette Studio, the owner-only cover maker on web and iOS - one-click covers drawn around the owner's cassette, lettered in their own handwriting, with moving covers and optional Runway filming. Read BEFORE changing or answering anything about covers, ideas, takes, the judge or critic, handwriting, lettering or titles, the cover viewer, looks and filters, moving covers, "Film it", or files under mf-artwork/studio/. Holds the owner's verdicts on what a good cover is, what each step costs, and the state of the owner's own files.
+description: Cassette Studio, the owner-only cover maker on web and iOS - one-click covers drawn around the owner's cassette, lettered in their own handwriting, with moving covers and optional Runway filming. Holds the owner's verdicts on what a good cover is, what each step costs, and the state of the owner's own files. Use before changing or answering anything about covers, ideas, takes, the judge or critic, handwriting, lettering or titles, the cover viewer, looks and filters, moving covers, "Film it", or files under mf-artwork/studio/.
 ---
 
 # Cassette Studio
@@ -106,8 +106,8 @@ The owner, 2026-11-11: "$.50 per run seems risky if I don't like the concept". H
 - Ideas: about a cent.
 - A cover: 3 takes (~38¢), plus up to 2 more on a redraw (~26¢), plus ~10¢ to extend it for the clips. Three of the first four runs needed the redraw, so the screens say 50 to 75 cents.
 - Filming (see [motion.md](motion.md)): about 80 Runway credits a clip, shown before the tap.
-- Never start a test run while a deploy is still swapping replicas: the job dies with the old one, paid pictures and all. Wait for the previous deployment to read REMOVED.
-- Paid test runs need the owner's yes first (see AGENTS.md → Working with the owner).
+- Never start a run while a deploy is still swapping replicas: the job dies with the old one, paid pictures and all. Wait for the previous deployment to read REMOVED.
+- A paid test run needs the owner's yes first (AGENTS.md → Working with the owner).
 
 ## After the run
 
@@ -156,11 +156,6 @@ The cover re-lettered after the fact in a chosen colour / spot (the six corners 
 - **Spare covers.** The covers the 2026-11-10 test runs drew were copied into the matching songs' own folders (`<projectId>/ai-cassette-<ts>.jpg` + its lettered `finalized-<ts>.jpg`): ERIS twice, VITALS, ECHOES OF THE DUST, BELLADONNA, 9AM IN ROSSLYN. They are NOT live. They show in each song's Artwork History (web only). Making one live is a restore of the `ai-cassette` file and then of its `finalized` file (`POST /api/projects/<id>/artwork-history`).
 - Lettering and signature files: see [lettering.md](lettering.md).
 
-## Testing without the owner's account
+## Testing
 
-The Studio is owner-only, and a remote session cannot reach mixbase.app directly. The method used so far:
-
-- A throwaway user made an admin through `ADMIN_USER_IDS`.
-- A temporary Supabase edge function that signs in as it and calls the routes, driven from `execute_sql` with `extensions.http`.
-- All of it removed afterwards: user, songs, files; `ADMIN_USER_IDS` emptied (production reads it at its next deploy).
-- The edge function `studio-qa` is left as a 410 stub because no MCP tool deletes one.
+The Studio answers 404 to everyone but the owner, and its runs cost money. How to test it live, and what to ask first: the `debugging-production` skill → Testing live.
