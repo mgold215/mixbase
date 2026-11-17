@@ -5,6 +5,8 @@
 // Run: node scripts/mix-check-test.mjs
 
 import { createMixAnalyzer, isMixSummary, MIX_BANDS, THIRD_OCTAVE_HZ, SIXTH_OCTAVE_HZ, MATCH_LUFS } from '../src/lib/mix-check.ts'
+import { loudnessOf } from '../src/lib/mix-check.ts'
+import { sanitizeLoudness } from '../src/lib/loudness-compare.ts'
 import { buildFindings, baselineOf, genreFamily, mixCheckMarker, withMarker, MARKER_TTL_MS, MIN_CATALOG, MIX_CHECK_AUTHOR } from '../src/lib/mix-check-findings.ts'
 import { measureLoudness } from '../src/lib/loudness.ts'
 
@@ -96,6 +98,16 @@ check('band and spectrum lengths', m.summary.b.length === MIX_BANDS.length && m.
 
 const ref = measureLoudness([base.L, base.R], SR)
 check('integrated loudness agrees with Master Check', Math.abs(m.summary.i - ref.integratedLufs) < 0.3, `${m.summary.i} vs ${ref.integratedLufs.toFixed(2)}`)
+// One card, one button: a check's own numbers are the loudness readout.
+{
+  const reading = loudnessOf(m)
+  check('a check gives the loudness readout: integrated, loudest 3 s and sample peak agree with Master Check',
+    Math.abs(reading.integratedLufs - ref.integratedLufs) < 0.3 && Math.abs(reading.shortTermMaxLufs - ref.shortTermMaxLufs) < 0.5 && Math.abs(reading.samplePeakDb - ref.samplePeakDb) < 0.1,
+    `${reading.integratedLufs}/${reading.shortTermMaxLufs}/${reading.samplePeakDb} vs ${ref.integratedLufs.toFixed(2)}/${ref.shortTermMaxLufs.toFixed(2)}/${ref.samplePeakDb.toFixed(2)}`)
+  check('…in the shape the loudness columns are written from', sanitizeLoudness(reading)?.integratedLufs === reading.integratedLufs)
+  const silent = loudnessOf({ summary: { ...m.summary, i: -120, st: -120 }, detail: { samplePeakDb: -120 } })
+  check('silence is "no number", not −120', silent.integratedLufs === null && silent.shortTermMaxLufs === null && silent.samplePeakDb === null)
+}
 check('true peak is at or above the sample peak', m.summary.tp >= m.detail.samplePeakDb - 0.05, `${m.summary.tp} ≥ ${m.detail.samplePeakDb}`)
 
 const rhythm = m.detail.sections.filter(s => s.kind === 'rhythm')
@@ -262,6 +274,23 @@ console.log('\nmix-check: the app reads the report the server writes\n')
   reads('MixCheckReport', ['at', 'findings', 'bands', 'compared', 'curves', 'detail'].filter(k => new RegExp(`\\b${k}[,:]`).test(server)))
   check('the option lists the app draws with are served, under the names it reads',
     /case thirdOctaveHz = "third_octave_hz"/.test(swift) && /third_octave_hz: THIRD_OCTAVE_HZ/.test(route) && /families: GENRE_FAMILIES/.test(route) && /options: OPTIONS/.test(route))
+  // Master Check and Mix Check are ONE card on both clients.
+  const page = readFileSync(new URL('../src/app/projects/[id]/ProjectClient.tsx', import.meta.url), 'utf8')
+  const webCard = readFileSync(new URL('../src/components/MixCheck.tsx', import.meta.url), 'utf8')
+  const loudnessCard = readFileSync(new URL('../src/components/MasterCheck.tsx', import.meta.url), 'utf8')
+  const songScreen = readFileSync(new URL('../ios/mixBase/Views/Projects/ProjectDetailView.swift', import.meta.url), 'utf8')
+  const appCard = readFileSync(new URL('../ios/mixBase/Views/Projects/MixCheckCard.swift', import.meta.url), 'utf8')
+  check('a check fills the loudness in, and never replaces a reading already there',
+    /await fillLoudness\(versionId, measured\)/.test(server) && /\.update\(columns\)\.eq\('id', versionId\)\.is\('loudness_measured_at', null\)/.test(server))
+  check('a finished check is served with the loudness reading', /loudnessForReport\(g\.id, stored\)/.test(route) && /loudness, options: OPTIONS/.test(route))
+  check('the app reads the reading under the column names the server sends',
+    ['loudness_lufs', 'loudness_short_term_lufs', 'sample_peak_db'].every(c => swift.includes(`= "${c}"`) && server.includes(c)) && /case status, report, options, loudness, error/.test(swift))
+  check('web: the owner gets one card, everyone else the loudness card', /ownerTools \? \(\s*<MixCheck[\s\S]{0,400}?\) : \(\s*<MasterCheck /.test(page) && (page.match(/<MixCheck\b/g) ?? []).length === 1)
+  check('web: Mix Check draws the loudness readout inside its own card', /<MasterCheck[\s\S]{0,200}mixCheck=\{\{/.test(webCard) && /body\.loudness/.test(webCard) && /\{mixCheck\?\.body\}/.test(loudnessCard))
+  check('app: the owner gets one card, everyone else the loudness card', /if authService\.ownerTools \{\s*MixCheckCard\([\s\S]{0,900}?\} else \{\s*MasterCheckCard\(/.test(songScreen))
+  check('app: Mix Check draws the loudness readout inside its own card', /LoudnessReadout\(measurement: loudness\)/.test(appCard) && /struct LoudnessReadout: View/.test(songScreen))
+  const everywhere = [loudnessCard, webCard, songScreen, appCard, readFileSync(new URL('../ios/mixBase/Services/LoudnessAnalyzer.swift', import.meta.url), 'utf8')].join('\n')
+  check('no limiter or chain recommendations on either client', !/recommendations/i.test(everywhere) && !/Pro-L|Ozone/.test(everywhere))
   check('the app starts and polls the same route', swift.includes('/mix-check",') && swift.includes('"/api/mix-check/references"'))
 }
 

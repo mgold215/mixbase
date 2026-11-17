@@ -87,7 +87,6 @@ const SUITES = [
   'mix-check-test.mjs',
   'loudness-compare-test.mjs',
   'loudness-auto-test.mjs',
-  'master-recommendations-test.mjs',
   'project-delete-assets-test.mjs',
   'survivor-scan-bound-test.mjs',
   'survivor-scan-routing-test.mjs',

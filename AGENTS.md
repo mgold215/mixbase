@@ -51,6 +51,7 @@ npm run test:e2e                # Playwright against staging; BASE_URL=http://lo
 
 - **Prod:** https://mixbase.app → https://mixbase-production.up.railway.app. **Staging:** https://mixbase-staging.up.railway.app. DNS at Namecheap.
 - Railway project `moodmixformat` (`9ff29ad4-39cd-45d5-a0e9-5cbd4ffa2227`). Supabase `mmf-agents`, ref `mdefkqaawrusoaojstpq` (us-east-1). Sentry `moodmixformat/mixbase`.
+- **Staging is not usable.** Its Supabase key was removed after the Railway breach, so its health check fails and every deploy to it since 2026-11-14 has failed. Nothing can be tested there until it is given credentials of its own.
 - Production runs two processes (us-east4 + us-west2). Anything kept in one process's memory (jobs, rate limits) is unknown to the other.
 - Environment variables: full list in `.env.example`.
 - **Something wrong in production? Check Supabase first**, before theorizing from code. → `debugging-production`

@@ -1403,8 +1403,9 @@ final class MixbaseAPI {
     }
 
     // MARK: - Mix Check (owner-only; no AI)
-    // The server analyses a whole mix (GET|POST /api/versions/<id>/mix-check)
-    // and writes what it finds into the mix notes under the "Mix Check" byline.
+    // The server analyses a whole mix (GET|POST /api/versions/<id>/mix-check),
+    // measures its loudness, and writes what it finds into the mix notes under
+    // the "Mix Check" byline.
     // Nothing is measured or judged on the device: the app starts a check,
     // polls it and draws the report the web draws. The server 404s these for
     // anyone but the owner; the app shows the card only when ownerTools is true.
@@ -1537,17 +1538,43 @@ final class MixbaseAPI {
         case notChecked
         case running
         case failed(String)
-        case done(MixCheckReport, MixCheckOptions?)
+        case done(MixCheckReport, MixCheckOptions?, MixCheckLoudness?)
+    }
+
+    /// The mix's loudness reading as stored on its row. A check measures the
+    /// loudness too (the readout that used to be the separate Master Check
+    /// card), so a finished check comes with it.
+    struct MixCheckLoudness: Decodable, Equatable {
+        let integratedLufs: Double?
+        let shortTermMaxLufs: Double?
+        let samplePeakDb: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case integratedLufs = "loudness_lufs"
+            case shortTermMaxLufs = "loudness_short_term_lufs"
+            case samplePeakDb = "sample_peak_db"
+        }
+
+        /// Silence stores as nulls and reads as −∞, as on the version row.
+        var measurement: LoudnessMeasurement {
+            LoudnessMeasurement(
+                integratedLufs: integratedLufs ?? -.infinity,
+                shortTermMaxLufs: shortTermMaxLufs ?? -.infinity,
+                samplePeakDb: samplePeakDb ?? -.infinity,
+                gatedBlockCount: 0
+            )
+        }
     }
 
     private struct MixCheckResponse: Decodable {
         let status: String
         let report: MixCheckReport?
         let options: MixCheckOptions?
+        let loudness: MixCheckLoudness?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
-            case status, report, options, error
+            case status, report, options, loudness, error
         }
 
         // Only `status` is required; the rest degrades part by part.
@@ -1556,6 +1583,7 @@ final class MixbaseAPI {
             status = try container.decode(String.self, forKey: .status)
             report = try? container.decode(MixCheckReport.self, forKey: .report)
             options = try? container.decode(MixCheckOptions.self, forKey: .options)
+            loudness = try? container.decode(MixCheckLoudness.self, forKey: .loudness)
             error = try? container.decode(String.self, forKey: .error)
         }
     }
@@ -1577,7 +1605,7 @@ final class MixbaseAPI {
             return .failed(response.error ?? "The check failed")
         case "done":
             guard let report = response.report else { return .notChecked }
-            return .done(report, response.options)
+            return .done(report, response.options, response.loudness)
         default:
             return .notChecked
         }

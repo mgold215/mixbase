@@ -3,12 +3,14 @@ import UniformTypeIdentifiers
 
 // MARK: - MixCheckCard
 // Mix Check for the latest mix — the app's side of the web project page's
-// "Mix check" panel. Master Check (the card above it) answers "how loud";
-// this asks the SERVER to analyse the whole mix and shows what it found: what
-// changed since the previous version, how the balance sits against the
-// artist's own catalog and against commercial references in the genre, and
-// faults that need no comparison (a drop that lands smaller than its
-// breakdown, a low end that cancels in mono, clipping).
+// "Mix check" panel. ONE card, one button: it asks the SERVER to analyse the
+// whole mix and shows the loudness readout that used to be its own Master
+// Check card (the server measures that too, so the mix is not downloaded to
+// the phone), then what the check found: what changed since the previous
+// version, how the balance sits against the artist's own catalog and against
+// commercial references in the genre, and faults that need no comparison (a
+// drop that lands smaller than its breakdown, a low end that cancels in mono,
+// clipping).
 //
 // Nothing is measured or judged here. The app starts a check, polls it and
 // draws the report — the same routes and the same report the web uses, so a
@@ -17,7 +19,9 @@ import UniformTypeIdentifiers
 // `onNotesChanged` tells the song screen to reload them.
 //
 // Owner-only for now: the song screen shows the card only when
-// AuthService.ownerTools is true (the server 404s the routes for anyone else).
+// AuthService.ownerTools is true (the server 404s the routes for anyone else);
+// everyone else gets MasterCheckCard, the loudness readout measured on the
+// device.
 struct MixCheckCard: View {
 
     let version: Version
@@ -31,6 +35,9 @@ struct MixCheckCard: View {
     @State private var status: MixbaseAPI.MixCheckStatus?
     @State private var expanded = false
     @State private var watcher: Task<Void, Never>?
+    // The reading the last finished check came with. Kept while a re-check
+    // runs, so the readout does not blink out and back.
+    @State private var checkedLoudness: LoudnessMeasurement?
 
     private static let teal = Color(hex: "#2dd4bf")
     private static let ink = Color(hex: "#f0f0f0")
@@ -41,22 +48,37 @@ struct MixCheckCard: View {
     }
 
     private var report: MixbaseAPI.MixCheckReport? {
-        if case .done(let report, _)? = status { return report }
+        if case .done(let report, _, _)? = status { return report }
         return nil
     }
 
     private var options: MixbaseAPI.MixCheckOptions? {
-        if case .done(_, let options)? = status { return options }
+        if case .done(_, let options, _)? = status { return options }
         return nil
+    }
+
+    // The reading a finished check came with, else the one on the mix's row
+    // (measured earlier, here or on the web).
+    private var loudness: LoudnessMeasurement? {
+        checkedLoudness ?? version.storedLoudness
+    }
+
+    private func show(_ current: MixbaseAPI.MixCheckStatus) {
+        status = current
+        if case .done(_, _, let reading?) = current { checkedLoudness = reading.measurement }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
 
+            if let loudness {
+                LoudnessReadout(measurement: loudness)
+            }
+
             switch status {
             case .some(.notChecked):
-                Text("Analyses the whole mix and writes what it finds into the notes, each at its place in the song.")
+                Text("Measures the loudness, analyses the whole mix and writes what it finds into the notes, each at its place in the song.")
                     .font(.caption)
                     .foregroundColor(.gray)
             case .some(.running):
@@ -67,7 +89,7 @@ struct MixCheckCard: View {
                 Text(message)
                     .font(.caption)
                     .foregroundColor(.red)
-            case .some(.done(let report, _)):
+            case .some(.done(let report, _, _)):
                 summaryRow(report)
                 if expanded {
                     MixCheckReportView(
@@ -173,7 +195,7 @@ struct MixCheckCard: View {
     private func load() async {
         do {
             let current = try await MixbaseAPI.shared.mixCheck(versionId: version.id)
-            status = current
+            show(current)
             // One started on the web (or before leaving this screen) is picked up.
             if case .running = current { watch() }
         } catch {
@@ -214,7 +236,7 @@ struct MixCheckCard: View {
                 if Task.isCancelled { return }
                 misses = 0
                 if case .running = current { continue }
-                status = current
+                show(current)
                 if case .done = current {
                     withAnimation(.easeOut(duration: 0.15)) { expanded = true }
                     onNotesChanged()

@@ -28,8 +28,9 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import { supabaseAdmin } from '@/lib/supabase'
 import { armDeadline } from '@/lib/proc-deadline.ts'
 import { versionDisplayLabel } from '@/lib/mix-status.ts'
+import { sanitizeLoudness, toLoudnessColumns, type VersionLoudnessRow } from '@/lib/loudness-compare'
 import {
-  ANALYSIS_RATE, MIX_CHECK_ALGO, createMixAnalyzer, isMixSummary,
+  ANALYSIS_RATE, MIX_CHECK_ALGO, createMixAnalyzer, isMixSummary, loudnessOf,
   type MixDetail, type MixMeasurement, type MixSummary,
 } from '@/lib/mix-check.ts'
 import {
@@ -135,6 +136,44 @@ export async function measureUrl(url: string, source: 'full' | 'preview' = 'full
   }
 }
 
+// ── The loudness readout ─────────────────────────────────────────────────────
+// Mix Check and Master Check are one card: a check measures the loudness too,
+// so the artist does not also have to download the mix and measure it on the
+// device. The numbers go into the SAME columns the browser and the app write
+// (migration 032), and only when the mix has no reading yet: a reading already
+// there is never replaced, so one mix does not show two slightly different
+// loudnesses depending on which measured last.
+
+const LOUDNESS_COLUMNS = 'loudness_lufs, loudness_short_term_lufs, sample_peak_db, loudness_measured_at, loudness_algo'
+
+async function fillLoudness(versionId: string, m: { summary: MixSummary; detail?: Pick<MixDetail, 'samplePeakDb'> }): Promise<void> {
+  // A version measured only as a comparison keeps no detail, so no sample peak.
+  if (!m.detail || typeof m.detail.samplePeakDb !== 'number') return
+  const reading = sanitizeLoudness(loudnessOf({ summary: m.summary, detail: m.detail }))
+  if (!reading) return
+  const columns = { ...toLoudnessColumns(reading, new Date().toISOString()), loudness_algo: MIX_CHECK_ALGO }
+  const { error } = await supabaseAdmin.from('mb_versions').update(columns).eq('id', versionId).is('loudness_measured_at', null)
+  if (error) console.error('[mix-check] loudness not written:', error.message)
+}
+
+/**
+ * The loudness reading on a checked mix, for the card that shows both. A mix
+ * checked before a check filled the reading in gets it from its stored report.
+ * Null when it cannot be read: the report is still shown without it.
+ */
+export async function loudnessForReport(versionId: string, report: MixCheckReport): Promise<VersionLoudnessRow | null> {
+  const read = async () => {
+    const { data, error } = await supabaseAdmin.from('mb_versions').select(LOUDNESS_COLUMNS).eq('id', versionId).maybeSingle()
+    return error ? null : (data as VersionLoudnessRow | null)
+  }
+  let row = await read()
+  if (row && row.loudness_measured_at == null && report.detail) {
+    await fillLoudness(versionId, report)
+    row = await read()
+  }
+  return row && row.loudness_measured_at != null ? row : null
+}
+
 // ── What a mix is compared with ──────────────────────────────────────────────
 
 type VersionRow = {
@@ -224,6 +263,7 @@ async function runMixCheck(versionId: string, userId: string): Promise<void> {
   const row = version as unknown as VersionRow & { mb_projects: { genre: string | null } }
 
   const measured = await measureUrl(row.audio_url)
+  await fillLoudness(versionId, measured)
 
   // The previous version: the nearest older mix of this song with other audio.
   const { data: siblings } = await supabaseAdmin
@@ -245,6 +285,8 @@ async function runMixCheck(versionId: string, userId: string): Promise<void> {
         summary = m.summary
         const stored: MixCheckReport = { algo: m.algo, at: new Date().toISOString(), summary }
         await supabaseAdmin.from('mb_versions').update({ mix_check: stored }).eq('id', older.id).is('mix_check', null)
+        // …and its loudness, which is what "vs the previous mix" reads.
+        await fillLoudness(older.id, m)
       } catch (err) {
         console.error('[mix-check] previous version could not be measured:', (err as Error).message)
       }
