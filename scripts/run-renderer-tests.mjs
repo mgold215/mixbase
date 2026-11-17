@@ -41,6 +41,7 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url))
 // Order matters only in that the cheap pure-source contract tests run first, so
 // a structural regression fails in seconds rather than after the ffmpeg suites.
 const SUITES = [
+  'agent-docs-test.mjs',
   'verify-token-test.mjs',
   'supabase-keys-test.mjs',
   'auth-errors-test.mjs',

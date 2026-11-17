@@ -17,13 +17,15 @@ executive empowered to execute deployments — and only through the sanctioned p
 - Deploy path (the ONLY one): green gate (`npm run lint` + `npm run build` + `npm test`,
   gitleaks) → push to `tst` → `ship-to-prod` skill → PR `tst`→`main` → merge when Build &
   Lint + Secret Scanning are green. Direct push to `main` is rejected (403). Never gate on staging.
-- Danger zones exist (`danger-zones` skill): `next.config.ts` CSP + font tracing,
-  `video-render.ts` (no xfade in the bundled ffmpeg), auth identity from `X-User-Id` only,
-  TUS 8 MB chunks, `mf-audio` 2 GB limit set via SQL only.
+- Reasonable-looking edits break production in a few places. The rules are in skills:
+  `uploads-and-audio` (TUS 8 MB chunks, `mf-audio` 2 GB limit set via SQL only),
+  `auth-and-security` (identity from `X-User-Id` only, CSP), `database-changes`,
+  `artwork-and-video` (font tracing, no xfade in the bundled ffmpeg).
 
 ## Your standing checks (run these, don't assume)
 
 1. **Prod health:** `GET https://mixbase.app/api/health` — expect `{ok, db:ok, service_key:true, admin_power:true, admin_session_leak:false}`.
+   From a remote session, fetch it through the database (the `debugging-production` skill shows how).
 2. **Stranded work:** `git fetch origin`, then compare every local worktree HEAD
    (`git worktree list`) against `origin/main`/`origin/tst`. A fully-gated green commit
    sitting unpushed is a deployment failure — YOURS to fix. (This happened 2026-08-19:
@@ -32,10 +34,13 @@ executive empowered to execute deployments — and only through the sanctioned p
 3. **CI:** GitHub Actions state on recent PRs; re-run flaky jobs (reversible, allowed).
 4. **Sentry:** new issues in 24h. Known-resolved schema-heal issues MIXBASE-5/6/7/8 —
    a recurrence is a regression.
-5. **Migrations backlog:** 031 is the newest applied. 030/032/033 pending Matt. **028 is
-   REFUTED — never apply it, ever.** Next free number: 034.
-6. **Security posture:** `SUPABASE_JWT_SECRET` present on staging+prod (without it,
-   auth-bypass risk), gitleaks green, no secrets in code.
+5. **Migrations:** a deploy does not apply them. Check what production really has with the
+   Supabase MCP (`list_migrations`, `pg_policies`), following the `database-changes` skill.
+   **028 is REFUTED — never apply it, ever.** 038 must not be applied yet.
+6. **Security posture:** `/api/health` reports `service_key: true`; gitleaks green; no
+   secrets in code. `SUPABASE_JWT_SECRET` leaked in the 2026-10-21 Railway breach and is
+   meant to be ABSENT once JWT signing keys are in use — never put it back
+   (`auth-and-security` skill).
 
 ## Your job in the daily meeting
 
@@ -69,4 +74,4 @@ A green gate plus a stranded commit is a failed run. Work is not done until it i
 
 Never `--force`, never `--no-verify`, never bypass the PR gate, never apply migration 028,
 never destructive infra ops (deletes, reaping, env-var changes) without Matt. Preflight
-(`preflight-checks` skill) before any push. Consult `danger-zones` before touching listed files.
+(`preflight-checks` skill) before any push. Read the skill for an area before touching its files.

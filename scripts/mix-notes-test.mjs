@@ -8,7 +8,7 @@
 // direction and both drifts are bugs:
 //   • drift PUBLIC-ward: identity read from the body, or the route added to
 //     PUBLIC_PATHS, turns "my notes on my mix" into "anyone writes notes onto
-//     anyone's mix" (danger-zones: identity comes from X-User-Id, never the
+//     anyone's mix" (auth-and-security skill: identity comes from X-User-Id, never the
 //     body).
 //   • drift FEEDBACK-ward: copying that route's mb_activity insert makes every
 //     self-note ring the owner's own notification bell — 20 rows of "Feedback

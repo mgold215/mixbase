@@ -1,7 +1,7 @@
 // Client half of the full-resolution save path: PUT the encoded clip DIRECTLY
 // to Supabase Storage via a short-lived signed URL, then register it with
 // /api/visualizer/finalize. File bytes never traverse Railway (its proxy
-// truncates bodies over 10 MB — see upload-audio-architecture); only the
+// truncates bodies over 10 MB — see the uploads-and-audio skill); only the
 // small JSON claim does.
 
 import type { VizRecipe } from './types.ts'

@@ -1,6 +1,6 @@
 // Pure validation helpers for /api/visualizer/finalize — the JSON endpoint
 // that indexes a clip the browser already PUT directly into mf-video via a
-// signed URL (bytes never traverse Railway; see upload-audio-architecture).
+// signed URL (bytes never traverse Railway; see the uploads-and-audio skill).
 // Kept DOM/IO-free so scripts/viz-finalize-test.mjs can exercise every rule in
 // Node (relative .ts imports, same pattern as the other Node-tested libs).
 

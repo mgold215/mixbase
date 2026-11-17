@@ -74,8 +74,9 @@ Minutes → boardroom; each PRIVATE_NOTE verbatim → its office channel.
   agents to read. **The execs recommend; the ops run decides its own execution.**
 
 ### Always human-gated — never autonomous
-Destructive/irreversible data ops, new spend, pricing/tier changes, Stripe live, App Store
-resubmission, migration 028 (refuted — never apply), permission/settings changes. These go to
+Destructive/irreversible data ops, new spend, any paid plan or pricing change (there are
+none, by decision), App Store submissions, applying a migration that is not purely additive
+(028 is refuted — never apply; 038 not yet), permission/settings changes. These go to
 ACTIONS_MATT with a recommendation and a default-on-silence date where sensible.
 
 ## Between meetings
