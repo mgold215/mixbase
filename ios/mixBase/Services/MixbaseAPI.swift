@@ -1485,6 +1485,33 @@ final class MixbaseAPI {
         let compared: Compared?
         let curves: Curves?
         let detail: Detail?
+
+        enum CodingKeys: String, CodingKey {
+            case at, findings, bands, compared, curves, detail
+        }
+
+        // Each part is read on its own. The server deploys the moment a
+        // change merges and the app follows through TestFlight, so an older
+        // app must show what it still understands (the findings above all)
+        // instead of treating a report it half-understands as "never checked".
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            at = (try? container.decode(String.self, forKey: .at)) ?? ""
+            findings = (try? container.decode([Tolerant<MixCheckFinding>].self, forKey: .findings))?.compactMap { $0.value }
+            bands = try? container.decode([MixCheckBand].self, forKey: .bands)
+            compared = try? container.decode(Compared.self, forKey: .compared)
+            curves = try? container.decode(Curves.self, forKey: .curves)
+            detail = try? container.decode(Detail.self, forKey: .detail)
+        }
+    }
+
+    /// One element of a list, or nothing when it does not read: a single
+    /// finding in a newer shape must not cost the rest of the list.
+    private struct Tolerant<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws {
+            value = try? Value(from: decoder)
+        }
     }
 
     /// Lists the server owns, sent with a finished report: the spectrum's
@@ -1518,6 +1545,19 @@ final class MixbaseAPI {
         let report: MixCheckReport?
         let options: MixCheckOptions?
         let error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status, report, options, error
+        }
+
+        // Only `status` is required; the rest degrades part by part.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try container.decode(String.self, forKey: .status)
+            report = try? container.decode(MixCheckReport.self, forKey: .report)
+            options = try? container.decode(MixCheckOptions.self, forKey: .options)
+            error = try? container.decode(String.self, forKey: .error)
+        }
     }
 
     /// Where the check of this mix stands, with the stored report when there is one.

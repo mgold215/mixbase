@@ -217,5 +217,53 @@ console.log('\nmix-check: the run marker (one answer from every process)\n')
   check('withMarker does not edit what it was given', !('job' in report))
 }
 
+console.log('\nmix-check: the app reads the report the server writes\n')
+{
+  // ios-parity-test is path-level: it cannot see a field renamed on a shared
+  // route. The app decodes the report by field name, so every name its model
+  // reads must be one this engine (or the server, for the three it adds) writes.
+  const { readFileSync } = await import('node:fs')
+  const swift = readFileSync(new URL('../ios/mixBase/Services/MixbaseAPI.swift', import.meta.url), 'utf8')
+  const server = readFileSync(new URL('../src/lib/mix-check-server.ts', import.meta.url), 'utf8')
+  const route = readFileSync(new URL('../src/app/api/versions/[id]/mix-check/route.ts', import.meta.url), 'utf8')
+  const fields = name => {
+    const start = swift.indexOf(`struct ${name}: Decodable`)
+    if (start < 0) return null
+    let depth = 0, i = swift.indexOf('{', start), end = i
+    for (; end < swift.length; end++) { if (swift[end] === '{') depth++; else if (swift[end] === '}' && --depth === 0) break }
+    // Stored properties at the struct's own level only (nested types have their own check).
+    const body = swift.slice(i + 1, end)
+    const out = []; let d = 0
+    for (const line of body.split('\n')) {
+      const m = d === 0 && /^\s*let (\w+):/.exec(line)
+      if (m) out.push(m[1])
+      d += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length
+    }
+    return out
+  }
+  const reads = (name, written, note = '') => {
+    const f = fields(name)
+    const missing = f ? f.filter(k => !written.includes(k)) : ['(struct not found)']
+    check(`${name}: every field the app reads is written${note}`, !!f && f.length > 0 && missing.length === 0, missing.join(', '))
+  }
+  const full = buildFindings(noSub, {
+    previous: { label: 'MIX 4', summary: m.summary },
+    catalog: Array(MIN_CATALOG + 2).fill(m.summary),
+    industry: { label: 'house', summaries: Array(6).fill(m.summary) },
+  })
+  reads('MixCheckFinding', Object.keys(full.findings[0]))
+  reads('MixCheckBand', Object.keys(full.bands[0]))
+  reads('Industry', Object.keys(full.compared.industry))
+  reads('Compared', [...Object.keys(full.compared), ...['genreAssumed', 'references', 'family'].filter(k => server.includes(`${k}:`))], ' (three of them by the server)')
+  reads('Section', Object.keys(noSub.detail.sections[0]))
+  reads('Timeline', Object.keys(noSub.detail.timeline))
+  reads('Detail', Object.keys(noSub.detail))
+  reads('Curves', ['mix', 'previous', 'catalog', 'industry'].filter(k => server.includes(`      ${k}:`)))
+  reads('MixCheckReport', ['at', 'findings', 'bands', 'compared', 'curves', 'detail'].filter(k => new RegExp(`\\b${k}[,:]`).test(server)))
+  check('the option lists the app draws with are served, under the names it reads',
+    /case thirdOctaveHz = "third_octave_hz"/.test(swift) && /third_octave_hz: THIRD_OCTAVE_HZ/.test(route) && /families: GENRE_FAMILIES/.test(route) && /options: OPTIONS/.test(route))
+  check('the app starts and polls the same route', swift.includes('/mix-check",') && swift.includes('"/api/mix-check/references"'))
+}
+
 if (failures) { console.error(`\nmix-check: ${failures} check(s) FAILED`); process.exit(1) }
 console.log('\nmix-check: all checks passed')
