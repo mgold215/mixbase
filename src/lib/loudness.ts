@@ -48,7 +48,7 @@ const BLOCK_HOP_SEC = 0.1 // 75 % overlap
 const SHORT_TERM_SEC = 3
 const SHORT_TERM_HOP_SEC = 1
 
-type Biquad = { b0: number; b1: number; b2: number; a1: number; a2: number }
+export type Biquad = { b0: number; b1: number; b2: number; a1: number; a2: number }
 
 // K-weighting filter stages. BS.1770 only tabulates coefficients for 48 kHz;
 // this is the exact per-sample-rate design libebur128 (the reference
@@ -56,7 +56,7 @@ type Biquad = { b0: number; b1: number; b2: number; a1: number; a2: number }
 // and the reverse-engineered analog parameters. Verified to reproduce the
 // spec's published 48 kHz table to 11 decimal places, so 44.1 kHz uploads get
 // the correct curve instead of a mis-tuned copy of the 48 k table.
-function kWeighting(sampleRate: number): { shelf: Biquad; highpass: Biquad } {
+export function kWeighting(sampleRate: number): { shelf: Biquad; highpass: Biquad } {
   // Stage 1: high-shelf (+~4 dB above ~1.5 kHz — head-related energy boost).
   const shelf = (() => {
     const f0 = 1681.974450955533

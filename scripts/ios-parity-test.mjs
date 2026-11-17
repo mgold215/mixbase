@@ -44,6 +44,8 @@ const KNOWN = {
   // ── missing: the app doesn't have it yet ────────────────────────────────────
   '/api/auth/change-password': { status: 'missing', note: 'Change password (web /profile)' },
   '/api/chat/summarize-feedback': { status: 'missing', note: 'AI summary of listener feedback (project page)' },
+  '/api/versions/*/mix-check': { status: 'missing', note: 'Mix Check (owner-only): the button and the report are on the web project page; the notes it writes are ordinary mix notes, which the app shows' },
+  '/api/mix-check/references': { status: 'missing', note: 'Mix Check: add a genre reference track from a full-quality file (web project page)' },
   '/api/notifications': { status: 'missing', note: 'Notifications bell — unread count + mark seen (app shows Recent Activity only)' },
   '/api/projects/*/artwork-history': { status: 'missing', note: 'Artwork history + restore (project Artwork tab)' },
   '/api/releases/waterfall': { status: 'missing', note: 'Waterfall release planner (/pipeline)' },

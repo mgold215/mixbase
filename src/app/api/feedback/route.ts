@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { MIX_CHECK_AUTHOR } from '@/lib/mix-check-findings.ts'
 import { supabaseAdmin } from '@/lib/supabase'
 import { feedbackLimiter, ipKey, rateLimitHeaders } from '@/lib/rate-limit'
 import { isUuid } from '@/lib/validators'
@@ -83,7 +84,10 @@ export async function POST(request: NextRequest) {
   // description previously derived it separately (`.trim()` vs raw), so the
   // stored name and the notification text could disagree.
   const rawName = typeof reviewer_name === 'string' ? reviewer_name.trim() : ''
-  const safeName = (rawName || 'Anonymous').slice(0, MAX_REVIEWER_NAME_LENGTH)
+  // "Mix Check" is the byline the analyser writes its notes under, and a re-run
+  // replaces them: a listener may not post under it.
+  const givenName = rawName.toLowerCase() === MIX_CHECK_AUTHOR.toLowerCase() ? '' : rawName
+  const safeName = (givenName || 'Anonymous').slice(0, MAX_REVIEWER_NAME_LENGTH)
 
   let versionId: string = version_id
   if (namesShare) {
