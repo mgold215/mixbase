@@ -34,7 +34,7 @@ Run one with `node scripts/<name>-test.mjs`.
 | Cassette Studio | `cassette-studio` `cassette-art` `cassette-quick` `handwriting-pen` `handwriting-glyphs` `cover-filters` `cassette-motion` `cover-motion` `film-finish` `artwork-history` |
 | Artwork, visualizers, video | `artwork-models` `finalize-options` `finalize` `visualizer-source` `effects` `fx` `free-render` `viz-save` `viz-claim-idempotency` `viz-key-shape` `viz-webm-replay` `viz-finalize` `viz-recover` `video-orphan-reaper` `visualizer-transcode` `video` `video-timeout` |
 | Share pages | `share-projection` `share-url` `share-target` `share-palette` `share-duration-heal` `waveform-peaks` |
-| Mixes, notes, loudness | `mix-check` `mix-session` `mix-notes` `mix-status` `loudness` `loudness-compare` `loudness-auto` `master-recommendations` `bpm` |
+| Mixes, notes, loudness | `mix-check` `mix-session` `mix-notes` `mix-status` `loudness` `loudness-compare` `loudness-auto` `bpm` |
 | The apps | `ios-parity` `macos-sheet-close` |
 | Product rules | `no-paid-plans` |
 | Other features | `notification-loop` `release-pipeline` `thumb-drive` `catalog` `submit-links` `infra-sql-guard` |
