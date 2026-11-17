@@ -6,11 +6,15 @@ import { THIRD_OCTAVE_HZ } from '@/lib/mix-check.ts'
 import { GENRE_FAMILIES, genreFamilyLabel, type MixSeverity } from '@/lib/mix-check-findings.ts'
 import type { MixCheckReport } from '@/lib/mix-check-server'
 import type { Feedback } from '@/lib/supabase'
+import type { VersionLoudnessRow } from '@/lib/loudness-compare'
+import MasterCheck, { type LoudnessCardProps } from '@/components/MasterCheck'
 
-// ─── Mix Check — what is measurably wrong with this mix ──────────────────────
-// Master Check answers "how loud". This asks the server to analyse the whole
-// mix (POST /api/versions/<id>/mix-check, a few seconds of work there, polled
-// here) and shows what it found: what changed since the previous version, how
+// ─── Mix Check — how loud this mix is, and what is measurably wrong with it ──
+// ONE card, one button. It asks the server to analyse the whole mix
+// (POST /api/versions/<id>/mix-check, a few seconds of work there, polled
+// here) and shows the loudness readout that used to be its own "Master check"
+// card (the server measures that too, so nothing is decoded in the browser),
+// then what the check found: what changed since the previous version, how
 // the balance sits against the artist's own catalog and against commercial
 // references in the genre, and faults that need no comparison (a drop that
 // lands smaller than its breakdown, a low end that cancels in mono, clipping).
@@ -21,10 +25,14 @@ import type { Feedback } from '@/lib/supabase'
 // is stored on the version, so it is here again after a reload or a deploy.
 //
 // Owner-only for now: rendered only when the page was told `ownerTools`.
+// Everyone else gets the loudness card on its own (MasterCheck).
 
 type Props = {
   versionId: string
   projectId: string
+  /** The loudness readout at the top of the card: the stored reading, the
+   *  previous mix to compare it with, and where a new reading goes. */
+  loudness: Omit<LoudnessCardProps, 'versionId'>
   /** The Mix Check notes now on the mix, in the page's own feedback shape. */
   onNotes: (notes: Feedback[]) => void
   /** Play the mix from a moment (seconds). */
@@ -45,12 +53,14 @@ const SEVERITY: Record<MixSeverity, { label: string; color: string }> = {
 const clock = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 const signed = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}`
 
-export default function MixCheck({ versionId, projectId, onNotes, onJump }: Props) {
+export default function MixCheck({ versionId, projectId, loudness, onNotes, onJump }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [open, setOpen] = useState(false)
   const alive = useRef(true)
   const notesRef = useRef(onNotes)
   useEffect(() => { notesRef.current = onNotes }, [onNotes])
+  const measuredRef = useRef(loudness.onMeasured)
+  useEffect(() => { measuredRef.current = loudness.onMeasured })
 
   const read = useCallback(async (): Promise<State> => {
     const res = await fetch(`/api/versions/${versionId}/mix-check`, { cache: 'no-store' })
@@ -58,6 +68,8 @@ export default function MixCheck({ versionId, projectId, onNotes, onJump }: Prop
     const body = await res.json()
     if (body.status === 'done') {
       notesRef.current(body.notes ?? [])
+      // The check measured the loudness too: hand the page the saved reading.
+      if (body.loudness) measuredRef.current?.(body.loudness as VersionLoudnessRow)
       return { status: 'done', report: body.report }
     }
     if (body.status === 'error') return { status: 'error', error: body.error ?? 'The check failed' }
@@ -98,43 +110,42 @@ export default function MixCheck({ versionId, projectId, onNotes, onJump }: Prop
     void poll()
   }
 
-  if (state.status === 'loading') return null
   const report = state.status === 'done' ? state.report : null
   const findings = report?.findings ?? []
   const counts = { high: 0, medium: 0, low: 0 }
   for (const f of findings) counts[f.severity]++
 
-  return (
-    <div className="rounded-xl p-3 space-y-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1.5">
-          <Stethoscope size={12} /> Mix check
-        </p>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={run}
-            disabled={state.status === 'running'}
-            className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-40 transition-colors"
-          >
-            {state.status === 'running' ? 'Checking…' : report ? 'Check again' : 'Check this mix'}
-          </button>
-          {report && (
-            <button
-              type="button"
-              onClick={() => setOpen(o => !o)}
-              aria-expanded={open}
-              className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] flex items-center gap-1 transition-colors"
-            >
-              {open ? 'Hide' : 'Show'} {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </button>
-          )}
-        </div>
-      </div>
+  // Until the first answer the card is the loudness readout alone.
+  const actions = state.status === 'loading' ? null : (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={run}
+        disabled={state.status === 'running'}
+        className={`text-[11px] disabled:opacity-40 transition-colors ${report
+          ? 'text-[var(--text-muted)] hover:text-[var(--text)]'
+          : 'font-semibold text-[#2dd4bf] hover:text-[#14b8a6]'}`}
+      >
+        {state.status === 'running' ? 'Checking…' : report ? 'Check again' : 'Check this mix'}
+      </button>
+      {report && (
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] flex items-center gap-1 transition-colors"
+        >
+          {open ? 'Hide' : 'Show'} {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+      )}
+    </div>
+  )
 
+  const body = (
+    <>
       {state.status === 'none' && (
         <p className="text-xs text-[var(--text-muted)]">
-          Analyses the whole mix and writes what it finds into the notes, each at its place in the song.
+          Measures the loudness, analyses the whole mix and writes what it finds into the notes, each at its place in the song.
         </p>
       )}
       {state.status === 'running' && (
@@ -185,7 +196,15 @@ export default function MixCheck({ versionId, projectId, onNotes, onJump }: Prop
           </p>
         </div>
       )}
-    </div>
+    </>
+  )
+
+  return (
+    <MasterCheck
+      versionId={versionId}
+      {...loudness}
+      mixCheck={{ heading: <><Stethoscope size={12} /> Mix check</>, actions, body }}
+    />
   )
 }
 

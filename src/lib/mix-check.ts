@@ -682,6 +682,25 @@ function smoothMask(mask: Uint8Array, gap: number, minRun: number) {
   }
 }
 
+/**
+ * The three numbers Master Check shows (integrated loudness, loudest 3 s,
+ * sample peak), out of a mix measurement — so one check of a mix gives both.
+ * In the shape POST /api/versions/<id>/loudness takes; a level that was not
+ * measurable (silence) is null, as it is there.
+ *
+ * Measured from the 44.1 kHz stereo decode, so on a 48 kHz file the sample
+ * peak can sit a tenth or two from the browser's reading of the same file.
+ */
+export function loudnessOf(m: { summary: MixSummary; detail: Pick<MixDetail, 'samplePeakDb'> }) {
+  const level = (x: number) => (typeof x === 'number' && Number.isFinite(x) && x > -120 ? x : null)
+  return {
+    integratedLufs: level(m.summary.i),
+    shortTermMaxLufs: level(m.summary.st),
+    samplePeakDb: level(m.detail.samplePeakDb),
+    gatedBlockCount: null,
+  }
+}
+
 /** True for a value that has the shape of a stored MixSummary. */
 export function isMixSummary(v: unknown): v is MixSummary {
   if (!v || typeof v !== 'object') return false

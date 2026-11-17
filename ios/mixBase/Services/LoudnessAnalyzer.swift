@@ -3,10 +3,9 @@ import AVFoundation
 
 // MARK: - LoudnessAnalyzer
 // Native port of the web Master Check's measurement + triage stack
-// (src/lib/loudness.ts, src/lib/master-recommendations.ts): ITU-R BS.1770-4
-// integrated loudness with K-weighting and two-stage gating, the loudest-3s
-// short-term window, raw sample peak, per-DSP normalization deltas, the
-// mastering verdict, and the limiter/chain recommendations.
+// (src/lib/loudness.ts): ITU-R BS.1770-4 integrated loudness with K-weighting
+// and two-stage gating, the loudest-3s short-term window, raw sample peak,
+// per-DSP normalization deltas and the mastering verdict.
 //
 // The web implementation holds prefix-sum arrays for the whole decoded file
 // (~1 GB peak on a 10-minute mix — it needs a hard size gate for phones).
@@ -41,16 +40,6 @@ struct DspDelta: Identifiable {
     let name: String
     /// Positive = the platform turns the master down by this much. Nil when unmeasurable.
     let deltaDb: Double?
-}
-
-struct MasterRecommendation: Identifiable {
-    let id = UUID()
-    /// The knob or chain area this touches ("Output ceiling", "Limiter drive"…).
-    let area: String
-    /// Universal advice with the measured numbers baked in.
-    let advice: String
-    /// The same move in Pro-L 2 / Ozone 11 terms.
-    let plugins: String?
 }
 
 enum LoudnessAnalyzerError: LocalizedError {
@@ -294,86 +283,6 @@ enum LoudnessAnalyzer {
             issues.append(LoudnessIssue(level: .info, message: "\(formatLufs(lufs)) integrated, \(formatDb(m.samplePeakDb)) dBFS peak — healthy for streaming."))
         }
         return issues
-    }
-
-    // MARK: - Limiter & chain recommendations (port of master-recommendations.ts)
-
-    static func recommendations(_ m: LoudnessMeasurement) -> [MasterRecommendation] {
-        let I = m.integratedLufs
-        guard I.isFinite else { return [] }
-        var recs: [MasterRecommendation] = []
-        let P = m.samplePeakDb
-        let ST = m.shortTermMaxLufs
-        let plr = P.isFinite ? P - I : Double.nan
-        let sti = ST.isFinite ? ST - I : Double.nan
-        let loud = I > -9
-
-        // Output ceiling
-        if P > -0.3 {
-            let extra = loud ? ", or −2.0 dBTP if this loud a master shows transcode distortion" : ""
-            recs.append(MasterRecommendation(
-                area: "Output ceiling",
-                advice: "Peaks hit \(formatDb(P)) dBFS — and that is SAMPLE peak, so true peaks read higher and lossy transcodes overshoot further still. Set the ceiling to −1.0 dBTP with true-peak limiting on\(extra). Perceived loudness barely moves; only the overs go.",
-                plugins: "Pro-L 2: Output −1.0, True Peak Limiting ON, Oversampling 4×. Ozone 11 Maximizer: Ceiling −1.0 dBTP, True Peak mode ON."))
-        } else if P > -1.05 {
-            recs.append(MasterRecommendation(
-                area: "Output ceiling",
-                advice: "Ceiling looks set around \(formatDb(P)) dB — right where it should be. Keep true-peak limiting and oversampling on so inter-sample peaks don't sneak past on encode.",
-                plugins: "Pro-L 2: True Peak Limiting ON, Oversampling ≥4×. Ozone 11 Maximizer: True Peak mode ON."))
-        } else if P < -2.5 && I < -12 {
-            let free = -1 - P
-            recs.append(MasterRecommendation(
-                area: "Output ceiling",
-                advice: "\(String(format: "%.1f", free)) dB of unused headroom below a −1 dBTP ceiling. Raising the limiter's input gain that much lifts the whole master to ~\(formatDb(I + free)) LUFS with essentially zero added limiting — free loudness before any trade-off starts.",
-                plugins: "Pro-L 2: raise Gain until the meter just touches the ceiling. Ozone 11 Maximizer: lower Threshold by the same amount."))
-        }
-
-        // Limiter drive
-        if plr.isFinite {
-            if plr < 6 {
-                recs.append(MasterRecommendation(
-                    area: "Limiter drive",
-                    advice: "Peak-to-loudness is \(String(format: "%.1f", plr)) dB — slammed territory. Streaming normalization throws the level away and keeps only the flattening. Back the limiter's input gain off ~2 dB so it catches 2–4 dB at the loudest hits, and get density earlier in the chain (clipper or saturation on the mix bus) instead of at the ceiling.",
-                    plugins: "Pro-L 2: lower Gain until the GR meter peaks around 3 dB; Style Modern. Ozone 11: ease the Maximizer threshold; use the Exciter or Vintage Tape module earlier in the chain for density."))
-            } else if plr > 12 && I < -16 {
-                let push = min(4, Int((-14 - I).rounded()))
-                recs.append(MasterRecommendation(
-                    area: "Limiter drive",
-                    advice: "Only \(String(format: "%.1f", plr)) dB peak-to-loudness at \(formatDb(I)) LUFS — the limiter is barely working and the master sits below every platform target (−14). There's room to push the input ~\(push) dB before limiting becomes audible, if a competitive level is the goal.",
-                    plugins: "Pro-L 2: raise Gain, watch the GR meter stay under ~4 dB. Ozone 11 Maximizer: lower Threshold the same way."))
-            }
-        }
-
-        // Before the limiter
-        if sti.isFinite {
-            if sti > 5 {
-                recs.append(MasterRecommendation(
-                    area: "Before the limiter",
-                    advice: "The loudest 3 s runs \(String(format: "%.1f", sti)) dB above the track average, so one static limiter setting slams the drop and ignores everything else. Level the sections first: 1–2 dB of slow glue compression (≈2:1, slow attack, auto release) or ride the section levels with automation, then let the limiter handle only peaks.",
-                    plugins: "Ozone 11: add the Dynamics module before the Maximizer, ~1–2 dB of gain reduction. Pro-L 2: put any bus compressor ahead of it — the limiter stays last."))
-            } else if sti < 1.5 && loud {
-                recs.append(MasterRecommendation(
-                    area: "Before the limiter",
-                    advice: "Every section is within \(String(format: "%.1f", sti)) dB of the loudest 3 s — the track is wall-to-wall. If the drop should still lift, automate 1–2 dB dips into the quieter sections before the limiter; normalization won't give that contrast back.",
-                    plugins: "Do this in the mix/DAW with clip gain or fader automation — no limiter setting recreates section contrast."))
-            }
-        }
-
-        // Release & style
-        if loud || (plr.isFinite && plr < 8) {
-            recs.append(MasterRecommendation(
-                area: "Release & style",
-                advice: "At this density the release setting decides the sound: too fast pumps and distorts the low end, too slow ducks the tail of every kick. Start from auto/adaptive release near 100 ms, shorten until pumping appears, then back off one notch. Keep a few ms of lookahead.",
-                plugins: "Pro-L 2: Style Modern (Aggressive for harder EDM), Release ~100 ms with Auto on, Lookahead ~2 ms. Ozone 11 Maximizer: IRC IV Modern, Character around 5."))
-        }
-
-        // Chain hygiene
-        recs.append(MasterRecommendation(
-            area: "Chain order",
-            advice: "Limiter last, always: EQ → compression → saturation → limiter, with nothing after the ceiling — a post-limiter EQ or widener re-introduces the very overs the ceiling just caught. And gain-match when bypassing anything; louder always sounds better.",
-            plugins: "Ozone 11: Maximizer in the final module slot. Pro-L 2: last insert on the master bus, after any Ozone modules."))
-
-        return recs
     }
 
     // MARK: - Formatting

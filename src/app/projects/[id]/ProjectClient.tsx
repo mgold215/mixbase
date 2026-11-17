@@ -1797,29 +1797,33 @@ function CurrentMixCard({
           </p>
         )}
 
-        {/* Measured loudness + per-DSP normalization verdict — the substance
-            behind the pipeline's "Mastering done" checkbox — plus the delta
-            against the last measured mix. */}
-        <MasterCheck
-          versionId={version.id}
-          audioUrl={vUrl}
-          fileSizeBytes={version.file_size_bytes ?? null}
-          initial={loudness}
-          previous={previousMeasured?.loudness ?? null}
-          previousLabel={previousMeasured?.label ?? null}
-          onMeasured={row => onMeasured(version.id, row)}
-        />
-
-        {/* What is measurably wrong with the mix, written into its notes. */}
-        {ownerTools && (
-          <MixCheck
-            key={version.id}
-            versionId={version.id}
-            projectId={version.project_id}
-            onNotes={notes => onMixNotes(version.id, notes)}
-            onJump={goToTimestamp}
-          />
-        )}
+        {/* Measured loudness + per-DSP normalization verdict (the substance
+            behind the pipeline's "Mastering done" checkbox) plus the delta
+            against the last measured mix. For the owner the same card is Mix
+            Check: one button measures the loudness AND finds what is
+            measurably wrong with the mix, written into its notes. */}
+        {(() => {
+          const loudnessCard = {
+            audioUrl: vUrl,
+            fileSizeBytes: version.file_size_bytes ?? null,
+            initial: loudness,
+            previous: previousMeasured?.loudness ?? null,
+            previousLabel: previousMeasured?.label ?? null,
+            onMeasured: (row: VersionLoudnessRow) => onMeasured(version.id, row),
+          }
+          return ownerTools ? (
+            <MixCheck
+              key={version.id}
+              versionId={version.id}
+              projectId={version.project_id}
+              loudness={loudnessCard}
+              onNotes={notes => onMixNotes(version.id, notes)}
+              onJump={goToTimestamp}
+            />
+          ) : (
+            <MasterCheck versionId={version.id} {...loudnessCard} />
+          )
+        })()}
 
         {/* Status */}
         <div className="flex gap-1.5 flex-wrap">

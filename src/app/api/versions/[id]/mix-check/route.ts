@@ -5,7 +5,7 @@ import { isAdminIdentity } from '@/lib/admin-identity'
 import { checkUserLimit, mixCheckLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { THIRD_OCTAVE_HZ } from '@/lib/mix-check.ts'
 import { GENRE_FAMILIES, MIX_CHECK_AUTHOR, withMarker } from '@/lib/mix-check-findings.ts'
-import { isMixCheckReport, mixCheckState, startMixCheck } from '@/lib/mix-check-server'
+import { isMixCheckReport, loudnessForReport, mixCheckState, startMixCheck } from '@/lib/mix-check-server'
 import { ensureVersionMixCheckColumn, isMissingMixCheckColumn } from '@/lib/schema-heal'
 
 // Mix Check on one mix (owner-only, like the Cassette Studio: every handler
@@ -13,7 +13,10 @@ import { ensureVersionMixCheckColumn, isMissingMixCheckColumn } from '@/lib/sche
 // GET /api/auth/me → owner_tools).
 //
 //   POST  start a check of this mix. 202 { status: 'running' }.
-//   GET   { status: 'none' | 'running' | 'done' | 'error', report?, notes?, options?, error? }
+//   GET   { status: 'none' | 'running' | 'done' | 'error', report?, notes?, loudness?, options?, error? }
+//
+// `loudness` is the mix's loudness reading (the mb_versions columns Master
+// Check writes): a check measures it too, and the clients show both as one card.
 //
 // The check itself is src/lib/mix-check-server.ts: an in-process job (lost on
 // deploy by design) whose RESULT is stored on the version row, so GET answers
@@ -76,13 +79,16 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   // The marker is the server's own bookkeeping, not part of the report.
   const report = withMarker(stored, null)
 
-  const { data: notes } = await supabaseAdmin
-    .from('mb_feedback')
-    .select(NOTE_COLUMNS)
-    .eq('version_id', g.id)
-    .eq('reviewer_name', MIX_CHECK_AUTHOR)
-    .order('timestamp_seconds', { ascending: true, nullsFirst: false })
-  return NextResponse.json({ status: 'done', report, notes: notes ?? [], options: OPTIONS })
+  const [{ data: notes }, loudness] = await Promise.all([
+    supabaseAdmin
+      .from('mb_feedback')
+      .select(NOTE_COLUMNS)
+      .eq('version_id', g.id)
+      .eq('reviewer_name', MIX_CHECK_AUTHOR)
+      .order('timestamp_seconds', { ascending: true, nullsFirst: false }),
+    loudnessForReport(g.id, stored),
+  ])
+  return NextResponse.json({ status: 'done', report, notes: notes ?? [], loudness, options: OPTIONS })
 }
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {

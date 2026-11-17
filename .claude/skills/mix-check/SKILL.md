@@ -25,11 +25,21 @@ The owner, after a by-hand analysis found CATALYST MASTER 5 had lost 6 dB of sub
 | `src/lib/mix-check.ts` | Measures. Pure, streaming: ffmpeg's PCM is piped in chunk by chunk, ~7 s of CPU for a 4.5-minute WAV, a few MB of memory. BS.1770 loudness, true peak, twelfth-octave band powers and left/right cross power per frame, clipping, holes, a cut-off tail |
 | `src/lib/mix-check-findings.ts` | Judges. Pure |
 | `src/lib/mix-check-server.ts` | Decodes, loads the comparisons, stores the report and syncs the notes |
-| `src/components/MixCheck.tsx` | Web: under Master Check on the current mix, shown when `ownerTools` |
-| `ios/mixBase/Views/Projects/MixCheckCard.swift` | App: under Master Check on the song screen, shown when `authService.ownerTools` |
+| `src/components/MixCheck.tsx` | Web: the card on the current mix, shown when `ownerTools`. It wraps `MasterCheck.tsx` (the loudness readout) through its `mixCheck` prop |
+| `ios/mixBase/Views/Projects/MixCheckCard.swift` | App: the card on the song screen, shown when `authService.ownerTools`. It draws `LoudnessReadout` (ProjectDetailView.swift) at its top |
 | `scripts/mix-check-test.mjs` | Builds synthetic mixes and checks every rule |
 
 The app measures and judges nothing: it draws from the same routes. The frequency axis and the genre families come with the report as `options`, not copied into Swift. `scripts/ios-parity-test.mjs` no longer lists either route.
+
+## One card with the loudness readout
+
+The owner, 2026-11-17: "Remove the chain and limiter recommendations and combine the existing master check with Mix Check".
+
+- The limiter and chain advice is gone from both clients. Do not bring plugin-settings advice back.
+- For the owner the loudness readout (LUFS, peak, what each platform's normalizer does, the verdict, and on the web the change since the previous mix) is the TOP of the Mix Check card, under ONE button.
+- A check also writes the loudness columns of migration 032 (`fillLoudness`, from its own measurement, `loudness_algo` `mix-check-v1`), only when the mix has no reading: a reading the browser or the app took is never replaced. GET returns them as `loudness`. A mix checked before this gets them from its stored report on the next GET. So the owner's phone does not download the mix to measure it.
+- Everyone else (Mix Check is still owner-only) has the loudness card alone, titled Master check and measured on the device. So do archived mixes in the web's version history.
+- The check's numbers agree with the browser's to within 0.1 dB on the test mix. On a 48 kHz file the sample peak is read after the 44.1 kHz decode and can differ by a tenth or two.
 
 ## How it measures
 

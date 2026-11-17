@@ -34,7 +34,7 @@ SHARE FOR FEEDBACK
 Send a private listening link for any mix. Collaborators open it in a browser, no account required, and leave comments pinned to the exact moment they mean. Their notes show up on that mix in the app.
 
 MASTER CHECK
-Measure the loudness of your latest mix (LUFS and peak) right on your phone and get limiter and chain recommendations before you send it off.
+Measure the loudness of your latest mix (LUFS and peak) right on your phone and see what each streaming service will do to its level before you send it off.
 
 RUN YOUR RELEASE PIPELINE
 Add a release and check off every milestone: mixing done, mastering done, artwork ready, submitted to DSPs, social posts out, press release sent. Keep your released catalog, with ISRC, UPC and release dates, in one library synced from your streaming profile.

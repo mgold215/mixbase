@@ -205,15 +205,13 @@ struct ProjectDetailView: View {
                         // MARK: - Instrumental slot (one no-vocals file per project)
                         instrumentalSection(project: project)
 
-                        // MARK: - Master Check (latest mix)
+                        // MARK: - Mix Check / Master Check (latest mix)
+                        // ONE card. For the owner it is Mix Check (the server
+                        // 404s it for anyone else): one button measures the
+                        // loudness AND analyses the mix on the server, which
+                        // writes the notes; reload them. Everyone else gets
+                        // the loudness card, measured on the device.
                         if let latest = versions.max(by: { $0.versionNumber < $1.versionNumber }) {
-                            MasterCheckCard(version: latest)
-                                .id(latest.id) // reset measurement state when a new mix lands
-                                .padding(.horizontal)
-
-                            // MARK: - Mix Check (latest mix; owner-only — the
-                            // server 404s it for anyone else). The server does
-                            // the analysis and writes the notes; reload them.
                             if authService.ownerTools {
                                 MixCheckCard(
                                     version: latest,
@@ -221,8 +219,12 @@ struct ProjectDetailView: View {
                                     onNotesChanged: { Task { await reloadFeedback(for: latest) } },
                                     onJump: { seconds in playFeedback(version: latest, at: seconds) }
                                 )
-                                .id(latest.id)
+                                .id(latest.id) // reset the card's state when a new mix lands
                                 .padding(.horizontal)
+                            } else {
+                                MasterCheckCard(version: latest)
+                                    .id(latest.id)
+                                    .padding(.horizontal)
                             }
                         }
 
@@ -1450,13 +1452,113 @@ struct InstrumentalExport: Transferable {
     }
 }
 
+extension Version {
+    /// The loudness reading stored on this mix, when it was measured before
+    /// (on either platform, or by a Mix Check on the server).
+    var storedLoudness: LoudnessMeasurement? {
+        guard loudnessLufs != nil || loudnessShortTermLufs != nil
+            || samplePeakDb != nil else { return nil }
+        return LoudnessMeasurement(
+            integratedLufs: loudnessLufs ?? -.infinity,
+            shortTermMaxLufs: loudnessShortTermLufs ?? -.infinity,
+            samplePeakDb: samplePeakDb ?? -.infinity,
+            gatedBlockCount: 0
+        )
+    }
+}
+
+// MARK: - LoudnessReadout
+// The loudness readout both cards show: the measured numbers, what each
+// platform's normalizer will do with this master, and the mastering verdict.
+// Master Check draws it for everyone; for the owner it is the top of the Mix
+// Check card (MixCheckCard.swift), so the two are one card.
+struct LoudnessReadout: View {
+
+    let measurement: LoudnessMeasurement
+
+    var body: some View {
+        let m = measurement
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(LoudnessAnalyzer.formatLufs(m.integratedLufs))
+                        .font(.headline)
+                        .foregroundColor(Color(hex: "#f0f0f0"))
+                    Text("integrated")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+                Text("peak \(LoudnessAnalyzer.formatDb(m.samplePeakDb)) dBFS (sample)  ·  loudest 3s \(LoudnessAnalyzer.formatLufs(m.shortTermMaxLufs))")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+
+            // What each platform's normalizer will do with this master.
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                ForEach(LoudnessAnalyzer.dspDeltas(m)) { d in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(d.name)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                        Text(deltaText(d.deltaDb))
+                            .font(.caption)
+                            .foregroundColor(Color(hex: "#f0f0f0"))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color(hex: "#161616"))
+                    .cornerRadius(8)
+                }
+            }
+
+            // Verdict
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(LoudnessAnalyzer.verdict(m)) { issue in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: issueIcon(issue.level))
+                            .font(.caption2)
+                            .padding(.top, 1)
+                        Text(issue.message)
+                            .font(.caption)
+                    }
+                    .foregroundColor(issueColor(issue.level))
+                }
+            }
+        }
+    }
+
+    private func deltaText(_ delta: Double?) -> String {
+        guard let delta else { return "—" }
+        if delta > 0.2 { return String(format: "−%.1f dB by normalization", delta) }
+        if delta < -0.2 { return String(format: "%.1f dB under target", abs(delta)) }
+        return "at target"
+    }
+
+    private func issueIcon(_ level: LoudnessIssueLevel) -> String {
+        switch level {
+        case .error: return "exclamationmark.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .info: return "checkmark"
+        }
+    }
+
+    private func issueColor(_ level: LoudnessIssueLevel) -> Color {
+        switch level {
+        case .error: return Color(red: 0.97, green: 0.44, blue: 0.44)
+        case .warning: return Color(red: 0.98, green: 0.75, blue: 0.14)
+        case .info: return Color(red: 0.20, green: 0.83, blue: 0.60)
+        }
+    }
+}
+
 // MARK: - MasterCheckCard
 // Native Master Check for the latest mix — measured BS.1770-4 loudness,
-// per-DSP normalization deltas, the mastering verdict, and the limiter/chain
-// recommendations, mirroring the web card. Measuring streams the audio file
-// through LoudnessAnalyzer on a background task (a few MB of memory whatever
-// the mix length) and persists through the same API route the web writes, so
-// both platforms share one measurement history.
+// per-DSP normalization deltas and the mastering verdict, mirroring the web
+// card. Measuring streams the audio file through LoudnessAnalyzer on a
+// background task (a few MB of memory whatever the mix length) and persists
+// through the same API route the web writes, so both platforms share one
+// measurement history. The owner does not see this card: their Mix Check card
+// carries the same readout, measured by the server's check.
 struct MasterCheckCard: View {
 
     let version: Version
@@ -1465,22 +1567,9 @@ struct MasterCheckCard: View {
     @State private var measuring = false
     @State private var statusText = ""
     @State private var errorText: String?
-    @State private var showRecommendations = false
-
-    // The stored row, when this mix was measured before (on either platform).
-    private var stored: LoudnessMeasurement? {
-        guard version.loudnessLufs != nil || version.loudnessShortTermLufs != nil
-            || version.samplePeakDb != nil else { return nil }
-        return LoudnessMeasurement(
-            integratedLufs: version.loudnessLufs ?? -.infinity,
-            shortTermMaxLufs: version.loudnessShortTermLufs ?? -.infinity,
-            samplePeakDb: version.samplePeakDb ?? -.infinity,
-            gatedBlockCount: 0
-        )
-    }
 
     // This session's measurement wins over the stored row.
-    private var display: LoudnessMeasurement? { measured ?? stored }
+    private var display: LoudnessMeasurement? { measured ?? version.storedLoudness }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1523,120 +1612,12 @@ struct MasterCheckCard: View {
             }
 
             if let m = display {
-                // Readout
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(LoudnessAnalyzer.formatLufs(m.integratedLufs))
-                        .font(.headline)
-                        .foregroundColor(Color(hex: "#f0f0f0"))
-                    Text("integrated")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
-                }
-                Text("peak \(LoudnessAnalyzer.formatDb(m.samplePeakDb)) dBFS (sample)  ·  loudest 3s \(LoudnessAnalyzer.formatLufs(m.shortTermMaxLufs))")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-
-                // What each platform's normalizer will do with this master.
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                    ForEach(LoudnessAnalyzer.dspDeltas(m)) { d in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(d.name)
-                                .font(.caption2)
-                                .foregroundColor(.gray)
-                            Text(deltaText(d.deltaDb))
-                                .font(.caption)
-                                .foregroundColor(Color(hex: "#f0f0f0"))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color(hex: "#161616"))
-                        .cornerRadius(8)
-                    }
-                }
-
-                // Verdict
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(LoudnessAnalyzer.verdict(m)) { issue in
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: issueIcon(issue.level))
-                                .font(.caption2)
-                                .padding(.top, 1)
-                            Text(issue.message)
-                                .font(.caption)
-                        }
-                        .foregroundColor(issueColor(issue.level))
-                    }
-                }
-
-                // Limiter & chain recommendations — collapsed by default, the
-                // full text is a lot for a phone card.
-                let recs = LoudnessAnalyzer.recommendations(m)
-                if !recs.isEmpty {
-                    Button(action: { withAnimation(.easeOut(duration: 0.15)) { showRecommendations.toggle() } }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.caption2)
-                            Text("Limiter & chain recommendations")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Image(systemName: showRecommendations ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9))
-                        }
-                        .foregroundColor(Color(hex: "#2dd4bf"))
-                    }
-                    if showRecommendations {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(recs) { r in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(r.area). ")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(Color(hex: "#2dd4bf"))
-                                    + Text(r.advice)
-                                        .font(.caption)
-                                        .fontWeight(.regular)
-                                        .foregroundColor(Color(hex: "#d0d0d0"))
-                                    if let plugins = r.plugins {
-                                        Text(plugins)
-                                            .font(.caption2)
-                                            .foregroundColor(.gray)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(10)
-                        .background(Color(hex: "#161616"))
-                        .cornerRadius(8)
-                    }
-                }
+                LoudnessReadout(measurement: m)
             }
         }
         .padding(12)
         .background(Color(hex: "#111111"))
         .cornerRadius(10)
-    }
-
-    private func deltaText(_ delta: Double?) -> String {
-        guard let delta else { return "—" }
-        if delta > 0.2 { return String(format: "−%.1f dB by normalization", delta) }
-        if delta < -0.2 { return String(format: "%.1f dB under target", abs(delta)) }
-        return "at target"
-    }
-
-    private func issueIcon(_ level: LoudnessIssueLevel) -> String {
-        switch level {
-        case .error: return "exclamationmark.circle"
-        case .warning: return "exclamationmark.triangle"
-        case .info: return "checkmark"
-        }
-    }
-
-    private func issueColor(_ level: LoudnessIssueLevel) -> Color {
-        switch level {
-        case .error: return Color(red: 0.97, green: 0.44, blue: 0.44)
-        case .warning: return Color(red: 0.98, green: 0.75, blue: 0.14)
-        case .info: return Color(red: 0.20, green: 0.83, blue: 0.60)
-        }
     }
 
     // Download → decode/measure off the main actor → show → persist. A failed

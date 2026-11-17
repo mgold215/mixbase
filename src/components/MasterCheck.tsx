@@ -1,10 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Gauge, AlertCircle, AlertTriangle, Check, GitCompareArrows, SlidersHorizontal } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Gauge, AlertCircle, AlertTriangle, Check, GitCompareArrows } from 'lucide-react'
 import { measureLoudness, masterVerdict, dspDeltas, formatLufs, canMeasureInBrowser, type LoudnessMeasurement } from '@/lib/loudness'
 import { compareLoudness, sanitizeLoudness, toMeasurement, type LoudnessInput, type VersionLoudnessRow } from '@/lib/loudness-compare'
-import { masterRecommendations } from '@/lib/master-recommendations'
 
 // ─── Master check — measured loudness on one mix ─────────────────────────────
 // Turns "mastering done?" from a self-reported checkbox into a fact: BS.1770-4
@@ -24,6 +23,13 @@ import { masterRecommendations } from '@/lib/master-recommendations'
 // the row loads, and it covers a failed POST), and on mount a reading that
 // exists locally but NOT in the database is silently pushed up — that backfills
 // every measurement taken before persistence shipped, with zero user action.
+//
+// For the owner this card is also the top of Mix Check (src/components/
+// MixCheck.tsx wraps it and passes `mixCheck`): ONE card, headed "Mix check",
+// with one button. The server's check measures the loudness as well and saves
+// it to the same columns, so there is nothing to measure in the browser and
+// this card shows no button of its own; what the check found follows the
+// readout. Everyone else gets the card as it always was.
 
 type Props = {
   /** Cache key — measurements are immutable per version upload. */
@@ -40,7 +46,13 @@ type Props = {
   /** Fired with the saved columns so the page can update its version state
    *  without a refetch. */
   onMeasured?: (row: VersionLoudnessRow) => void
+  /** Set when Mix Check owns this card: its heading, its buttons, and what it
+   *  found (drawn under the loudness readout). */
+  mixCheck?: { heading: ReactNode; actions: ReactNode; body: ReactNode }
 }
+
+/** The loudness half of the card, as the project page hands it to either card. */
+export type LoudnessCardProps = Omit<Props, 'mixCheck'>
 
 // Guard on the DOWNLOAD only. This is deliberately not the memory gate — the
 // real limit is decided after decode by canMeasureInBrowser(), which knows the
@@ -79,7 +91,7 @@ export function writeLoudnessCache(versionId: string, m: LoudnessMeasurement) {
 
 export default function MasterCheck({
   versionId, audioUrl, fileSizeBytes,
-  initial = null, previous = null, previousLabel = null, onMeasured,
+  initial = null, previous = null, previousLabel = null, onMeasured, mixCheck,
 }: Props) {
   // Measured in THIS session — takes precedence over anything stored.
   const [measured, setMeasured] = useState<LoudnessMeasurement | null>(null)
@@ -191,10 +203,9 @@ export default function MasterCheck({
     <div className="rounded-xl p-3 space-y-2.5" style={{ backgroundColor: 'var(--surface-2)' }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-1.5">
-          <Gauge size={12} />
-          Master check
+          {mixCheck ? mixCheck.heading : <><Gauge size={12} /> Master check</>}
         </p>
-        {measurement ? (
+        {mixCheck ? mixCheck.actions : measurement ? (
           <button
             onClick={measure}
             disabled={measuring || tooLarge}
@@ -271,33 +282,10 @@ export default function MasterCheck({
               </div>
             ))}
           </div>
-
-          {/* Limiter & chain settings the numbers imply — universal advice
-              first, the same move in Pro-L 2 / Ozone 11 terms underneath. */}
-          {(() => {
-            const recs = masterRecommendations(measurement)
-            if (recs.length === 0) return null
-            return (
-              <div className="rounded-lg px-2.5 py-2 space-y-2" style={{ border: '1px solid var(--border)' }}>
-                <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
-                  <SlidersHorizontal size={11} />
-                  Limiter &amp; chain recommendations
-                </p>
-                {recs.map((r, i) => (
-                  <div key={i} className="text-xs space-y-0.5">
-                    <p className="text-[var(--text-secondary)]">
-                      <span className="font-semibold text-[#2dd4bf]">{r.area}.</span> {r.advice}
-                    </p>
-                    {r.plugins && (
-                      <p className="text-[11px] text-[var(--text-muted)]">{r.plugins}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
-          })()}
         </>
       )}
+
+      {mixCheck?.body}
     </div>
   )
 }
