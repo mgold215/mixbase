@@ -30,6 +30,45 @@ export const MIX_CHECK_AUTHOR = 'Mix Check'
 
 export type MixSeverity = 'high' | 'medium' | 'low'
 
+// ── The run marker ───────────────────────────────────────────────────────────
+// A check is an in-process job, and production runs more than one process (two
+// regions). Without something they both read, a poll answered by the OTHER one
+// says "nothing here" halfway through a check, and a second tap there starts a
+// second run whose notes land beside the first's. So a run writes this marker
+// into the version's mix_check (beside the report it is about to replace, or
+// alone) and every process reads it: running → wait, error → say so. A running
+// marker older than MARKER_TTL_MS is a run that died with its process (a
+// deploy): it counts for nothing, and the stored report shows again.
+export type MixCheckMarker = { state: 'running' | 'error'; at: string; error?: string }
+export const MARKER_TTL_MS = 4 * 60_000
+
+/** The marker in a stored mix_check value, if it still means something. */
+export function mixCheckMarker(stored: unknown, nowMs: number): MixCheckMarker | null {
+  if (!stored || typeof stored !== 'object') return null
+  const job = (stored as { job?: unknown }).job
+  if (!job || typeof job !== 'object') return null
+  const { state, at, error } = job as Record<string, unknown>
+  if ((state !== 'running' && state !== 'error') || typeof at !== 'string') return null
+  const t = Date.parse(at)
+  if (!Number.isFinite(t)) return null
+  if (state === 'running' && (nowMs - t > MARKER_TTL_MS || t - nowMs > 60_000)) return null
+  // A failure is worth showing only until a report newer than it exists.
+  if (state === 'error') {
+    const reportAt = Date.parse(String((stored as { at?: unknown }).at ?? ''))
+    if (Number.isFinite(reportAt) && reportAt > t) return null
+    return { state, at, error: typeof error === 'string' && error ? error : 'The check failed' }
+  }
+  return { state, at }
+}
+
+/** A stored value with a marker set (or, with null, taken off). Null when nothing is left. */
+export function withMarker(stored: unknown, marker: MixCheckMarker | null): Record<string, unknown> | null {
+  const base: Record<string, unknown> = stored && typeof stored === 'object' ? { ...(stored as Record<string, unknown>) } : {}
+  delete base.job
+  if (marker) base.job = marker
+  return Object.keys(base).length ? base : null
+}
+
 export type MixFinding = {
   /** Stable identity within one mix — a re-run replaces the note with this code. */
   code: string
