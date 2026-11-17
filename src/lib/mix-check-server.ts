@@ -9,7 +9,10 @@
 // Like the waveform decode and the video renders, a run is an in-process job
 // (POST starts it, GET polls) and is lost on deploy by design. Unlike them, its
 // RESULT is not: the report is stored on the version row, so a finished check
-// is there after a reload, a deploy, or on another device.
+// is there after a reload, a deploy, or on another device. And unlike them its
+// STATE is on the row too (the marker in mix-check-findings.ts), because
+// production is more than one process: a poll, or a second tap, that lands on
+// the process NOT running the job must still see that one is.
 //
 // One run at a time per process. A check is several seconds of CPU on the
 // container that also serves the site; two side by side would be felt.
@@ -30,7 +33,7 @@ import {
   type MixDetail, type MixMeasurement, type MixSummary,
 } from '@/lib/mix-check.ts'
 import {
-  MIN_CATALOG, MIN_INDUSTRY, MIX_CHECK_AUTHOR, buildFindings, genreFamily, genreFamilyLabel,
+  MIN_CATALOG, MIN_INDUSTRY, MIX_CHECK_AUTHOR, buildFindings, genreFamily, genreFamilyLabel, mixCheckMarker, withMarker,
   type BandComparison, type MixFinding, type MixVerdict,
 } from '@/lib/mix-check-findings.ts'
 
@@ -317,20 +320,53 @@ type Job = { state: 'running' | 'error'; startedAt: number; error?: string }
 const jobs = new Map<string, Job>()
 let queue: Promise<void> = Promise.resolve()
 
-/** Start a check unless one is already running for this mix. */
-export function startMixCheck(versionId: string, userId: string): 'started' | 'running' {
+async function setMarker(versionId: string, marker: { state: 'running' | 'error'; error?: string } | null): Promise<void> {
+  const { data } = await supabaseAdmin.from('mb_versions').select('mix_check').eq('id', versionId).maybeSingle()
+  const current = (data as { mix_check: unknown } | null)?.mix_check ?? null
+  const next = withMarker(current, marker ? { ...marker, at: new Date().toISOString() } : null)
+  const { error } = await supabaseAdmin.from('mb_versions').update({ mix_check: next }).eq('id', versionId)
+  if (error) console.error('[mix-check] marker not written:', error.message)
+}
+
+/**
+ * Start a check unless one is already running for this mix — here, or in
+ * another process (`stored` is the version's mix_check as the route just read
+ * it). The marker is on the row before this returns, so the caller's 202 is
+ * true for whichever process answers the next poll.
+ */
+export async function startMixCheck(versionId: string, userId: string, stored: unknown): Promise<'started' | 'running'> {
   if (jobs.get(versionId)?.state === 'running') return 'running'
+  if (mixCheckMarker(stored, Date.now())?.state === 'running') return 'running'
   jobs.set(versionId, { state: 'running', startedAt: Date.now() })
+  await setMarker(versionId, { state: 'running' })
   queue = queue
     .then(() => runMixCheck(versionId, userId))
     .then(() => { jobs.delete(versionId) })
-    .catch((err: Error) => {
+    .catch(async (err: Error) => {
       console.error('[mix-check] run failed:', err.message)
       jobs.set(versionId, { state: 'error', startedAt: Date.now(), error: err.message })
+      await setMarker(versionId, { state: 'error', error: err.message }).catch(() => {})
     })
   return 'started'
 }
 
-export function mixCheckJob(versionId: string): Job | null {
-  return jobs.get(versionId) ?? null
+/**
+ * Where a check of this mix stands, whichever process is asked: this
+ * process's own job first, then the marker on the row.
+ */
+export function mixCheckState(versionId: string, stored: unknown): { state: 'running' } | { state: 'error'; error: string } | null {
+  const job = jobs.get(versionId)
+  if (job?.state === 'running') return { state: 'running' }
+  const marker = mixCheckMarker(stored, Date.now())
+  if (marker?.state === 'running') return { state: 'running' }
+  if (marker?.state === 'error') return { state: 'error', error: marker.error ?? 'The check failed' }
+  // This process's failure, when the marker could not be written.
+  if (job?.state === 'error' && !isFreshReport(stored, job.startedAt)) return { state: 'error', error: job.error ?? 'The check failed' }
+  return null
+}
+
+function isFreshReport(stored: unknown, sinceMs: number): boolean {
+  if (!isMixCheckReport(stored)) return false
+  const t = Date.parse(stored.at)
+  return Number.isFinite(t) && t >= sinceMs
 }

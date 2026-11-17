@@ -210,6 +210,20 @@ struct ProjectDetailView: View {
                             MasterCheckCard(version: latest)
                                 .id(latest.id) // reset measurement state when a new mix lands
                                 .padding(.horizontal)
+
+                            // MARK: - Mix Check (latest mix; owner-only — the
+                            // server 404s it for anyone else). The server does
+                            // the analysis and writes the notes; reload them.
+                            if authService.ownerTools {
+                                MixCheckCard(
+                                    version: latest,
+                                    projectId: project.id,
+                                    onNotesChanged: { Task { await reloadFeedback(for: latest) } },
+                                    onJump: { seconds in playFeedback(version: latest, at: seconds) }
+                                )
+                                .id(latest.id)
+                                .padding(.horizontal)
+                            }
                         }
 
                         // MARK: - Version History (collapsible, like the web app)
@@ -844,6 +858,14 @@ struct ProjectDetailView: View {
             audioService.resume()
         }
         audioService.seek(to: Double(seconds))
+    }
+
+    // One mix's notes, read again: Mix Check has just written (or replaced)
+    // its own. Opened in the list below, so they are there to be read.
+    private func reloadFeedback(for version: Version) async {
+        guard let notes = try? await SupabaseService.shared.fetchFeedback(versionId: version.id) else { return }
+        feedbackByVersion[version.id] = notes.isEmpty ? nil : notes
+        if !notes.isEmpty { expandedFeedback.insert(version.id) }
     }
 
     @ViewBuilder

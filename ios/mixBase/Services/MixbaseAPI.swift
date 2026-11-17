@@ -1402,6 +1402,213 @@ final class MixbaseAPI {
         )
     }
 
+    // MARK: - Mix Check (owner-only; no AI)
+    // The server analyses a whole mix (GET|POST /api/versions/<id>/mix-check)
+    // and writes what it finds into the mix notes under the "Mix Check" byline.
+    // Nothing is measured or judged on the device: the app starts a check,
+    // polls it and draws the report the web draws. The server 404s these for
+    // anyone but the owner; the app shows the card only when ownerTools is true.
+
+    /// One thing the check found. It is also a note on the mix.
+    struct MixCheckFinding: Decodable, Identifiable, Equatable {
+        let code: String
+        /// "high" | "medium" | "low"
+        let severity: String
+        /// Where in the song, seconds; nil for a finding about the whole mix.
+        let at: Double?
+        let title: String
+        let note: String
+        var id: String { code }
+        var atSeconds: Int? { at.map { Int($0.rounded()) } }
+    }
+
+    /// One band's level against each comparison, dB (this mix minus the other).
+    struct MixCheckBand: Decodable, Identifiable, Equatable {
+        let key: String
+        let label: String
+        let range: String
+        let level: Double
+        let vsPrevious: Double?
+        let vsCatalog: Double?
+        let vsIndustry: Double?
+        var id: String { key }
+    }
+
+    struct MixCheckReport: Decodable, Equatable {
+        struct Industry: Decodable, Equatable {
+            let count: Int
+            let label: String
+        }
+        struct Reference: Decodable, Equatable, Identifiable {
+            let artist: String
+            let title: String
+            /// "preview" | "full"
+            let source: String
+            var id: String { "\(artist)|\(title)" }
+        }
+        struct Compared: Decodable, Equatable {
+            /// The previous version's name, when there was one to compare with.
+            let previous: String?
+            /// How many of the artist's other songs made the baseline (0 = too few).
+            let catalog: Int?
+            let industry: Industry?
+            let genreAssumed: Bool?
+            let references: [Reference]?
+            let family: String?
+        }
+        /// Third-octave spectra at matched loudness (the axis comes in MixCheckOptions).
+        struct Curves: Decodable, Equatable {
+            let mix: [Double]
+            let previous: [Double]?
+            let catalog: [Double]?
+            let industry: [Double]?
+        }
+        struct Section: Decodable, Equatable {
+            /// "rhythm" where the kick plays, "break" elsewhere.
+            let kind: String
+            let start: Double
+            let end: Double
+        }
+        struct Timeline: Decodable, Equatable {
+            /// Sub level per second, dBFS at matched loudness.
+            let sub: [Double]
+        }
+        struct Detail: Decodable, Equatable {
+            let sections: [Section]
+            let timeline: Timeline
+        }
+
+        /// When the check finished (ISO 8601).
+        let at: String
+        let findings: [MixCheckFinding]?
+        let bands: [MixCheckBand]?
+        let compared: Compared?
+        let curves: Curves?
+        let detail: Detail?
+    }
+
+    /// Lists the server owns, sent with a finished report: the spectrum's
+    /// frequency axis and the genre families a reference can be filed under.
+    struct MixCheckOptions: Decodable, Equatable {
+        struct Family: Decodable, Equatable, Identifiable {
+            let key: String
+            let label: String
+            var id: String { key }
+        }
+        let thirdOctaveHz: [Double]
+        let families: [Family]
+
+        enum CodingKeys: String, CodingKey {
+            case thirdOctaveHz = "third_octave_hz"
+            case families
+        }
+    }
+
+    enum MixCheckStatus: Equatable {
+        /// This mix has never been checked. (Not `none`: the screens hold an
+        /// optional status, where `.none` would read as "not loaded yet".)
+        case notChecked
+        case running
+        case failed(String)
+        case done(MixCheckReport, MixCheckOptions?)
+    }
+
+    private struct MixCheckResponse: Decodable {
+        let status: String
+        let report: MixCheckReport?
+        let options: MixCheckOptions?
+        let error: String?
+    }
+
+    /// Where the check of this mix stands, with the stored report when there is one.
+    func mixCheck(versionId: UUID) async throws -> MixCheckStatus {
+        let data = try await requestCore(
+            path: "/api/versions/\(versionId.postgresString)/mix-check",
+            method: "GET",
+            contentType: nil,
+            body: nil,
+            timeout: 30
+        )
+        let response = try decoder.decode(MixCheckResponse.self, from: data)
+        switch response.status {
+        case "running":
+            return .running
+        case "error":
+            return .failed(response.error ?? "The check failed")
+        case "done":
+            guard let report = response.report else { return .notChecked }
+            return .done(report, response.options)
+        default:
+            return .notChecked
+        }
+    }
+
+    /// Start a check of this mix. The server answers at once; poll mixCheck.
+    func startMixCheck(versionId: UUID) async throws {
+        _ = try await requestCore(
+            path: "/api/versions/\(versionId.postgresString)/mix-check",
+            method: "POST",
+            contentType: nil,
+            body: nil,
+            timeout: 30
+        )
+    }
+
+    /// File extensions a reference track may have (the server checks again).
+    static let mixReferenceExtensions: Set<String> = ["wav", "aif", "aiff", "flac", "mp3", "m4a"]
+
+    /// Add a genre reference from a full-quality file: the same three steps the
+    /// web takes. The file goes straight to Storage on a signed URL, the server
+    /// measures it and deletes it. Only the measurement is kept.
+    func addMixReference(projectId: UUID, fileURL: URL, family: String, artist: String, title: String) async throws {
+        let ext = fileURL.pathExtension.lowercased()
+        guard Self.mixReferenceExtensions.contains(ext) else {
+            throw MixbaseAPIError.serverError("Use a WAV, AIFF, FLAC, MP3 or M4A file.")
+        }
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let storagePath = "\(projectId.storageKeyComponent)/mixref-\(stamp).\(ext)"
+        let contentType: String
+        switch ext {
+        case "wav": contentType = "audio/wav"
+        case "aif", "aiff": contentType = "audio/aiff"
+        case "flac": contentType = "audio/flac"
+        case "mp3": contentType = "audio/mpeg"
+        default: contentType = "audio/mp4"
+        }
+
+        let signedData = try await requestData(
+            path: "/api/upload-url",
+            method: "POST",
+            body: ["filename": storagePath, "contentType": contentType, "bucket": "mf-audio"]
+        )
+        let signed = try decoder.decode(SignedVideoUpload.self, from: signedData)
+        guard let signedUrl = URL(string: signed.signedUrl) else {
+            throw MixbaseAPIError.invalidResponse("Bad signed upload URL")
+        }
+
+        var put = URLRequest(url: signedUrl)
+        put.httpMethod = "PUT"
+        put.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        put.timeoutInterval = 600
+        let (_, putResponse) = try await URLSession.shared.upload(for: put, fromFile: fileURL)
+        let putStatus = (putResponse as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200...299).contains(putStatus) else {
+            throw MixbaseAPIError.invalidResponse("Upload failed (\(putStatus))")
+        }
+
+        _ = try await requestData(
+            path: "/api/mix-check/references",
+            method: "POST",
+            body: [
+                "project_id": projectId.postgresString,
+                "path": storagePath,
+                "family": family,
+                "artist": artist,
+                "title": title,
+            ]
+        )
+    }
+
     // MARK: - Instrumental slot
 
     /// Set (or clear, with nil) the project's pinned instrumental — the one

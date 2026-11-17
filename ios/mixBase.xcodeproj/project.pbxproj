@@ -40,6 +40,7 @@
 		A100000050 /* ProjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000050; };
 		A100000051 /* ProjectDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000051; };
 		A100000052 /* NewProjectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000052; };
+		A100000087 /* MixCheckCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000087; };
 
 		/* Views - Player */
 		A100000060 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000060; };
@@ -136,6 +137,7 @@
 		B100000050 /* ProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsView.swift; sourceTree = "<group>"; };
 		B100000051 /* ProjectDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDetailView.swift; sourceTree = "<group>"; };
 		B100000052 /* NewProjectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewProjectView.swift; sourceTree = "<group>"; };
+		B100000087 /* MixCheckCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixCheckCard.swift; sourceTree = "<group>"; };
 		B100000060 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
 		B100000070 /* PipelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineView.swift; sourceTree = "<group>"; };
 		B100000071 /* ReleaseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseDetailView.swift; sourceTree = "<group>"; };
@@ -340,6 +342,7 @@
 				B100000050 /* ProjectsView.swift */,
 				B100000051 /* ProjectDetailView.swift */,
 				B100000052 /* NewProjectView.swift */,
+				B100000087 /* MixCheckCard.swift */,
 			);
 			path = Projects;
 			sourceTree = "<group>";
@@ -581,6 +584,7 @@
 				A100000050 /* ProjectsView.swift in Sources */,
 				A100000051 /* ProjectDetailView.swift in Sources */,
 				A100000052 /* NewProjectView.swift in Sources */,
+				A100000087 /* MixCheckCard.swift in Sources */,
 				A100000060 /* PlayerView.swift in Sources */,
 				A100000070 /* PipelineView.swift in Sources */,
 				A100000071 /* ReleaseDetailView.swift in Sources */,

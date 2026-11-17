@@ -5,7 +5,7 @@
 // Run: node scripts/mix-check-test.mjs
 
 import { createMixAnalyzer, isMixSummary, MIX_BANDS, THIRD_OCTAVE_HZ, SIXTH_OCTAVE_HZ, MATCH_LUFS } from '../src/lib/mix-check.ts'
-import { buildFindings, baselineOf, genreFamily, MIN_CATALOG, MIX_CHECK_AUTHOR } from '../src/lib/mix-check-findings.ts'
+import { buildFindings, baselineOf, genreFamily, mixCheckMarker, withMarker, MARKER_TTL_MS, MIN_CATALOG, MIX_CHECK_AUTHOR } from '../src/lib/mix-check-findings.ts'
 import { measureLoudness } from '../src/lib/loudness.ts'
 
 let failures = 0
@@ -197,6 +197,25 @@ fam('Riddim', 'dubstep')
 fam('Lo-Fi', null)
 fam(null, null)
 check('the byline is fixed', MIX_CHECK_AUTHOR === 'Mix Check')
+
+console.log('\nmix-check: the run marker (one answer from every process)\n')
+{
+  const now = Date.parse('2026-11-17T19:00:00Z')
+  const iso = ms => new Date(ms).toISOString()
+  const report = { algo: 'mix-check-v1', at: iso(now - 3600_000), summary: m.summary, findings: [] }
+  check('no marker on a plain report, on null, on junk', mixCheckMarker(report, now) === null && mixCheckMarker(null, now) === null && mixCheckMarker({ job: 'x' }, now) === null && mixCheckMarker({ job: { state: 'done', at: iso(now) } }, now) === null)
+  const running = withMarker(report, { state: 'running', at: iso(now - 20_000) })
+  check('a run marks the row and keeps the report beside it', mixCheckMarker(running, now)?.state === 'running' && running.summary === report.summary && running.findings === report.findings)
+  check('a first check marks a row that has nothing else', mixCheckMarker(withMarker(null, { state: 'running', at: iso(now) }), now)?.state === 'running')
+  check('a run that died with its process stops counting', mixCheckMarker(withMarker(report, { state: 'running', at: iso(now - MARKER_TTL_MS - 1000) }), now) === null)
+  check('a marker from the future is not believed', mixCheckMarker(withMarker(report, { state: 'running', at: iso(now + 10 * 60_000) }), now) === null)
+  const failed = withMarker(report, { state: 'error', at: iso(now - 5000), error: 'The mix could not be read' })
+  check('a failure is reported with its reason', mixCheckMarker(failed, now)?.state === 'error' && mixCheckMarker(failed, now)?.error === 'The mix could not be read')
+  check('…until a newer report exists', mixCheckMarker({ ...failed, at: iso(now) }, now) === null)
+  check('taking the marker off leaves the report as it was', JSON.stringify(withMarker(running, null)) === JSON.stringify(report))
+  check('…and leaves nothing where there was only a marker', withMarker(withMarker(null, { state: 'running', at: iso(now) }), null) === null)
+  check('withMarker does not edit what it was given', !('job' in report))
+}
 
 if (failures) { console.error(`\nmix-check: ${failures} check(s) FAILED`); process.exit(1) }
 console.log('\nmix-check: all checks passed')
