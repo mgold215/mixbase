@@ -105,6 +105,8 @@ The owner, 2026-11-11: "$.50 per run seems risky if I don't like the concept". H
 
 - Ideas: about a cent.
 - A cover: 3 takes (~38¢), plus up to 2 more on a redraw (~26¢), plus ~10¢ to extend it for the clips. Three of the first four runs needed the redraw, so the screens say 50 to 75 cents.
+- The motion plan for the clips adds a few cents.
+- Making a song again draws a NEW picture and a new title. There is no way to re-letter the existing cover from changed handwriting: "The title" re-uses the stored lockup.
 - Filming (see [motion.md](motion.md)): about 80 Runway credits a clip, shown before the tap.
 - Never start a run while a deploy is still swapping replicas: the job dies with the old one, paid pictures and all. Wait for the previous deployment to read REMOVED.
 - A paid test run needs the owner's yes first (AGENTS.md → Working with the owner).

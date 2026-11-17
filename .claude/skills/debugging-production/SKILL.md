@@ -13,6 +13,8 @@ description: How to find out what actually happened in mixBASE's production from
 
 ## Start with Supabase
 
+The Supabase tools that read (`execute_sql`, `query_logs`, the `list_` and `get_` tools) are pre-approved in `.claude/settings.json`, so they run without asking the owner. The ones that change the project (`apply_migration`, `deploy_edge_function`, branches, pausing) still ask.
+
 `pg_policies`, `storage.objects` and the logs usually settle "what actually happened" in minutes. Read them before theorizing from code.
 
 | Question | Where to look (Supabase MCP) |
@@ -41,7 +43,7 @@ A healthy answer is 200 with `{"ok":true,"db":"ok","service_key":true,"admin_pow
 
 ## Deploys and server logs
 
-Use the Railway MCP tools (`list-deployments`, `get-logs`, `get-deployment-diagnosis`).
+Use the Railway MCP tools (`list-deployments`, `get-logs`, `get-deployment-diagnosis`). `list-services` gives the service and environment ids for production and staging.
 
 - A merge to `main` deploys the web app. While replicas swap, the old deployment still serves; it is finished when the previous deployment reads `REMOVED`.
 - Feature code logs with a bracketed prefix, e.g. `[cassette-quick] motion plan by …`. Search the deploy logs for the prefix.

@@ -15,7 +15,6 @@ This file holds what every session needs. Feature detail lives in the notes list
   1. Follow what they do AFTER the first success (adjust the title, save a look, leave the screen and come back, reopen the app hours later or after a deploy) and check what each screen then shows on web AND app. Anything that lives only in server memory or in one view's state is a suspect; a control that can vanish needs a test or a stored source.
   2. LOOK at the real output (render it, pull frames, watch for the thing the owner asked for) and judge it as they would: "it runs" is not "it is good".
   3. When something built is not live yet, the report's first line says what they will still get if they use the app right now.
-- **Decide, don't ask.** Owner, 2026-11-17: "Stop asking so much". Reading: make the call, do the work and report what was done. Ask only before spending their money or doing something that cannot be undone.
 - **A fix that hasn't been verified is not done.** Report it as in progress or broken, with the failing output. The owner ships to production on your word.
 - **The owner mostly uses the app.** Owner, 2026-11-17: "I generally use the app in 95% of the time". Reading: an owner-facing feature that exists only on the web has not reached them yet.
 - **Settled, don't suggest again:** the entity (moodmixformat, LLC) is formed; the Apple Developer Program is active and paid; there are no paid plans.
