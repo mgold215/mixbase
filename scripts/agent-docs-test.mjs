@@ -23,7 +23,9 @@
 // Fail-first witness (RUN and confirmed): with the 2026-11-17 CLAUDE.md and
 // AGENTS.md put back, this suite fails on the size budget, the longest line,
 // the doubled Next.js heading and the skills the table does not list. With a
-// suite name deleted from the preflight-checks table, it fails on that too.
+// suite name deleted from the preflight-checks table, it fails on that too,
+// and so does a table that still names a suite the runner no longer has
+// (`master-recommendations`, removed with its feature on 2026-11-17).
 //
 // Run: node scripts/agent-docs-test.mjs  (also part of `npm test`)
 
@@ -158,6 +160,14 @@ const preflight = read(`${SKILLS_DIR}/preflight-checks/SKILL.md`)
 const unmapped = registered.filter(s => !preflight.includes('`' + s + '`'))
 check('the runner\'s suite list was read', registered.length >= 80, `only ${registered.length} found`)
 check('preflight-checks names every registered suite', unmapped.length === 0, `add to its table: ${unmapped.join(', ')}`)
+// …and nothing else: a suite that was deleted must leave the table too.
+const mapStart = preflight.indexOf('## While iterating')
+const mapEnd = preflight.indexOf('\n## ', mapStart + 1)
+const mapRows = preflight.slice(mapStart, mapEnd === -1 ? undefined : mapEnd).split('\n').filter(l => l.startsWith('|'))
+const mapped = [...new Set(mapRows.flatMap(l => [...l.matchAll(/`([a-z0-9-]+)`/g)].map(m => m[1])))]
+const deleted = mapped.filter(s => !registered.includes(s))
+check('preflight-checks names no suite the runner does not have', mapped.length >= 80 && deleted.length === 0,
+  mapped.length < 80 ? `only ${mapped.length} suite names read from its table` : `remove from its table: ${deleted.join(', ')}`)
 
 // ── C. Nothing points at a file that is not there ────────────────────────────
 console.log('\nagent-docs: every file these documents name exists\n')
