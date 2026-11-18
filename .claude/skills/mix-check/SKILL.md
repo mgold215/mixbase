@@ -44,6 +44,7 @@ The owner, 2026-11-17: "Remove the chain and limiter recommendations and combine
 ## How it measures
 
 - **Sections.** "Where the kick plays" is found by matching every fast rise of the low band against a template of the song's most REPEATED hit. Not the strongest hit and not a tempo grid: a sub note entering out of silence rises harder than any kick, and two detuned subs beat like a rhythm. Both fooled the first two tries.
+- **Where a whole-mix note is pinned.** A balance note (a band changed, against the catalog, against the genre) is about the whole song, so it is pinned to the start of the main drop: the loudest kick section of at least 8 s (`mainDropStart`). Until 2026-11-18 it took the FIRST kick section, and since most club tracks open on a kick every such note sat at 0:00 (the owner: "the mix notes are all at 0:00", EVERGREEN MIX 4, whose drop is at 2:37). EVERGREEN's notes were moved to 2:37 by hand.
 - **Core.** The core every comparison uses is those sections within 4 LU of their upper quartile. Every level is gained to −10 LUFS first, so a mix and a master compare.
 
 ## What it compares with

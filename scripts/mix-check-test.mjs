@@ -7,7 +7,7 @@
 import { createMixAnalyzer, isMixSummary, MIX_BANDS, THIRD_OCTAVE_HZ, SIXTH_OCTAVE_HZ, MATCH_LUFS } from '../src/lib/mix-check.ts'
 import { loudnessOf } from '../src/lib/mix-check.ts'
 import { sanitizeLoudness } from '../src/lib/loudness-compare.ts'
-import { buildFindings, baselineOf, genreFamily, mixCheckMarker, withMarker, MARKER_TTL_MS, MIN_CATALOG, MIX_CHECK_AUTHOR } from '../src/lib/mix-check-findings.ts'
+import { mainDropStart, buildFindings, baselineOf, genreFamily, mixCheckMarker, withMarker, MARKER_TTL_MS, MIN_CATALOG, MIX_CHECK_AUTHOR } from '../src/lib/mix-check-findings.ts'
 import { measureLoudness } from '../src/lib/loudness.ts'
 
 let failures = 0
@@ -209,6 +209,22 @@ fam('Riddim', 'dubstep')
 fam('Lo-Fi', null)
 fam(null, null)
 check('the byline is fixed', MIX_CHECK_AUTHOR === 'Mix Check')
+
+console.log('\nmix-check: where a whole-mix note is pinned\n')
+{
+  const sec = (kind, start, end, lufs) => ({ kind, start, end, lufs, sub: -30, punch: -30, lowCorr: 1 })
+  // EVERGREEN MIX 2, as its report stored it: every balance note sat at 0:00.
+  const evergreen = [sec('rhythm', 0, 29, -17.1), sec('break', 29, 157, -15.6), sec('rhythm', 157, 190, -15.6), sec('break', 190, 226, -14.5)]
+  check('a quiet intro kick does not pin the notes to 0:00: they go to the drop', mainDropStart(evergreen) === 157, String(mainDropStart(evergreen)))
+  check('two drops as loud as each other: the longer one',
+    mainDropStart([sec('rhythm', 30, 60, -9), sec('break', 60, 90, -14), sec('rhythm', 90, 180, -9.3)]) === 90)
+  check('…and the same length: the earlier one',
+    mainDropStart([sec('rhythm', 30, 60, -9), sec('break', 60, 90, -14), sec('rhythm', 90, 120, -9.2)]) === 30)
+  check('a loud fill under 8 s is not the drop',
+    mainDropStart([sec('rhythm', 10, 14, -7), sec('break', 14, 40, -12), sec('rhythm', 40, 100, -9)]) === 40)
+  check('a kick from start to finish: its start', mainDropStart([sec('rhythm', 0, 300, -9)]) === 0)
+  check('no kick at all: no time', mainDropStart([sec('break', 0, 200, -12)]) === null)
+}
 
 console.log('\nmix-check: the run marker (one answer from every process)\n')
 {
