@@ -19,6 +19,16 @@ export async function register() {
       })
       .catch(() => {})
 
+    // Release-day ISRC lookup (src/lib/release-isrc-job.ts): once a day, a
+    // pipeline release that is out and has no ISRC is looked up on its release
+    // day, retried twice that week, then left alone. Production only — a local
+    // `next dev` or staging must never write the owner's release rows.
+    if (process.env.RAILWAY_ENVIRONMENT_NAME === 'production') {
+      import('./src/lib/release-isrc-job')
+        .then(m => m.startReleaseIsrcScheduler())
+        .catch(() => {})
+    }
+
     // Fire-and-forget WebM→MP4 visualizer heal: iOS AVPlayer can't decode
     // WebM, so any WebM loop still referenced by the library or a project pin
     // gets an H.264 twin and the rows are repointed. Idempotent and
