@@ -1,5 +1,26 @@
 [build]
 builder = "nixpacks"
+# Deploy only when something the running site is built from changes. A merge
+# that touches only notes, tests, CI, the database files or the apps (ios/,
+# macos/) no longer restarts production, which also kills any render, Studio
+# run or Mix Check in progress. Every top-level path must be listed here or in
+# scripts/deploy-watch-test.mjs as "does not deploy", or the build fails: a new
+# path left out of this list would otherwise merge and silently never go live.
+watchPatterns = [
+  "/src/**",
+  "/public/**",
+  "/package.json",
+  "/package-lock.json",
+  "/next.config.ts",
+  "/tsconfig.json",
+  "/postcss.config.mjs",
+  "/instrumentation.ts",
+  "/sentry.client.config.ts",
+  "/sentry.edge.config.ts",
+  "/sentry.server.config.ts",
+  "/railway.toml",
+  "/.nvmrc",
+]
 
 [deploy]
 startCommand = "next start -p ${PORT:-3000}"
