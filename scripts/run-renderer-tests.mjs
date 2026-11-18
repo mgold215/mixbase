@@ -108,6 +108,7 @@ const SUITES = [
   'infra-sql-guard-test.mjs',
   'bpm-test.mjs',
   'catalog-test.mjs',
+  'release-isrc-test.mjs',
   'submit-links-test.mjs',
   'usage-refund-test.mjs',
   'effects-test.mjs',

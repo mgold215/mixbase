@@ -37,7 +37,7 @@ Run one with `node scripts/<name>-test.mjs`.
 | Mixes, notes, loudness | `mix-check` `intern` `mix-session` `mix-notes` `mix-status` `loudness` `loudness-compare` `loudness-auto` `bpm` |
 | The apps | `ios-parity` `macos-sheet-close` |
 | Product rules | `no-paid-plans` |
-| Other features | `notification-loop` `release-pipeline` `thumb-drive` `catalog` `submit-links` `infra-sql-guard` |
+| Other features | `notification-loop` `release-pipeline` `thumb-drive` `catalog` `release-isrc` `submit-links` `infra-sql-guard` |
 | What makes Railway deploy | `deploy-watch` |
 | These instruction files | `agent-docs` |
 
