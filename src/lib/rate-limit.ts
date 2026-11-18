@@ -135,6 +135,12 @@ export const mixNoteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 60 })
 // 30/h is far above listening-speed use and still bounds a stuck client.
 export const mixCheckLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 })
 
+// The mixing intern: its jobs are started by a tap and then reported on by the
+// Mac app stage by stage (a claim poll every few seconds while the app is
+// open, a progress write per move). 1200/h covers a poll every 5 s plus a long
+// job's reports, and still bounds a client stuck in a loop.
+export const internLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 1200 })
+
 // Mix Session ticks (PATCH /api/mix-session/notes/[id]): 300 per hour per
 // user. Its own bucket, not mixNoteLimiter — ticking off a long list (and
 // un-ticking a slip) during one sitting would burn the note-writing budget,

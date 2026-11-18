@@ -193,6 +193,37 @@ drop policy if exists "users_read_own_mix_references" on public.mb_mix_reference
 create policy "users_read_own_mix_references" on public.mb_mix_references
   for select using (user_id = auth.uid());
 
+-- Migration 046: the mixing intern's jobs (one row = one request to fix a mix)
+create table if not exists public.mb_intern_jobs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_id uuid not null references public.mb_projects(id) on delete cascade,
+  version_id uuid not null references public.mb_versions(id) on delete cascade,
+  status text not null default 'queued' check (status in ('queued', 'working', 'done', 'failed', 'cancelled')),
+  stage text,
+  notes jsonb not null default '[]'::jsonb,
+  changes jsonb not null default '[]'::jsonb,
+  result_version_id uuid references public.mb_versions(id) on delete set null,
+  error text,
+  device text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  heartbeat_at timestamptz,
+  finished_at timestamptz
+);
+
+create index if not exists mb_intern_jobs_user_status on public.mb_intern_jobs (user_id, status, created_at);
+create index if not exists mb_intern_jobs_version on public.mb_intern_jobs (version_id, created_at desc);
+-- One job in flight per mix.
+create unique index if not exists mb_intern_jobs_one_active
+  on public.mb_intern_jobs (version_id) where status in ('queued', 'working');
+
+alter table public.mb_intern_jobs enable row level security;
+
+drop policy if exists "users_read_own_intern_jobs" on public.mb_intern_jobs;
+create policy "users_read_own_intern_jobs" on public.mb_intern_jobs
+  for select using (user_id = auth.uid());
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),
