@@ -38,6 +38,7 @@ Run one with `node scripts/<name>-test.mjs`.
 | The apps | `ios-parity` `macos-sheet-close` |
 | Product rules | `no-paid-plans` |
 | Other features | `notification-loop` `release-pipeline` `thumb-drive` `catalog` `submit-links` `infra-sql-guard` |
+| What makes Railway deploy | `deploy-watch` |
 | These instruction files | `agent-docs` |
 
 ## A new suite

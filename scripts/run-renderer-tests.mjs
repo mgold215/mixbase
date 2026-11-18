@@ -42,6 +42,7 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url))
 // a structural regression fails in seconds rather than after the ffmpeg suites.
 const SUITES = [
   'agent-docs-test.mjs',
+  'deploy-watch-test.mjs',
   'verify-token-test.mjs',
   'supabase-keys-test.mjs',
   'auth-errors-test.mjs',
