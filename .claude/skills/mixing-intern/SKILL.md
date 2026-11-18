@@ -13,6 +13,7 @@ In progress. Nothing the owner can use yet.
 - "I should be able to initiate it all from mix base app."
 - "No API usage." Nothing in this feature may be billed per use. The Claude subscription is fine.
 - "Would need to be able to manipulate plugins which is just screen control. And knowing how logic works."
+- "WHEN it's done", and "I'm also not gonna sit here all today responding to permission requests so I approve your access to do what you need to do." Reading: no progress notes; one message when it works end to end. Their approval covers this work's own tools; it cannot answer a macOS system prompt.
 - On how to work with them here: "You just seem to be presenting me with all these problems and variables and I just want you to let me know what it's done. I'm very clear about the end result I'm looking for." Reading: decide, build, and report what is finished. Do not bring them option lists or risk lists; ask only for something only they can do, once, in one line.
 
 ## Decisions
@@ -28,6 +29,11 @@ In progress. Nothing the owner can use yet.
 
 - `POST /api/intern/diagnostics` (owner-only): the Mac app reports what it can read of Logic. Rows land in `mb_mac_probe` (created by hand 2026-11-18, write-only for the public key, no migration file: it is temporary).
 - `macos/MixbaseApp/InternDiagnostics.swift`: started by `AuthService` on the Mac when `ownerTools` is true. Read-only (`scripts/intern-test.mjs` fails the build if it ever acts on Logic). It asks for the Accessibility permission once, then reports whenever there is more to see: permission granted, Logic opened, a plug-in window opened.
+- **Jobs** (migration 046, `mb_intern_jobs`, applied to production 2026-11-18; one job in flight per mix). `src/lib/intern-jobs.ts` holds the rules: which notes a job is handed (`notesForJob`: every open note, never the genre note) and what the Mac app may report (`sanitizeReport`). Routes, all owner-only:
+  - `POST|GET|DELETE /api/versions/<id>/intern`: hand a mix over, read the newest job, cancel.
+  - `POST /api/intern/jobs/claim`: the Mac app asks for work; one conditional UPDATE, and a job gone quiet for 4 minutes is handed out again.
+  - `PATCH /api/intern/jobs/<id>`: stage, changes, then `done` with the uploaded version or `failed` with why. Every report is the heartbeat; a 409 with `status: cancelled` tells the app to stop.
+  - No screen calls these yet: a button with no hands behind it would be a dead control.
 - `scripts/mac-probe.sh` + `.swift`, called from `scripts/ios-autodeploy.sh`: an earlier one-off probe sent through the Mac's auto-deploy helper. Temporary; delete all three pieces once a report has come back by either route.
 
 ## What was researched (2026-11-18)
