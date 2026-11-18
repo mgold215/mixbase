@@ -47,7 +47,8 @@ Use the Railway MCP tools (`list-deployments`, `get-logs`, `get-deployment-diagn
 
 - Railway ids: service `c8d681cc-7798-4ee0-b569-5667002ccb5e`; production environment `79a0efb1-e494-4bbf-8ad5-a9009ed1c267`; staging environment `866f14c6-0ed1-450b-9679-9499866c4df4`.
 - **Staging deploys fail, and that is expected.** Staging has no `SUPABASE_SERVICE_ROLE_KEY` (removed after the Railway breach), so `/api/health` fails and Railway marks every `tst` deploy FAILED at the health check. It says nothing about the code. A failed staging deploy is not a reason to hold a merge.
-- A merge to `main` deploys the web app. While replicas swap, the old deployment still serves; it is finished when the previous deployment reads `REMOVED`.
+- A merge to `main` deploys the web app only when it touches a path in `watchPatterns` (`railway.toml`). A merge of notes, tests, CI, database files or app code alone starts no deployment, and that is correct. A new top-level file must be added to that list or to `scripts/deploy-watch-test.mjs`.
+- When a merge does deploy, the old deployment keeps serving while replicas swap. It is finished when the previous deployment reads `REMOVED`.
 - Feature code logs with a bracketed prefix, e.g. `[cassette-quick] motion plan by …`. Search the deploy logs for the prefix.
 
 ## When something "vanishes" mid-run
