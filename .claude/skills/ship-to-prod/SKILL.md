@@ -51,7 +51,7 @@ If a check fails: read the logs (`mcp__github__get_job_logs`), fix the cause loc
 
 ### 6. Report
 
-Tell the owner what shipped and that the merge triggered the production deploy (https://mixbase.app). A change under `ios/` or `macos/` also starts the TestFlight builds. To confirm the deploy finished and the site is healthy, use the `debugging-production` skill.
+Tell the owner what shipped. The merge deploys production (https://mixbase.app) only if it touched something the site is built from (`watchPatterns` in `railway.toml`); say which it was. A change under `ios/` or `macos/` also starts the TestFlight builds. To confirm the deploy finished and the site is healthy, use the `debugging-production` skill.
 
 ## Never
 

@@ -42,7 +42,7 @@ npm run test:e2e                # Playwright against staging; BASE_URL=http://lo
 
 - **Ship straight to `main`, which is production.** Don't babysit `tst` / staging: the owner does not check it. No feature branches unless the owner asks for one.
 - `main` is branch-protected: `git push origin main` is rejected (403). Deploy with the `ship-to-prod` skill: PR `tst` → `main`, merged as soon as **Build & Lint** and **Secret Scanning** are green. Never gate on staging.
-- A merge to `main` deploys the web app on Railway. A change under `ios/` or `macos/` also builds and uploads the apps to TestFlight.
+- A merge to `main` deploys the web app on Railway only when it touches what the site is built from (`watchPatterns` in `railway.toml`). Notes, tests, CI and app-only merges do not deploy. A change under `ios/` or `macos/` builds and uploads the apps to TestFlight.
 - A deploy restarts the server. In-process jobs (video renders, a Studio run, a Mix Check) die with it by design, so never start a paid run while a deploy is still swapping replicas.
 - The pre-commit gitleaks hook scans for secrets. Fix the leak; never use `--no-verify`.
 - Only `main` and `tst` matter. The other remote branches are stale, except `asc5-inspect`, `asc6-submit` and `asc7-listing`, which trigger App Store workflows when pushed.
