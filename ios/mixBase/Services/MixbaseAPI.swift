@@ -2009,6 +2009,19 @@ final class MixbaseAPI {
         return try decoder.decode(Version.self, from: data)
     }
 
+    // MARK: - Mixing intern (owner-only)
+
+    /// What the Mac app can read of Logic Pro on this Mac, as text
+    /// (macos/MixbaseApp/InternDiagnostics.swift). The server 404s this for
+    /// anyone but the owner.
+    func sendInternDiagnostics(report: String) async throws {
+        _ = try await requestData(
+            path: "/api/intern/diagnostics",
+            method: "POST",
+            body: ["report": report, "source": "mac-app"]
+        )
+    }
+
     // MARK: - Loudness (Master Check)
 
     /// Persist a measured BS.1770-4 reading for one mix — the same endpoint and

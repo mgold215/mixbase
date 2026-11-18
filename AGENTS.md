@@ -100,6 +100,7 @@ Each is a file at `.claude/skills/<name>/SKILL.md`. Claude Code loads them as sk
 | `database-changes` | A table, column, policy or SQL function; applying anything to Supabase |
 | `cassette-studio` | Covers, handwriting and titles, looks, moving covers, Film it |
 | `mix-check` | Mix analysis and its notes, genre references |
+| `mixing-intern` | The agent that fixes Mix Check notes in the Logic project; anything driving Logic Pro on the owner's Mac |
 | `share-pages` | Public song and album pages, share tokens, the link card, waveform |
 | `artwork-and-video` | AI artwork, visualizers, uploaded videos, Runway, YouTube / Shorts renders |
 | `infra-panel` | The owner's infrastructure panel and its chat |
