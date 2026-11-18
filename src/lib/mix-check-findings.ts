@@ -154,10 +154,31 @@ const BAND_FIX: Record<MixBandKey, { low: string; high: string }> = {
   },
 }
 
+/**
+ * Where a note about the whole mix's balance is pinned: the start of the
+ * song's main drop, the loudest stretch where the kick plays (ties go to the
+ * longer, then the earlier one). Not the FIRST kick: most club tracks open on
+ * a kick, so every such note landed on 0:00, the quiet intro, instead of
+ * where the balance it describes can actually be heard (EVERGREEN, 2026-11-17:
+ * intro kick at 0:00 at −17 LUFS, the drop at 2:37 at −15.6). Stretches under
+ * 8 seconds are a fill, not a section. Null when no kick section was found.
+ */
+export function mainDropStart(sections: { kind: string; start: number; end: number; lufs: number }[]): number | null {
+  const rhythm = sections.filter(x => x.kind === 'rhythm')
+  const real = rhythm.filter(x => x.end - x.start >= 8)
+  const pool = real.length ? real : rhythm
+  if (!pool.length) return null
+  const loudest = Math.max(...pool.map(x => x.lufs))
+  const best = pool
+    .filter(x => x.lufs >= loudest - 0.5)
+    .sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start)[0]
+  return best.start
+}
+
 export function buildFindings(m: MixMeasurement, ctx: MixContext = {}): MixVerdict {
   const { summary: s, detail: d } = m
   const findings: MixFinding[] = []
-  const firstFull = d.sections.find(x => x.kind === 'rhythm')?.start ?? null
+  const firstFull = mainDropStart(d.sections)
   const where = d.hasRhythm ? 'where the kick plays' : 'in the loudest part'
 
   const previous = ctx.previous ?? null
