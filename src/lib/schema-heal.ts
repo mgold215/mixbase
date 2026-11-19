@@ -662,6 +662,33 @@ export function isMissingThumbDriveColumn(error: { message?: string } | null): b
   return !!error?.message && /is_thumb_drive/.test(error.message)
 }
 
+// ── mb_collections.is_sync (migration 047) ─────────────────────────────────────
+// Gates the public /sync/<token> catalog (src/lib/sync-share.ts). The loader
+// heals and retries once, so a deploy that beats the migration still serves.
+
+const SYNC_CATALOG_SQL =
+  'alter table public.mb_collections add column if not exists is_sync boolean not null default false;' +
+  " notify pgrst, 'reload schema';"
+
+let syncCatalogEnsured: Promise<boolean> | null = null
+
+export function ensureCollectionSyncColumn(): Promise<boolean> {
+  if (!syncCatalogEnsured) {
+    syncCatalogEnsured = runQuery(SYNC_CATALOG_SQL, 'mb_collections.is_sync column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) syncCatalogEnsured = null
+        return ok
+      })
+  }
+  return syncCatalogEnsured
+}
+
+/** True when a PostgREST error is the missing is_sync column failure. */
+export function isMissingCollectionSyncColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /is_sync/.test(error.message)
+}
+
 const VERSION_INDEX_SQL = `
 create unique index if not exists mb_versions_project_version_uidx
   on public.mb_versions (project_id, version_number);`
