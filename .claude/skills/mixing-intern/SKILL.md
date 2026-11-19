@@ -19,7 +19,7 @@ In progress. Nothing the owner can use yet.
 ## Decisions
 
 - **The hands are a small helper on the owner's Mac that is NOT sandboxed.** Logic only exists there. The first plan was the mixBASE Mac app itself; the owner's Mac proved that cannot work (2026-11-19): the app is sandboxed (TestFlight requires it), and with the Accessibility permission switched on it reported `ax_trusted=true` and still could not read Logic's menu bar or a single window. A sandboxed app is not allowed to talk to another app's interface, whatever the permission says. So the helper is built and run on the Mac itself, signed with the owner's Apple Development certificate (a stable signature, so the Accessibility permission survives rebuilds), started at login. It signs in to mixBASE as the owner and drives Logic through the Accessibility API.
-- **The helper is developed in a Claude session ON the Mac**, where Logic can be driven and looked at for real. A cloud session cannot see Logic, and a loop through TestFlight costs a build, an update and the owner reopening an app for every try.
+- **The helper is developed in a Claude session ON the Mac**, where Logic can be driven and looked at for real. A cloud session cannot see Logic (see "Where it must be built"), and a loop through TestFlight costs a build, an update and the owner reopening an app for every try.
 - **Plug-ins are set through Logic's Controls view** (every plug-in window: View > Controls), which lists each parameter by name with a value. That is readable and settable without looking at pixels. The graphic editor is the fallback.
 - **The judge is Mix Check.** A fix is kept only if the note it answers clears on the next bounce and no new note appears.
 - **Measurable notes are fixed by rules, with no AI.** Judgment (listener notes, taste) goes to a Claude task on the subscription, never the API.
@@ -36,6 +36,12 @@ In progress. Nothing the owner can use yet.
   - `PATCH /api/intern/jobs/<id>`: stage, changes, then `done` with the uploaded version or `failed` with why. Every report is the heartbeat; a 409 with `status: cancelled` tells the app to stop.
   - No screen calls these yet: a button with no hands behind it would be a dead control.
 - The earlier probe sent through the Mac's auto-deploy helper (`scripts/mac-probe.*`) never reported and was removed: that helper is not running on the owner's Mac.
+- **The rules for a measured note** (`src/lib/intern-rules.ts`, pure, no AI; `scripts/intern-rules-test.mjs`). Only `changed.<band>` has a rule so far; every other note is skipped with a sentence saying why.
+  - Each exported track is measured over the mix's kick sections (`coreWindows` of the job's `sections`) into an absolute power spectrum (`createTrackMeter`). `planFixes` tries moves on those spectra and solves the size: the band is aimed 1 dB from where the earlier mix had it, not at zero (some of the change may have been meant).
+  - A **level** move wins on any track where it shifts no other band by 0.5 dB; otherwise one **bell** centred on the band (`bellFor`) on the track carrying most of it; otherwise a bell on up to three tracks. Never more than 6 dB a move. A plan that would push a fine band towards a note of its own, or move loudness by 1 dB, is refused.
+  - The test is a closed loop: synthetic tracks, a real gain and a real EQ filter applied to the audio, and the real Mix Check finding both notes gone. The prediction was within 0.1 dB there; real projects have bus and output processing, which is what `sumVsMix` and `refine` are for.
+- **The command the helper runs**: `node scripts/intern-plan.mjs plan|judge|refine` (usage at the top of the file). It takes the claim's JSON and audio files and prints JSON; audio is decoded by the same ffmpeg call as the server (`npm ci` installs an Apple-silicon ffmpeg). `plan --mix` reports whether the tracks add up to the mix band by band. `judge` runs Mix Check on a bounce locally, so a bounce that did not clear its notes is never uploaded; it cannot see the catalog and genre comparisons, so the server's check after upload is the last word.
+- **What an intern's bounce is compared with**: see the `mix-check` skill, "What it compares with". The helper must report `{ result_version_id }` in a PATCH BEFORE it starts Mix Check on the upload, or the check compares the fix with the mix it fixes. `claim` returns that earlier mix as `song.baseline` (label + summary).
 
 ## What the owner's Mac showed (2026-11-19)
 
@@ -51,11 +57,14 @@ In progress. Nothing the owner can use yet.
 - An open-source Logic controller (MongLong0214/logic-pro-mcp, MIT) drives Logic through Accessibility, MIDI and control-surface channels; only 17 of its 138 operations were verified on Logic 13.0. Useful as a reference for what Logic exposes.
 - Logic Pro 13's own Assistant needs Creator Studio and macOS 27, has no way for another program to call it, and nothing confirms it adjusts a mix.
 
+## Where it must be built
+
+A cloud session cannot do the Mac half (tried 2026-11-19): the Mac's folders are in the owner's Remote Control list but are not offered to cloud sessions, and every tool a cloud session has runs in its own Linux container. Steps 1 to 3 below need Claude Code started ON the Mac, in the repository folder.
+
 ## Next
 
-All of it happens in a Claude session on the owner's Mac.
-
-1. With Logic open, find out by trying: read the mixer and a plug-in's Controls view through Accessibility, set one value and read it back, export all tracks, bounce. Write down what works on Logic 12.4.
-2. Build the helper (a new folder under macos, named MixbaseIntern; a command-line tool or a menu-bar app, not sandboxed): sign in as the owner, poll `POST /api/intern/jobs/claim`, work on a COPY of the project, report each stage with `PATCH /api/intern/jobs/<id>`, upload the bounce as a new version, finish the job. Install it to start at login.
-3. The rules that choose a fix for a measured note (start with `changed.<band>`: find the track that carries the band from the exported tracks, correct it with a gain or EQ move, bounce, and keep the move only if Mix Check's next run clears the note).
+1. With a COPY of a project open in Logic, find out by trying: read the mixer and a plug-in's Controls view through Accessibility, set one value and read it back, export all tracks, bounce, Save As. Write down what works on Logic 12.4. For the export: WAVE, volume and pan automation included, effects not bypassed, or the tracks will not add up to the mix (`plan --mix` shows it).
+2. Build the helper (a new folder under macos, named MixbaseIntern; not sandboxed): sign in as the owner, poll `POST /api/intern/jobs/claim`, work on a COPY of the project, report each stage with `PATCH /api/intern/jobs/<id>`. Per job: export tracks, `plan`, make the moves (a level move as a Gain plug-in or the fader, a bell as a new Channel EQ band), bounce, `judge`, `refine` and re-bounce while it says `changed`, upload only a bounce `judge` keeps, report `result_version_id`, run Mix Check on it, finish `done` or take the version back and finish `failed`. Install it to start at login.
+3. Prove it on EVERGREEN (sub up 3.4 dB and low mids down 2.6 dB since MIX 1).
 4. The button on the Mix Check card (app and web) with progress, the result and Stop. Only once a real job has gone end to end.
+5. Remove `InternDiagnostics.swift`, its call in `AuthService.swift`, `/api/intern/diagnostics` and the `mb_mac_probe` table.

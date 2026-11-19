@@ -60,6 +60,33 @@ export function notesForJob(feedback: FeedbackRow[], findings: FindingRow[]): In
   return out
 }
 
+/**
+ * Which version number a mix's "previous version" must be older than.
+ * Normally its own. A bounce the intern uploaded for a job (the job's
+ * `result_version_id`) is compared as the mix it fixes was, so the bound is
+ * that mix's number; and a fix of a fix follows the chain back to the mix the
+ * owner made. Null when the version is not one of the song's.
+ */
+export function comparedBefore(
+  versionId: string,
+  versions: { id: string; version_number: number }[],
+  jobs: { version_id: string; result_version_id: string | null }[],
+): number | null {
+  const number = new Map(versions.map(v => [v.id, v.version_number]))
+  let bound = number.get(versionId)
+  if (bound == null) return null
+  let current = versionId
+  for (let hop = 0; hop < 20; hop++) {
+    const job = jobs.find(j => j.result_version_id === current)
+    const fixed = job ? number.get(job.version_id) : undefined
+    // Only ever backwards: a job pointing at a newer mix is not this one's origin.
+    if (!job || fixed == null || fixed >= bound) break
+    bound = fixed
+    current = job.version_id
+  }
+  return bound
+}
+
 export type InternChange = { track: string; what: string; from?: string; to?: string; note_id?: string }
 
 const str = (v: unknown, max: number): string | undefined =>

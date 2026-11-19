@@ -28,6 +28,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 import { supabaseAdmin } from '@/lib/supabase'
 import { armDeadline } from '@/lib/proc-deadline.ts'
 import { versionDisplayLabel } from '@/lib/mix-status.ts'
+import { comparedBefore } from '@/lib/intern-jobs.ts'
 import { sanitizeLoudness, toLoudnessColumns, type VersionLoudnessRow } from '@/lib/loudness-compare'
 import {
   ANALYSIS_RATE, MIX_CHECK_ALGO, createMixAnalyzer, isMixSummary, loudnessOf,
@@ -250,6 +251,27 @@ function meanCurve(summaries: MixSummary[]): number[] {
   return summaries[0].s3.map((_, i) => Math.round((summaries.reduce((sum, m) => sum + m.s3[i], 0) / summaries.length) * 10) / 10)
 }
 
+/**
+ * The version a mix is compared with: the nearest older mix of the song with
+ * other audio. A bounce the mixing intern uploaded is the exception: it is
+ * compared with what the mix it FIXES was compared with (comparedBefore), so
+ * "did the note clear" is asked against the same earlier mix the note was
+ * written about. Measured against the mix it fixes, every fix would itself
+ * read as a band that changed.
+ */
+export async function previousVersionOf(row: Pick<VersionRow, 'id' | 'project_id' | 'audio_url'>): Promise<VersionRow | null> {
+  const [{ data: versions }, { data: jobs }] = await Promise.all([
+    supabaseAdmin.from('mb_versions').select(VERSION_COLUMNS).eq('project_id', row.project_id)
+      .order('version_number', { ascending: false }).limit(200),
+    supabaseAdmin.from('mb_intern_jobs').select('version_id, result_version_id').eq('project_id', row.project_id)
+      .not('result_version_id', 'is', null).order('created_at', { ascending: false }).limit(100),
+  ])
+  const all = (versions ?? []) as VersionRow[]
+  const before = comparedBefore(row.id, all, (jobs ?? []) as { version_id: string; result_version_id: string | null }[])
+  if (before == null) return null
+  return all.find(v => v.version_number < before && v.audio_url && v.audio_url !== row.audio_url) ?? null
+}
+
 // ── A run ────────────────────────────────────────────────────────────────────
 
 async function runMixCheck(versionId: string, userId: string): Promise<void> {
@@ -265,16 +287,8 @@ async function runMixCheck(versionId: string, userId: string): Promise<void> {
   const measured = await measureUrl(row.audio_url)
   await fillLoudness(versionId, measured)
 
-  // The previous version: the nearest older mix of this song with other audio.
-  const { data: siblings } = await supabaseAdmin
-    .from('mb_versions')
-    .select(VERSION_COLUMNS)
-    .eq('project_id', row.project_id)
-    .lt('version_number', row.version_number)
-    .order('version_number', { ascending: false })
-    .limit(20)
+  const older = await previousVersionOf(row)
   let previous: { label: string; summary: MixSummary } | null = null
-  const older = ((siblings ?? []) as VersionRow[]).find(v => v.audio_url && v.audio_url !== row.audio_url)
   if (older) {
     let summary = isMixCheckReport(older.mix_check) ? older.mix_check.summary : null
     if (!summary) {

@@ -74,5 +74,28 @@ console.log('\nintern: jobs\n')
   check('one job in flight per mix, and the table is locked down', /unique index if not exists mb_intern_jobs_one_active[\s\S]{0,120}where status in \('queued', 'working'\)/.test(migration) && /enable row level security/.test(migration) && !/for (insert|update|delete|all)/.test(migration))
 }
 
+console.log('\nintern: what a bounce the intern uploaded is compared with\n')
+{
+  const { comparedBefore } = await import('../src/lib/intern-jobs.ts')
+  const versions = [{ id: 'm1', version_number: 1 }, { id: 'm4', version_number: 4 }, { id: 'fix', version_number: 5 }, { id: 'fix2', version_number: 6 }, { id: 'm7', version_number: 7 }]
+  const jobs = [{ version_id: 'fix', result_version_id: 'fix2' }, { version_id: 'm4', result_version_id: 'fix' }, { version_id: 'm4', result_version_id: null }]
+  check('a mix the owner made is compared with the one before it', comparedBefore('m4', versions, jobs) === 4 && comparedBefore('m7', versions, jobs) === 7)
+  check('the intern\'s bounce is compared as the mix it fixes was', comparedBefore('fix', versions, jobs) === 4)
+  check('…and a fix of a fix goes back to the mix the owner made', comparedBefore('fix2', versions, jobs) === 4)
+  check('a job never moves the comparison forwards, and cannot loop', comparedBefore('m4', versions, [{ version_id: 'm7', result_version_id: 'm4' }]) === 4 &&
+    comparedBefore('fix', versions, [{ version_id: 'fix', result_version_id: 'fix' }]) === 5)
+  check('a version that is not the song\'s has no comparison', comparedBefore('other', versions, jobs) === null)
+
+  const server = read('src/lib/mix-check-server.ts')
+  const claim = read('src/app/api/intern/jobs/claim/route.ts')
+  check('Mix Check picks the earlier mix through that rule, within the song',
+    /const older = await previousVersionOf\(row\)/.test(server) && /comparedBefore\(row\.id, all,/.test(server) &&
+    /from\('mb_intern_jobs'\)\.select\('version_id, result_version_id'\)\.eq\('project_id', row\.project_id\)/.test(server) &&
+    /v\.version_number < before && v\.audio_url && v\.audio_url !== row\.audio_url/.test(server))
+  check('a claimed job carries that earlier mix as measured, so the Mac can judge a bounce before uploading it',
+    /previousVersionOf\(\{ id: v\.id, project_id: v\.mb_projects\.id, audio_url: v\.audio_url \}\)/.test(claim) && /summary: earlier\.mix_check\.summary/.test(claim) && /\n        baseline,\n/.test(claim))
+  check('…and only after the caller is known to be the owner', claim.indexOf('isAdminIdentity(userId)') < claim.indexOf('previousVersionOf('))
+}
+
 if (failures) { console.error(`\nintern: ${failures} check(s) FAILED`); process.exit(1) }
 console.log('\nintern: all checks passed')
