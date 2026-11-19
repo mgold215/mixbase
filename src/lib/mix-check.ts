@@ -132,7 +132,7 @@ const clampDb = (x: number) => (x < -120 ? -120 : round1(x))
 
 // ── FFT (radix-2, in place) ──────────────────────────────────────────────────
 
-function makeFft(n: number) {
+export function makeFft(n: number) {
   const bits = Math.log2(n)
   const rev = new Uint32Array(n)
   for (let i = 0; i < n; i++) {

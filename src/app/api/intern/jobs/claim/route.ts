@@ -5,6 +5,7 @@ import { isAdminIdentity } from '@/lib/admin-identity'
 import { checkUserLimit, internLimiter, rateLimitHeaders } from '@/lib/rate-limit'
 import { INTERN_STALL_MS, jobView } from '@/lib/intern-jobs.ts'
 import { versionDisplayLabel } from '@/lib/mix-status.ts'
+import { isMixCheckReport, previousVersionOf } from '@/lib/mix-check-server'
 
 // POST /api/intern/jobs/claim — the mixBASE Mac app asks for work (owner-only).
 //
@@ -63,6 +64,12 @@ export async function POST(request: NextRequest) {
       mix_check: { findings?: unknown; bands?: unknown; compared?: unknown; detail?: { sections?: unknown } } | null
       mb_projects: { id: string; title: string; genre: string | null; bpm: number | null }
     } | null
+    // The mix the notes were written against, as measured: with it the Mac can
+    // judge a bounce itself before uploading anything.
+    const earlier = v ? await previousVersionOf({ id: v.id, project_id: v.mb_projects.id, audio_url: v.audio_url }) : null
+    const baseline = earlier && isMixCheckReport(earlier.mix_check)
+      ? { version_id: earlier.id, label: versionDisplayLabel(earlier), summary: earlier.mix_check.summary }
+      : null
     return NextResponse.json({
       job: jobView(row, Date.now()),
       song: v && {
@@ -79,6 +86,7 @@ export async function POST(request: NextRequest) {
         bands: v.mix_check?.bands ?? [],
         compared: v.mix_check?.compared ?? null,
         sections: v.mix_check?.detail?.sections ?? [],
+        baseline,
       },
     })
   }

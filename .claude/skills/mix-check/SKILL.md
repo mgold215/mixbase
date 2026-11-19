@@ -50,6 +50,7 @@ The owner, 2026-11-17: "Remove the chain and limiter recommendations and combine
 ## What it compares with
 
 1. **The previous version of the song.** Measured on the spot if it never was; summary kept on its row, no notes written there.
+   - A bounce the mixing intern uploaded is the exception: it is compared with what the mix it FIXES was compared with (`previousVersionOf` in `mix-check-server.ts`, `comparedBefore` in `intern-jobs.ts`), found through the job's `result_version_id`. Compared with the mix it fixes, every fix would read as a band that changed.
 2. **The artist's catalog** = the newest measured version of every other song, mixes and masters alike. Needs 6. All 71 of the owner's songs were measured from a remote session on 2026-11-17 and written as summary-only rows.
 3. **The genre** = `mb_mix_references` rows of the song's family. `genreFamily()` maps the free-text genre. A song with no genre uses the artist's most common family and the report says so. Needs 5.
 
