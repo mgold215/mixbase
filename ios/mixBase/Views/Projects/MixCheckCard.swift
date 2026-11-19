@@ -30,6 +30,8 @@ struct MixCheckCard: View {
     let onNotesChanged: () -> Void
     /// Play this mix from a moment (seconds).
     let onJump: (Int) -> Void
+    /// The mixing intern added a new version to the song.
+    let onInternDone: () -> Void
 
     // nil until the first answer from the server.
     @State private var status: MixbaseAPI.MixCheckStatus?
@@ -102,6 +104,15 @@ struct MixCheckCard: View {
             case .none:
                 // Not loaded yet.
                 EmptyView()
+            }
+
+            // The intern is handed the measured notes, never the genre comparison.
+            if status != nil {
+                InternPanel(
+                    version: version,
+                    hasNotes: (report?.findings ?? []).contains { $0.code != "genre.balance" },
+                    onDone: onInternDone
+                )
             }
         }
         .padding(12)
@@ -252,6 +263,190 @@ struct MixCheckCard: View {
             }
         }
         status = .failed("The check is taking too long. Try again in a minute.")
+    }
+}
+
+// MARK: - InternPanel
+// The mixing intern, on the Mix Check card. "Hand to the intern" files a job;
+// the work happens on the owner's Mac (the mixBASE Intern helper claims it,
+// fixes the measured notes in a COPY of the song's Logic project, bounces and
+// uploads the result as a new version). This only shows where that is:
+// waiting for the Mac, the stage it reports, what it changed, and Stop.
+// Nothing is measured or decided here, and it is the same routes as the web.
+struct InternPanel: View {
+
+    let version: Version
+    /// Whether this mix has notes to hand over (a finished check with findings).
+    let hasNotes: Bool
+    /// The intern finished and a new version is on the song.
+    let onDone: () -> Void
+
+    @State private var state: MixbaseAPI.InternState?
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var watcher: Task<Void, Never>?
+    // Whether this screen saw the job in flight: only then is its finish news.
+    @State private var sawActive = false
+
+    private static let teal = Color(hex: "#2dd4bf")
+    private static let ink = Color(hex: "#f0f0f0")
+
+    private var job: MixbaseAPI.InternJob? { state?.job }
+
+    var body: some View {
+        Group {
+            if let state, hasNotes || state.job != nil || state.madeBy != nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    header
+                    if let made = state.madeBy {
+                        Text("The intern made this version. What it changed in the Logic project (on a copy):")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                        changeList(made.changes ?? [])
+                    }
+                    detail
+                    if let problem {
+                        Text(problem).font(.caption2).foregroundColor(.red)
+                    }
+                }
+                .padding(10)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
+            }
+        }
+        .task { await load() }
+        .onDisappear {
+            watcher?.cancel()
+            watcher = nil
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "wand.and.stars")
+                .font(.caption2)
+                .foregroundColor(.gray)
+            Text("Mixing intern")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(Self.ink)
+            Spacer()
+            if job?.isActive == true {
+                Button("Stop") { stop() }
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .disabled(busy)
+            } else if hasNotes {
+                Button(job?.status == "failed" ? "Try again" : "Hand to the intern") { hand() }
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(Self.teal)
+                    .disabled(busy)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let job {
+            if job.isWaiting {
+                Text("Waiting for your Mac. It starts when the Mac is on and mixBASE Intern is running.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else if job.status == "working" {
+                HStack(spacing: 6) {
+                    ProgressView().tint(Self.teal).scaleEffect(0.6)
+                    Text(job.stage ?? "Working")
+                        .font(.caption2)
+                        .foregroundColor(Self.ink)
+                }
+                changeList(job.changes ?? [])
+            } else if job.status == "done" {
+                Text("Done. The fixed mix is on the song as a new version, checked again.")
+                    .font(.caption2)
+                    .foregroundColor(Self.ink)
+                changeList(job.changes ?? [])
+            } else if job.status == "failed" {
+                Text(job.error ?? "The intern could not finish.")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if job.status == "cancelled" {
+                Text("Stopped. Nothing was uploaded.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        } else if state?.madeBy == nil {
+            Text("Fixes the measured notes in a copy of the Logic project on your Mac, bounces it and adds the result as a new version. Your project is not touched.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+        }
+    }
+
+    private func changeList(_ changes: [MixbaseAPI.InternChange]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(changes) { change in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(change.track).foregroundColor(Self.ink)
+                    Text([change.what, change.to].compactMap { $0 }.joined(separator: " ")).foregroundColor(.gray)
+                }
+                .font(.caption2)
+            }
+        }
+    }
+
+    // MARK: Talking to the server
+
+    private func show(_ next: MixbaseAPI.InternState) {
+        state = next
+        if next.job?.isActive == true {
+            sawActive = true
+        } else if next.job?.status == "done", sawActive {
+            sawActive = false
+            onDone()
+        }
+    }
+
+    private func load() async {
+        guard let current = try? await MixbaseAPI.shared.internState(versionId: version.id) else { return }
+        show(current)
+        if current.job?.isActive == true { watch() }
+    }
+
+    private func hand() {
+        busy = true
+        problem = nil
+        Task {
+            do {
+                show(try await MixbaseAPI.shared.handToIntern(versionId: version.id))
+                watch()
+            } catch {
+                problem = error.localizedDescription
+            }
+            busy = false
+        }
+    }
+
+    private func stop() {
+        busy = true
+        Task {
+            if let next = try? await MixbaseAPI.shared.stopIntern(versionId: version.id) { show(next) }
+            busy = false
+        }
+    }
+
+    // Follow the job until it is no longer in flight. A job can sit waiting
+    // for the Mac for a long time, so this keeps asking while the screen is open.
+    private func watch() {
+        watcher?.cancel()
+        watcher = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if Task.isCancelled { return }
+                guard let current = try? await MixbaseAPI.shared.internState(versionId: version.id) else { continue }
+                if Task.isCancelled { return }
+                show(current)
+                if current.job?.isActive != true { return }
+            }
+        }
     }
 }
 

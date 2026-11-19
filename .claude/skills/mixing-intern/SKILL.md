@@ -5,7 +5,7 @@ description: The mixing intern - the owner-only agent that takes a mix's Mix Che
 
 # The mixing intern
 
-In progress. Nothing the owner can use yet.
+In progress. Nothing the owner can use yet: the helper is installed on the Mac, the Logic steps are not proven.
 
 ## What the owner asked for (2026-11-18)
 
@@ -26,15 +26,27 @@ In progress. Nothing the owner can use yet.
 - **The intern never saves over the owner's project**: it works on a copy and uploads its bounce as a new version marked as its own.
 - **The genre-reference note is never chased automatically.** It appears on nearly every song of the owner's; following it would reshape their sound.
 
+## The helper (`macos/MixbaseIntern`)
+
+A menu-bar app, built and installed on the Mac itself: `cd macos/MixbaseIntern && ./install.sh` (re-run after any change; `./install.sh runtime` refreshes only the worker's files). Not in `project.yml`, not on TestFlight.
+
+- **Swift is the hands, node is the head.** The app (`Sources/`) signs in, holds the two privacy switches, and answers commands against Logic (`AX.swift`: read the interface, press, set a value, pick a menu item, send a key). The job loop is `scripts/intern-worker.mjs`, which the app starts and restarts; it asks the app for the access token and for every touch of Logic over its stdout/stdin. So a change to how a job runs needs no rebuild.
+- **Installed copy.** `install.sh` copies the worker, the rules it imports (`src/lib/intern-*.ts`, `mix-check*.ts`, `loudness.ts`) and ffmpeg into `~/Library/Application Support/MixbaseIntern/runtime/`, so the helper does not depend on a checkout. After changing any of those files, run `./install.sh runtime`; the helper restarts the worker when it exits.
+- **Starts at login** through a LaunchAgent (`app.mixbase.intern`), restarted if it crashes; a normal Quit stays quit.
+- **Signed with the Mac's Apple Development certificate** (`build.sh`), so the Accessibility and Full Disk Access switches survive a rebuild. `codesign` needed no password prompt.
+- **What a person must do, once** (the setup window shows all three and their state): sign in to mixBASE (only the refresh token is kept, in the login Keychain), switch on Accessibility, switch on Full Disk Access. Full Disk Access is what lets it look for projects and copy them wherever they are without a folder prompt nobody is there to answer.
+- **Trying a command by hand:** `node scripts/intern-ax.mjs ping`, `app.windows`, `ax.dump '{"el":"e12","depth":2}'`, `ax.menu '{"path":["File","Save"],"press":false}'`. This goes through a socket in the helper's folder that only the owner's account can open; it reaches Logic only and never gets the access token.
+- **Trying a job without the app:** write `{"version_id":"…"}` to `~/Library/Application Support/MixbaseIntern/handoff.json`; the worker files the hand-off as the owner on its next pass.
+- **Logs:** `~/Library/Logs/MixbaseIntern/` (`helper.log`, `worker.log`). Each job's working folder (the project copy, exported tracks, bounces, `plan.json`, `judge-N.json`) is `…/MixbaseIntern/jobs/<job id>/`; the newest five are kept.
+- **Finding the project** (`scripts/intern-find.mjs`): Spotlight, and a walk of the home folder and other drives when Spotlight has nothing (on 2026-11-19 its index was rebuilding and answered zero). Matched by name against the song's title AND every filename its mixes were uploaded under (`song.filenames` in the claim): EVERGREEN was CORRIDOR for its first two mixes. No match is an `error` on the job, never a guess.
+- **The project may be ahead of the handed mix.** So the copy is bounced untouched first and judged; the plan is made from THAT measurement, and a project that no longer shows the notes fails with a sentence saying so.
+
 ## What exists
 
-- `POST /api/intern/diagnostics` (owner-only): the Mac app reports what it can read of Logic. Rows land in `mb_mac_probe` (created by hand 2026-11-18, write-only for the public key, no migration file: it is temporary).
-- `macos/MixbaseApp/InternDiagnostics.swift`: started by `AuthService` on the Mac when `ownerTools` is true. Read-only. It did its job (see "What the owner's Mac showed") and can be removed once the helper exists; its Accessibility prompt never appears, because macOS does not show that prompt for a sandboxed app.
 - **Jobs** (migration 046, `mb_intern_jobs`, applied to production 2026-11-18; one job in flight per mix). `src/lib/intern-jobs.ts` holds the rules: which notes a job is handed (`notesForJob`: every open note, never the genre note) and what the Mac app may report (`sanitizeReport`). Routes, all owner-only:
   - `POST|GET|DELETE /api/versions/<id>/intern`: hand a mix over, read the newest job, cancel.
   - `POST /api/intern/jobs/claim`: the Mac app asks for work; one conditional UPDATE, and a job gone quiet for 4 minutes is handed out again.
   - `PATCH /api/intern/jobs/<id>`: stage, changes, then `done` with the uploaded version or `failed` with why. Every report is the heartbeat; a 409 with `status: cancelled` tells the app to stop.
-  - No screen calls these yet: a button with no hands behind it would be a dead control.
 - The earlier probe sent through the Mac's auto-deploy helper (`scripts/mac-probe.*`) never reported and was removed: that helper is not running on the owner's Mac.
 - **The rules for a measured note** (`src/lib/intern-rules.ts`, pure, no AI; `scripts/intern-rules-test.mjs`). Only `changed.<band>` has a rule so far; every other note is skipped with a sentence saying why.
   - Each exported track is measured over the mix's kick sections (`coreWindows` of the job's `sections`) into an absolute power spectrum (`createTrackMeter`). `planFixes` tries moves on those spectra and solves the size: the band is aimed 1 dB from where the earlier mix had it, not at zero (some of the change may have been meant).

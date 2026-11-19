@@ -1819,6 +1819,8 @@ function CurrentMixCard({
               loudness={loudnessCard}
               onNotes={notes => onMixNotes(version.id, notes)}
               onJump={goToTimestamp}
+              // The new version is a new row on the song: load the page with it.
+              onInternDone={() => window.location.reload()}
             />
           ) : (
             <MasterCheck versionId={version.id} {...loudnessCard} />

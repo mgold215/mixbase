@@ -10,7 +10,8 @@ import { jobView, notesForJob } from '@/lib/intern-jobs.ts'
 //
 //   POST    hand this mix's open notes to the intern. 201 { job }, or 200 with
 //           the job already in flight for this mix.
-//   GET     { job } — the newest job for this mix, or { job: null }.
+//   GET     { job, made_by } — the newest job for this mix (or null), and, when
+//           this mix is one the intern uploaded, the job that made it.
 //   DELETE  cancel the job in flight. The Mac app learns it on its next report.
 //
 // The work happens on the owner's Mac: the mixBASE Mac app claims the job
@@ -50,11 +51,25 @@ async function newest(versionId: string, userId: string) {
   return data as Record<string, unknown> | null
 }
 
+/** The job that MADE this version: an intern's upload shows what was done to make it. */
+async function madeBy(versionId: string, userId: string) {
+  const { data } = await supabaseAdmin
+    .from('mb_intern_jobs')
+    .select(JOB_COLUMNS)
+    .eq('result_version_id', versionId)
+    .eq('user_id', userId)
+    .eq('status', 'done')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data as Record<string, unknown> | null
+}
+
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const g = await gate(request, ctx)
   if (g.error) return g.error
-  const job = await newest(g.version.id, g.userId)
-  return NextResponse.json({ job: job ? jobView(job, Date.now()) : null })
+  const [job, made] = await Promise.all([newest(g.version.id, g.userId), madeBy(g.version.id, g.userId)])
+  return NextResponse.json({ job: job ? jobView(job, Date.now()) : null, made_by: made ? jobView(made, Date.now()) : null })
 }
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {

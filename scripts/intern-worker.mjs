@@ -1,0 +1,359 @@
+#!/usr/bin/env node
+// The mixing intern's job loop. The helper on the owner's Mac
+// (macos/MixbaseIntern) starts this and keeps it running; it is not started by
+// hand. No AI and nothing billed per use: measured notes are fixed by the
+// rules in src/lib/intern-rules.ts, and Mix Check is the judge.
+//
+// One job, start to finish:
+//   claim → find the song's Logic project → COPY it → open the copy in Logic →
+//   bounce it as it is and measure (the project may have moved on since the
+//   handed mix) → export every track → plan the moves → make them → bounce →
+//   judge → resize and re-bounce while that helps → upload the bounce as a new
+//   version marked as the intern's → tell the server which version it is →
+//   Mix Check there → done, or take the version back and say why.
+//
+// The owner's own project is only ever read: copied, never opened, never saved.
+//
+// It talks to the helper over its stdout/stdin, one JSON object per line: the
+// helper lends it the access token and its hands on Logic (AX.swift). Its own
+// log goes to stderr, which the helper writes to ~/Library/Logs/MixbaseIntern.
+
+import { spawn } from 'node:child_process'
+import { createReadStream } from 'node:fs'
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import { basename, extname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { Readable } from 'node:stream'
+import { judge, plan, refine } from './intern-plan.mjs'
+import { internNames, listProjects, pickProject } from './intern-find.mjs'
+import { createLogic } from './intern-logic.mjs'
+import { judgeFix } from '../src/lib/intern-rules.ts'
+import { MIX_BANDS } from '../src/lib/mix-check.ts'
+
+const SUPPORT = process.env.INTERN_SUPPORT ?? join(os.homedir(), 'Library/Application Support/MixbaseIntern')
+const JOBS = join(SUPPORT, 'jobs')
+const FFMPEG = join(SUPPORT, 'runtime/bin/ffmpeg')
+const DEVICE = process.env.INTERN_DEVICE ?? 'Mac'
+const POLL_MS = 10_000
+/** How many times a bounce that missed is resized and tried again. */
+const MAX_REFINES = 3
+/** Working folders kept for the owner to look at; older ones are removed. */
+const KEEP_JOBS = 5
+
+const log = (...a) => process.stderr.write(`${a.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')}\n`)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// ── The helper: token and hands ──────────────────────────────────────────────
+
+let rpcId = 0
+const waiting = new Map()
+createInterface({ input: process.stdin }).on('line', line => {
+  let reply
+  try { reply = JSON.parse(line) } catch { return }
+  const w = waiting.get(reply.id)
+  if (!w) return
+  waiting.delete(reply.id)
+  if (reply.ok) w.resolve(reply.result); else w.reject(new Error(reply.error ?? 'The helper refused'))
+}).on('close', () => process.exit(0)) // the helper quit: so do we
+
+export function helper(cmd, args = {}, timeoutMs = 120_000) {
+  return new Promise((resolve, reject) => {
+    const id = ++rpcId
+    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`${cmd}: Logic did not answer in ${timeoutMs / 1000}s`)) }, timeoutMs)
+    waiting.set(id, { resolve: v => { clearTimeout(timer); resolve(v) }, reject: e => { clearTimeout(timer); reject(e) } })
+    process.stdout.write(`${JSON.stringify({ id, cmd, ...args })}\n`)
+  })
+}
+
+// ── mixBASE ──────────────────────────────────────────────────────────────────
+
+class Cancelled extends Error {}
+/** A failure the owner should read as it is (not a crash). */
+class Giveup extends Error {}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const auth = await helper('auth.token')
+  const res = await fetch(`${auth.api}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${auth.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(60_000),
+  })
+  const json = await res.json().catch(() => null)
+  return { status: res.status, json }
+}
+
+/** One job's line to the server: every report is also its heartbeat. */
+function reporter(jobId) {
+  let stage = 'Starting', cancelled = false, timer = null, sending = Promise.resolve()
+  const send = body => {
+    sending = sending.then(async () => {
+      try {
+        const r = await api(`/api/intern/jobs/${jobId}`, { method: 'PATCH', body })
+        if (r.status === 409 && r.json?.job?.status === 'cancelled') cancelled = true
+        if (r.status === 409 && r.json?.job && r.json.job.status !== 'working') cancelled = true
+        return r
+      } catch (err) { log('report failed:', err.message); return null }
+    })
+    return sending
+  }
+  return {
+    start() { timer = setInterval(() => send({ stage }), 45_000) },
+    stop() { clearInterval(timer) },
+    /** Say where the job is, and stop here if the owner cancelled it. */
+    async stage(text) {
+      stage = text
+      log(`[${jobId.slice(0, 8)}] ${text}`)
+      await send({ stage })
+      if (cancelled) throw new Cancelled('The job was stopped')
+    },
+    check() { if (cancelled) throw new Cancelled('The job was stopped') },
+    report: send,
+  }
+}
+
+// ── Files ────────────────────────────────────────────────────────────────────
+
+function run(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    p.stderr.on('data', d => { if (err.length < 2000) err += d })
+    p.on('error', reject)
+    p.on('close', code => (code === 0 ? resolve() : reject(new Error(`${basename(cmd)} failed: ${err.trim().split('\n')[0]}`))))
+  })
+}
+
+async function pruneJobs(keepId) {
+  let dirs = []
+  try { dirs = await readdir(JOBS) } catch { return }
+  const aged = []
+  for (const d of dirs) { try { aged.push({ d, t: (await stat(join(JOBS, d))).mtimeMs }) } catch { /* gone */ } }
+  aged.sort((a, b) => b.t - a.t)
+  for (const { d } of aged.slice(KEEP_JOBS)) if (d !== keepId) await rm(join(JOBS, d), { recursive: true, force: true })
+}
+
+// ── The upload ───────────────────────────────────────────────────────────────
+
+async function upload(song, file) {
+  const auth = await helper('auth.token')
+  // The app's own path for a mix: straight to Storage with the owner's token,
+  // so the file never passes through the web server (10 MB limit there).
+  const key = `${String(song.project_id).toLowerCase()}/${Date.now()}.wav`
+  const size = (await stat(file)).size
+  const res = await fetch(`${auth.supabase}/storage/v1/object/mf-audio/${key}`, {
+    method: 'POST',
+    headers: { apikey: auth.key, Authorization: `Bearer ${auth.token}`, 'Content-Type': 'audio/wav', 'Content-Length': String(size) },
+    body: Readable.toWeb(createReadStream(file)),
+    duplex: 'half',
+    signal: AbortSignal.timeout(900_000),
+  })
+  if (!res.ok) throw new Giveup(`The upload was refused (${res.status})`)
+  return { url: `${auth.supabase}/storage/v1/object/public/mf-audio/${key}`, key, size }
+}
+
+async function removeUpload(key) {
+  try {
+    const auth = await helper('auth.token')
+    await fetch(`${auth.supabase}/storage/v1/object/mf-audio/${key}`, { method: 'DELETE', headers: { apikey: auth.key, Authorization: `Bearer ${auth.token}` } })
+  } catch { /* an orphan is found by the usual cleanup */ }
+}
+
+/** Runs Mix Check on a version and waits for its report. */
+async function serverCheck(versionId, report) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const started = await api(`/api/versions/${versionId}/mix-check`, { method: 'POST' })
+    if (started.status >= 400 && started.status !== 409) { await sleep(5000); continue }
+    for (let i = 0; i < 90; i++) {
+      await sleep(4000)
+      report.check()
+      const r = await api(`/api/versions/${versionId}/mix-check`)
+      if (r.json?.status === 'done' && r.json.report) return r.json.report
+      // 'none' mid-run means the server restarted under it: start it again.
+      if (r.json?.status === 'error' || r.json?.status === 'none') break
+    }
+  }
+  throw new Giveup('Mix Check on the new version did not finish')
+}
+
+// ── One job ──────────────────────────────────────────────────────────────────
+
+const bandLabel = key => MIX_BANDS.find(b => b.key === key)?.label ?? key
+const handledCodes = notes => notes.map(n => n.code).filter(c => typeof c === 'string' && MIX_BANDS.some(b => c === `changed.${b.key}`))
+
+async function runJob(claim) {
+  const { job, song } = claim
+  const report = reporter(job.id)
+  const dir = join(JOBS, job.id)
+  const logic = createLogic(helper, { log })
+  let opened = false, uploaded = null, versionId = null
+  report.start()
+  try {
+    if (!song) throw new Giveup('The mix this job was for is gone')
+    const handled = handledCodes(job.notes ?? [])
+    if (!handled.length) throw new Giveup('None of these notes is one the intern has a rule for yet (it fixes a band that changed since the last version)')
+    await mkdir(dir, { recursive: true })
+    await pruneJobs(job.id)
+    await helper('sys.awake', { on: true })
+
+    await report.stage('Finding the Logic project')
+    const projects = await listProjects({ exclude: [JOBS] })
+    const found = pickProject([song.title, song.audio_filename, ...(song.filenames ?? [])].filter(Boolean), projects)
+    if (found.error) throw new Giveup(found.error)
+    log('project:', basename(found.path), found.others?.length ? `(also matched: ${found.others.map(p => basename(p)).join(', ')})` : '')
+
+    await report.stage('Copying the project')
+    const copy = join(dir, `${basename(found.path, '.logicx')} (intern).logicx`)
+    await rm(copy, { recursive: true, force: true })
+    // -c clones on APFS: instant, and takes no space until something changes.
+    await run('/bin/cp', ['-Rc', found.path, copy])
+    const before = (await stat(found.path)).mtimeMs
+
+    await report.stage('Opening the copy in Logic Pro')
+    await logic.open(copy)
+    opened = true
+
+    // The project as it is now, measured the way Mix Check measures: it may
+    // have moved on since the handed mix was bounced.
+    await report.stage('Bouncing the project as it is')
+    const bounce0 = join(dir, 'bounce-0.wav')
+    await logic.bounce(bounce0)
+    const judge0 = await judge({ job: claim, bounce: bounce0, handled, ffmpeg: FFMPEG })
+    await writeFile(join(dir, 'judge-0.json'), JSON.stringify(judge0, null, 2))
+    const open = judge0.remaining
+    if (!open.length) throw new Giveup('The Logic project no longer shows these notes: its bounce is already inside what Mix Check accepts')
+    const now = { ...claim, song: { ...song, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
+
+    await report.stage('Exporting the tracks')
+    const tracksDir = join(dir, 'tracks')
+    await rm(tracksDir, { recursive: true, force: true })
+    await mkdir(tracksDir, { recursive: true })
+    await logic.exportTracks(tracksDir)
+
+    await report.stage('Choosing the moves')
+    let planned = await plan({ job: now, tracksDir, mix: bounce0, ffmpeg: FFMPEG })
+    await writeFile(join(dir, 'plan.json'), JSON.stringify(planned, null, 2))
+    log('tracks vs mix:', planned.sumVsMix?.map(b => `${b.key} ${b.db}`).join(', ') ?? 'n/a')
+    if (!planned.moves.length) {
+      const why = planned.skipped.filter(s => s.code && open.includes(s.code)).map(s => s.why)[0] ?? 'no move within its limits answers these notes'
+      throw new Giveup(`Nothing changed: ${why}`)
+    }
+
+    let verdict = null, bounce = null, changes = []
+    for (let round = 0; round <= MAX_REFINES; round++) {
+      await report.stage(round === 0 ? 'Making the moves in Logic' : `Resizing the moves (try ${round + 1})`)
+      changes = await logic.applyMoves(planned.moves)
+      await report.report({ changes })
+      await report.stage(round === 0 ? 'Bouncing' : `Bouncing again (try ${round + 1})`)
+      bounce = join(dir, `bounce-${round + 1}.wav`)
+      await logic.bounce(bounce)
+      await report.stage('Checking the bounce')
+      verdict = await judge({ job: claim, bounce, handled: open, ffmpeg: FFMPEG })
+      await writeFile(join(dir, `judge-${round + 1}.json`), JSON.stringify(verdict, null, 2))
+      log('judge:', { keep: verdict.keep, cleared: verdict.cleared, remaining: verdict.remaining, appeared: verdict.appeared })
+      if (verdict.keep) break
+      if (verdict.appeared.length) break // resizing does not un-make a new note
+      const next = refine({ plan: planned, judge: verdict })
+      if (!next.changed) break
+      planned = { ...planned, moves: next.moves, changes: next.changes }
+    }
+    if (!verdict.keep) {
+      const what = verdict.appeared.length ? `it brought a new note (${verdict.appeared.join(', ')})`
+        : `${verdict.remaining.map(c => bandLabel(c.split('.')[1])).join(' and ')} still reads as changed`
+      throw new Giveup(`Nothing was uploaded: the fix was tried and bounced, but ${what}`)
+    }
+
+    await report.stage('Saving the copy')
+    await logic.save()
+    if ((await stat(found.path)).mtimeMs !== before) log('WARNING: the original project changed during the job (the owner may have saved it)')
+
+    await report.stage('Uploading the new version')
+    const names = internNames(song)
+    const up = await upload(song, bounce)
+    uploaded = up.key
+    const list = changes.map(c => `${c.track}: ${c.what} ${c.to ?? ''}`.trim()).join('; ')
+    const created = await api('/api/versions', {
+      method: 'POST',
+      body: {
+        project_id: song.project_id, audio_url: up.url, audio_filename: names.filename, label: names.label,
+        duration_seconds: Math.round(verdict.loudness.seconds), file_size_bytes: up.size,
+        change_log: `Mixing intern, from ${song.version_label}: ${list}`.slice(0, 1000),
+        // The owner decides what the feed sees; an intern's bounce is not announced.
+        share_to_feed: false,
+      },
+    })
+    versionId = created.json?.id ?? created.json?.version?.id
+    if (!versionId) throw new Giveup(`The new version could not be filed (${created.status})`)
+    // BEFORE Mix Check: this is how the server knows to compare the bounce
+    // with the mix the notes were written against, not with the mix it fixes.
+    await report.report({ result_version_id: versionId, changes })
+
+    await report.stage('Running Mix Check on the new version')
+    const checked = await serverCheck(versionId, report)
+    const final = judgeFix(song.findings ?? [], checked.findings ?? [], open)
+    await writeFile(join(dir, 'server-check.json'), JSON.stringify({ final, findings: checked.findings }, null, 2))
+    if (!final.keep) {
+      const what = final.appeared.length ? `Mix Check found a new note on it (${final.appeared.join(', ')})` : `${final.remaining.join(', ')} did not clear`
+      throw new Giveup(`The new version was taken back: ${what}`)
+    }
+    await report.report({ status: 'done', stage: 'Done', changes })
+    log(`[${job.id.slice(0, 8)}] done: version ${versionId}`)
+    uploaded = null; versionId = null
+  } catch (err) {
+    // Whatever was uploaded for a fix that did not hold is taken back.
+    if (versionId) await api(`/api/versions/${versionId}`, { method: 'DELETE' }).catch(() => null)
+    if (uploaded) await removeUpload(uploaded)
+    if (err instanceof Cancelled) {
+      log(`[${job.id.slice(0, 8)}] stopped by the owner`)
+    } else {
+      const text = err instanceof Giveup ? err.message : `Something went wrong on the Mac: ${err.message}`
+      log(`[${job.id.slice(0, 8)}] failed: ${text}`, err instanceof Giveup ? '' : String(err.stack ?? ''))
+      await report.report({ status: 'failed', error: text.slice(0, 500) })
+    }
+  } finally {
+    report.stop()
+    if (opened) await logic.close().catch(e => log('close failed:', e.message))
+    await helper('sys.awake', { on: false }).catch(() => null)
+  }
+}
+
+// ── The loop ─────────────────────────────────────────────────────────────────
+
+/** A hand-off made on the Mac itself: a file naming a version, for trying a job without the app. */
+async function localHandoff() {
+  const file = join(SUPPORT, 'handoff.json')
+  let raw
+  try { raw = await readFile(file, 'utf8') } catch { return }
+  await unlink(file).catch(() => null)
+  try {
+    const { version_id, check_first } = JSON.parse(raw)
+    // check_first: run Mix Check on the mix before handing it over, as the
+    // owner would by tapping "Check this mix" and then "Hand to the intern".
+    if (check_first) {
+      const report = await serverCheck(version_id, { check() {} })
+      log('local hand-off: Mix Check found', (report.findings ?? []).map(f => f.code).join(', ') || 'nothing')
+    }
+    const r = await api(`/api/versions/${version_id}/intern`, { method: 'POST' })
+    log('local hand-off:', r.status, r.json?.job?.id ?? r.json?.error ?? '')
+  } catch (err) { log('local hand-off failed:', err.message) }
+}
+
+async function main() {
+  log(`worker up on ${DEVICE}`)
+  await mkdir(JOBS, { recursive: true })
+  for (;;) {
+    try {
+      await localHandoff()
+      const state = await helper('ping')
+      if (state.trusted && state.signed_in) {
+        const r = await api('/api/intern/jobs/claim', { method: 'POST', body: { device: DEVICE } })
+        if (r.status === 200 && r.json?.job) { await runJob(r.json); continue }
+        if (r.status !== 200) log('claim answered', r.status)
+      }
+    } catch (err) { log('loop:', err.message) }
+    await sleep(POLL_MS)
+  }
+}
+
+if (process.argv[1] && import.meta.url.endsWith(basename(process.argv[1])) && extname(process.argv[1]) === '.mjs') main()

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The mixing intern (owner-only): the Mac app reports what it can read of
-// Logic Pro. Source checks only: no database, no network, no Mac.
+// The mixing intern (owner-only): its jobs, its routes and the two clients'
+// hand-off control. Source checks only: no database, no network, no Mac.
 //
 // Run: node scripts/intern-test.mjs  (part of `npm test`)
 import { readFileSync } from 'node:fs'
@@ -12,25 +12,27 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures++
 }
 
-console.log('intern: the Mac app\'s report\n')
-const route = read('src/app/api/intern/diagnostics/route.ts')
+console.log('intern: the routes\n')
 const proxy = read('src/proxy.ts')
-const auth = read('ios/mixBase/Services/AuthService.swift')
 const api = read('ios/mixBase/Services/MixbaseAPI.swift')
-const mac = read('macos/MixbaseApp/InternDiagnostics.swift')
+const card = read('ios/mixBase/Views/Projects/MixCheckCard.swift')
+const panel = read('src/components/InternPanel.tsx')
+const handoff = read('src/app/api/versions/[id]/intern/route.ts')
 
-check('the route takes the caller from the middleware header and 404s anyone but the owner',
-  /request\.headers\.get\('X-User-Id'\)/.test(route) && /if \(!\(await isAdminIdentity\(userId\)\)\) return NextResponse\.json\(\{ error: 'Not found' \}, \{ status: 404 \}\)/.test(route))
-check('…before it reads the body', route.indexOf('isAdminIdentity(userId)') < route.indexOf('request.json()'))
-check('the route is rate limited and caps what it stores', /checkUserLimit\(mixCheckLimiter, userId\)/.test(route) && /\.slice\(0, MAX_REPORT\)/.test(route))
 check('nothing under /api/intern is public', !/['"]\/api\/intern/.test(proxy))
-check('only the Mac build starts it, and only for the owner',
-  /#if os\(macOS\)[\s\S]{0,260}if self\.ownerTools \{ InternDiagnostics\.start\(\) \}[\s\S]{0,40}#endif/.test(auth))
-check('the app sends it to that route', api.includes('"/api/intern/diagnostics"'))
-// Read-only: it may read attributes and ask whether one CAN be set, nothing else.
-check('the Mac code reads Logic and never acts on it',
-  !/AXUIElementSetAttributeValue|AXUIElementPerformAction|CGEvent|NSAppleScript|Process\(\)/.test(mac))
-check('it asks for the Accessibility permission once, not on every launch', /internAskedForAccessibility/.test(mac) && /UserDefaults\.standard\.set\(true/.test(mac))
+check('every hand-off handler 404s anyone but the owner, before anything else is read',
+  /if \(!\(await isAdminIdentity\(userId\)\)\) return \{ error: NextResponse\.json\(\{ error: 'Not found' \}, \{ status: 404 \}\) \}/.test(handoff)
+  && (handoff.match(/const g = await gate\(request, ctx\)/g) ?? []).length === 3)
+check('the diagnostics probe is gone (the helper replaced it)',
+  !api.includes('/api/intern/diagnostics') && !/InternDiagnostics/.test(read('ios/mixBase/Services/AuthService.swift')))
+check('the app hands over, reads and stops through the same route as the web',
+  /func handToIntern/.test(api) && /func stopIntern/.test(api) && api.includes('/api/versions/\\(versionId.postgresString)/intern')
+  && (panel.match(/\/api\/versions\/\$\{versionId\}\/intern/g) ?? []).length === 3)
+check('both clients say "waiting for your Mac" when no helper has taken the job',
+  /Waiting for your Mac/.test(panel) && /Waiting for your Mac/.test(card))
+check('both clients have Stop, the stage and the change list',
+  /Stop/.test(panel) && /job\.stage/.test(panel) && /<ChangeList/.test(panel) && /Button\("Stop"\)/.test(card) && /job\.stage/.test(card) && /changeList\(/.test(card))
+check('the genre note is never offered to the intern', /f\.code !== 'genre\.balance'/.test(read('src/components/MixCheck.tsx')) && /\$0\.code != "genre\.balance"/.test(card))
 
 console.log('\nintern: jobs\n')
 {
