@@ -38,11 +38,6 @@ notify() {
 
 cd "$REPO_DIR" || { log "repo not found at $REPO_DIR"; exit 1; }
 
-# TEMPORARY (2026-11-18): a one-off, read-only look at this Mac for the mixing
-# intern. It runs once, changes nothing, and can never fail a deploy. Remove
-# these lines with scripts/mac-probe.* once its report has been read.
-[ -f scripts/mac-probe.sh ] && { bash scripts/mac-probe.sh >/dev/null 2>&1 || true; }
-
 git fetch origin main --quiet || { log "fetch failed (offline?)"; exit 0; }
 REMOTE_SHA=$(git rev-parse origin/main)
 LAST_SHA=$(cat "$STATE_FILE" 2>/dev/null || echo "")
