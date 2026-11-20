@@ -20,14 +20,14 @@
 
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import { basename, extname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { Readable } from 'node:stream'
 import { judge, plan, refine } from './intern-plan.mjs'
 import { internNames, listProjects, pickProject } from './intern-find.mjs'
-import { createLogic } from './intern-logic.mjs'
+import { LogicProblem, createLogic } from './intern-logic.mjs'
 import { judgeFix } from '../src/lib/intern-rules.ts'
 import { MIX_BANDS } from '../src/lib/mix-check.ts'
 
@@ -51,18 +51,23 @@ const waiting = new Map()
 createInterface({ input: process.stdin }).on('line', line => {
   let reply
   try { reply = JSON.parse(line) } catch { return }
-  const w = waiting.get(reply.id)
+  const w = waiting.get(reply.rpc)
   if (!w) return
-  waiting.delete(reply.id)
+  waiting.delete(reply.rpc)
   if (reply.ok) w.resolve(reply.result); else w.reject(new Error(reply.error ?? 'The helper refused'))
 }).on('close', () => process.exit(0)) // the helper quit: so do we
 
 export function helper(cmd, args = {}, timeoutMs = 120_000) {
   return new Promise((resolve, reject) => {
     const id = ++rpcId
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`${cmd}: Logic did not answer in ${timeoutMs / 1000}s`)) }, timeoutMs)
-    waiting.set(id, { resolve: v => { clearTimeout(timer); resolve(v) }, reject: e => { clearTimeout(timer); reject(e) } })
-    process.stdout.write(`${JSON.stringify({ id, cmd, ...args })}\n`)
+    const started = Date.now()
+    const what = () => `${cmd} ${JSON.stringify(args).slice(0, 160)}`
+    const timer = setTimeout(() => { waiting.delete(id); log('no answer:', what()); reject(new Error(`${cmd}: Logic did not answer in ${timeoutMs / 1000}s`)) }, timeoutMs)
+    // A slow answer is worth a line: it is how a stuck step is found afterwards.
+    const done = () => { clearTimeout(timer); if (Date.now() - started > 20_000 && cmd !== 'auth.token') log(`slow (${Math.round((Date.now() - started) / 1000)}s):`, what()) }
+    waiting.set(id, { resolve: v => { done(); resolve(v) }, reject: e => { done(); reject(e) } })
+    // The message's own number is `rpc`, never `id`: a search can ask for an element by its id.
+    process.stdout.write(`${JSON.stringify({ ...args, rpc: id, cmd })}\n`)
   })
 }
 
@@ -134,6 +139,31 @@ async function pruneJobs(keepId) {
   for (const { d } of aged.slice(KEEP_JOBS)) if (d !== keepId) await rm(join(JOBS, d), { recursive: true, force: true })
 }
 
+// ── What a job leaves beside the owner's files ──────────────────────────────
+// Logic can only write where its own save dialog is, so a job makes a folder
+// there ("mixBASE Intern <job>.nosync") and removes it when it ends. Each one
+// is written down first, so a job that died (the Mac shut down) is cleaned up
+// by the next start. Only things the intern itself named are ever removed.
+
+const LEFTOVERS = join(SUPPORT, 'leftovers.json')
+const isOurs = path => /^mixBASE Intern .+/.test(basename(path)) || /:MixbaseIntern:jobs:/.test(basename(path))
+
+async function rememberLeftover(path) {
+  let list = []
+  try { list = JSON.parse(await readFile(LEFTOVERS, 'utf8')) } catch { /* none yet */ }
+  if (!list.includes(path)) await writeFile(LEFTOVERS, JSON.stringify([...list, path]))
+}
+
+async function clearLeftovers() {
+  let list = []
+  try { list = JSON.parse(await readFile(LEFTOVERS, 'utf8')) } catch { return }
+  for (const path of Array.isArray(list) ? list : []) {
+    if (typeof path !== 'string' || !isOurs(path)) continue
+    await rm(path, { recursive: true, force: true }).then(() => log('removed', basename(path)), err => log('could not remove', basename(path), err.message))
+  }
+  await unlink(LEFTOVERS).catch(() => null)
+}
+
 // ── The upload ───────────────────────────────────────────────────────────────
 
 async function upload(song, file) {
@@ -177,16 +207,43 @@ async function serverCheck(versionId, report) {
   throw new Giveup('Mix Check on the new version did not finish')
 }
 
+/**
+ * Logic's windows cannot be read while the display sleeps. The helper can wake
+ * the display, and holds it awake for the job; what it cannot do is type the
+ * password once the Mac has locked. Then the job waits, saying so, until
+ * someone unlocks the Mac (or stops the job).
+ */
+async function awake(report) {
+  for (let i = 0; ; i++) {
+    await helper('sys.wake').catch(() => null)
+    await helper('sys.awake', { on: true })
+    await sleep(2500)
+    const state = await helper('ping')
+    if (!state.screen_locked && !state.display_asleep) return
+    if (i === 0) log('the Mac is locked: waiting')
+    await report.stage('Waiting for your Mac to be unlocked')
+    await sleep(15_000)
+  }
+}
+
 // ── One job ──────────────────────────────────────────────────────────────────
 
 const bandLabel = key => MIX_BANDS.find(b => b.key === key)?.label ?? key
+
+/** How the project's untouched bounce differs from the handed mix, in words, or null when it is the same mix (within 2 dB a band). */
+export function projectDrift(bands) {
+  const off = (bands ?? []).filter(b => b.before != null && b.after != null && Math.abs(b.after - b.before) >= 2)
+    .sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before))
+  if (!off.length) return null
+  return off.slice(0, 3).map(b => `${bandLabel(b.key).toLowerCase()} ${b.after > b.before ? '+' : '−'}${Math.abs(b.after - b.before).toFixed(1)} dB`).join(', ')
+}
 const handledCodes = notes => notes.map(n => n.code).filter(c => typeof c === 'string' && MIX_BANDS.some(b => c === `changed.${b.key}`))
 
 async function runJob(claim) {
   const { job, song } = claim
   const report = reporter(job.id)
   const dir = join(JOBS, job.id)
-  const logic = createLogic(helper, { log })
+  const logic = createLogic(helper, { log, tag: job.id.slice(0, 8), onFolder: rememberLeftover, ownDir: JOBS })
   let opened = false, uploaded = null, versionId = null
   report.start()
   try {
@@ -195,7 +252,9 @@ async function runJob(claim) {
     if (!handled.length) throw new Giveup('None of these notes is one the intern has a rule for yet (it fixes a band that changed since the last version)')
     await mkdir(dir, { recursive: true })
     await pruneJobs(job.id)
-    await helper('sys.awake', { on: true })
+    // What the server handed over, kept beside the job's files: `intern-plan.mjs` can be re-run on it by hand.
+    await writeFile(join(dir, 'claim.json'), JSON.stringify(claim, null, 1))
+    await awake(report)
 
     await report.stage('Finding the Logic project')
     const projects = await listProjects({ exclude: [JOBS] })
@@ -223,13 +282,26 @@ async function runJob(claim) {
     await writeFile(join(dir, 'judge-0.json'), JSON.stringify(judge0, null, 2))
     const open = judge0.remaining
     if (!open.length) throw new Giveup('The Logic project no longer shows these notes: its bounce is already inside what Mix Check accepts')
-    const now = { ...claim, song: { ...song, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
+    // From here the project's own bounce is the "before": its bands are what the
+    // moves are sized on, and a note it already had is not one a fix brought.
+    const had = [...(song.findings ?? []), ...judge0.findings.filter(f => !(song.findings ?? []).some(x => x.code === f.code))]
+    const now = { ...claim, song: { ...song, findings: had, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
+    // A project that does not bounce to the handed mix (it has moved on, or the
+    // mix was finished somewhere else) is still fixed, and the owner is told.
+    const drift = projectDrift(judge0.bands)
+    if (drift) log('project differs from the handed mix:', drift)
 
     await report.stage('Exporting the tracks')
     const tracksDir = join(dir, 'tracks')
     await rm(tracksDir, { recursive: true, force: true })
     await mkdir(tracksDir, { recursive: true })
     await logic.exportTracks(tracksDir)
+    // A track stack's own export is its tracks added up: set it aside, or they count twice.
+    const sums = new Set(await logic.sumTracks())
+    await mkdir(join(dir, 'sums'), { recursive: true })
+    for (const f of await readdir(tracksDir)) {
+      if (sums.has(basename(f, extname(f)))) await rename(join(tracksDir, f), join(dir, 'sums', f))
+    }
 
     await report.stage('Choosing the moves')
     let planned = await plan({ job: now, tracksDir, mix: bounce0, ffmpeg: FFMPEG })
@@ -243,13 +315,14 @@ async function runJob(claim) {
     let verdict = null, bounce = null, changes = []
     for (let round = 0; round <= MAX_REFINES; round++) {
       await report.stage(round === 0 ? 'Making the moves in Logic' : `Resizing the moves (try ${round + 1})`)
-      changes = await logic.applyMoves(planned.moves)
+      await logic.applyMoves(planned.moves)
+      changes = planned.changes
       await report.report({ changes })
       await report.stage(round === 0 ? 'Bouncing' : `Bouncing again (try ${round + 1})`)
       bounce = join(dir, `bounce-${round + 1}.wav`)
       await logic.bounce(bounce)
       await report.stage('Checking the bounce')
-      verdict = await judge({ job: claim, bounce, handled: open, ffmpeg: FFMPEG })
+      verdict = await judge({ job: now, bounce, handled: open, ffmpeg: FFMPEG })
       await writeFile(join(dir, `judge-${round + 1}.json`), JSON.stringify(verdict, null, 2))
       log('judge:', { keep: verdict.keep, cleared: verdict.cleared, remaining: verdict.remaining, appeared: verdict.appeared })
       if (verdict.keep) break
@@ -272,6 +345,7 @@ async function runJob(claim) {
     const names = internNames(song)
     const up = await upload(song, bounce)
     uploaded = up.key
+    if (drift) changes = [...changes, { track: 'Whole mix', what: `Bounced from the Logic project as it is now, which is not ${song.version_label} exactly (${drift})` }]
     const list = changes.map(c => `${c.track}: ${c.what} ${c.to ?? ''}`.trim()).join('; ')
     const created = await api('/api/versions', {
       method: 'POST',
@@ -291,7 +365,7 @@ async function runJob(claim) {
 
     await report.stage('Running Mix Check on the new version')
     const checked = await serverCheck(versionId, report)
-    const final = judgeFix(song.findings ?? [], checked.findings ?? [], open)
+    const final = judgeFix(had, checked.findings ?? [], open)
     await writeFile(join(dir, 'server-check.json'), JSON.stringify({ final, findings: checked.findings }, null, 2))
     if (!final.keep) {
       const what = final.appeared.length ? `Mix Check found a new note on it (${final.appeared.join(', ')})` : `${final.remaining.join(', ')} did not clear`
@@ -307,13 +381,17 @@ async function runJob(claim) {
     if (err instanceof Cancelled) {
       log(`[${job.id.slice(0, 8)}] stopped by the owner`)
     } else {
-      const text = err instanceof Giveup ? err.message : `Something went wrong on the Mac: ${err.message}`
-      log(`[${job.id.slice(0, 8)}] failed: ${text}`, err instanceof Giveup ? '' : String(err.stack ?? ''))
+      const plain = err instanceof Giveup || err instanceof LogicProblem
+      const text = plain ? err.message : `Something went wrong on the Mac: ${err.message}`
+      log(`[${job.id.slice(0, 8)}] failed: ${text}`, plain ? '' : String(err.stack ?? ''))
       await report.report({ status: 'failed', error: text.slice(0, 500) })
     }
   } finally {
     report.stop()
     if (opened) await logic.close().catch(e => log('close failed:', e.message))
+    // The folders Logic wrote into, beside the owner's own files, go with the job.
+    await logic.cleanup().catch(e => log('cleanup failed:', e.message))
+    await clearLeftovers()
     await helper('sys.awake', { on: false }).catch(() => null)
   }
 }
@@ -342,6 +420,7 @@ async function localHandoff() {
 async function main() {
   log(`worker up on ${DEVICE}`)
   await mkdir(JOBS, { recursive: true })
+  await clearLeftovers()
   for (;;) {
     try {
       await localHandoff()

@@ -349,7 +349,7 @@ struct InternPanel: View {
     private var detail: some View {
         if let job {
             if job.isWaiting {
-                Text("Waiting for your Mac. It starts when the Mac is on and mixBASE Intern is running.")
+                Text("Waiting for your Mac. It starts when the Mac is on, unlocked and running mixBASE Intern.")
                     .font(.caption2)
                     .foregroundColor(.gray)
             } else if job.status == "working" {

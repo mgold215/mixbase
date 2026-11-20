@@ -31,11 +31,19 @@ if [[ ! -x "$RUNTIME/bin/ffmpeg" ]]; then echo "✗ ffmpeg is missing: run npm c
 NODE="$(command -v node)"
 printf '{ "node": "%s" }\n' "$NODE" > "$SUPPORT/config.json"
 
-if [[ "${1:-}" == "runtime" ]]; then echo "✅ Worker files refreshed."; exit 0; fi
+if [[ "${1:-}" == "runtime" ]]; then
+  # The helper starts the worker again by itself when it exits. Not while a job is in flight.
+  pkill -f "runtime/scripts/intern-worker.mjs" 2>/dev/null || true
+  echo "✅ Worker files refreshed; the helper restarts the worker in a few seconds."
+  exit 0
+fi
 
 # 2. The app.
 ./build.sh
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+# Any copy still running (one started by hand, or one launchd had not finished stopping).
+pkill -x MixbaseIntern 2>/dev/null || true
+sleep 1
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 rm -rf "$DEST"
 cp -R build/MixbaseIntern.app "$DEST"

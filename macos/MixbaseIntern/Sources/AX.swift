@@ -25,7 +25,22 @@ final class AXBridge {
     /// Runs one command. `allowAuth` is true only for the worker the helper
     /// started itself; the local socket never hands out the access token.
     func run(_ cmd: [String: Any], allowAuth: Bool) -> [String: Any] {
-        queue.sync {
+        let name = cmd["cmd"] as? String ?? "?"
+        // The token has nothing to do with Logic: it must not wait behind a slow answer from it,
+        // or a job could not report (its heartbeat) while Logic is busy.
+        if name == "auth.token" || name == "ping" {
+            do { return ["ok": true, "result": try dispatch(cmd, allowAuth: allowAuth)] }
+            catch let e as AXFailure { return ["ok": false, "error": e.message] }
+            catch { return ["ok": false, "error": "\(error)"] }
+        }
+        let asked = Date()
+        return queue.sync {
+            let started = Date()
+            defer {
+                // Anything slow is written down: it is how a stuck step is found afterwards.
+                let waited = started.timeIntervalSince(asked), took = Date().timeIntervalSince(started)
+                if waited > 2 || took > 2 { Log.write(String(format: "slow: %@ waited %.1fs took %.1fs", name, waited, took)) }
+            }
             do { return ["ok": true, "result": try dispatch(cmd, allowAuth: allowAuth)] }
             catch let e as AXFailure { return ["ok": false, "error": e.message] }
             catch { return ["ok": false, "error": "\(error)"] }
@@ -51,10 +66,17 @@ final class AXBridge {
         case "ax.reset": handles.removeAll(); return true
         case "ax.dump":
             let el = try element(c["el"])
-            return dump(el, depth: c["depth"] as? Int ?? 3, maxChildren: c["max"] as? Int ?? 80)
+            findDeadline = Date().addingTimeInterval(25)
+            let tree = dump(el, depth: c["depth"] as? Int ?? 3, maxChildren: c["max"] as? Int ?? 80)
+            // Half a tree is worse than none: the caller would act on what is missing.
+            if Date() > findDeadline { throw AXFailure(message: "Logic is too busy to answer") }
+            return tree
         case "ax.find":
             let el = try element(c["el"])
             var out: [[String: Any]] = []
+            // A search is given 25 seconds: part of Logic's interface (a third-party
+            // plug-in's editor) can take that long to answer for a single element.
+            findDeadline = Date().addingTimeInterval(25)
             find(el, c, depth: c["depth"] as? Int ?? 14, limit: c["limit"] as? Int ?? 50, into: &out)
             return out
         case "ax.attrs": return try attributes(try element(c["el"]))
@@ -87,12 +109,19 @@ final class AXBridge {
         case "sys.key":
             guard let code = c["code"] as? Int else { throw AXFailure(message: "Missing code") }
             return try key(CGKeyCode(code), mods: c["mods"] as? [String] ?? [])
+        case "sys.axkey":
+            guard let code = c["code"] as? Int else { throw AXFailure(message: "Missing code") }
+            return try axKey(CGKeyCode(code), mods: c["mods"] as? [String] ?? [])
         case "sys.type":
             guard let text = c["text"] as? String else { throw AXFailure(message: "Missing text") }
             return try type(text)
         case "sys.click":
             guard let x = c["x"] as? Double, let y = c["y"] as? Double else { throw AXFailure(message: "Missing x or y") }
             return try click(CGPoint(x: x, y: y), double: c["double"] as? Bool ?? false)
+        case "logic.savedir":
+            // Where Logic's next save dialog will open. With `path`, points it at
+            // that folder; with `restore` (what an earlier call returned), puts it back.
+            return try saveDirectory(path: c["path"] as? String, restore: c["restore"] as? String)
         case "sys.awake":
             return holdAwake(c["on"] as? Bool ?? true)
         case "sys.wake":
@@ -109,10 +138,15 @@ final class AXBridge {
         NSRunningApplication.runningApplications(withBundleIdentifier: Self.logicBundleId).first
     }
 
+    /// No single question to Logic may wait longer than this, on any element.
+    /// (Set on the system-wide element, which is how the limit is made global;
+    /// nothing else is ever asked of it.)
+    func limitWaits() { AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 6) }
+
     private func logicElement() throws -> AXUIElement {
         guard let app = logicApp() else { throw AXFailure(message: "Logic Pro is not running") }
         let el = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(el, 15)
+        AXUIElementSetMessagingTimeout(el, 6)
         return el
     }
 
@@ -155,11 +189,40 @@ final class AXBridge {
         return ["opening": (path as NSString).lastPathComponent]
     }
 
-    /// Keeps the Mac from idle-sleeping while a job runs. It does not change any setting.
+    /// Logic's save dialogs open in the folder used last, kept in its
+    /// preferences as a bookmark. Keys cannot be typed into that dialog from
+    /// outside (and nobody is there to type), so a job points the dialog at its
+    /// own folder here and puts the owner's folder back when it is done.
+    private func saveDirectory(path: String?, restore: String?) throws -> Any {
+        let key = "NSOSPLastRootDirectory" as CFString, app = Self.logicBundleId as CFString
+        let was = CFPreferencesCopyAppValue(key, app) as? Data
+        var out: [String: Any] = [:]
+        if let was {
+            out["was"] = was.base64EncodedString()
+            var stale = false
+            if let url = try? URL(resolvingBookmarkData: was, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) { out["path"] = url.path }
+        }
+        var next: Data?
+        if let restore { next = Data(base64Encoded: restore) }
+        else if let path {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { throw AXFailure(message: "No such folder") }
+            next = try URL(fileURLWithPath: path, isDirectory: true).bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        if let next {
+            CFPreferencesSetAppValue(key, next as CFData, app)
+            out["set"] = CFPreferencesAppSynchronize(app)
+        }
+        return out
+    }
+
+    /// Keeps the display (and so the Mac) awake while a job runs: with the
+    /// display asleep Logic's windows cannot be read. Like a video player
+    /// does; it changes no setting and ends with the job.
     private func holdAwake(_ on: Bool) -> Bool {
         if powerAssertion != 0 { IOPMAssertionRelease(powerAssertion); powerAssertion = 0 }
         guard on else { return true }
-        return IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+        return IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
                                            "mixBASE intern is working on a mix" as CFString, &powerAssertion) == kIOReturnSuccess
     }
 
@@ -246,7 +309,7 @@ final class AXBridge {
         let kids = children(el)
         if !kids.isEmpty {
             d["n"] = kids.count
-            if depth > 0 { d["children"] = kids.prefix(maxChildren).map { dump($0, depth: depth - 1, maxChildren: maxChildren) } }
+            if depth > 0 && Date() < findDeadline { d["children"] = kids.prefix(maxChildren).map { dump($0, depth: depth - 1, maxChildren: maxChildren) } }
         }
         return d
     }
@@ -289,8 +352,10 @@ final class AXBridge {
         return true
     }
 
+    private var findDeadline = Date.distantFuture
+
     private func find(_ el: AXUIElement, _ c: [String: Any], depth: Int, limit: Int, into out: inout [[String: Any]]) {
-        if out.count >= limit { return }
+        if out.count >= limit || Date() > findDeadline { return }
         if matches(el, c) { out.append(describe(el)) }
         guard depth > 0 else { return }
         for kid in children(el) {
@@ -342,8 +407,19 @@ final class AXBridge {
                 return d
             }
         }
-        if let enabled = (try? copy(current, kAXEnabledAttribute as String)) as? Bool, !enabled {
-            throw AXFailure(message: "\"\(path.joined(separator: " > "))\" is greyed out")
+        let disabled = { ((try? self.copy(current, kAXEnabledAttribute as String)) as? Bool) == false }
+        if disabled() {
+            // Logic only works out which items are enabled when a menu is opened: what
+            // reads as greyed out may be left over from before the project was open.
+            // Open the menu to make it look again.
+            if let top = self.children(bar as! AXUIElement).first(where: { plain(string($0, kAXTitleAttribute as String) ?? "") == plain(path[0]) }) {
+                AXUIElementPerformAction(top, kAXPressAction as CFString)
+                usleep(700_000)
+                if disabled() {
+                    AXUIElementPerformAction(top, kAXCancelAction as CFString)
+                    throw AXFailure(message: "\"\(path.joined(separator: " > "))\" is greyed out")
+                }
+            }
         }
         let err = AXUIElementPerformAction(current, kAXPressAction as CFString)
         if err != .success && err != .cannotComplete { throw AXFailure(message: "\(path.last ?? ""): \(axName(err))") }
@@ -366,6 +442,24 @@ final class AXBridge {
             e.postToPid(app.processIdentifier)
             usleep(20_000)
         }
+        return true
+    }
+
+    /// A key press handed to Logic through the Accessibility API itself, with
+    /// the modifier keys pressed around it. Swift hides this old call, so it is
+    /// looked up by name.
+    private typealias PostKey = @convention(c) (AXUIElement, CGCharCode, CGKeyCode, DarwinBoolean) -> AXError
+    private func axKey(_ code: CGKeyCode, mods: [String]) throws -> Any {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "AXUIElementPostKeyboardEvent") else { throw AXFailure(message: "key posting is not available") }
+        let post = unsafeBitCast(sym, to: PostKey.self)
+        let app = try logicElement()
+        let modCodes: [CGKeyCode] = mods.compactMap { ["cmd": 55, "shift": 56, "alt": 58, "ctrl": 59][$0] }
+        for m in modCodes { _ = post(app, 0, m, true) }
+        let down = post(app, 0, code, true)
+        usleep(30_000)
+        _ = post(app, 0, code, false)
+        for m in modCodes.reversed() { _ = post(app, 0, m, false) }
+        if down != .success { throw AXFailure(message: "key: \(axName(down))") }
         return true
     }
 

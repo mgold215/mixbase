@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { internNames, nameKey, pickProject } from './intern-find.mjs'
 import { parseVersionName } from '../src/lib/mix-status.ts'
+import { readNumber, stripIndexFor, trackOfFile } from './intern-logic.mjs'
 
 const read = p => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
 let failures = 0
@@ -36,7 +37,22 @@ check('…and still reads as the mix it came from, so the owner\'s next mix keep
   parseVersionName(names.label)?.label === 'MIX 2' && parseVersionName(names.filename)?.label === 'MIX 2')
 check('a fix of a fix is not marked twice', internNames({ version_label: names.label, audio_filename: names.filename }).label === 'MIX 2 (intern)')
 
+console.log('\nintern: reading Logic\n')
+check('a control\'s readout becomes a number', readNumber('-2.4 dB') === -2.4 && readNumber('+0.50 dB') === 0.5 && readNumber('−3.0 dB') === -3 && readNumber('1040 Hz') === 1040 && readNumber('0.60') === 0.6 && readNumber('Auto') === null)
+check('an exported file names its track, with or without the project in front',
+  trackOfFile('SUB.wav', 'CATALYST (intern)') === 'SUB' && trackOfFile('CATALYST (intern) - SYNTH BASS.wav', 'CATALYST (intern)') === 'SYNTH BASS')
+const mixerNames = ['KICK', 'HOOK', 'SUB', 'HOOK', 'HOOK', 'Take_2']
+check('a track finds its channel strip by name', stripIndexFor('SUB', mixerNames) === 2 && stripIndexFor('NOPE', mixerNames) === -1)
+check('a repeated name is told apart by Logic\'s number, in mixer order', stripIndexFor('HOOK', mixerNames) === 1 && stripIndexFor('HOOK_1', mixerNames) === 3 && stripIndexFor('HOOK_2', mixerNames) === 4)
+check('…and a track that is really called that is not mistaken for one', stripIndexFor('Take_2', mixerNames) === 5 && stripIndexFor('SUB_1', mixerNames) === -1)
+
 console.log('\nintern: the helper\'s promises\n')
+const logic = read('scripts/intern-logic.mjs')
+check('Logic is never sent a typed key or a click by position', !/sys\.(key|type|click)/.test(logic))
+check('the intern only adds its own plug-ins, last in the strip, and never bypasses or removes one',
+  /empty\[0\]/.test(logic) && !/desc === 'bypass'|Remove|No Plug-in/.test(logic))
+check('the owner\'s open project is never answered for: unsaved changes stop the job', /unsaved changes\. Save or close it/.test(logic) && !/title: 'Save'/.test(logic))
+check('what Logic wrote beside the owner\'s files is only removed if it is the intern\'s own folder', /startsWith\('mixBASE Intern '\) \|\| !dir\.endsWith\('\.nosync'\)/.test(logic))
 const worker = read('scripts/intern-worker.mjs')
 const ax = read('macos/MixbaseIntern/Sources/AX.swift')
 const server = read('macos/MixbaseIntern/Sources/Server.swift')
@@ -45,8 +61,15 @@ check('it tells the server which version it uploaded before Mix Check runs on it
   worker.indexOf('result_version_id: versionId') > 0 && worker.indexOf('result_version_id: versionId') < worker.indexOf('await serverCheck(versionId'))
 check('a fix that does not hold is taken back', /api\(`\/api\/versions\/\$\{versionId\}`, \{ method: 'DELETE' \}\)/.test(worker))
 check('nothing is uploaded before the local judge keeps the bounce', worker.indexOf('if (!verdict.keep)') < worker.indexOf('await upload(song, bounce)'))
+check('a fix is judged against the project\'s own untouched bounce: a note it already had is not one the fix brought',
+  /const had = \[\.\.\.\(song\.findings \?\? \[\]\), \.\.\.judge0\.findings/.test(worker) && /judge\(\{ job: now, bounce, handled: open/.test(worker) && /judgeFix\(had, checked\.findings/.test(worker))
+check('a project that no longer shows the notes is left alone', /no longer shows these notes/.test(worker))
+check('the owner is told when the project does not bounce to the handed mix', /Bounced from the Logic project as it is now, which is not/.test(worker))
+check('a locked Mac is waited for, in words, never worked around', /Waiting for your Mac to be unlocked/.test(worker) && !/password/i.test(worker.replace(/\/\*\*[\s\S]*?\*\//g, '')))
+check('folders made beside the owner\'s files are written down first and only the intern\'s own are removed',
+  /onFolder: rememberLeftover/.test(worker) && /const isOurs = path => \/\^mixBASE Intern/.test(worker) && /if \(typeof path !== 'string' \|\| !isOurs\(path\)\) continue/.test(worker))
 check('no AI and nothing billed per use', !/anthropic|openai|replicate|runway/i.test(worker + read('scripts/intern-find.mjs') + read('scripts/intern-plan.mjs')))
-check('the helper only ever addresses Logic Pro', /static let logicBundleId = "com\.apple\.logic10"/.test(ax) && !/AXUIElementCreateSystemWide|runningApplications\(withBundleIdentifier: (?!Self\.logicBundleId)/.test(ax))
+check('the helper only ever addresses Logic Pro', /static let logicBundleId = "com\.apple\.logic10"/.test(ax) && (ax.match(/AXUIElementCreateSystemWide/g) ?? []).length === 1 && /AXUIElementSetMessagingTimeout\(AXUIElementCreateSystemWide\(\), 6\)/.test(ax) && !/runningApplications\(withBundleIdentifier: (?!Self\.logicBundleId)/.test(ax))
 check('the local socket never hands out the access token', /answer\(line, allowAuth: false\)/.test(server) && /guard allowAuth else/.test(ax))
 check('no personal paths or addresses in the helper', !/\/Users\/|@(gmail|icloud|me)\./.test(ax + server + worker + read('macos/MixbaseIntern/install.sh') + read('macos/MixbaseIntern/build.sh')))
 

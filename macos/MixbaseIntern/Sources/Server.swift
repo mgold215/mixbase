@@ -8,17 +8,28 @@ import Foundation
 //  - Worker: the node process the helper starts itself (the job loop). It asks
 //    over its own stdout/stdin, and may ask for the access token.
 //
-// Both speak one JSON object per line: {"id":1,"cmd":"ping"} -> {"id":1,"ok":true,"result":{…}}
+// Both speak one JSON object per line: {"rpc":1,"cmd":"ping"} -> {"rpc":1,"ok":true,"result":{…}}
+// ("rpc" and not "id": a search can ask for an element by its id.)
 
 func answer(_ line: Data, allowAuth: Bool) -> Data {
     var reply: [String: Any]
     if let cmd = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] {
         reply = AXBridge.shared.run(cmd, allowAuth: allowAuth)
-        if let id = cmd["id"] { reply["id"] = id }
+        if let n = cmd["rpc"] { reply["rpc"] = n }
     } else {
         reply = ["ok": false, "error": "Not a JSON object"]
     }
-    var out = (try? JSONSerialization.data(withJSONObject: reply, options: [.withoutEscapingSlashes])) ?? Data("{\"ok\":false}".utf8)
+    var out: Data
+    if JSONSerialization.isValidJSONObject(reply), let data = try? JSONSerialization.data(withJSONObject: reply, options: [.withoutEscapingSlashes]) {
+        out = data
+    } else {
+        // Something Logic returned cannot be written as JSON (a number that is not finite, say).
+        // The caller still gets an answer to ITS question, or it would wait for nothing.
+        Log.write("unwritable reply to \((try? JSONSerialization.jsonObject(with: line)).map { "\($0)" }?.prefix(200) ?? "?")")
+        var failed: [String: Any] = ["ok": false, "error": "Logic returned something that could not be read"]
+        if let cmd = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let n = cmd["rpc"], JSONSerialization.isValidJSONObject([n]) { failed["rpc"] = n }
+        out = (try? JSONSerialization.data(withJSONObject: failed)) ?? Data("{\"ok\":false}".utf8)
+    }
     out.append(0x0A)
     return out
 }

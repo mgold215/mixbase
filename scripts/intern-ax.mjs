@@ -25,7 +25,7 @@ export function socketCall(cmd, args = {}, timeoutMs = 60_000) {
     const sock = net.createConnection(SOCKET)
     let buf = ''
     const timer = setTimeout(() => { sock.destroy(); reject(new Error(`${cmd}: no answer from the helper in ${timeoutMs / 1000}s`)) }, timeoutMs)
-    sock.on('connect', () => sock.write(`${JSON.stringify({ id: 1, cmd, ...args })}\n`))
+    sock.on('connect', () => sock.write(`${JSON.stringify({ ...args, rpc: 1, cmd })}\n`))
     sock.on('data', d => {
       buf += d
       const nl = buf.indexOf('\n')
@@ -38,10 +38,23 @@ export function socketCall(cmd, args = {}, timeoutMs = 60_000) {
   })
 }
 
+/** A dump or a list of elements as an indented outline, one element a line. */
+export function outline(node, depth = 0) {
+  if (Array.isArray(node)) return node.map(n => outline(n, depth)).join('')
+  if (!node || typeof node !== 'object' || !node.h) return `${JSON.stringify(node)}\n`
+  const bits = [node.h, node.role, node.sub, node.title && JSON.stringify(node.title), node.desc && `desc=${JSON.stringify(node.desc)}`,
+    node.id && `id=${node.id}`, 'value' in node && `value=${JSON.stringify(node.value).slice(0, 60)}`, node.vdesc && `(${node.vdesc})`,
+    node.help && `help=${JSON.stringify(node.help).slice(0, 60)}`, node.enabled === false && 'DISABLED', node.selected && 'SELECTED',
+    node.frame && `@${node.frame.map(Math.round).join(',')}`, node.n && !node.children && `[${node.n} inside]`].filter(Boolean)
+  return `${'  '.repeat(depth)}${bits.join(' ')}\n${(node.children ?? []).map(c => outline(c, depth + 1)).join('')}`
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [cmd, json] = process.argv.slice(2)
+  // -t prints dumps and lists as an outline instead of JSON.
+  const tree = process.argv.includes('-t')
+  const [cmd, json] = process.argv.slice(2).filter(a => a !== '-t')
   if (!cmd) { process.stderr.write('Usage: node scripts/intern-ax.mjs <command> [json arguments]\n'); process.exit(2) }
   socketCall(cmd, json ? JSON.parse(json) : {})
-    .then(r => process.stdout.write(`${JSON.stringify(r, null, 1)}\n`))
+    .then(r => process.stdout.write(tree ? outline(r) : `${JSON.stringify(r, null, 1)}\n`))
     .catch(err => { process.stderr.write(`${err.message}\n`); process.exit(1) })
 }

@@ -151,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
 
         NotificationCenter.default.addObserver(forName: .internSignedOut, object: nil, queue: .main) { [weak self] _ in self?.showSetup() }
+        AXBridge.shared.limitWaits()
         server.start()
         Log.write("helper started; trusted=\(AXIsProcessTrusted()) fullDisk=\(Permissions.fullDisk) signedIn=\(Auth.shared.isSignedIn)")
         if setup.allDone { Worker.shared.start() } else { showSetup() }
@@ -170,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showSetup() { setup.show() }
     @objc private func showLog() { NSWorkspace.shared.open(Paths.logDir) }
     @objc private func signOut() { Worker.shared.stop(); Auth.shared.signOut(); setup.show() }
+}
+
+// One helper at a time: two would each run a worker and both would reach for Logic.
+if NSRunningApplication.runningApplications(withBundleIdentifier: Paths.bundleId).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+    exit(0)
 }
 
 let app = NSApplication.shared

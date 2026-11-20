@@ -148,7 +148,7 @@ export default function InternPanel({ versionId, hasNotes, onDone }: Props) {
       )}
       {waiting && (
         <p className="text-[11px] text-[var(--text-secondary)]">
-          Waiting for your Mac<span className="text-[var(--text-muted)]"> · it starts when the Mac is on and mixBASE Intern is running</span>
+          Waiting for your Mac<span className="text-[var(--text-muted)]"> · it starts when the Mac is on, unlocked and running mixBASE Intern</span>
         </p>
       )}
       {job?.status === 'working' && !job.stalled && (
