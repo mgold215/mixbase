@@ -237,6 +237,39 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     })
   }
 
+  /** Every strip's mute and solo switches, read fresh from the mixer: [{ index, name, mute, solo }]. */
+  async function switches() {
+    const area = await mixer()
+    const dump = await ax('ax.dump', { el: area.h, depth: 2, max: 400 })
+    return (dump.children ?? []).filter(c => c.role === 'AXLayoutItem').map((c, index) => {
+      const button = desc => (c.children ?? []).find(k => k.role === 'AXButton' && k.desc === desc)
+      return { index, name: c.desc ?? '', mute: button('mute'), solo: button('solo') }
+    })
+  }
+
+  /** The strips that are muted or soloed: either changes what a bounce contains. As { index, name }. */
+  async function silenced() {
+    const all = await switches()
+    const pick = key => all.filter(s => s[key]?.value === 'on').map(s => ({ index: s.index, name: s.name }))
+    return { muted: pick('mute'), soloed: pick('solo') }
+  }
+
+  /**
+   * Mutes or unmutes strips (in the copy) by their place in the mixer, and
+   * confirms each took. A switch's value does not follow the press on the
+   * handle that was pressed, so the mixer is read again to see it.
+   */
+  async function setMuted(strips, on) {
+    for (const want of strips) {
+      const now = (await switches())[want.index]
+      if (!now?.mute || (now.mute.value === 'on') === on) continue
+      await press(now.mute.h)
+      await sleep(700)
+      const after = (await switches())[want.index]
+      if ((after?.mute?.value === 'on') !== on) throw new LogicProblem(`${want.name} could not be ${on ? 'muted' : 'unmuted'}`)
+    }
+  }
+
   async function save() {
     await menu(['File', 'Save'])
     await whileBusy('saving', 120_000)
@@ -543,5 +576,5 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     return done
   }
 
-  return { open, close, save, bounce, exportTracks, applyMoves, strips, sumTracks, cleanup, state }
+  return { open, close, save, bounce, exportTracks, applyMoves, strips, sumTracks, silenced, setMuted, cleanup, state }
 }
