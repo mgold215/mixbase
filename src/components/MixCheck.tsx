@@ -8,6 +8,7 @@ import type { MixCheckReport } from '@/lib/mix-check-server'
 import type { Feedback } from '@/lib/supabase'
 import type { VersionLoudnessRow } from '@/lib/loudness-compare'
 import MasterCheck, { type LoudnessCardProps } from '@/components/MasterCheck'
+import InternPanel from '@/components/InternPanel'
 
 // ─── Mix Check — how loud this mix is, and what is measurably wrong with it ──
 // ONE card, one button. It asks the server to analyse the whole mix
@@ -37,6 +38,8 @@ type Props = {
   onNotes: (notes: Feedback[]) => void
   /** Play the mix from a moment (seconds). */
   onJump: (seconds: number) => void
+  /** The mixing intern added a new version to the song. */
+  onInternDone: () => void
 }
 
 type State =
@@ -53,7 +56,7 @@ const SEVERITY: Record<MixSeverity, { label: string; color: string }> = {
 const clock = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 const signed = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}`
 
-export default function MixCheck({ versionId, projectId, loudness, onNotes, onJump }: Props) {
+export default function MixCheck({ versionId, projectId, loudness, onNotes, onJump, onInternDone }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [open, setOpen] = useState(false)
   const alive = useRef(true)
@@ -162,6 +165,11 @@ export default function MixCheck({ versionId, projectId, loudness, onNotes, onJu
           {counts.medium > 0 && <span style={{ color: SEVERITY.medium.color }}> · {counts.medium} medium</span>}
           <span className="text-[var(--text-muted)]"> · {comparedLine(report)}</span>
         </p>
+      )}
+
+      {/* The intern is handed the measured notes, never the genre comparison. */}
+      {state.status !== 'loading' && (
+        <InternPanel versionId={versionId} hasNotes={findings.some(f => f.code !== 'genre.balance')} onDone={onInternDone} />
       )}
 
       {report && open && (

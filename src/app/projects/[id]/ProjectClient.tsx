@@ -1819,6 +1819,7 @@ function CurrentMixCard({
               loudness={loudnessCard}
               onNotes={notes => onMixNotes(version.id, notes)}
               onJump={goToTimestamp}
+              onInternDone={() => window.location.reload()}
             />
           ) : (
             <MasterCheck versionId={version.id} {...loudnessCard} />

@@ -2010,16 +2010,68 @@ final class MixbaseAPI {
     }
 
     // MARK: - Mixing intern (owner-only)
+    // "Hand to the intern" on the Mix Check card. The work happens on the
+    // owner's Mac (the mixBASE Intern helper, macos/MixbaseIntern): the app
+    // files the job and shows where it is. The server 404s these for anyone
+    // but the owner.
 
-    /// What the Mac app can read of Logic Pro on this Mac, as text
-    /// (macos/MixbaseApp/InternDiagnostics.swift). The server 404s this for
-    /// anyone but the owner.
-    func sendInternDiagnostics(report: String) async throws {
-        _ = try await requestData(
-            path: "/api/intern/diagnostics",
-            method: "POST",
-            body: ["report": report, "source": "mac-app"]
+    struct InternChange: Decodable, Equatable, Identifiable {
+        let track: String
+        let what: String
+        let to: String?
+        var id: String { "\(track)|\(what)|\(to ?? "")" }
+    }
+
+    struct InternJob: Decodable, Equatable {
+        let id: String
+        let status: String          // queued | working | done | failed | cancelled
+        let stage: String?
+        let stalled: Bool?
+        let changes: [InternChange]?
+        let resultVersionId: String?
+        let error: String?
+        let device: String?
+
+        var isActive: Bool { status == "queued" || status == "working" }
+        /// Filed, but no Mac has picked it up (or the one that did went quiet).
+        var isWaiting: Bool { status == "queued" || (status == "working" && stalled == true) }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, status, stage, stalled, changes, error, device
+            case resultVersionId = "result_version_id"
+        }
+    }
+
+    /// The newest job for a mix, and, when the mix is one the intern uploaded, the job that made it.
+    struct InternState: Decodable, Equatable {
+        let job: InternJob?
+        let madeBy: InternJob?
+        private enum CodingKeys: String, CodingKey { case job; case madeBy = "made_by" }
+    }
+
+    private func internRequest(versionId: UUID, method: String) async throws -> InternState {
+        let data = try await requestCore(
+            path: "/api/versions/\(versionId.postgresString)/intern",
+            method: method,
+            contentType: nil,
+            body: nil,
+            timeout: 30
         )
+        return try decoder.decode(InternState.self, from: data)
+    }
+
+    func internState(versionId: UUID) async throws -> InternState {
+        try await internRequest(versionId: versionId, method: "GET")
+    }
+
+    /// Hand this mix's open notes to the intern (or get the job already in flight).
+    func handToIntern(versionId: UUID) async throws -> InternState {
+        try await internRequest(versionId: versionId, method: "POST")
+    }
+
+    /// Stop the job in flight. The Mac learns it on its next report.
+    func stopIntern(versionId: UUID) async throws -> InternState {
+        try await internRequest(versionId: versionId, method: "DELETE")
     }
 
     // MARK: - Loudness (Master Check)

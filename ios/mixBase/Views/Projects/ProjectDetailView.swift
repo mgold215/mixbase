@@ -217,7 +217,9 @@ struct ProjectDetailView: View {
                                     version: latest,
                                     projectId: project.id,
                                     onNotesChanged: { Task { await reloadFeedback(for: latest) } },
-                                    onJump: { seconds in playFeedback(version: latest, at: seconds) }
+                                    onJump: { seconds in playFeedback(version: latest, at: seconds) },
+                                    // The intern's bounce is a new version: load the song again.
+                                    onInternDone: { Task { await loadProjectData() } }
                                 )
                                 .id(latest.id) // reset the card's state when a new mix lands
                                 .padding(.horizontal)

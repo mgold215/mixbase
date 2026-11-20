@@ -67,6 +67,13 @@ export async function POST(request: NextRequest) {
     // The mix the notes were written against, as measured: with it the Mac can
     // judge a bounce itself before uploading anything.
     const earlier = v ? await previousVersionOf({ id: v.id, project_id: v.mb_projects.id, audio_url: v.audio_url }) : null
+    // Every filename the song's mixes were uploaded under: a song renamed in
+    // mixBASE still has its old name on the Mac, and the helper finds the
+    // Logic project by name.
+    const { data: siblings } = v
+      ? await supabaseAdmin.from('mb_versions').select('audio_filename').eq('project_id', v.mb_projects.id).limit(200)
+      : { data: null }
+    const filenames = [...new Set((siblings ?? []).map(s => (s as { audio_filename: string | null }).audio_filename).filter((f): f is string => !!f))]
     const baseline = earlier && isMixCheckReport(earlier.mix_check)
       ? { version_id: earlier.id, label: versionDisplayLabel(earlier), summary: earlier.mix_check.summary }
       : null
@@ -80,6 +87,7 @@ export async function POST(request: NextRequest) {
         version_id: v.id,
         version_label: versionDisplayLabel(v),
         audio_filename: v.audio_filename,
+        filenames,
         audio_url: v.audio_url,
         // What Mix Check measured, so a fix can be worked out from numbers.
         findings: v.mix_check?.findings ?? [],

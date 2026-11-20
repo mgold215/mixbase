@@ -97,11 +97,6 @@ class AuthService: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             self.ownerTools = allowed && self.isAuthenticated
             self.ownerToolsTask = nil
-            #if os(macOS)
-            // The Mac app is the mixing intern's hands (Logic only exists
-            // here): report what this Mac lets it read. Read-only, owner only.
-            if self.ownerTools { InternDiagnostics.start() }
-            #endif
         }
     }
 
