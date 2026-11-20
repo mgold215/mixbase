@@ -3,15 +3,18 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { isUuid } from '@/lib/validators'
 import { isAdminIdentity } from '@/lib/admin-identity'
 import { checkUserLimit, internLimiter, rateLimitHeaders } from '@/lib/rate-limit'
-import { jobView, notesForJob } from '@/lib/intern-jobs.ts'
+import { internCanFix, internComparison, jobView, notesForJob } from '@/lib/intern-jobs.ts'
+import { ensureInternStepsColumn, isMissingInternStepsColumn } from '@/lib/schema-heal'
+import { versionDisplayLabel } from '@/lib/mix-status.ts'
 
 // The mixing intern on one mix (owner-only: every handler 404s unless
 // isAdminIdentity, like Mix Check).
 //
 //   POST    hand this mix's open notes to the intern. 201 { job }, or 200 with
 //           the job already in flight for this mix.
-//   GET     { job, made_by } — the newest job for this mix (or null), and, when
-//           this mix is one the intern uploaded, the job that made it.
+//   GET     { job, made_by, comparison } — the newest job for this mix (or null);
+//           when this mix is one the intern uploaded, the job that made it; each
+//           with its step log; and the handed mix beside the intern's version.
 //   DELETE  cancel the job in flight. The Mac app learns it on its next report.
 //
 // The work happens on the owner's Mac: the mixBASE Mac app claims the job
@@ -19,7 +22,7 @@ import { jobView, notesForJob } from '@/lib/intern-jobs.ts'
 
 export const dynamic = 'force-dynamic'
 
-const JOB_COLUMNS = 'id, status, stage, notes, changes, result_version_id, error, device, created_at, updated_at, heartbeat_at, finished_at'
+const JOB_COLUMNS = 'id, version_id, status, stage, notes, changes, result_version_id, error, device, created_at, updated_at, heartbeat_at, finished_at'
 
 async function gate(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const userId = request.headers.get('X-User-Id')
@@ -65,11 +68,56 @@ async function madeBy(versionId: string, userId: string) {
   return data as Record<string, unknown> | null
 }
 
+/** A job's step log, read in a query of its own (migration 048's column is healed on first miss). */
+async function stepsOf(jobId: string, userId: string): Promise<unknown[]> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await supabaseAdmin.from('mb_intern_jobs').select('steps').eq('id', jobId).eq('user_id', userId).maybeSingle()
+    if (!error) {
+      const steps = (data as { steps?: unknown } | null)?.steps
+      return Array.isArray(steps) ? steps : []
+    }
+    if (attempt === 0 && isMissingInternStepsColumn(error) && await ensureInternStepsColumn()) continue
+    console.error('[intern] steps not read:', error.message)
+    break
+  }
+  return []
+}
+
+/** The handed mix beside the version the intern made from it, from their stored Mix Check reports. */
+async function comparisonFor(job: Record<string, unknown>, userId: string) {
+  const fromId = job.version_id as string | null, toId = job.result_version_id as string | null
+  if (job.status !== 'done' || !fromId || !toId) return null
+  const { data, error } = await supabaseAdmin
+    .from('mb_versions')
+    .select('id, version_number, label, status, audio_filename, mix_check, mb_projects!inner(user_id)')
+    .in('id', [fromId, toId])
+    .eq('mb_projects.user_id', userId)
+  if (error || !data) return null
+  type Row = { id: string; version_number: number; label: string | null; status: string; audio_filename: string | null; mix_check: Parameters<typeof internComparison>[0]['report'] }
+  const rows = data as unknown as Row[]
+  const from = rows.find(r => r.id === fromId), to = rows.find(r => r.id === toId)
+  if (!from || !to) return null
+  return internComparison({ label: versionDisplayLabel(from), report: from.mix_check }, { label: versionDisplayLabel(to), report: to.mix_check })
+}
+
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const g = await gate(request, ctx)
   if (g.error) return g.error
   const [job, made] = await Promise.all([newest(g.version.id, g.userId), madeBy(g.version.id, g.userId)])
-  return NextResponse.json({ job: job ? jobView(job, Date.now()) : null, made_by: made ? jobView(made, Date.now()) : null })
+  // The job this card is about: the one that made this version, else the newest on it.
+  const subject = made ?? job
+  const [jobSteps, madeSteps, comparison] = await Promise.all([
+    job ? stepsOf(job.id as string, g.userId) : [],
+    made ? stepsOf(made.id as string, g.userId) : [],
+    subject ? comparisonFor(subject, g.userId) : null,
+  ])
+  return NextResponse.json({
+    job: job ? { ...jobView(job, Date.now()), steps: jobSteps } : null,
+    made_by: made ? { ...jobView(made, Date.now()), steps: madeSteps } : null,
+    comparison,
+    // Whether there is a note here the intern has a rule for: the clients offer the button on this.
+    can_hand: internCanFix(g.version.mix_check?.findings),
+  })
 }
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {

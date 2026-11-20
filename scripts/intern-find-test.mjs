@@ -67,7 +67,7 @@ check('a fix is judged against the project\'s own untouched bounce: a note it al
 check('a project that no longer shows the notes is left alone', /no longer shows these notes/.test(worker))
 check('a bounce that is not the handed mix is never uploaded as a fix of it', /does not bounce to \$\{song\.version_label\}/.test(worker) && worker.indexOf('does not bounce to') < worker.indexOf('await upload(song, bounce)'))
 check('…but first it is tried with the muted tracks on, and the owner is told what was unmuted',
-  /await logic\.setMuted\(muted, false\)/.test(worker) && /else await logic\.setMuted\(muted, true\)/.test(worker) && /Unmuted for the bounce/.test(worker))
+  /await logic\.setMuted\(muted, false\)/.test(worker) && /await logic\.setMuted\(muted, true\)/.test(worker) && /Unmuted for the bounce/.test(worker))
 check('a mute is confirmed by reading the mixer again after the press', /const after = \(await switches\(\)\)\[want\.index\]/.test(logic0) && /could not be \$\{on \? 'muted' : 'unmuted'\}/.test(logic0))
 check('a locked Mac is waited for, in words, never worked around', /Waiting for your Mac to be unlocked/.test(worker) && !/password/i.test(worker.replace(/\/\*\*[\s\S]*?\*\//g, '')))
 check('folders made beside the owner\'s files are written down first and only the intern\'s own are removed',

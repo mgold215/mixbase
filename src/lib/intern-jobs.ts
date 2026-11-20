@@ -10,6 +10,16 @@ export type InternStatus = (typeof INTERN_STATUSES)[number]
  *  (the app was quit, the Mac slept). It is shown as such and can be re-queued. */
 export const INTERN_STALL_MS = 4 * 60_000
 
+/**
+ * Whether a mix has a note the intern has a rule for: a band that changed
+ * since the previous version (`changed.<band>`; loudness is not a band). The
+ * clients offer "Hand to the intern" on this, so the button is never there
+ * for notes it would only skip.
+ */
+export function internCanFix(findings: { code: string }[] | null | undefined): boolean {
+  return (findings ?? []).some(f => /^changed\.(?!loudness$)[A-Za-z]+$/.test(f.code))
+}
+
 /** The Mix Check byline (src/lib/mix-check-findings.ts MIX_CHECK_AUTHOR). */
 const MIX_CHECK_BYLINE = 'Mix Check'
 
@@ -89,19 +99,43 @@ export function comparedBefore(
 
 export type InternChange = { track: string; what: string; from?: string; to?: string; note_id?: string }
 
+/** One line of a job's step log. `detail` marks what was found or set inside a stage. */
+export type InternStep = { at: string; text: string; detail?: boolean }
+
+/** A job keeps at most this many steps. */
+export const INTERN_MAX_STEPS = 80
+
+/**
+ * A job's step log with the next report added: the stage it says it reached
+ * (once: every heartbeat repeats the stage) and the detail line it sent.
+ */
+export function withSteps(steps: unknown, report: { stage?: string; step?: string }, at: string): InternStep[] {
+  const out: InternStep[] = (Array.isArray(steps) ? steps : []).flatMap((s): InternStep[] => {
+    if (!s || typeof s !== 'object') return []
+    const x = s as Record<string, unknown>
+    return typeof x.text === 'string' && typeof x.at === 'string' ? [{ at: x.at, text: x.text, ...(x.detail === true ? { detail: true } : {}) }] : []
+  })
+  const lastStage = [...out].reverse().find(s => !s.detail)?.text
+  if (report.stage && report.stage !== lastStage) out.push({ at, text: report.stage })
+  if (report.step) out.push({ at, text: report.step, detail: true })
+  return out.slice(-INTERN_MAX_STEPS)
+}
+
 const str = (v: unknown, max: number): string | undefined =>
   typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined
 
 /** What the Mac app may report about a job it holds. Unknown fields are
  *  dropped, and it can only finish a job, never re-open or re-queue one. */
 export function sanitizeReport(raw: unknown): {
-  stage?: string; status?: 'done' | 'failed'; error?: string; changes?: InternChange[]; result_version_id?: string
+  stage?: string; step?: string; status?: 'done' | 'failed'; error?: string; changes?: InternChange[]; result_version_id?: string
 } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
   const out: ReturnType<typeof sanitizeReport> = {}
   const stage = str(r.stage, 200)
   if (stage) out.stage = stage
+  const step = str(r.step, 300)
+  if (step) out.step = step
   if (r.status === 'done' || r.status === 'failed') out.status = r.status
   const error = str(r.error, 500)
   if (error) out.error = error
@@ -129,5 +163,88 @@ export function jobView(job: Record<string, unknown>, nowMs: number) {
     notes: job.notes ?? [], changes: job.changes ?? [],
     result_version_id: job.result_version_id ?? null, error: job.error ?? null,
     device: job.device ?? null, created_at: job.created_at, updated_at: job.updated_at, finished_at: job.finished_at ?? null,
+  }
+}
+
+// ── What a fix changed, measured ──────────────────────────────────────────────
+
+type ReportLike = {
+  summary?: { i?: number; tp?: number } | null
+  bands?: { key: string; label: string; range: string; vsPrevious: number | null }[]
+  findings?: { code: string; severity?: string; title?: string }[]
+  compared?: { previous?: string | null } | null
+}
+
+export type InternComparison = {
+  from: string
+  to: string
+  /** The earlier mix both were measured against, when it is the same one. */
+  against: string | null
+  bands: { key: string; label: string; range: string; from: number | null; to: number | null }[]
+  loudness: { from: number | null; to: number | null }
+  truePeak: { from: number | null; to: number | null }
+  notes: { state: 'cleared' | 'still' | 'new'; severity: string; before: string | null; after: string | null }[]
+}
+
+type Titled = { code: string; severity?: string; title?: string }
+
+/** Two timed notes of a kind this many seconds apart are the same note, moved. */
+const NOTE_SAME_PLACE_S = 40
+/** The second a note is tied to ('drop.smaller@48' → 48), or null for a whole-mix note. */
+const noteSecond = (code: string) => {
+  const m = /@(\d+)$/.exec(code)
+  return m ? Number(m[1]) : null
+}
+
+/** A note's kind without its place (see judgeFix in intern-rules.ts). */
+const noteKind = (code: string) => (code.startsWith('resonance.') ? 'resonance' : code.split('@')[0])
+
+/**
+ * The mix that was handed over beside the version the intern made from it:
+ * each band against the same earlier mix, the loudness, and which notes
+ * cleared, stayed or are new. Both sides are the stored Mix Check reports, so
+ * nothing is measured here. Null when either has no full report.
+ */
+export function internComparison(
+  from: { label: string; report: ReportLike | null },
+  to: { label: string; report: ReportLike | null },
+): InternComparison | null {
+  const a = from.report, b = to.report
+  if (!a?.bands?.length || !b?.bands?.length) return null
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const bands = a.bands.map(band => {
+    const other = b.bands!.find(x => x.key === band.key)
+    return { key: band.key, label: band.label, range: band.range, from: num(band.vsPrevious), to: num(other?.vsPrevious) }
+  })
+  const notes: InternComparison['notes'] = []
+  const before = a.findings ?? [], after = b.findings ?? []
+  const kinds = [...new Set([...before, ...after].map(f => noteKind(f.code)))]
+  const line = (state: 'cleared' | 'still' | 'new', w?: Titled, n?: Titled) =>
+    notes.push({ state, severity: String((n ?? w)?.severity ?? 'low'), before: w?.title ?? null, after: n?.title ?? null })
+  for (const kind of kinds) {
+    const was = before.filter(f => noteKind(f.code) === kind)
+    const is = after.filter(f => noteKind(f.code) === kind)
+    // A note tied to a moment is the same note only near the same moment: the
+    // nearest one within NOTE_SAME_PLACE_S. A whole-mix note is matched by kind.
+    for (const w of was) {
+      const at = noteSecond(w.code)
+      let best = -1
+      is.forEach((n, i) => {
+        const there = noteSecond(n.code)
+        if (at == null || there == null) { if (at == null && there == null && best < 0) best = i; return }
+        if (Math.abs(there - at) <= NOTE_SAME_PLACE_S && (best < 0 || Math.abs(there - at) < Math.abs((noteSecond(is[best].code) ?? Infinity) - at))) best = i
+      })
+      if (best >= 0) line('still', w, is.splice(best, 1)[0]); else line('cleared', w)
+    }
+    for (const n of is) line('new', undefined, n)
+  }
+  const order = { cleared: 0, still: 1, new: 2 }
+  notes.sort((x, y) => order[x.state] - order[y.state])
+  const same = a.compared?.previous && a.compared.previous === b.compared?.previous ? a.compared.previous : null
+  return {
+    from: from.label, to: to.label, against: same, bands,
+    loudness: { from: num(a.summary?.i), to: num(b.summary?.i) },
+    truePeak: { from: num(a.summary?.tp), to: num(b.summary?.tp) },
+    notes,
   }
 }
