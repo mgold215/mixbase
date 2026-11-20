@@ -288,6 +288,10 @@ alter table mb_collections
 create unique index if not exists idx_collections_one_thumb_drive
   on mb_collections(user_id) where is_thumb_drive;
 
+-- Migration 047: is_sync marks a collection whose /sync/<token> page is live.
+alter table mb_collections
+  add column if not exists is_sync boolean not null default false;
+
 alter table mb_projects        enable row level security;
 alter table mb_versions        enable row level security;
 alter table mb_releases        enable row level security;

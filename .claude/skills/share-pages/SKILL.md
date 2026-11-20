@@ -12,6 +12,7 @@ Shipped 2026-11-04. These pages are public: anything exposed here is exposed to 
 - **Song:** `mixbase.app/listen/<artist>/<title>/<token>` (canonical; a stale slug 308s to the current spelling) and the original `mixbase.app/share/<token>`.
 - BOTH serve `TrackShareScreen` directly, with no redirect: links already in chats must keep working byte-for-byte.
 - **Album:** `/album/<artist>/<title>/<token>`.
+- **Sync catalog:** `/sync/<token>`, a collection's share token, served ONLY when the collection has `is_sync = true` (migration 047). Laid out for music supervisors: BPM, key, genre, length, full mix + instrumental (`mb_projects.instrumental_url`), a download of each, and the one-stop rights line. Loader `src/lib/sync-share.ts`; pure parts in `src/lib/sync-catalog.ts`; `scripts/sync-catalog-test.mjs` locks the gate and the columns. The flag is the gate: without it any album link could be rewritten into a download page. There is no toggle in the apps yet; the flag is set in the database.
 - `trackShareUrl(token, { artistName, title })` builds the pretty form. The web callers get the name from `useArtistName()` (`/api/auth/me`). The iOS app still mints `/share/<token>`, which is fine.
 - Loaders: `src/lib/track-share.ts` (the public projection; `scripts/share-projection-test.mjs` locks the column lists) and `src/lib/album-share.ts`.
 

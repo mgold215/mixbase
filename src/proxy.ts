@@ -55,6 +55,7 @@ const PUBLIC_PATHS = [
   '/share/',
   '/listen/', // canonical public single-track player (token-addressed; /share/<token> redirects here)
   '/album/', // canonical public album share player (token-addressed)
+  '/sync/', // public sync catalog (token-addressed; 404s unless the collection is_sync)
   '/auth/callback',
   // Share-token-scoped duration backfill, posted by the anonymous listeners on
   // /share/<token> and /album/<…>/<token>. NOTE: '/share/' above does NOT cover

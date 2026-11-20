@@ -28,6 +28,7 @@ export default function robots(): MetadataRoute.Robots {
         '/share/', // private token links — never index
         '/listen/', // canonical single-track share links — same privacy rules
         '/album/', // canonical album share links — same privacy rules
+        '/sync/', // sync catalog links — sent to supervisors, never indexed
       ],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,

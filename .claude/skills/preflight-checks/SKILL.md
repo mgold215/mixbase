@@ -33,7 +33,7 @@ Run one with `node scripts/<name>-test.mjs`.
 | Deleting a project or an account | `project-delete-assets` `project-delete-scope` `delete-account-scope` `delete-account-bound` `survivor-scan-bound` `survivor-scan-routing` |
 | Cassette Studio | `cassette-studio` `cassette-art` `cassette-quick` `handwriting-pen` `handwriting-glyphs` `cover-filters` `cassette-motion` `cover-motion` `film-finish` `artwork-history` |
 | Artwork, visualizers, video | `artwork-models` `finalize-options` `finalize` `visualizer-source` `effects` `fx` `free-render` `viz-save` `viz-claim-idempotency` `viz-key-shape` `viz-webm-replay` `viz-finalize` `viz-recover` `video-orphan-reaper` `visualizer-transcode` `video` `video-timeout` |
-| Share pages | `share-projection` `share-url` `share-target` `share-palette` `share-duration-heal` `waveform-peaks` |
+| Share pages | `share-projection` `sync-catalog` `share-url` `share-target` `share-palette` `share-duration-heal` `waveform-peaks` |
 | Mixes, notes, loudness | `mix-check` `intern` `intern-rules` `intern-find` `mix-session` `mix-notes` `mix-status` `loudness` `loudness-compare` `loudness-auto` `bpm` |
 | The apps | `ios-parity` `macos-sheet-close` |
 | Product rules | `no-paid-plans` |
