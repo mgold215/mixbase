@@ -392,6 +392,9 @@ async function runJob(claim) {
     // The folders Logic wrote into, beside the owner's own files, go with the job.
     await logic.cleanup().catch(e => log('cleanup failed:', e.message))
     await clearLeftovers()
+    // The exported tracks are gigabytes (32-bit float, one file a track) and have done their job;
+    // the bounces, the plan and the verdicts stay for the owner to look at.
+    for (const sub of ['tracks', 'sums']) await rm(join(dir, sub), { recursive: true, force: true }).catch(() => null)
     await helper('sys.awake', { on: false }).catch(() => null)
   }
 }

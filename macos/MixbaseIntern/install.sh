@@ -20,6 +20,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 #    repository so the helper does not depend on a checkout staying put.
 echo "→ Installing the worker…"
 mkdir -p "$RUNTIME/scripts" "$RUNTIME/src/lib" "$RUNTIME/bin"
+rm -f "$RUNTIME"/scripts/intern-*.mjs
 cp "$REPO"/scripts/intern-*.mjs "$RUNTIME/scripts/"
 rm -f "$RUNTIME"/scripts/*-test.mjs
 cp "$REPO"/src/lib/intern-*.ts "$REPO"/src/lib/mix-check.ts "$REPO"/src/lib/mix-check-findings.ts "$REPO"/src/lib/loudness.ts "$RUNTIME/src/lib/"
