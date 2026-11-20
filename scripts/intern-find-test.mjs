@@ -48,6 +48,7 @@ check('…and a track that is really called that is not mistaken for one', strip
 
 console.log('\nintern: the helper\'s promises\n')
 const logic = read('scripts/intern-logic.mjs')
+check('only notices met for real are answered OK; any other message from Logic stops the job', /const NOTICES = \[\/last selected audio interface is not available\/i\]/.test(logic) && /Logic showed a message while opening the copy/.test(logic))
 check('Logic is never sent a typed key or a click by position', !/sys\.(key|type|click)/.test(logic))
 check('the intern only adds its own plug-ins, last in the strip, and never bypasses or removes one',
   /empty\[0\]/.test(logic) && !/desc === 'bypass'|Remove|No Plug-in/.test(logic))
@@ -75,6 +76,7 @@ check('folders made beside the owner\'s files are written down first and only th
 check('no AI and nothing billed per use', !/anthropic|openai|replicate|runway/i.test(worker + read('scripts/intern-find.mjs') + read('scripts/intern-plan.mjs')))
 check('the helper only ever addresses Logic Pro', /static let logicBundleId = "com\.apple\.logic10"/.test(ax) && (ax.match(/AXUIElementCreateSystemWide/g) ?? []).length === 1 && /AXUIElementSetMessagingTimeout\(AXUIElementCreateSystemWide\(\), 6\)/.test(ax) && !/runningApplications\(withBundleIdentifier: (?!Self\.logicBundleId)/.test(ax))
 check('the local socket never hands out the access token', /answer\(line, allowAuth: false\)/.test(server) && /guard allowAuth else/.test(ax))
+check('Full Disk Access is tested on more than one file (they move between macOS versions)', (ax.match(/com\.apple\.TCC\/TCC\.db/g) ?? []).length >= 2 && /Library\/Safari\/Bookmarks\.plist/.test(ax))
 check('no personal paths or addresses in the helper', !/\/Users\/|@(gmail|icloud|me)\./.test(ax + server + worker + read('macos/MixbaseIntern/install.sh') + read('macos/MixbaseIntern/build.sh')))
 
 console.log(failures ? `\n${failures} failed` : '\nall passed')
