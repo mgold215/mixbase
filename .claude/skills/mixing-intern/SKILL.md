@@ -103,6 +103,16 @@ The owner asked for CATALYST instead of EVERGREEN. Its newest mix, MASTER 5, had
 - **A mute is read and pressed on the mixer strip.** Its value is right when read fresh, but the handle that was pressed keeps the old value, so the mixer is read again to confirm. (A search for track headers across the whole window ran out of time and found none.)
 - **Taking a version back leaves its audio file in Storage**: the owner's token may not delete there. The row goes (through `DELETE /api/versions/<id>`); the file is an orphan for the usual cleanup.
 
+## After a macOS update (2026-11-20: macOS 15.6.1 → 27.2.1)
+
+The owner updated the Mac and asked that the intern still worked. It did not, three ways, none of them a lost permission (both switches and the sign-in survived the update and a rebuild):
+
+- **The helper thought Full Disk Access was off** and never started its worker: macOS 27 has no privacy database in the user's Library, the one file the check opened. `Permissions.fullDisk` now tries several protected files.
+- **Logic shows a notice when a project opens** after a restart: "The last selected audio interface is not available…". Notices met for real are listed in `NOTICES` (`intern-logic.mjs`) and answered OK; any other message still stops the job with its text.
+- **Save and export dialogs nest their controls one level deeper**, and a press on Export right after the job's folder is made can be ignored. Dialog lookups go a level further, and `confirm()` presses the default button until the dialog has really closed.
+
+To check the intern after any update, without adding a version to a song: write `{"version_id":"…","dry_run":true}` to `handoff.json`. The job does everything on the Mac up to the upload and ends "Dry run: every step on the Mac worked…". Delete its job row afterwards. `node scripts/intern-ax.mjs ping` shows the helper's own view of its permissions first.
+
 ## What the owner's Mac showed (2026-11-19)
 
 - macOS 15.6.1, Apple silicon. **Logic Pro 12.4** (`com.apple.logic10`), not 13: Logic's own Assistant is not there.

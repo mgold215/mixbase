@@ -19,6 +19,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 /** A dialog that has only just appeared ignores presses, and reading it at once can hang: wait this long first. */
 const SETTLE_MS = 1500
 
+/**
+ * Messages Logic shows by itself that only inform, and are answered OK. Each
+ * is one that was met for real; anything else stops the job with its text.
+ *  - after a restart or a system update Logic may fall back to another audio
+ *    interface ("The last selected audio interface is not available. The
+ *    previously selected interface … will be used instead."). A bounce does
+ *    not play through the interface.
+ */
+const NOTICES = [/last selected audio interface is not available/i]
+
 /** A failure the owner should read as it is. */
 export class LogicProblem extends Error {}
 
@@ -65,7 +75,9 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
   const ax = async (cmd, args, timeoutMs) => {
     for (let i = 0; ; i++) {
       try { return await helper(cmd, args, timeoutMs) } catch (err) {
-        if (i >= 6 || !/too busy/i.test(err.message)) throw err
+        // The window list also fails outright for a moment while a project loads.
+        const busy = /too busy/i.test(err.message) || (cmd === 'app.windows' && /cannot complete/i.test(err.message))
+        if (i >= 6 || !busy) throw err
         await sleep(4000)
       }
     }
@@ -115,7 +127,16 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       const texts = (await find(w.h, { role: 'AXStaticText', limit: 8 })).map(t => t.value).filter(Boolean)
       const buttons = (await find(w.h, { role: 'AXButton', limit: 8 })).filter(b => b.title)
       if (!buttons.length) continue
-      return { h: w.h, text: texts.join(' ').slice(0, 300), buttons }
+      const text = texts.join(' ').slice(0, 300)
+      // A notice that only informs, and that Logic shows by itself: acknowledged, not a problem.
+      const ok = buttons.find(b => b.title === 'OK')
+      if (ok && NOTICES.some(re => re.test(text))) {
+        log(`Logic said: "${text}" (OK pressed)`)
+        await press(ok.h)
+        await sleep(800)
+        continue
+      }
+      return { h: w.h, text, buttons }
     }
     return null
   }
@@ -162,6 +183,8 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       await until('start', async () => (await ax('ping')).logic_running, { timeout: 120_000, every: 2000 })
       await sleep(8000)
     }
+    // A notice left on screen (see NOTICES) blocks Logic's menus: acknowledge it first.
+    await alert().catch(() => null)
     // A copy an earlier job left open (the Mac restarted mid-job, say) is the intern's own: closed, not saved.
     const openNow = (await windows().catch(() => [])).filter(w => w.sub === 'AXStandardWindow').map(docPath).filter(Boolean)
     const stale = ownDir ? openNow.filter(p => p.startsWith(`${ownDir}/`) && p !== state.copy) : []
@@ -177,6 +200,13 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       const a = await alert()
       if (a) {
         const names = a.buttons.map(b => b.title)
+        // Logic asks whether to save what is open. If that is only the intern's own
+        // stale copy (nothing of the owner's was open), it is not saved.
+        const dont = a.buttons.find(b => /^don.t save/i.test(b.title))
+        if (names.some(n => /^save/i.test(n)) && dont && stale.length && !state.reopen.length) {
+          await press(dont.h)
+          return false
+        }
         // Unsaved work in the project that is open: never answered for the owner.
         if (names.some(n => /^save/i.test(n))) {
           const cancel = a.buttons.find(b => /cancel/i.test(b.title))
@@ -311,7 +341,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
   // the next dialog of that kind in the same folder.
 
   async function intoOurFolder(panel) {
-    const where = async () => (await one(panel.h, { role: 'AXPopUpButton', id: 'where popup', depth: 2 }))?.value ?? ''
+    const where = async () => (await one(panel.h, { role: 'AXPopUpButton', id: 'where popup', depth: 3 }))?.value ?? ''
     const current = await where()
     // The bounce dialog and the export dialog each remember their own folder.
     if (state.outDirs.some(d => basename(d) === current)) return current
@@ -319,20 +349,46 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     // Press again if nothing came.
     let sheet = null
     for (let tries = 0; tries < 4 && !sheet; tries++) {
-      await press((await one(panel.h, { role: 'AXButton', id: 'NewFolderButton', depth: 2 })).h)
-      sheet = await until('the New Folder sheet', () => one(panel.h, { role: 'AXSheet', depth: 1 }), { timeout: 4000 }).catch(() => null)
+      await press((await one(panel.h, { role: 'AXButton', id: 'NewFolderButton', depth: 3 })).h)
+      sheet = await until('the New Folder sheet', () => one(panel.h, { role: 'AXSheet', depth: 2 }), { timeout: 4000 }).catch(() => null)
     }
     if (!sheet) throw new LogicProblem('Logic\'s save dialog would not make a folder for the job')
-    await ax('ax.set', { el: (await one(sheet.h, { role: 'AXTextField', depth: 1 })).h, attr: 'AXValue', value: name })
-    await press((await one(sheet.h, { role: 'AXButton', title: 'Create', depth: 1 })).h)
+    await ax('ax.set', { el: (await one(sheet.h, { role: 'AXTextField', depth: 2 })).h, attr: 'AXValue', value: name })
+    await press((await one(sheet.h, { role: 'AXButton', title: 'Create', depth: 2 })).h)
     await until('the new folder', async () => (await where()) === name, { timeout: 15_000 })
-    state.outDirs.push(name) // the full path is learned once Logic has written into it
+    state.outDirs.push(name)
+    // Its full path, written down at once so the folder is cleaned up even if the job stops right here.
+    const made = (await ax('logic.savedir').catch(() => null))?.path
+    if (made && basename(made) === name) { state.outDirs[state.outDirs.length - 1] = made; await onFolder(made) }
     return name
+  }
+
+  /**
+   * Presses a dialog's default button and makes sure the dialog went: a press
+   * right after the dialog changed (a folder was just made in it) can be
+   * ignored, so it is pressed again until the dialog is gone.
+   */
+  async function confirm(panelId) {
+    for (let tries = 0; tries < 4; tries++) {
+      const panel = (await windows()).find(w => w.id === panelId)
+      if (!panel) return
+      await sleep(SETTLE_MS)
+      const ok = await one(panel.h, { role: 'AXButton', id: 'OKButton', depth: 3 })
+      if (ok) await press(ok.h)
+      const gone = await until('the dialog to close', async () => !(await windows().catch(() => [{ id: panelId }])).some(w => w.id === panelId), { timeout: 6000 }).catch(() => false)
+      if (gone) return
+    }
+    throw new LogicProblem('Logic\'s dialog would not accept the folder it was given')
   }
 
   /** Where Logic last wrote: the folder its save dialog was in. */
   async function lastFolder(expectName) {
-    const dir = (await ax('logic.savedir')).path
+    // Logic's note of the folder can lag the save by a moment.
+    let dir = null
+    for (let i = 0; i < 10 && (!dir || basename(dir) !== expectName); i++) {
+      if (i) await sleep(1000)
+      dir = (await ax('logic.savedir')).path
+    }
     if (!dir || basename(dir) !== expectName) throw new LogicProblem('Logic wrote the file somewhere unexpected; nothing was used')
     const i = state.outDirs.findIndex(d => basename(d) === expectName)
     if (i >= 0 && state.outDirs[i] !== dir) { state.outDirs[i] = dir; await onFolder(dir) }
@@ -341,7 +397,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
 
   async function setPopup(root, current, want) {
     // The value exactly: "On" must not find "One File per Track".
-    const popup = (await find(root, { role: 'AXPopUpButton', valueHas: current, depth: 3, limit: 12 })).find(p => p.value === current && p.enabled !== false)
+    const popup = (await find(root, { role: 'AXPopUpButton', valueHas: current, depth: 4, limit: 12 })).find(p => p.value === current && p.enabled !== false)
     if (!popup) return false
     await press(popup.h)
     await sleep(400)
@@ -354,7 +410,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
   }
 
   async function setCheckbox(root, title, on) {
-    const box = await one(root, { role: 'AXCheckBox', title, depth: 3 })
+    const box = await one(root, { role: 'AXCheckBox', title, depth: 4 })
     if (box && (box.value === 1) !== on) await press(box.h)
   }
 
@@ -378,8 +434,8 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     await sleep(SETTLE_MS)
     const outName = await intoOurFolder(panel)
     const name = `bounce-${Date.now()}`
-    await ax('ax.set', { el: (await one(panel.h, { role: 'AXTextField', id: 'saveAsNameTextField', depth: 2 })).h, attr: 'AXValue', value: name })
-    await press((await one(panel.h, { role: 'AXButton', id: 'OKButton', depth: 2 })).h)
+    await ax('ax.set', { el: (await one(panel.h, { role: 'AXTextField', id: 'saveAsNameTextField', depth: 3 })).h, attr: 'AXValue', value: name })
+    await confirm('save-panel')
     // A real-time bounce (some plug-ins force one) takes the length of the song.
     await whileBusy('bouncing', 30 * 60_000)
     const dir = await lastFolder(outName)
@@ -408,7 +464,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     await setCheckbox(panel.h, 'Include Volume/Pan Automation', true)
     await setCheckbox(panel.h, 'Add resulting files to Project Browser', false)
     const outName = await intoOurFolder(panel)
-    await press((await one(panel.h, { role: 'AXButton', id: 'OKButton', depth: 2 })).h)
+    await confirm('open-panel')
     await whileBusy('exporting the tracks', 90 * 60_000)
     const dir = await lastFolder(outName)
     await mkdir(folder, { recursive: true })

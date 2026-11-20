@@ -518,12 +518,23 @@ final class AXBridge {
 }
 
 enum Permissions {
-    /// Full Disk Access shows itself by whether the privacy database can be opened.
-    /// Trying also makes the helper appear in that list in System Settings.
+    /// Full Disk Access shows itself by whether a file only it unlocks can be
+    /// opened. Trying also makes the helper appear in that list in System
+    /// Settings. Several files are tried, because they move: macOS 27 no longer
+    /// keeps a privacy database in the user's Library, and with only that one
+    /// probed the helper read the switch as off and never started its worker.
     static var fullDisk: Bool {
-        let path = NSHomeDirectory() + "/Library/Application Support/com.apple.TCC/TCC.db"
-        let fd = open(path, O_RDONLY)
-        if fd >= 0 { close(fd); return true }
+        let home = NSHomeDirectory()
+        let probes = [
+            "/Library/Application Support/com.apple.TCC/TCC.db",
+            home + "/Library/Application Support/com.apple.TCC/TCC.db",
+            home + "/Library/Safari/Bookmarks.plist",
+            home + "/Library/Mail",
+        ]
+        for path in probes {
+            let fd = open(path, O_RDONLY)
+            if fd >= 0 { close(fd); return true }
+        }
         return false
     }
 }

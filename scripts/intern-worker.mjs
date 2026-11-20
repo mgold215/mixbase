@@ -395,6 +395,8 @@ async function runJob(claim) {
       throw new Giveup(`Nothing was uploaded: the fix was tried and bounced, but ${what}`)
     }
 
+    if (dryRuns.delete(job.id)) throw new Giveup('Dry run: every step on the Mac worked and the fix was kept; nothing was uploaded')
+
     await report.stage('Saving the copy')
     await logic.save()
     if ((await stat(found.path)).mtimeMs !== before) log('WARNING: the original project changed during the job (the owner may have saved it)')
@@ -461,6 +463,9 @@ async function runJob(claim) {
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
+/** Jobs filed here as dry runs: they stop before anything is uploaded. */
+const dryRuns = new Set()
+
 /** A hand-off made on the Mac itself: a file naming a version, for trying a job without the app. */
 async function localHandoff() {
   const file = join(SUPPORT, 'handoff.json')
@@ -468,7 +473,7 @@ async function localHandoff() {
   try { raw = await readFile(file, 'utf8') } catch { return }
   await unlink(file).catch(() => null)
   try {
-    const { version_id, check_first, take_back } = JSON.parse(raw)
+    const { version_id, check_first, take_back, dry_run } = JSON.parse(raw)
     // take_back: remove a version the intern uploaded that turned out wrong
     // ({ version_id, key }): the row through the app's own route, then its file.
     if (take_back?.version_id) {
@@ -484,6 +489,8 @@ async function localHandoff() {
       log('local hand-off: Mix Check found', (report.findings ?? []).map(f => f.code).join(', ') || 'nothing')
     }
     const r = await api(`/api/versions/${version_id}/intern`, { method: 'POST' })
+    // dry_run: do everything on the Mac up to the upload and stop there (a check that Logic can still be driven).
+    if (dry_run && r.json?.job?.id) dryRuns.add(r.json.job.id)
     log('local hand-off:', r.status, r.json?.job?.id ?? r.json?.error ?? '')
   } catch (err) { log('local hand-off failed:', err.message) }
 }
