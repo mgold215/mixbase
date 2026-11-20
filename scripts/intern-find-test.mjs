@@ -54,6 +54,7 @@ check('the intern only adds its own plug-ins, last in the strip, and never bypas
 check('the owner\'s open project is never answered for: unsaved changes stop the job', /unsaved changes\. Save or close it/.test(logic) && !/title: 'Save'/.test(logic))
 check('what Logic wrote beside the owner\'s files is only removed if it is the intern\'s own folder', /startsWith\('mixBASE Intern '\) \|\| !dir\.endsWith\('\.nosync'\)/.test(logic))
 const worker = read('scripts/intern-worker.mjs')
+const logic0 = read('scripts/intern-logic.mjs')
 const ax = read('macos/MixbaseIntern/Sources/AX.swift')
 const server = read('macos/MixbaseIntern/Sources/Server.swift')
 check('the worker opens the COPY, never the project it found', /await logic\.open\(copy\)/.test(worker) && !/logic\.open\(found\.path\)/.test(worker))
@@ -64,7 +65,10 @@ check('nothing is uploaded before the local judge keeps the bounce', worker.inde
 check('a fix is judged against the project\'s own untouched bounce: a note it already had is not one the fix brought',
   /const had = \[\.\.\.\(song\.findings \?\? \[\]\), \.\.\.judge0\.findings/.test(worker) && /judge\(\{ job: now, bounce, handled: open/.test(worker) && /judgeFix\(had, checked\.findings/.test(worker))
 check('a project that no longer shows the notes is left alone', /no longer shows these notes/.test(worker))
-check('the owner is told when the project does not bounce to the handed mix', /Bounced from the Logic project as it is now, which is not/.test(worker))
+check('a bounce that is not the handed mix is never uploaded as a fix of it', /does not bounce to \$\{song\.version_label\}/.test(worker) && worker.indexOf('does not bounce to') < worker.indexOf('await upload(song, bounce)'))
+check('…but first it is tried with the muted tracks on, and the owner is told what was unmuted',
+  /await logic\.setMuted\(muted, false\)/.test(worker) && /else await logic\.setMuted\(muted, true\)/.test(worker) && /Unmuted for the bounce/.test(worker))
+check('a mute is confirmed by reading the mixer again after the press', /const after = \(await switches\(\)\)\[want\.index\]/.test(logic0) && /could not be \$\{on \? 'muted' : 'unmuted'\}/.test(logic0))
 check('a locked Mac is waited for, in words, never worked around', /Waiting for your Mac to be unlocked/.test(worker) && !/password/i.test(worker.replace(/\/\*\*[\s\S]*?\*\//g, '')))
 check('folders made beside the owner\'s files are written down first and only the intern\'s own are removed',
   /onFolder: rememberLeftover/.test(worker) && /const isOurs = path => \/\^mixBASE Intern/.test(worker) && /if \(typeof path !== 'string' \|\| !isOurs\(path\)\) continue/.test(worker))

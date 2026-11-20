@@ -230,9 +230,14 @@ async function awake(report) {
 
 const bandLabel = key => MIX_BANDS.find(b => b.key === key)?.label ?? key
 
-/** How the project's untouched bounce differs from the handed mix, in words, or null when it is the same mix (within 2 dB a band). */
+/** A band this far from the handed mix means the bounce is not that mix (Mix Check itself writes a note at 2.5 dB). */
+const DRIFT_DB = 2.5
+/** The furthest any band of a bounce is from the handed mix, in dB. */
+const driftDb = bands => Math.max(0, ...(bands ?? []).filter(b => b.before != null && b.after != null).map(b => Math.abs(b.after - b.before)))
+
+/** How the project's bounce differs from the handed mix, in words, or null when it is that mix. */
 export function projectDrift(bands) {
-  const off = (bands ?? []).filter(b => b.before != null && b.after != null && Math.abs(b.after - b.before) >= 2)
+  const off = (bands ?? []).filter(b => b.before != null && b.after != null && Math.abs(b.after - b.before) >= DRIFT_DB)
     .sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before))
   if (!off.length) return null
   return off.slice(0, 3).map(b => `${bandLabel(b.key).toLowerCase()} ${b.after > b.before ? '+' : '−'}${Math.abs(b.after - b.before).toFixed(1)} dB`).join(', ')
@@ -276,20 +281,42 @@ async function runJob(claim) {
     // The project as it is now, measured the way Mix Check measures: it may
     // have moved on since the handed mix was bounced.
     await report.stage('Bouncing the project as it is')
-    const bounce0 = join(dir, 'bounce-0.wav')
+    let bounce0 = join(dir, 'bounce-0.wav')
     await logic.bounce(bounce0)
-    const judge0 = await judge({ job: claim, bounce: bounce0, handled, ffmpeg: FFMPEG })
+    let judge0 = await judge({ job: claim, bounce: bounce0, handled, ffmpeg: FFMPEG })
     await writeFile(join(dir, 'judge-0.json'), JSON.stringify(judge0, null, 2))
+
+    // Is this bounce the handed mix? A project is saved as it was last left: a
+    // muted vocal stack from an instrumental bounce, say. If it is not the
+    // mix, and tracks are muted, the bounce is tried with them on, and the
+    // state that reproduces the handed mix is the one worked on.
+    const unmuted = []
+    if (driftDb(judge0.bands) >= DRIFT_DB) {
+      const { muted, soloed } = await logic.silenced()
+      log('not the handed mix:', projectDrift(judge0.bands), '| muted:', muted.map(m => m.name).join(', ') || 'none', '| soloed:', soloed.map(m => m.name).join(', ') || 'none')
+      if (muted.length) {
+        await report.stage(`Trying the bounce with ${muted.length === 1 ? muted[0].name : `${muted.length} muted tracks`} unmuted`)
+        await logic.setMuted(muted, false)
+        const again = join(dir, 'bounce-0-unmuted.wav')
+        await logic.bounce(again)
+        const judged = await judge({ job: claim, bounce: again, handled, ffmpeg: FFMPEG })
+        await writeFile(join(dir, 'judge-0-unmuted.json'), JSON.stringify(judged, null, 2))
+        if (driftDb(judged.bands) < driftDb(judge0.bands) - 0.5) { bounce0 = again; judge0 = judged; unmuted.push(...muted.map(m => m.name)) }
+        else await logic.setMuted(muted, true)
+      }
+    }
+    // Still not the mix: fixing it would upload something the owner did not make.
+    const drift = projectDrift(judge0.bands)
+    if (drift) {
+      throw new Giveup(`Nothing was uploaded: the Logic project does not bounce to ${song.version_label} (${drift}). It has changed since that mix, or the mix was finished somewhere else. Upload the project's own bounce, check it, and hand that over.`)
+    }
+
     const open = judge0.remaining
     if (!open.length) throw new Giveup('The Logic project no longer shows these notes: its bounce is already inside what Mix Check accepts')
     // From here the project's own bounce is the "before": its bands are what the
     // moves are sized on, and a note it already had is not one a fix brought.
     const had = [...(song.findings ?? []), ...judge0.findings.filter(f => !(song.findings ?? []).some(x => x.code === f.code))]
     const now = { ...claim, song: { ...song, findings: had, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
-    // A project that does not bounce to the handed mix (it has moved on, or the
-    // mix was finished somewhere else) is still fixed, and the owner is told.
-    const drift = projectDrift(judge0.bands)
-    if (drift) log('project differs from the handed mix:', drift)
 
     await report.stage('Exporting the tracks')
     const tracksDir = join(dir, 'tracks')
@@ -345,7 +372,7 @@ async function runJob(claim) {
     const names = internNames(song)
     const up = await upload(song, bounce)
     uploaded = up.key
-    if (drift) changes = [...changes, { track: 'Whole mix', what: `Bounced from the Logic project as it is now, which is not ${song.version_label} exactly (${drift})` }]
+    if (unmuted.length) changes = [...changes, ...unmuted.map(name => ({ track: name, what: `Unmuted for the bounce: the project was saved with it muted, and with it on the bounce matches ${song.version_label}` }))]
     const list = changes.map(c => `${c.track}: ${c.what} ${c.to ?? ''}`.trim()).join('; ')
     const created = await api('/api/versions', {
       method: 'POST',
@@ -408,7 +435,15 @@ async function localHandoff() {
   try { raw = await readFile(file, 'utf8') } catch { return }
   await unlink(file).catch(() => null)
   try {
-    const { version_id, check_first } = JSON.parse(raw)
+    const { version_id, check_first, take_back } = JSON.parse(raw)
+    // take_back: remove a version the intern uploaded that turned out wrong
+    // ({ version_id, key }): the row through the app's own route, then its file.
+    if (take_back?.version_id) {
+      const r = await api(`/api/versions/${take_back.version_id}`, { method: 'DELETE' })
+      if (r.status === 200 && typeof take_back.key === 'string') await removeUpload(take_back.key)
+      log('local take-back:', r.status)
+      return
+    }
     // check_first: run Mix Check on the mix before handing it over, as the
     // owner would by tapping "Check this mix" and then "Hand to the intern".
     if (check_first) {
