@@ -2022,12 +2022,50 @@ final class MixbaseAPI {
         var id: String { "\(track)|\(what)|\(to ?? "")" }
     }
 
+    /// One line of a job's step log. `detail` marks what was found or set inside a stage.
+    struct InternStep: Decodable, Equatable {
+        let at: String
+        let text: String
+        let detail: Bool?
+    }
+
+    /// The handed mix beside the version the intern made from it, as the
+    /// server works it out from the two stored Mix Check reports.
+    struct InternComparison: Decodable, Equatable {
+        struct Band: Decodable, Equatable, Identifiable {
+            let key: String
+            let label: String
+            let range: String
+            let from: Double?
+            let to: Double?
+            var id: String { key }
+        }
+        struct Pair: Decodable, Equatable {
+            let from: Double?
+            let to: Double?
+        }
+        struct Note: Decodable, Equatable {
+            let state: String       // cleared | still | new
+            let severity: String
+            let before: String?
+            let after: String?
+        }
+        let from: String
+        let to: String
+        let against: String?
+        let bands: [Band]
+        let loudness: Pair
+        let truePeak: Pair
+        let notes: [Note]
+    }
+
     struct InternJob: Decodable, Equatable {
         let id: String
         let status: String          // queued | working | done | failed | cancelled
         let stage: String?
         let stalled: Bool?
         let changes: [InternChange]?
+        let steps: [InternStep]?
         let resultVersionId: String?
         let error: String?
         let device: String?
@@ -2037,7 +2075,7 @@ final class MixbaseAPI {
         var isWaiting: Bool { status == "queued" || (status == "working" && stalled == true) }
 
         private enum CodingKeys: String, CodingKey {
-            case id, status, stage, stalled, changes, error, device
+            case id, status, stage, stalled, changes, steps, error, device
             case resultVersionId = "result_version_id"
         }
     }
@@ -2046,7 +2084,10 @@ final class MixbaseAPI {
     struct InternState: Decodable, Equatable {
         let job: InternJob?
         let madeBy: InternJob?
-        private enum CodingKeys: String, CodingKey { case job; case madeBy = "made_by" }
+        let comparison: InternComparison?
+        /// There is a note on this mix the intern has a rule for (the server decides).
+        let canHand: Bool?
+        private enum CodingKeys: String, CodingKey { case job, comparison; case madeBy = "made_by"; case canHand = "can_hand" }
     }
 
     private func internRequest(versionId: UUID, method: String) async throws -> InternState {

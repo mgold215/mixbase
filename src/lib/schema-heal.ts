@@ -171,6 +171,34 @@ export function isMissingMixCheckColumn(error: { message?: string } | null): boo
   return !!error?.message && /mix_check/.test(error.message)
 }
 
+// ── mb_intern_jobs.steps (migration 048) ────────────────────────────────────────
+// The mixing intern's step log. PATCH /api/intern/jobs/[id] appends to it and
+// GET /api/versions/[id]/intern reads it, each in a query of its own, so a
+// deploy that beats the migration cannot fail a job's report or the card: on
+// the missing-column error they heal and retry.
+
+const INTERN_STEPS_SQL =
+  "alter table public.mb_intern_jobs add column if not exists steps jsonb not null default '[]'::jsonb; notify pgrst, 'reload schema';"
+
+let internStepsEnsured: Promise<boolean> | null = null
+
+export function ensureInternStepsColumn(): Promise<boolean> {
+  if (!internStepsEnsured) {
+    internStepsEnsured = runQuery(INTERN_STEPS_SQL, 'mb_intern_jobs.steps column')
+      .catch(() => false)
+      .then(ok => {
+        if (!ok) internStepsEnsured = null
+        return ok
+      })
+  }
+  return internStepsEnsured
+}
+
+/** True when a PostgREST error is the missing steps column failure. */
+export function isMissingInternStepsColumn(error: { message?: string } | null): boolean {
+  return !!error?.message && /steps/.test(error.message)
+}
+
 // ── mb_feedback.resolved_at (migration 041) ─────────────────────────────────────
 // The Mix Session's done tick on a note. GET /api/mix-session reads it and
 // PATCH /api/mix-session/notes/[id] writes it; both catch the missing-column

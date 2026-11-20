@@ -8,7 +8,7 @@ import type { MixCheckReport } from '@/lib/mix-check-server'
 import type { Feedback } from '@/lib/supabase'
 import type { VersionLoudnessRow } from '@/lib/loudness-compare'
 import MasterCheck, { type LoudnessCardProps } from '@/components/MasterCheck'
-import InternPanel from '@/components/InternPanel'
+import { InternCompare, InternLog, InternRow, useIntern } from '@/components/InternPanel'
 
 // ─── Mix Check — how loud this mix is, and what is measurably wrong with it ──
 // ONE card, one button. It asks the server to analyse the whole mix
@@ -19,6 +19,13 @@ import InternPanel from '@/components/InternPanel'
 // the balance sits against the artist's own catalog and against commercial
 // references in the genre, and faults that need no comparison (a drop that
 // lands smaller than its breakdown, a low end that cancels in mono, clipping).
+//
+// Opened, the card is tabbed so it never becomes one long scroll: Notes (the
+// findings), Balance (the band table, the spectrum, the sub timeline, the genre
+// references), and, once the mixing intern has been handed the mix, Intern
+// (what it changed and every step it took) and Compare (the handed mix beside
+// the intern's version). One line above the tabs carries the hand-off button
+// or where the job is.
 //
 // Every finding is ALSO written into the mix notes by the server, timestamped,
 // under the "Mix Check" byline — `onNotes` hands the page those rows so the
@@ -42,6 +49,8 @@ type Props = {
   onInternDone: () => void
 }
 
+type Tab = 'notes' | 'balance' | 'intern' | 'compare'
+
 type State =
   | { status: 'loading' | 'none' | 'running' }
   | { status: 'error'; error: string }
@@ -59,6 +68,8 @@ const signed = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).
 export default function MixCheck({ versionId, projectId, loudness, onNotes, onJump, onInternDone }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<Tab>('notes')
+  const intern = useIntern(versionId, onInternDone)
   const alive = useRef(true)
   const notesRef = useRef(onNotes)
   useEffect(() => { notesRef.current = onNotes }, [onNotes])
@@ -167,43 +178,80 @@ export default function MixCheck({ versionId, projectId, loudness, onNotes, onJu
         </p>
       )}
 
-      {/* The intern is handed the measured notes, never the genre comparison. */}
+      {/* One line: the hand-off button (when there is a note the intern has a rule for) or where the job is. */}
       {state.status !== 'loading' && (
-        <InternPanel versionId={versionId} hasNotes={findings.some(f => f.code !== 'genre.balance')} onDone={onInternDone} />
+        <InternRow
+          intern={{ ...intern, hand: () => { intern.hand(); setOpen(true); setTab('intern') } }}
+        />
       )}
 
-      {report && open && (
-        <div className="space-y-3">
-          {findings.length > 0 && (
-            <ul className="space-y-1.5">
-              {findings.map(f => (
-                <li key={f.code} className="rounded-lg px-2.5 py-2" style={{ border: '1px solid var(--border)' }}>
-                  <div className="flex items-baseline gap-2">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 translate-y-[-1px]" style={{ backgroundColor: SEVERITY[f.severity].color }} aria-label={`${SEVERITY[f.severity].label} severity`} />
-                    <span className="text-xs font-medium text-[var(--text)] flex-1">{f.title}</span>
-                    {f.at != null && (
-                      <button type="button" onClick={() => onJump(f.at!)} className="text-[11px] tabular-nums text-[var(--accent)] hover:underline shrink-0" title="Play from here">
-                        {clock(f.at)}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-[var(--text-muted)] mt-1 pl-3.5">{f.note}</p>
-                </li>
+      {report && open && (() => {
+        const internJob = intern.madeBy ?? intern.job
+        const tabs: { key: Tab; label: string }[] = [
+          { key: 'notes', label: findings.length ? `Notes ${findings.length}` : 'Notes' },
+          { key: 'balance', label: 'Balance' },
+          ...(internJob ? [{ key: 'intern' as const, label: 'Intern' }] : []),
+          ...(intern.comparison ? [{ key: 'compare' as const, label: 'Compare' }] : []),
+        ]
+        // A tab that is no longer offered (the job was for another version) falls back to Notes.
+        const current = tabs.some(t => t.key === tab) ? tab : 'notes'
+        return (
+          <div className="space-y-3">
+            <div role="tablist" aria-label="Mix check" className="flex gap-1 p-0.5 rounded-lg" style={{ backgroundColor: 'var(--surface-2)' }}>
+              {tabs.map(t => (
+                <button
+                  key={t.key} type="button" role="tab" aria-selected={current === t.key} onClick={() => setTab(t.key)}
+                  className={`flex-1 text-[11px] px-2 py-1 rounded-md transition-colors ${current === t.key ? 'text-[var(--text)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+                  style={current === t.key ? { backgroundColor: 'var(--surface)', boxShadow: '0 0 0 1px var(--border)' } : undefined}
+                >
+                  {t.label}
+                </button>
               ))}
-            </ul>
-          )}
+            </div>
 
-          {report.bands && <BandTable report={report} />}
-          {report.curves && <SpectrumChart curves={report.curves} />}
-          {report.detail && <SubTimeline report={report} onJump={onJump} />}
-          <References report={report} projectId={projectId} />
+            {current === 'notes' && (
+              <>
+                {findings.length > 0 ? (
+                  <ul className="space-y-1.5">
+                    {findings.map(f => (
+                      <li key={f.code} className="rounded-lg px-2.5 py-2" style={{ border: '1px solid var(--border)' }}>
+                        <div className="flex items-baseline gap-2">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 translate-y-[-1px]" style={{ backgroundColor: SEVERITY[f.severity].color }} aria-label={`${SEVERITY[f.severity].label} severity`} />
+                          <span className="text-xs font-medium text-[var(--text)] flex-1">{f.title}</span>
+                          {f.at != null && (
+                            <button type="button" onClick={() => onJump(f.at!)} className="text-[11px] tabular-nums text-[var(--accent)] hover:underline shrink-0" title="Play from here">
+                              {clock(f.at)}
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-[var(--text-muted)] mt-1 pl-3.5">{f.note}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-[var(--text-muted)]">Nothing measurable stands out.</p>
+                )}
+                <p className="text-[10px] leading-relaxed text-[var(--text-muted)]">
+                  Measured from the stereo file, so it finds what can be measured and not what is a matter of taste.
+                  Tick a note off in the notes list and a later check will leave it alone.
+                </p>
+              </>
+            )}
 
-          <p className="text-[10px] leading-relaxed text-[var(--text-muted)]">
-            Measured from the stereo file, so it finds what can be measured and not what is a matter of taste.
-            Tick a note off in the notes list and a later check will leave it alone.
-          </p>
-        </div>
-      )}
+            {current === 'balance' && (
+              <>
+                {report.bands && <BandTable report={report} />}
+                {report.curves && <SpectrumChart curves={report.curves} />}
+                {report.detail && <SubTimeline report={report} onJump={onJump} />}
+                <References report={report} projectId={projectId} />
+              </>
+            )}
+
+            {current === 'intern' && internJob && <InternLog job={internJob} />}
+            {current === 'compare' && intern.comparison && <InternCompare comparison={intern.comparison} />}
+          </div>
+        )
+      })()}
     </>
   )
 

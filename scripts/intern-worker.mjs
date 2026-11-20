@@ -113,6 +113,8 @@ function reporter(jobId) {
       await send({ stage })
       if (cancelled) throw new Cancelled('The job was stopped')
     },
+    /** A line of the step log inside the current stage: what was found or set. */
+    async note(text) { log(`[${jobId.slice(0, 8)}]   ${text}`); await send({ step: String(text).slice(0, 300) }) },
     check() { if (cancelled) throw new Cancelled('The job was stopped') },
     report: send,
   }
@@ -229,6 +231,7 @@ async function awake(report) {
 // ── One job ──────────────────────────────────────────────────────────────────
 
 const bandLabel = key => MIX_BANDS.find(b => b.key === key)?.label ?? key
+const signedDb = x => (typeof x === 'number' && Number.isFinite(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)} dB` : '?')
 
 /** A band this far from the handed mix means the bounce is not that mix (Mix Check itself writes a note at 2.5 dB). */
 const DRIFT_DB = 2.5
@@ -266,6 +269,7 @@ async function runJob(claim) {
     const found = pickProject([song.title, song.audio_filename, ...(song.filenames ?? [])].filter(Boolean), projects)
     if (found.error) throw new Giveup(found.error)
     log('project:', basename(found.path), found.others?.length ? `(also matched: ${found.others.map(p => basename(p)).join(', ')})` : '')
+    await report.note(`Found ${basename(found.path)} among ${projects.length} projects`)
 
     await report.stage('Copying the project')
     const copy = join(dir, `${basename(found.path, '.logicx')} (intern).logicx`)
@@ -291,6 +295,9 @@ async function runJob(claim) {
     // mix, and tracks are muted, the bounce is tried with them on, and the
     // state that reproduces the handed mix is the one worked on.
     const unmuted = []
+    await report.note(driftDb(judge0.bands) >= DRIFT_DB
+      ? `Measured it: not ${song.version_label} (${projectDrift(judge0.bands)})`
+      : `Measured it: it is ${song.version_label} (every band within ${driftDb(judge0.bands).toFixed(1)} dB)`)
     if (driftDb(judge0.bands) >= DRIFT_DB) {
       const { muted, soloed } = await logic.silenced()
       log('not the handed mix:', projectDrift(judge0.bands), '| muted:', muted.map(m => m.name).join(', ') || 'none', '| soloed:', soloed.map(m => m.name).join(', ') || 'none')
@@ -301,8 +308,15 @@ async function runJob(claim) {
         await logic.bounce(again)
         const judged = await judge({ job: claim, bounce: again, handled, ffmpeg: FFMPEG })
         await writeFile(join(dir, 'judge-0-unmuted.json'), JSON.stringify(judged, null, 2))
-        if (driftDb(judged.bands) < driftDb(judge0.bands) - 0.5) { bounce0 = again; judge0 = judged; unmuted.push(...muted.map(m => m.name)) }
-        else await logic.setMuted(muted, true)
+        if (driftDb(judged.bands) < driftDb(judge0.bands) - 0.5) {
+          bounce0 = again; judge0 = judged; unmuted.push(...muted.map(m => m.name))
+          await report.note(driftDb(judged.bands) >= DRIFT_DB
+            ? `Closer with ${unmuted.join(', ')} on, but still not ${song.version_label}`
+            : `With ${unmuted.join(', ')} on it is ${song.version_label} (every band within ${driftDb(judged.bands).toFixed(1)} dB)`)
+        } else {
+          await logic.setMuted(muted, true)
+          await report.note('No closer with them on: muted again')
+        }
       }
     }
     // Still not the mix: fixing it would upload something the owner did not make.
@@ -326,14 +340,24 @@ async function runJob(claim) {
     // A track stack's own export is its tracks added up: set it aside, or they count twice.
     const sums = new Set(await logic.sumTracks())
     await mkdir(join(dir, 'sums'), { recursive: true })
+    let exported = 0
     for (const f of await readdir(tracksDir)) {
+      exported++
       if (sums.has(basename(f, extname(f)))) await rename(join(tracksDir, f), join(dir, 'sums', f))
     }
+    await report.note(`${exported} tracks exported${sums.size ? `; ${sums.size} are track stacks, the sum of their tracks, and were set aside` : ''}`)
 
     await report.stage('Choosing the moves')
     let planned = await plan({ job: now, tracksDir, mix: bounce0, ffmpeg: FFMPEG })
     await writeFile(join(dir, 'plan.json'), JSON.stringify(planned, null, 2))
     log('tracks vs mix:', planned.sumVsMix?.map(b => `${b.key} ${b.db}`).join(', ') ?? 'n/a')
+    // Who carries each band the notes are about, and what the moves are predicted to do.
+    for (const key of [...new Set(planned.moves.map(m => m.band))]) {
+      const carriers = planned.tracks.filter(t => t.share[key] >= 0.05).sort((a, b) => b.share[key] - a.share[key]).slice(0, 4)
+      await report.note(`${bandLabel(key)} is carried by ${carriers.map(t => `${t.name} ${Math.round(t.share[key] * 100)}%`).join(', ')}`)
+      const p = planned.predicted.find(x => x.key === key)
+      if (p?.before != null && p.after != null) await report.note(`Predicted: ${bandLabel(key).toLowerCase()} ${signedDb(p.before)} → ${signedDb(p.after)} against ${song.baseline?.label ?? 'the earlier mix'}`)
+    }
     if (!planned.moves.length) {
       const why = planned.skipped.filter(s => s.code && open.includes(s.code)).map(s => s.why)[0] ?? 'no move within its limits answers these notes'
       throw new Giveup(`Nothing changed: ${why}`)
@@ -342,7 +366,12 @@ async function runJob(claim) {
     let verdict = null, bounce = null, changes = []
     for (let round = 0; round <= MAX_REFINES; round++) {
       await report.stage(round === 0 ? 'Making the moves in Logic' : `Resizing the moves (try ${round + 1})`)
-      await logic.applyMoves(planned.moves)
+      const set = await logic.applyMoves(planned.moves)
+      for (const m of set) {
+        await report.note(m.kind === 'level'
+          ? `${m.track}: Gain added last in the strip, set to ${signedDb(m.gain)}`
+          : `${m.track}: Channel EQ added last in the strip, Peak 1 at ${m.hz} Hz, Q ${m.q}, ${signedDb(m.gain)}`)
+      }
       changes = planned.changes
       await report.report({ changes })
       await report.stage(round === 0 ? 'Bouncing' : `Bouncing again (try ${round + 1})`)
@@ -352,6 +381,8 @@ async function runJob(claim) {
       verdict = await judge({ job: now, bounce, handled: open, ffmpeg: FFMPEG })
       await writeFile(join(dir, `judge-${round + 1}.json`), JSON.stringify(verdict, null, 2))
       log('judge:', { keep: verdict.keep, cleared: verdict.cleared, remaining: verdict.remaining, appeared: verdict.appeared })
+      const moved = verdict.bands.filter(b => open.includes(`changed.${b.key}`)).map(b => `${bandLabel(b.key).toLowerCase()} ${signedDb(judge0.bands.find(x => x.key === b.key)?.after)} → ${signedDb(b.after)}`)
+      await report.note(`Measured: ${moved.join(', ')}; ${verdict.remaining.length ? 'still a note' : 'the note is gone'}${verdict.appeared.length ? `; new: ${verdict.appeared.join(', ')}` : '; nothing new'}`)
       if (verdict.keep) break
       if (verdict.appeared.length) break // resizing does not un-make a new note
       const next = refine({ plan: planned, judge: verdict })
@@ -390,6 +421,7 @@ async function runJob(claim) {
     // with the mix the notes were written against, not with the mix it fixes.
     await report.report({ result_version_id: versionId, changes })
 
+    await report.note(`Filed as ${names.label}`)
     await report.stage('Running Mix Check on the new version')
     const checked = await serverCheck(versionId, report)
     const final = judgeFix(had, checked.findings ?? [], open)
@@ -398,6 +430,7 @@ async function runJob(claim) {
       const what = final.appeared.length ? `Mix Check found a new note on it (${final.appeared.join(', ')})` : `${final.remaining.join(', ')} did not clear`
       throw new Giveup(`The new version was taken back: ${what}`)
     }
+    await report.note(`Mix Check kept it: ${final.cleared.length} note${final.cleared.length === 1 ? '' : 's'} cleared, nothing new`)
     await report.report({ status: 'done', stage: 'Done', changes })
     log(`[${job.id.slice(0, 8)}] done: version ${versionId}`)
     uploaded = null; versionId = null

@@ -27,12 +27,62 @@ check('the diagnostics probe is gone (the helper replaced it)',
   !api.includes('/api/intern/diagnostics') && !/InternDiagnostics/.test(read('ios/mixBase/Services/AuthService.swift')))
 check('the app hands over, reads and stops through the same route as the web',
   /func handToIntern/.test(api) && /func stopIntern/.test(api) && api.includes('/api/versions/\\(versionId.postgresString)/intern')
-  && (panel.match(/\/api\/versions\/\$\{versionId\}\/intern/g) ?? []).length === 3)
+  && (panel.match(/\/api\/versions\/\$\{versionId\}\/intern/g) ?? []).length === 2)
 check('both clients say "waiting for your Mac" when no helper has taken the job',
   /Waiting for your Mac/.test(panel) && /Waiting for your Mac/.test(card))
 check('both clients have Stop, the stage and the change list',
-  /Stop/.test(panel) && /job\.stage/.test(panel) && /<ChangeList/.test(panel) && /Button\("Stop"\)/.test(card) && /job\.stage/.test(card) && /changeList\(/.test(card))
-check('the genre note is never offered to the intern', /f\.code !== 'genre\.balance'/.test(read('src/components/MixCheck.tsx')) && /\$0\.code != "genre\.balance"/.test(card))
+  /Stop/.test(panel) && /job\.stage/.test(panel) && /job\.changes\.map/.test(panel) && /Button\("Stop", action: onStop\)/.test(card) && /job\.stage/.test(card) && /ForEach\(changes\)/.test(card))
+const webCard = read('src/components/MixCheck.tsx')
+check('both clients lay the card out in the same tabs: Notes, Balance, Intern, Compare',
+  ["'notes'", "'balance'", "'intern'", "'compare'"].every(k => webCard.includes(k)) && /role="tablist"/.test(webCard)
+  && /case notes, balance, intern, compare/.test(card) && /\.pickerStyle\(\.segmented\)/.test(card))
+check('the Intern and Compare tabs only appear when there is something in them',
+  /\.\.\.\(internJob \? \[\{ key: 'intern'/.test(webCard) && /\.\.\.\(intern\.comparison \? \[\{ key: 'compare'/.test(webCard)
+  && /if internJob != nil \{ out\.append\(\.intern\) \}/.test(card) && /if intern\?\.comparison != nil \{ out\.append\(\.compare\) \}/.test(card))
+check('neither client works the comparison out: it is drawn from what the server sends',
+  !/vsPrevious/.test(panel) && /let comparison: InternComparison\?/.test(api) && /internComparison\(/.test(handoff))
+check('the genre note is never offered to the intern', !/genre\.balance/.test(panel) && /NEVER_HANDED = \(code: string\) => code === 'genre\.balance'/.test(read('src/lib/intern-jobs.ts')))
+
+console.log('\nintern: the step log and the comparison\n')
+{
+  const { withSteps, internComparison, sanitizeReport, INTERN_MAX_STEPS } = await import('../src/lib/intern-jobs.ts')
+  let steps = withSteps([], { stage: 'Bouncing' }, 't1')
+  steps = withSteps(steps, { stage: 'Bouncing' }, 't2')           // a heartbeat repeats the stage
+  steps = withSteps(steps, { step: 'Measured it' }, 't3')
+  steps = withSteps(steps, { stage: 'Bouncing' }, 't4')           // …still the same stage, after a detail
+  steps = withSteps(steps, { stage: 'Uploading', step: 'Filed' }, 't5')
+  check('a stage is logged once however often it is reported, details every time',
+    JSON.stringify(steps.map(s => [s.text, !!s.detail])) === JSON.stringify([['Bouncing', false], ['Measured it', true], ['Uploading', false], ['Filed', true]]), JSON.stringify(steps))
+  check('junk already in the log is dropped, and the log is capped',
+    withSteps([{ text: 5 }, null, 'x'], { step: 'ok' }, 't').length === 1
+    && withSteps(Array.from({ length: 200 }, (_, i) => ({ at: 't', text: `s${i}`, detail: true })), { step: 'last' }, 't').length === INTERN_MAX_STEPS)
+  check('a report may carry a step line, cut to length', sanitizeReport({ step: 'x'.repeat(900) })?.step?.length === 300 && sanitizeReport({ step: '  ' }) === null)
+  check('the step log has its own column, healed if a deploy beats the migration',
+    /add column if not exists steps jsonb/.test(read('supabase/migrations/048_intern_job_steps.sql')) && /ensureInternStepsColumn/.test(read('src/app/api/intern/jobs/[id]/route.ts')) && /ensureInternStepsColumn/.test(handoff))
+  check('a failed write of the log never fails the report itself', /if \(report\.stage \|\| report\.step\) await appendSteps/.test(read('src/app/api/intern/jobs/[id]/route.ts')) && /console\.error\('\[intern\] steps not written/.test(read('src/app/api/intern/jobs/[id]/route.ts')))
+
+  const band = (key, v) => ({ key, label: key, range: '', vsPrevious: v })
+  const from = { label: 'MASTER 5', report: { summary: { i: -9.6, tp: -1.7 }, compared: { previous: 'MASTER 4' }, bands: [band('sub', -5.8), band('mid', 0.1)],
+    findings: [{ code: 'changed.sub', severity: 'high', title: 'Sub dropped' }, { code: 'mono.low@95', severity: 'medium', title: 'Stereo 1:35' }, { code: 'mono.low@143', severity: 'medium', title: 'Stereo 2:23' }] } }
+  const to = { label: 'MASTER 5 (intern)', report: { summary: { i: -9.5, tp: -1.8 }, compared: { previous: 'MASTER 4' }, bands: [band('sub', -1.9), band('mid', 0.1)],
+    findings: [{ code: 'mono.low@96', severity: 'low', title: 'Stereo 1:36' }, { code: 'drop.quieter@46', severity: 'low', title: 'Quieter at 0:46' }] } }
+  const c = internComparison(from, to)
+  check('the comparison sets each band of the two mixes side by side, against the same earlier mix',
+    c?.against === 'MASTER 4' && c.bands[0].from === -5.8 && c.bands[0].to === -1.9 && c.loudness.from === -9.6 && c.loudness.to === -9.5 && c.truePeak.to === -1.8)
+  check('a note is cleared, still there (whatever second it moved to), or new',
+    JSON.stringify(c.notes.map(n => [n.state, n.before, n.after])) === JSON.stringify([['cleared', 'Sub dropped', null], ['cleared', 'Stereo 2:23', null], ['still', 'Stereo 1:35', 'Stereo 1:36'], ['new', null, 'Quieter at 0:46']]), JSON.stringify(c.notes))
+  const timed = (codes) => ({ label: 'x', report: { bands: [band('sub', 0)], findings: codes.map(code => ({ code, title: code })) } })
+  check('a timed note is the same note only near the same moment, matched to the nearest',
+    JSON.stringify(internComparison(timed(['mono.low@95', 'mono.low@143', 'drop.quieter@112']), timed(['mono.low@175', 'drop.quieter@46', 'mono.low@96'])).notes.map(n => [n.state, n.before, n.after]))
+    === JSON.stringify([['cleared', 'drop.quieter@112', null], ['still', 'mono.low@95', 'mono.low@96'], ['still', 'mono.low@143', 'mono.low@175'], ['new', null, 'drop.quieter@46']]))
+  const { internCanFix } = await import('../src/lib/intern-jobs.ts')
+  check('the button is offered only for a note the intern has a rule for',
+    internCanFix([{ code: 'mono.low@95' }, { code: 'changed.sub' }]) && !internCanFix([{ code: 'changed.loudness' }, { code: 'genre.balance' }, { code: 'balance.presence' }]) && !internCanFix(null)
+    && /can_hand: internCanFix/.test(handoff) && /canHand: answer\?\.can_hand === true/.test(panel) && /hasNotes: intern\.canHand == true/.test(card))
+  check('no comparison is made up when either mix has no full report', internComparison(from, { label: 'x', report: null }) === null && internComparison({ label: 'x', report: { bands: [] } }, to) === null)
+  check('"against" is only named when both were measured against the same mix',
+    internComparison(from, { ...to, report: { ...to.report, compared: { previous: 'MASTER 3' } } })?.against === null)
+}
 
 console.log('\nintern: jobs\n')
 {

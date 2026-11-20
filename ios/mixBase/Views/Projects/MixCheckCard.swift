@@ -12,6 +12,13 @@ import UniformTypeIdentifiers
 // drop that lands smaller than its breakdown, a low end that cancels in mono,
 // clipping).
 //
+// Opened, the card is tabbed so it never becomes one long scroll: Notes (the
+// findings), Balance (the band table, the spectrum, the sub timeline, the genre
+// references), and, once the mixing intern has been handed the mix, Intern
+// (what it changed and every step it took) and Compare (the handed mix beside
+// the intern's version). One line above the tabs carries the hand-off button
+// or where the job is.
+//
 // Nothing is measured or judged here. The app starts a check, polls it and
 // draws the report — the same routes and the same report the web uses, so a
 // check run on either shows on both. Every finding is also written into the
@@ -41,8 +48,27 @@ struct MixCheckCard: View {
     // runs, so the readout does not blink out and back.
     @State private var checkedLoudness: LoudnessMeasurement?
 
+    @State private var tab: MixCheckTab = .notes
+    // The mixing intern on this mix: nil until the first answer.
+    @State private var intern: MixbaseAPI.InternState?
+    @State private var internBusy = false
+    @State private var internProblem: String?
+    @State private var internWatcher: Task<Void, Never>?
+    // Whether this screen saw the job in flight: only then is its finish news.
+    @State private var sawInternActive = false
+
     private static let teal = Color(hex: "#2dd4bf")
     private static let ink = Color(hex: "#f0f0f0")
+
+    // The job the Intern tab is about: the one that made this version, else the newest on it.
+    private var internJob: MixbaseAPI.InternJob? { intern?.madeBy ?? intern?.job }
+
+    private var tabs: [MixCheckTab] {
+        var out: [MixCheckTab] = [.notes, .balance]
+        if internJob != nil { out.append(.intern) }
+        if intern?.comparison != nil { out.append(.compare) }
+        return out
+    }
 
     private var isRunning: Bool {
         if case .running? = status { return true }
@@ -93,26 +119,49 @@ struct MixCheckCard: View {
                     .foregroundColor(.red)
             case .some(.done(let report, _, _)):
                 summaryRow(report)
-                if expanded {
-                    MixCheckReportView(
-                        report: report,
-                        options: options,
-                        projectId: projectId,
-                        onJump: onJump
-                    )
-                }
             case .none:
                 // Not loaded yet.
                 EmptyView()
             }
 
-            // The intern is handed the measured notes, never the genre comparison.
-            if status != nil {
-                InternPanel(
-                    version: version,
-                    hasNotes: (report?.findings ?? []).contains { $0.code != "genre.balance" },
-                    onDone: onInternDone
+            // One line: the hand-off button (when there is a note the intern has a rule for) or where the job is.
+            if status != nil, let intern {
+                InternRow(
+                    state: intern,
+                    hasNotes: intern.canHand == true,
+                    busy: internBusy,
+                    problem: internProblem,
+                    onHand: handToIntern,
+                    onStop: stopIntern
                 )
+            }
+
+            if expanded, let report {
+                // A tab that is no longer offered falls back to Notes.
+                let current = tabs.contains(tab) ? tab : .notes
+                if tabs.count > 1 {
+                    Picker("Mix check", selection: Binding(get: { current }, set: { tab = $0 })) {
+                        ForEach(tabs, id: \.self) { item in
+                            Text(item.title(noteCount: (report.findings ?? []).count)).tag(item)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                switch current {
+                case .notes, .balance:
+                    MixCheckReportView(
+                        report: report,
+                        options: options,
+                        projectId: projectId,
+                        showing: current,
+                        onJump: onJump
+                    )
+                case .intern:
+                    if let internJob { InternLogView(job: internJob) }
+                case .compare:
+                    if let comparison = intern?.comparison { InternCompareView(comparison: comparison) }
+                }
             }
         }
         .padding(12)
@@ -121,9 +170,14 @@ struct MixCheckCard: View {
         .task {
             await load()
         }
+        .task {
+            await loadIntern()
+        }
         .onDisappear {
             watcher?.cancel()
             watcher = nil
+            internWatcher?.cancel()
+            internWatcher = nil
         }
     }
 
@@ -264,189 +318,307 @@ struct MixCheckCard: View {
         }
         status = .failed("The check is taking too long. Try again in a minute.")
     }
-}
 
-// MARK: - InternPanel
-// The mixing intern, on the Mix Check card. "Hand to the intern" files a job;
-// the work happens on the owner's Mac (the mixBASE Intern helper claims it,
-// fixes the measured notes in a COPY of the song's Logic project, bounces and
-// uploads the result as a new version). This only shows where that is:
-// waiting for the Mac, the stage it reports, what it changed, and Stop.
-// Nothing is measured or decided here, and it is the same routes as the web.
-struct InternPanel: View {
+    // MARK: The mixing intern
 
-    let version: Version
-    /// Whether this mix has notes to hand over (a finished check with findings).
-    let hasNotes: Bool
-    /// The intern finished and a new version is on the song.
-    let onDone: () -> Void
-
-    @State private var state: MixbaseAPI.InternState?
-    @State private var busy = false
-    @State private var problem: String?
-    @State private var watcher: Task<Void, Never>?
-    // Whether this screen saw the job in flight: only then is its finish news.
-    @State private var sawActive = false
-
-    private static let teal = Color(hex: "#2dd4bf")
-    private static let ink = Color(hex: "#f0f0f0")
-
-    private var job: MixbaseAPI.InternJob? { state?.job }
-
-    var body: some View {
-        Group {
-            if let state, hasNotes || state.job != nil || state.madeBy != nil {
-                VStack(alignment: .leading, spacing: 6) {
-                    header
-                    if let made = state.madeBy {
-                        Text("The intern made this version. What it changed in the Logic project (on a copy):")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                        changeList(made.changes ?? [])
-                    }
-                    detail
-                    if let problem {
-                        Text(problem).font(.caption2).foregroundColor(.red)
-                    }
-                }
-                .padding(10)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
-            }
-        }
-        .task { await load() }
-        .onDisappear {
-            watcher?.cancel()
-            watcher = nil
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "wand.and.stars")
-                .font(.caption2)
-                .foregroundColor(.gray)
-            Text("Mixing intern")
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(Self.ink)
-            Spacer()
-            if job?.isActive == true {
-                Button("Stop") { stop() }
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .disabled(busy)
-            } else if hasNotes {
-                Button(job?.status == "failed" ? "Try again" : "Hand to the intern") { hand() }
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(Self.teal)
-                    .disabled(busy)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        if let job {
-            if job.isWaiting {
-                Text("Waiting for your Mac. It starts when the Mac is on, unlocked and running mixBASE Intern.")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-            } else if job.status == "working" {
-                HStack(spacing: 6) {
-                    ProgressView().tint(Self.teal).scaleEffect(0.6)
-                    Text(job.stage ?? "Working")
-                        .font(.caption2)
-                        .foregroundColor(Self.ink)
-                }
-                changeList(job.changes ?? [])
-            } else if job.status == "done" {
-                Text("Done. The fixed mix is on the song as a new version, checked again.")
-                    .font(.caption2)
-                    .foregroundColor(Self.ink)
-                changeList(job.changes ?? [])
-            } else if job.status == "failed" {
-                Text(job.error ?? "The intern could not finish.")
-                    .font(.caption2)
-                    .foregroundColor(.orange)
-            } else if job.status == "cancelled" {
-                Text("Stopped. Nothing was uploaded.")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-            }
-        } else if state?.madeBy == nil {
-            Text("Fixes the measured notes in a copy of the Logic project on your Mac, bounces it and adds the result as a new version. Your project is not touched.")
-                .font(.caption2)
-                .foregroundColor(.gray)
-        }
-    }
-
-    private func changeList(_ changes: [MixbaseAPI.InternChange]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(changes) { change in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(change.track).foregroundColor(Self.ink)
-                    Text([change.what, change.to].compactMap { $0 }.joined(separator: " ")).foregroundColor(.gray)
-                }
-                .font(.caption2)
-            }
-        }
-    }
-
-    // MARK: Talking to the server
-
-    private func show(_ next: MixbaseAPI.InternState) {
-        state = next
+    private func showIntern(_ next: MixbaseAPI.InternState) {
+        intern = next
         if next.job?.isActive == true {
-            sawActive = true
-        } else if next.job?.status == "done", sawActive {
-            sawActive = false
-            onDone()
+            sawInternActive = true
+        } else if next.job?.status == "done", sawInternActive {
+            sawInternActive = false
+            onInternDone()
         }
     }
 
-    private func load() async {
-        guard let current = try? await MixbaseAPI.shared.internState(versionId: version.id) else { return }
-        show(current)
-        if current.job?.isActive == true { watch() }
+    private func loadIntern() async {
+        guard let current = try? await MixbaseAPI.shared.internState(versionId: version.id) else {
+            // Not being able to ask is not "nothing to hand over": show the row anyway.
+            if intern == nil { intern = MixbaseAPI.InternState(job: nil, madeBy: nil, comparison: nil, canHand: nil) }
+            return
+        }
+        showIntern(current)
+        if current.job?.isActive == true { watchIntern() }
     }
 
-    private func hand() {
-        busy = true
-        problem = nil
+    private func handToIntern() {
+        internBusy = true
+        internProblem = nil
         Task {
             do {
-                show(try await MixbaseAPI.shared.handToIntern(versionId: version.id))
-                watch()
+                _ = try await MixbaseAPI.shared.handToIntern(versionId: version.id)
+                // Read it back whole: the answer to a hand-off carries the job alone.
+                showIntern(try await MixbaseAPI.shared.internState(versionId: version.id))
+                withAnimation(.easeOut(duration: 0.15)) {
+                    expanded = true
+                    tab = .intern
+                }
+                watchIntern()
             } catch {
-                problem = error.localizedDescription
+                internProblem = error.localizedDescription
             }
-            busy = false
+            internBusy = false
         }
     }
 
-    private func stop() {
-        busy = true
+    private func stopIntern() {
+        internBusy = true
         Task {
-            if let next = try? await MixbaseAPI.shared.stopIntern(versionId: version.id) { show(next) }
-            busy = false
+            _ = try? await MixbaseAPI.shared.stopIntern(versionId: version.id)
+            if let next = try? await MixbaseAPI.shared.internState(versionId: version.id) { showIntern(next) }
+            internBusy = false
         }
     }
 
     // Follow the job until it is no longer in flight. A job can sit waiting
     // for the Mac for a long time, so this keeps asking while the screen is open.
-    private func watch() {
-        watcher?.cancel()
-        watcher = Task {
+    private func watchIntern() {
+        internWatcher?.cancel()
+        internWatcher = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 if Task.isCancelled { return }
                 guard let current = try? await MixbaseAPI.shared.internState(versionId: version.id) else { continue }
                 if Task.isCancelled { return }
-                show(current)
+                showIntern(current)
                 if current.job?.isActive != true { return }
             }
         }
+    }
+}
+
+// MARK: - Tabs
+
+enum MixCheckTab: Hashable {
+    case notes, balance, intern, compare
+
+    func title(noteCount: Int) -> String {
+        switch self {
+        case .notes: return noteCount > 0 ? "Notes \(noteCount)" : "Notes"
+        case .balance: return "Balance"
+        case .intern: return "Intern"
+        case .compare: return "Compare"
+        }
+    }
+}
+
+// MARK: - The mixing intern
+// "Hand to the intern" files a job; the work happens on the owner's Mac (the
+// mixBASE Intern helper claims it, fixes the measured notes in a COPY of the
+// song's Logic project, bounces and uploads the result as a new version).
+// Three pieces, so the card stays one tidy thing:
+//   InternRow          one line, always there: the button, or where the job is, and Stop
+//   InternLogView      the Intern tab: what it changed, and every step it took
+//   InternCompareView  the Compare tab: the handed mix beside the intern's version
+// Nothing is measured or decided here: the steps are what the Mac reported and
+// the comparison comes from the server, the same routes as the web.
+
+private struct InternRow: View {
+
+    let state: MixbaseAPI.InternState
+    /// Whether this mix has a note the intern has a rule for.
+    let hasNotes: Bool
+    let busy: Bool
+    let problem: String?
+    let onHand: () -> Void
+    let onStop: () -> Void
+
+    private static let teal = Color(hex: "#2dd4bf")
+    private static let ink = Color(hex: "#f0f0f0")
+
+    private var job: MixbaseAPI.InternJob? { state.job }
+
+    var body: some View {
+        if hasNotes || state.job != nil || state.madeBy != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    line
+                        .font(.caption2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    if job?.isActive == true {
+                        Button("Stop", action: onStop)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .disabled(busy)
+                    } else if hasNotes {
+                        Button(job?.status == "failed" ? "Try again" : "Hand to the intern", action: onHand)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Self.teal)
+                            .disabled(busy)
+                    }
+                }
+                if let problem {
+                    Text(problem).font(.caption2).foregroundColor(.red)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var line: some View {
+        if let job, job.isWaiting {
+            Text("Waiting for your Mac: on, unlocked and running mixBASE Intern").foregroundColor(.gray)
+        } else if let job, job.status == "working" {
+            Text(job.stage ?? "Working").foregroundColor(Self.ink)
+        } else if let job, job.status == "failed" {
+            Text(job.error ?? "The intern could not finish.").foregroundColor(.orange)
+        } else if let job, job.status == "done" {
+            Text("Fixed version added to the song").foregroundColor(Self.ink)
+        } else if let job, job.status == "cancelled" {
+            Text("Stopped. Nothing was uploaded.").foregroundColor(.gray)
+        } else if state.madeBy != nil {
+            Text("The intern made this version").foregroundColor(Self.ink)
+        } else {
+            Text("Fixes the measured notes in a copy of the Logic project").foregroundColor(.gray)
+        }
+    }
+}
+
+private struct InternLogView: View {
+
+    let job: MixbaseAPI.InternJob
+
+    private static let ink = Color(hex: "#f0f0f0")
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .medium
+        return f
+    }()
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private func time(_ at: String) -> String {
+        guard let date = Self.iso.date(from: at) ?? ISO8601DateFormatter().date(from: at) else { return "" }
+        return Self.clock.string(from: date)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let changes = job.changes ?? []
+            if !changes.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    heading("WHAT IT CHANGED (IN A COPY)")
+                    ForEach(changes) { change in
+                        (Text(change.track).foregroundColor(Self.ink)
+                         + Text("  " + [change.what, change.to].compactMap { $0 }.joined(separator: " ")).foregroundColor(.gray))
+                            .font(.caption2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                heading(job.device.map { "STEPS · \($0.uppercased())" } ?? "STEPS")
+                let steps = job.steps ?? []
+                if steps.isEmpty {
+                    Text(job.status == "queued" ? "Not started yet." : "No step log for this job.")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                } else {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                        if step.detail == true {
+                            Text(step.text)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                                .padding(.leading, 12)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(step.text).foregroundColor(Self.ink)
+                                Spacer(minLength: 4)
+                                Text(time(step.at)).foregroundColor(.gray).monospacedDigit()
+                            }
+                            .font(.caption2)
+                            .padding(.top, 3)
+                        }
+                    }
+                }
+            }
+            if job.status == "failed", let error = job.error {
+                Text(error).font(.caption2).foregroundColor(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func heading(_ text: String) -> some View {
+        Text(text).font(.system(size: 9)).tracking(0.8).foregroundColor(.gray)
+    }
+}
+
+private struct InternCompareView: View {
+
+    let comparison: MixbaseAPI.InternComparison
+
+    private static let ink = Color(hex: "#f0f0f0")
+    private static let teal = Color(hex: "#2dd4bf")
+
+    private func signed(_ x: Double?) -> String {
+        guard let x else { return "·" }
+        return (x > 0 ? "+" : x < 0 ? "−" : "") + String(format: "%.1f", abs(x))
+    }
+    private func plain(_ x: Double?) -> String { x.map { String(format: "%.1f", $0) } ?? "·" }
+    private func delta(_ pair: (Double?, Double?)) -> Double? {
+        guard let a = pair.0, let b = pair.1 else { return nil }
+        return ((b - a) * 10).rounded() / 10
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Grid(alignment: .trailing, horizontalSpacing: 10, verticalSpacing: 5) {
+                GridRow {
+                    Text(comparison.against.map { "dB vs \($0)" } ?? "Band, dB")
+                        .gridColumnAlignment(.leading)
+                    Text(comparison.from).lineLimit(1)
+                    Text(comparison.to).lineLimit(1)
+                    Text("Change")
+                }
+                .font(.system(size: 9))
+                .foregroundColor(.gray)
+                ForEach(comparison.bands) { band in
+                    row(band.label, signed(band.from), signed(band.to), delta((band.from, band.to)))
+                }
+                Divider().gridCellColumns(4)
+                row("Loudness, LUFS", plain(comparison.loudness.from), plain(comparison.loudness.to), delta((comparison.loudness.from, comparison.loudness.to)))
+                row("True peak, dB", plain(comparison.truePeak.from), plain(comparison.truePeak.to), delta((comparison.truePeak.from, comparison.truePeak.to)))
+            }
+            if !comparison.notes.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(comparison.notes.enumerated()), id: \.offset) { _, note in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(note.state == "cleared" ? "CLEARED" : note.state == "new" ? "NEW" : "STILL")
+                                .font(.system(size: 9))
+                                .foregroundColor(note.state == "cleared" ? Self.teal : note.state == "new" ? .orange : .gray)
+                                .frame(width: 48, alignment: .leading)
+                            Text((note.state == "cleared" ? note.before : note.after) ?? "")
+                                .font(.caption2)
+                                .strikethrough(note.state == "cleared")
+                                .foregroundColor(note.state == "cleared" ? .gray : Self.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(_ name: String, _ from: String, _ to: String, _ change: Double?) -> some View {
+        GridRow {
+            Text(name).foregroundColor(Self.ink).gridColumnAlignment(.leading)
+            Text(from).foregroundColor(.gray)
+            Text(to).foregroundColor(Self.ink)
+            Text(signed(change))
+                .fontWeight(.medium)
+                .foregroundColor(abs(change ?? 0) >= 1 ? Self.ink : .gray)
+        }
+        .font(.caption2.monospacedDigit())
     }
 }
 
@@ -499,36 +671,50 @@ private struct MixCheckReportView: View {
     let report: MixbaseAPI.MixCheckReport
     let options: MixbaseAPI.MixCheckOptions?
     let projectId: UUID
+    /// Which half to draw: the findings (.notes) or the measurements behind them (.balance).
+    let showing: MixCheckTab
     let onJump: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             let findings = report.findings ?? []
-            if !findings.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(findings) { finding in
-                        findingRow(finding)
+            if showing == .balance {
+                if let bands = report.bands, !bands.isEmpty {
+                    MixCheckBandTable(bands: bands, compared: report.compared)
+                }
+
+                if let curves = report.curves {
+                    MixCheckSpectrum(curves: curves, hz: options?.thirdOctaveHz ?? [])
+                }
+
+                if let detail = report.detail, detail.timeline.sub.count >= 10 {
+                    MixCheckSubTimeline(detail: detail, findings: findings)
+                }
+
+                MixCheckReferences(
+                    compared: report.compared,
+                    families: options?.families ?? [],
+                    projectId: projectId
+                )
+            } else {
+                if findings.isEmpty {
+                    Text("Nothing measurable stands out.")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(findings) { finding in
+                            findingRow(finding)
+                        }
                     }
                 }
+                footnote
             }
+        }
+    }
 
-            if let bands = report.bands, !bands.isEmpty {
-                MixCheckBandTable(bands: bands, compared: report.compared)
-            }
-
-            if let curves = report.curves {
-                MixCheckSpectrum(curves: curves, hz: options?.thirdOctaveHz ?? [])
-            }
-
-            if let detail = report.detail, detail.timeline.sub.count >= 10 {
-                MixCheckSubTimeline(detail: detail, findings: findings)
-            }
-
-            MixCheckReferences(
-                compared: report.compared,
-                families: options?.families ?? [],
-                projectId: projectId
-            )
+    private var footnote: some View {
+        VStack(alignment: .leading, spacing: 0) {
 
             Text("Measured from the stereo file, so it finds what can be measured and not what is a matter of taste. Tick a note off in the Mix Session and a later check will leave it alone.")
                 .font(.caption2)

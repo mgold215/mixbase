@@ -224,6 +224,9 @@ drop policy if exists "users_read_own_intern_jobs" on public.mb_intern_jobs;
 create policy "users_read_own_intern_jobs" on public.mb_intern_jobs
   for select using (user_id = auth.uid());
 
+-- Migration 048: the mixing intern's step log
+alter table public.mb_intern_jobs add column if not exists steps jsonb not null default '[]'::jsonb;
+
 -- Collections tables (idempotent)
 create table if not exists mb_collections (
   id uuid primary key default gen_random_uuid(),
