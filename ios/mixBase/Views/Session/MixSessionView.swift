@@ -26,6 +26,11 @@ struct MixSessionView: View {
     @State private var organizing: OrganizeTarget?
     @State private var plan: MixbaseAPI.SessionPlan?
     @State private var shareText: ShareText?
+    // The intern hand-off for the whole session; nil until loaded, and always nil for non-owners.
+    @State private var handoff: MixbaseAPI.SessionHandoff?
+    @State private var handingOver = false
+    @State private var handoffMessage: String?
+    @State private var showHandoffSongs = false
 
     private enum OrganizeTarget: Equatable {
         case all
@@ -87,6 +92,14 @@ struct MixSessionView: View {
         .task {
             if session == nil { await load() }
         }
+        // While the Mac has work, keep the intern's lines current.
+        .task(id: handoff?.inFlightCount ?? 0) {
+            while (handoff?.inFlightCount ?? 0) > 0 {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                if Task.isCancelled { return }
+                await refreshHandoff()
+            }
+        }
     }
 
     // MARK: - Content
@@ -121,6 +134,10 @@ struct MixSessionView: View {
                                 .foregroundColor(.gray)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
+                        }
+
+                        if let handoff, !handoff.songs.isEmpty {
+                            internCard(handoff)
                         }
 
                         if let plan {
@@ -218,6 +235,127 @@ struct MixSessionView: View {
                 .foregroundColor(.gray)
         }
         .padding(.horizontal)
+    }
+
+    // MARK: - The intern (owner only)
+
+    private func minutesText(_ minutes: Int) -> String {
+        if minutes < 60 { return "about \(minutes) min" }
+        let hours = Double(minutes) / 60
+        return hours == hours.rounded() ? "about \(Int(hours)) hr" : String(format: "about %.1f hr", hours)
+    }
+
+    private func handoffSummary(_ h: MixbaseAPI.SessionHandoff) -> String {
+        var text: String
+        if h.readyCount > 0 {
+            text = "\(h.readyCount) \(h.readyCount == 1 ? "song has" : "songs have") notes the intern can fix, \(minutesText(h.minutes)) on your Mac"
+            text += h.inFlightCount > 0 ? " with the \(h.inFlightCount) already handed over." : "."
+        } else if h.inFlightCount > 0 {
+            text = "The intern has \(h.inFlightCount) \(h.inFlightCount == 1 ? "song" : "songs"), \(minutesText(h.minutes)) left on your Mac."
+        } else {
+            text = "None of the open notes are ones the intern has a fix for yet."
+        }
+        if h.leftCount > 0 {
+            text += " \(h.leftCount) \(h.leftCount == 1 ? "song is" : "songs are") left for you."
+        }
+        return text
+    }
+
+    private func internCard(_ h: MixbaseAPI.SessionHandoff) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("The intern")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color(hex: "#f0f0f0"))
+                Spacer()
+                Button(action: { withAnimation(.easeOut(duration: 0.15)) { showHandoffSongs.toggle() } }) {
+                    Text(showHandoffSongs ? "Hide songs" : "Show songs")
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(teal)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(handoffSummary(h))
+                .font(.caption)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: { Task { await handAllToIntern() } }) {
+                HStack(spacing: 8) {
+                    if handingOver {
+                        ProgressView()
+                            .tint(Color(hex: "#080808"))
+                        Text("Handing over…")
+                    } else {
+                        Image(systemName: "wand.and.stars")
+                        Text(h.readyCount > 1 ? "Hand all \(h.readyCount) to the intern" : "Hand to the intern")
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color(hex: "#080808"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(h.readyCount == 0 || handingOver ? Color.gray.opacity(0.4) : teal)
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
+            .disabled(h.readyCount == 0 || handingOver)
+
+            if let handoffMessage {
+                Text(handoffMessage)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+
+            if showHandoffSongs {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(h.songs) { song in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(song.title) \(song.versionLabel)")
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(Color(hex: "#f0f0f0"))
+                                .lineLimit(1)
+                            Text(song.line)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(hex: "#111111"))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+
+    private func refreshHandoff() async {
+        // A missed refresh is harmless: the card keeps what it last showed.
+        if let fresh = try? await MixbaseAPI.shared.sessionHandoff() {
+            handoff = fresh
+        }
+    }
+
+    private func handAllToIntern() async {
+        handingOver = true
+        handoffMessage = nil
+        defer { handingOver = false }
+        do {
+            let result = try await MixbaseAPI.shared.handSessionToIntern()
+            handoff = result
+            showHandoffSongs = true
+            let handed = result.handed ?? 0, failed = result.failed ?? 0
+            if failed > 0 {
+                handoffMessage = "Handed over \(handed). \(failed) could not be started; try those again."
+            } else if handed > 0 {
+                handoffMessage = "Handed over \(handed) \(handed == 1 ? "song" : "songs"). Your Mac takes them one at a time."
+            } else {
+                handoffMessage = "Nothing new to hand over."
+            }
+        } catch {
+            handoffMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Song card
@@ -505,6 +643,7 @@ struct MixSessionView: View {
             loadError = nil
             errorMessage = nil
             onOpenCountChange?(fresh.songs.reduce(0) { $0 + $1.openCount })
+            await refreshHandoff()
         } catch {
             if session == nil {
                 loadError = error.localizedDescription

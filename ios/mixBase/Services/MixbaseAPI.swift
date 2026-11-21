@@ -2115,6 +2115,81 @@ final class MixbaseAPI {
         try await internRequest(versionId: versionId, method: "DELETE")
     }
 
+    // MARK: - Mix Session → the intern (owner only)
+    // One hand-off for the whole Mix Session: the server files a job for every
+    // song whose open notes the intern can fix, and names the songs it leaves
+    // for you (src/lib/mix-session-intern.ts decides; this only shows it).
+
+    struct SessionHandoff: Decodable, Equatable {
+        struct Song: Decodable, Equatable, Identifiable {
+            let versionId: UUID
+            let title: String
+            let versionLabel: String
+            /// "ready", "queued", "working" or "written-only" (the server's word).
+            let state: String
+            let stage: String?
+            let stalled: Bool
+
+            var id: UUID { versionId }
+
+            /// Where this song stands, as one line.
+            var line: String {
+                switch state {
+                case "ready": return "Ready to hand over"
+                case "written-only": return "Left for you: no measured note he has a fix for"
+                case "queued": return "Waiting for your Mac"
+                default:
+                    if stalled { return "Waiting for your Mac" }
+                    if let stage, !stage.isEmpty { return "Working: \(stage)" }
+                    return "Working"
+                }
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case title, state, stage, stalled
+                case versionId = "version_id"
+                case versionLabel = "version_label"
+            }
+        }
+
+        let songs: [Song]
+        /// Songs a hand-off would start a job for.
+        let readyCount: Int
+        /// Songs already waiting for the Mac or being worked on.
+        let inFlightCount: Int
+        /// Songs whose open notes the intern cannot act on.
+        let leftCount: Int
+        /// Roughly how long the Mac needs for everything ready and in flight.
+        let minutes: Int
+        /// Only on the answer to a hand-off: how many jobs it started, and how many it could not.
+        let handed: Int?
+        let failed: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case songs, minutes, handed, failed
+            case readyCount = "ready_count"
+            case inFlightCount = "in_flight_count"
+            case leftCount = "left_count"
+        }
+    }
+
+    /// What handing the whole session over would do. nil when this account is
+    /// not the owner: the route answers 404 and the screen shows nothing.
+    func sessionHandoff() async throws -> SessionHandoff? {
+        let (status, data) = try await send(path: "/api/mix-session/intern", method: "GET", contentType: nil, body: nil, timeout: 30)
+        if status == 404 { return nil }
+        guard (200...299).contains(status) else {
+            throw scrubbedError(statusCode: status, data: data)
+        }
+        return try decoder.decode(SessionHandoff.self, from: data)
+    }
+
+    /// Hand every ready song to the intern. Songs already handed over are left as they are.
+    func handSessionToIntern() async throws -> SessionHandoff {
+        let data = try await requestCore(path: "/api/mix-session/intern", method: "POST", contentType: nil, body: nil, timeout: 60)
+        return try decoder.decode(SessionHandoff.self, from: data)
+    }
+
     // MARK: - Loudness (Master Check)
 
     /// Persist a measured BS.1770-4 reading for one mix — the same endpoint and
