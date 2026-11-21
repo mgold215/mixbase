@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Image from 'next/image'
 import { Play, Pause, SkipBack, SkipForward, Download, MessageSquare, ChevronDown, PenLine, RotateCcw } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
-import { audioProxyUrl, formatDuration } from '@/lib/supabase'
+import { audioProxyUrl, formatDuration, storageThumbUrl } from '@/lib/supabase'
 import { audioDownloadFileName } from '@/lib/download'
 import { applyMediaSession } from '@/lib/media-session'
 import { announcePlay, announceStop, onOtherSourcePlay, claimMediaSession, ownsMediaSession, releaseMediaSession } from '@/lib/audio-coordinator'
@@ -473,7 +473,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
       <div className="relative flex-1 flex flex-col items-center justify-center gap-6 px-6 py-16">
         <div className="relative w-48 h-48 rounded-2xl overflow-hidden" style={{ backgroundColor: '#141414' }}>
           {coverUrl ? (
-            <Image src={coverUrl} alt={title} fill className="object-cover" unoptimized />
+            <Image src={storageThumbUrl(coverUrl, 400)} alt={title} fill className="object-cover" unoptimized />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
               <CassetteIcon size={56} className="text-[#333]" />
@@ -668,7 +668,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
             <div className="flex items-center gap-3.5 px-4 py-4 border-b border-white/10">
               <div className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0" style={{ backgroundColor: '#181818' }}>
                 {coverUrl ? (
-                  <Image src={coverUrl} alt={title} fill className="object-cover" unoptimized />
+                  <Image src={storageThumbUrl(coverUrl, 400)} alt={title} fill className="object-cover" unoptimized />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <CassetteIcon size={20} className="text-[#333]" />
@@ -743,7 +743,7 @@ export default function AlbumPlayer({ title, typeLabel, coverUrl, artistName, tr
                     {/* Per-track artwork */}
                     <span className={`relative w-10 h-10 rounded-md overflow-hidden flex-shrink-0 block ${playable ? '' : 'opacity-50'}`} style={{ backgroundColor: '#181818' }}>
                       {track.artworkUrl ? (
-                        <Image src={track.artworkUrl} alt="" fill className="object-cover" unoptimized />
+                        <Image src={storageThumbUrl(track.artworkUrl, 120)} alt="" fill className="object-cover" unoptimized />
                       ) : (
                         <span className="absolute inset-0 flex items-center justify-center">
                           <CassetteIcon size={14} className="text-[#333]" />
