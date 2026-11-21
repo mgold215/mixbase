@@ -90,6 +90,7 @@ const SUITES = [
   'intern-test.mjs',
   'intern-rules-test.mjs',
   'intern-find-test.mjs',
+  'mastering-rules-test.mjs',
   'loudness-compare-test.mjs',
   'loudness-auto-test.mjs',
   'project-delete-assets-test.mjs',

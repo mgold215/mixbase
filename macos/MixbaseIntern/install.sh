@@ -23,7 +23,7 @@ mkdir -p "$RUNTIME/scripts" "$RUNTIME/src/lib" "$RUNTIME/bin"
 rm -f "$RUNTIME"/scripts/intern-*.mjs
 cp "$REPO"/scripts/intern-*.mjs "$RUNTIME/scripts/"
 rm -f "$RUNTIME"/scripts/*-test.mjs
-cp "$REPO"/src/lib/intern-*.ts "$REPO"/src/lib/mix-check.ts "$REPO"/src/lib/mix-check-findings.ts "$REPO"/src/lib/loudness.ts "$RUNTIME/src/lib/"
+cp "$REPO"/src/lib/intern-*.ts "$REPO"/src/lib/mix-check.ts "$REPO"/src/lib/mix-check-findings.ts "$REPO"/src/lib/loudness.ts "$REPO"/src/lib/mastering-rules.ts "$RUNTIME/src/lib/"
 printf '{ "type": "module", "private": true }\n' > "$RUNTIME/package.json"
 # ffmpeg, the same build the server decodes with (npm ci puts it in node_modules).
 FFMPEG="$(cd "$REPO" && node --input-type=commonjs -e "process.stdout.write(require('@ffmpeg-installer/ffmpeg').path)" 2>/dev/null || true)"

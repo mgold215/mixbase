@@ -100,23 +100,37 @@ async function comparisonFor(job: Record<string, unknown>, userId: string) {
   return internComparison({ label: versionDisplayLabel(from), report: from.mix_check }, { label: versionDisplayLabel(to), report: to.mix_check })
 }
 
+/** How many notes a hand-off would carry: the same ones POST files (never the genre note, never a ticked-off one). */
+async function openNotesOn(version: { id: string; mix_check: { findings?: { code: string; severity?: string; note_id?: string | null }[] } | null }): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from('mb_feedback')
+    .select('id, reviewer_name, comment, timestamp_seconds, resolved_at')
+    .eq('version_id', version.id)
+  if (error) return 0
+  return notesForJob(data ?? [], version.mix_check?.findings ?? []).length
+}
+
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const g = await gate(request, ctx)
   if (g.error) return g.error
   const [job, made] = await Promise.all([newest(g.version.id, g.userId), madeBy(g.version.id, g.userId)])
   // The job this card is about: the one that made this version, else the newest on it.
   const subject = made ?? job
-  const [jobSteps, madeSteps, comparison] = await Promise.all([
+  const [jobSteps, madeSteps, comparison, openNotes] = await Promise.all([
     job ? stepsOf(job.id as string, g.userId) : [],
     made ? stepsOf(made.id as string, g.userId) : [],
     subject ? comparisonFor(subject, g.userId) : null,
+    openNotesOn(g.version),
   ])
   return NextResponse.json({
     job: job ? { ...jobView(job, Date.now()), steps: jobSteps } : null,
     made_by: made ? { ...jobView(made, Date.now()), steps: madeSteps } : null,
     comparison,
-    // Whether there is a note here the intern has a rule for: the clients offer the button on this.
-    can_hand: internCanFix(g.version.mix_check?.findings),
+    // The clients offer the button on this: any open note can be handed over (the
+    // owner, 2026-11-20: "hand off all to intern"). Each comes back fixed, tried, or
+    // left with the reason. `can_fix` says whether at least one has a rule today.
+    can_hand: openNotes > 0,
+    can_fix: internCanFix(g.version.mix_check?.findings),
   })
 }
 

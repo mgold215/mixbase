@@ -12,12 +12,16 @@ export const INTERN_STALL_MS = 4 * 60_000
 
 /**
  * Whether a mix has a note the intern has a rule for: a band that changed
- * since the previous version (`changed.<band>`; loudness is not a band). The
+ * since the previous version (`changed.<band>`; loudness is not a band) or a
+ * low end that is stereo (`mono.low@<sec>`, `changed.lowwidth`). It must agree
+ * with internHasRule in intern-rules.ts (scripts/intern-test.mjs checks). The
  * clients offer "Hand to the intern" on this, so the button is never there
  * for notes it would only skip.
  */
 export function internCanFix(findings: { code: string }[] | null | undefined): boolean {
-  return (findings ?? []).some(f => /^changed\.(?!loudness$)[A-Za-z]+$/.test(f.code))
+  return (findings ?? []).some(f => /^changed\.[A-Za-z]+$/.test(f.code) || /^mono\.low@\d+$/.test(f.code) || /^resonance\.\d+$/.test(f.code)
+    // …and the mastering engineer's (masteringHasRule): a band heavy or light against the catalog, a true peak over.
+    || /^balance\.[A-Za-z]+$/.test(f.code) || ['peak.over', 'peak.clip', 'changed.loudness', 'dc.offset', 'tail.cut'].includes(f.code))
 }
 
 /** The Mix Check byline (src/lib/mix-check-findings.ts MIX_CHECK_AUTHOR). */

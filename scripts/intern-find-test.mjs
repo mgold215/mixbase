@@ -49,7 +49,8 @@ check('…and a track that is really called that is not mistaken for one', strip
 console.log('\nintern: the helper\'s promises\n')
 const logic = read('scripts/intern-logic.mjs')
 check('only notices met for real are answered OK; any other message from Logic stops the job', /const NOTICES = \[\/last selected audio interface is not available\/i\]/.test(logic) && /Logic showed a message while opening the copy/.test(logic))
-check('Logic is never sent a typed key or a click by position', !/sys\.(key|type|click)/.test(logic))
+check('Logic is never sent a typed key; the one click is on a named pop-up and the one drag moves a plug-in window on screen, both with Logic in front',
+  !/sys\.(key|type)/.test(logic) && (logic.match(/sys\.click/g) ?? []).length === 1 && (logic.match(/sys\.drag/g) ?? []).length === 1 && /real: true/.test(logic) && /guard app\.isActive else/.test(read('macos/MixbaseIntern/Sources/AX.swift')) && /guard let app = logicApp\(\), app\.isActive else/.test(read('macos/MixbaseIntern/Sources/AX.swift')))
 check('the intern only adds its own plug-ins, last in the strip, and never bypasses or removes one',
   /empty\[0\]/.test(logic) && !/desc === 'bypass'|Remove|No Plug-in/.test(logic))
 check('the owner\'s open project is never answered for: unsaved changes stop the job', /unsaved changes\. Save or close it/.test(logic) && !/title: 'Save'/.test(logic))
@@ -64,7 +65,14 @@ check('it tells the server which version it uploaded before Mix Check runs on it
 check('a fix that does not hold is taken back', /api\(`\/api\/versions\/\$\{versionId\}`, \{ method: 'DELETE' \}\)/.test(worker))
 check('nothing is uploaded before the local judge keeps the bounce', worker.indexOf('if (!verdict.keep)') < worker.indexOf('await upload(song, bounce)'))
 check('a fix is judged against the project\'s own untouched bounce: a note it already had is not one the fix brought',
-  /const had = \[\.\.\.\(song\.findings \?\? \[\]\), \.\.\.judge0\.findings/.test(worker) && /judge\(\{ job: now, bounce, handled: open/.test(worker) && /judgeFix\(had, checked\.findings/.test(worker))
+  /const had = \[\.\.\.\(song\.findings \?\? \[\]\), \.\.\.judge0\.findings/.test(worker) && /judge\(\{ job: now, bounce, handled: attempted/.test(worker) && /judgeFix\(had, checked\.findings/.test(worker))
+check('a fix is judged on the notes a move was made for; a note the rules left alone is logged with its reason, not counted against it',
+  /attempted = \[\.\.\.new Set\(planned\.moves\.map\(m => m\.code\)\)\]/.test(worker) && /Left alone: /.test(worker) && /judgeFix\(had, checked\.findings \?\? \[\], handledHere\)/.test(worker))
+check('the mastering engineer works after the intern, on the output strip, and a move of its that does not hold is taken back',
+  worker.indexOf('planMastering(') > worker.indexOf('refine({ plan: planned') && /const out = await logic\.outputStrip\(\)/.test(worker) && /await logic\.applyMoves\(moves\.map\(neutral\)\)/.test(worker)
+  && /k\.desc === 'bounce'/.test(logic0))
+check('…and what it could not confirm from a bounce (the catalog comparison) never takes a version back',
+  /mastered\.map\(m => m\.code\)\.filter\(masteringJudgedLocally\)/.test(worker) && /the rest is yours/.test(worker))
 check('a project that no longer shows the notes is left alone', /no longer shows these notes/.test(worker))
 check('a bounce that is not the handed mix is never uploaded as a fix of it', /does not bounce to \$\{song\.version_label\}/.test(worker) && worker.indexOf('does not bounce to') < worker.indexOf('await upload(song, bounce)'))
 check('…but first it is tried with the muted tracks on, and the owner is told what was unmuted',

@@ -28,7 +28,8 @@ import { Readable } from 'node:stream'
 import { judge, plan, refine } from './intern-plan.mjs'
 import { internNames, listProjects, pickProject } from './intern-find.mjs'
 import { LogicProblem, createLogic } from './intern-logic.mjs'
-import { judgeFix } from '../src/lib/intern-rules.ts'
+import { describeMove, internHasRule, judgeFix } from '../src/lib/intern-rules.ts'
+import { deliverableProblems, masteringHasRule, masteringJudgedLocally, neutral, planMastering } from '../src/lib/mastering-rules.ts'
 import { MIX_BANDS } from '../src/lib/mix-check.ts'
 
 const SUPPORT = process.env.INTERN_SUPPORT ?? join(os.homedir(), 'Library/Application Support/MixbaseIntern')
@@ -39,7 +40,7 @@ const POLL_MS = 10_000
 /** How many times a bounce that missed is resized and tried again. */
 const MAX_REFINES = 3
 /** Working folders kept for the owner to look at; older ones are removed. */
-const KEEP_JOBS = 5
+const KEEP_JOBS = 12
 
 const log = (...a) => process.stderr.write(`${a.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')}\n`)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -132,13 +133,13 @@ function run(cmd, args) {
   })
 }
 
-async function pruneJobs(keepId) {
+async function pruneJobs(...keep) {
   let dirs = []
   try { dirs = await readdir(JOBS) } catch { return }
   const aged = []
   for (const d of dirs) { try { aged.push({ d, t: (await stat(join(JOBS, d))).mtimeMs }) } catch { /* gone */ } }
   aged.sort((a, b) => b.t - a.t)
-  for (const { d } of aged.slice(KEEP_JOBS)) if (d !== keepId) await rm(join(JOBS, d), { recursive: true, force: true })
+  for (const { d } of aged.slice(KEEP_JOBS)) if (!keep.includes(d)) await rm(join(JOBS, d), { recursive: true, force: true })
 }
 
 // ── What a job leaves beside the owner's files ──────────────────────────────
@@ -231,6 +232,8 @@ async function awake(report) {
 // ── One job ──────────────────────────────────────────────────────────────────
 
 const bandLabel = key => MIX_BANDS.find(b => b.key === key)?.label ?? key
+/** Notes only the server's Mix Check can confirm: a band against the artist's catalog. */
+const serverOnly = code => /^balance\.(?!lr$)/.test(String(code))
 const signedDb = x => (typeof x === 'number' && Number.isFinite(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)} dB` : '?')
 
 /** A band this far from the handed mix means the bounce is not that mix (Mix Check itself writes a note at 2.5 dB). */
@@ -245,7 +248,7 @@ export function projectDrift(bands) {
   if (!off.length) return null
   return off.slice(0, 3).map(b => `${bandLabel(b.key).toLowerCase()} ${b.after > b.before ? '+' : '−'}${Math.abs(b.after - b.before).toFixed(1)} dB`).join(', ')
 }
-const handledCodes = notes => notes.map(n => n.code).filter(c => typeof c === 'string' && MIX_BANDS.some(b => c === `changed.${b.key}`))
+const handledCodes = notes => notes.map(n => n.code).filter(c => internHasRule(c))
 
 async function runJob(claim) {
   const { job, song } = claim
@@ -257,22 +260,36 @@ async function runJob(claim) {
   try {
     if (!song) throw new Giveup('The mix this job was for is gone')
     const handled = handledCodes(job.notes ?? [])
-    if (!handled.length) throw new Giveup('None of these notes is one the intern has a rule for yet (it fixes a band that changed since the last version)')
+    // The mastering engineer's notes: whole-mix ones, answered on the output channel after the intern.
+    const masterCodes = (job.notes ?? []).map(n => n.code).filter(c => masteringHasRule(c))
+    if (!handled.length && !masterCodes.length) throw new Giveup(`Nothing was changed: ${(job.notes ?? []).length === 1 ? 'this note has' : `none of these ${(job.notes ?? []).length} notes has`} a fix the intern can make by rule yet. ${(job.notes ?? []).some(n => n.kind === 'listener') ? 'Written notes need a person\'s judgment. ' : ''}They are left for you.`)
     await mkdir(dir, { recursive: true })
-    await pruneJobs(job.id)
+    // Never the folder of the job that made the mix being fixed: its copy is what this job starts from.
+    await pruneJobs(job.id, String(song.made_by_job_id ?? ''))
     // What the server handed over, kept beside the job's files: `intern-plan.mjs` can be re-run on it by hand.
     await writeFile(join(dir, 'claim.json'), JSON.stringify(claim, null, 1))
     await awake(report)
 
     await report.stage('Finding the Logic project')
-    const projects = await listProjects({ exclude: [JOBS] })
-    const found = pickProject([song.title, song.audio_filename, ...(song.filenames ?? [])].filter(Boolean), projects)
-    if (found.error) throw new Giveup(found.error)
-    log('project:', basename(found.path), found.others?.length ? `(also matched: ${found.others.map(p => basename(p)).join(', ')})` : '')
-    await report.note(`Found ${basename(found.path)} among ${projects.length} projects`)
+    // A mix the intern made came from the intern's own copy of the project (the
+    // owner's never had that fix): the next fix starts from that copy.
+    let found = null
+    if (song.made_by_job_id) {
+      const earlier = join(JOBS, String(song.made_by_job_id))
+      const copyThere = (await readdir(earlier).catch(() => [])).find(f => f.toLowerCase().endsWith('.logicx'))
+      if (!copyThere) throw new Giveup(`${song.version_label} was made by the intern, in a copy of the project that is no longer on this Mac. Hand over the mix it was made from instead.`)
+      found = { path: join(earlier, copyThere) }
+      await report.note(`Starting from the copy that made ${song.version_label}`)
+    } else {
+      const projects = await listProjects({ exclude: [JOBS] })
+      found = pickProject([song.title, song.audio_filename, ...(song.filenames ?? [])].filter(Boolean), projects)
+      if (found.error) throw new Giveup(found.error)
+      log('project:', basename(found.path), found.others?.length ? `(also matched: ${found.others.map(p => basename(p)).join(', ')})` : '')
+      await report.note(`Found ${basename(found.path)} among ${projects.length} projects`)
+    }
 
     await report.stage('Copying the project')
-    const copy = join(dir, `${basename(found.path, '.logicx')} (intern).logicx`)
+    const copy = join(dir, `${basename(found.path, '.logicx').replace(/ \(intern\)$/, '')} (intern).logicx`)
     await rm(copy, { recursive: true, force: true })
     // -c clones on APFS: instant, and takes no space until something changes.
     await run('/bin/cp', ['-Rc', found.path, copy])
@@ -325,13 +342,19 @@ async function runJob(claim) {
       throw new Giveup(`Nothing was uploaded: the Logic project does not bounce to ${song.version_label} (${drift}). It has changed since that mix, or the mix was finished somewhere else. Upload the project's own bounce, check it, and hand that over.`)
     }
 
-    const open = judge0.remaining
-    if (!open.length) throw new Giveup('The Logic project no longer shows these notes: its bounce is already inside what Mix Check accepts')
+    // Still open in the project: what the bounce shows, plus the notes only the server can see (against the catalog).
+    const open = [...judge0.remaining, ...handled.filter(c => serverOnly(c) && !judge0.remaining.includes(c))]
+    if (!open.length && !masterCodes.length) throw new Giveup('The Logic project no longer shows these notes: its bounce is already inside what Mix Check accepts')
+    const titleOf = code => (song.findings ?? []).find(f => f.code === code)?.title ?? code
+    let verdict = null, bounce = null, changes = [], attempted = []
     // From here the project's own bounce is the "before": its bands are what the
     // moves are sized on, and a note it already had is not one a fix brought.
     const had = [...(song.findings ?? []), ...judge0.findings.filter(f => !(song.findings ?? []).some(x => x.code === f.code))]
-    const now = { ...claim, song: { ...song, findings: had, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
+    // Each band against the catalog in THIS bounce: the handed figure, moved by what differs since.
+    const catNow = b => { const h = (song.bands ?? []).find(x => x.key === b.key); return typeof h?.vsCatalog === 'number' && typeof h.vsPrevious === 'number' && typeof b.after === 'number' ? h.vsCatalog + (b.after - h.vsPrevious) : null }
+    const now = { ...claim, song: { ...song, findings: had, bands: judge0.bands.map(b => ({ key: b.key, vsPrevious: b.after, vsCatalog: catNow(b) })) }, job: { ...job, notes: (job.notes ?? []).filter(n => !n.code || !handled.includes(n.code) || open.includes(n.code)) } }
 
+    if (open.length) {
     await report.stage('Exporting the tracks')
     const tracksDir = join(dir, 'tracks')
     await rm(tracksDir, { recursive: true, force: true })
@@ -358,18 +381,28 @@ async function runJob(claim) {
       const p = planned.predicted.find(x => x.key === key)
       if (p?.before != null && p.after != null) await report.note(`Predicted: ${bandLabel(key).toLowerCase()} ${signedDb(p.before)} → ${signedDb(p.after)} against ${song.baseline?.label ?? 'the earlier mix'}`)
     }
-    if (!planned.moves.length) {
+    for (const code of [...new Set(planned.moves.filter(m => m.kind === 'mono').map(m => m.code))]) {
+      const wide = planned.tracks.filter(t => (t.lowSide?.[code] ?? 0) >= 0.05).sort((a, b) => b.lowSide[code] - a.lowSide[code]).slice(0, 4)
+      await report.note(`The stereo low end is ${wide.map(t => `${t.name} ${Math.round(t.lowSide[code] * 100)}%`).join(', ')}`)
+    }
+    if (!planned.moves.length && !masterCodes.length) {
       const why = planned.skipped.filter(s => s.code && open.includes(s.code)).map(s => s.why)[0] ?? 'no move within its limits answers these notes'
       throw new Giveup(`Nothing changed: ${why}`)
     }
 
-    let verdict = null, bounce = null, changes = []
-    for (let round = 0; round <= MAX_REFINES; round++) {
+    // What the fix is judged on: the notes a move was made for. A note the rules
+    // left alone (and say why) is not a failure of the ones they answered.
+    attempted = [...new Set(planned.moves.map(m => m.code))]
+    // …unless the mastering engineer has a rule for it: then it is passed on, not left.
+    for (const skip of planned.skipped.filter(x => x.code && open.includes(x.code))) {
+      await report.note(masteringHasRule(skip.code) ? `Passed to the mastering engineer: ${titleOf(skip.code)}. ${skip.why}` : `Left alone: ${titleOf(skip.code)}. ${skip.why}`)
+    }
+    for (let round = 0; planned.moves.length && round <= MAX_REFINES; round++) {
       await report.stage(round === 0 ? 'Making the moves in Logic' : `Resizing the moves (try ${round + 1})`)
       const set = await logic.applyMoves(planned.moves)
       for (const m of set) {
-        await report.note(m.kind === 'level'
-          ? `${m.track}: Gain added last in the strip, set to ${signedDb(m.gain)}`
+        await report.note(m.kind === 'level' ? `${m.track}: Gain added last in the strip, set to ${signedDb(m.gain)}`
+          : m.kind === 'mono' ? `${m.track}: Channel EQ added last in the strip, working on the sides only, low cut at ${m.hz} Hz`
           : `${m.track}: Channel EQ added last in the strip, Peak 1 at ${m.hz} Hz, Q ${m.q}, ${signedDb(m.gain)}`)
       }
       changes = planned.changes
@@ -378,22 +411,82 @@ async function runJob(claim) {
       bounce = join(dir, `bounce-${round + 1}.wav`)
       await logic.bounce(bounce)
       await report.stage('Checking the bounce')
-      verdict = await judge({ job: now, bounce, handled: open, ffmpeg: FFMPEG })
+      verdict = await judge({ job: now, bounce, handled: attempted.filter(c => !serverOnly(c)), ffmpeg: FFMPEG })
+      // A plan of catalog moves alone has nothing the Mac can confirm: it is kept if nothing new appeared.
+      if (!attempted.some(c => !serverOnly(c))) verdict.keep = verdict.appeared.length === 0
       await writeFile(join(dir, `judge-${round + 1}.json`), JSON.stringify(verdict, null, 2))
       log('judge:', { keep: verdict.keep, cleared: verdict.cleared, remaining: verdict.remaining, appeared: verdict.appeared })
-      const moved = verdict.bands.filter(b => open.includes(`changed.${b.key}`)).map(b => `${bandLabel(b.key).toLowerCase()} ${signedDb(judge0.bands.find(x => x.key === b.key)?.after)} → ${signedDb(b.after)}`)
-      await report.note(`Measured: ${moved.join(', ')}; ${verdict.remaining.length ? 'still a note' : 'the note is gone'}${verdict.appeared.length ? `; new: ${verdict.appeared.join(', ')}` : '; nothing new'}`)
+      const moved = verdict.bands.filter(b => attempted.includes(`changed.${b.key}`)).map(b => `${bandLabel(b.key).toLowerCase()} ${signedDb(judge0.bands.find(x => x.key === b.key)?.after)} → ${signedDb(b.after)}`)
+      await report.note(`Measured: ${moved.length ? `${moved.join(', ')}; ` : ''}${verdict.remaining.length ? `${verdict.remaining.length} of ${attempted.length} notes still there` : attempted.length === 1 ? 'the note is gone' : `all ${attempted.length} notes are gone`}${verdict.appeared.length ? `; new: ${verdict.appeared.join(', ')}` : '; nothing new'}`)
       if (verdict.keep) break
       if (verdict.appeared.length) break // resizing does not un-make a new note
       const next = refine({ plan: planned, judge: verdict })
       if (!next.changed) break
       planned = { ...planned, moves: next.moves, changes: next.changes }
     }
-    if (!verdict.keep) {
+    if (verdict && !verdict.keep) {
       const what = verdict.appeared.length ? `it brought a new note (${verdict.appeared.join(', ')})`
-        : `${verdict.remaining.map(c => bandLabel(c.split('.')[1])).join(' and ')} still reads as changed`
+        : `still there: ${verdict.remaining.map(titleOf).join('; ')}`
       throw new Giveup(`Nothing was uploaded: the fix was tried and bounced, but ${what}`)
     }
+    }
+    // Nothing for the intern (or nothing it could do): the mastering engineer works from the project's own bounce.
+    if (!bounce) { bounce = bounce0; verdict = judge0 }
+
+    // ── The mastering engineer: the whole-mix notes, on the output channel ──
+    let mastered = [], tail = false
+    if (masterCodes.length) {
+      await report.stage('Mastering engineer: reviewing the bounce')
+      const masterPlan = planMastering({
+        notes: job.notes ?? [], handedBands: song.bands ?? [],
+        bounce: { bands: verdict.bands, findings: verdict.findings, truePeakDb: verdict.loudness.truePeakDb, integratedLufs: verdict.loudness.integratedLufs, balanceDb: verdict.balanceDb ?? null },
+        previousLufs: song.baseline?.summary?.i ?? null,
+        answered: attempted,
+      })
+      await writeFile(join(dir, 'mastering.json'), JSON.stringify(masterPlan, null, 2))
+      for (const skip of masterPlan.skipped) await report.note(`Left alone: ${titleOf(skip.code)}. ${skip.why}`)
+      if (masterPlan.moves.length || masterPlan.bounce.tail) {
+        const out = await logic.outputStrip()
+        const moves = masterPlan.moves.map(m => ({ ...m, track: out }))
+        if (moves.length) await report.stage('Mastering engineer: making its moves on the output')
+        for (const m of moves.length ? await logic.applyMoves(moves) : []) {
+          await report.note(m.kind === 'level' ? `${m.track}: Gain added last${m.gain ? `, set to ${signedDb(m.gain)}` : ''}${m.balance ? `, balance ${Math.abs(m.balance).toFixed(0)}% ${m.balance > 0 ? 'right' : 'left'}` : ''}`
+            : m.kind === 'lowcut' ? `${m.track}: Channel EQ added last, low cut at ${m.hz} Hz`
+            : m.kind === 'mono' ? `${m.track}: Channel EQ added last, sides only, low cut at ${m.hz} Hz (the low end is mono below it)`
+            : `${m.track}: Channel EQ added last, a bell at ${m.hz} Hz, Q ${m.q}, ${signedDb(m.gain)}`)
+        }
+        await report.stage('Mastering engineer: bouncing')
+        const final = join(dir, 'bounce-mastered.wav')
+        if (masterPlan.bounce.tail) await report.note('Bouncing with the audio tail included, so the ending rings out')
+        await logic.bounce(final, masterPlan.bounce)
+        await report.stage('Mastering engineer: checking the bounce')
+        const local = [...new Set([...moves.map(m => m.code), ...masterPlan.alsoAnswers].filter(masteringJudgedLocally))]
+        const checked = await judge({ job: now, bounce: final, handled: [...attempted.filter(c => !serverOnly(c)), ...local], ffmpeg: FFMPEG })
+        await writeFile(join(dir, 'judge-mastered.json'), JSON.stringify(checked, null, 2))
+        // It must leave the mix at least as good as it found it: the intern's notes
+        // still gone, nothing new, and still the same piece of audio.
+        const lost = attempted.filter(c => checked.remaining.includes(c))
+        const problems = [
+          ...(lost.length ? [`it brought back: ${lost.map(titleOf).join('; ')}`] : []),
+          ...(checked.appeared.length ? [`it brought a new note (${checked.appeared.join(', ')})`] : []),
+          // (Length and loudness are MEANT to change when the tail is added or the output is trimmed.)
+          ...deliverableProblems(verdict.loudness, checked.loudness, { tail: !!masterPlan.bounce.tail, level: moves.find(m => m.kind === 'level')?.gainDb ?? 0 }),
+        ]
+        if (problems.length) {
+          await report.note(`Taken back: ${problems.join('; ')}. The bounce from before it is the one that goes on.`)
+          if (moves.length) await logic.applyMoves(moves.map(neutral))
+        } else {
+          const stillThere = local.filter(c => checked.remaining.includes(c))
+          await report.note(`Kept: nothing new, ${local.length - stillThere.length} of ${local.length || moves.length} note${(local.length || moves.length) === 1 ? '' : 's'} it can measure here ${local.length ? 'gone' : 'to be checked on the server'}; loudness ${checked.loudness.integratedLufs.toFixed(1)} LUFS, true peak ${checked.loudness.truePeakDb.toFixed(1)} dBTP`)
+          mastered = moves
+          bounce = final; verdict = checked
+          changes = [...changes, ...moves.map(m => ({ ...describeMove(m), track: `${out} (mastering engineer)` })), ...(masterPlan.bounce.tail ? [{ track: 'Bounce (mastering engineer)', what: 'Audio tail included, so the ending rings out' }] : [])]
+          tail = !!masterPlan.bounce.tail
+          await report.report({ changes })
+        }
+      }
+    }
+    if (!attempted.length && !mastered.length && !tail) throw new Giveup('Nothing changed: no move within the intern\'s or the mastering engineer\'s limits answers these notes')
 
     if (dryRuns.delete(job.id)) throw new Giveup('Dry run: every step on the Mac worked and the fix was kept; nothing was uploaded')
 
@@ -426,13 +519,31 @@ async function runJob(claim) {
     await report.note(`Filed as ${names.label}`)
     await report.stage('Running Mix Check on the new version')
     const checked = await serverCheck(versionId, report)
-    const final = judgeFix(had, checked.findings ?? [], open)
+    // Judged on what was acted on and can be measured from a bounce; the catalog
+    // comparison the mastering engineer aimed at is reported, never a reason to take the version back.
+    const handledHere = [...attempted.filter(c => !serverOnly(c)), ...mastered.map(m => m.code).filter(masteringJudgedLocally), ...(tail ? ['tail.cut'] : [])]
+    const judged = judgeFix(had, checked.findings ?? [], handledHere)
+    const final = handledHere.length ? judged : { ...judged, keep: judged.appeared.length === 0 }
+    for (const code of [...new Set([...attempted.filter(serverOnly), ...mastered.map(m => m.code).filter(c => !masteringJudgedLocally(c))])]) {
+      const still = (checked.findings ?? []).find(f => f.code === code)
+      await report.note(still ? `Still there after the move, the rest is yours: ${still.title}` : `Gone on the new version: ${titleOf(code)}`)
+    }
     await writeFile(join(dir, 'server-check.json'), JSON.stringify({ final, findings: checked.findings }, null, 2))
     if (!final.keep) {
       const what = final.appeared.length ? `Mix Check found a new note on it (${final.appeared.join(', ')})` : `${final.remaining.join(', ')} did not clear`
       throw new Giveup(`The new version was taken back: ${what}`)
     }
     await report.note(`Mix Check kept it: ${final.cleared.length} note${final.cleared.length === 1 ? '' : 's'} cleared, nothing new`)
+    // Every note that was handed over gets its outcome, one line each: fixed, tried, or left with the reason.
+    for (const n of job.notes ?? []) {
+      const name = n.code ? titleOf(n.code) : `"${String(n.text ?? '').slice(0, 60)}"`
+      const acted = n.code && (attempted.includes(n.code) || mastered.some(m => m.code === n.code) || (tail && n.code === 'tail.cut'))
+      const still = n.code && judgeFix([], checked.findings ?? [], [n.code]).remaining.length > 0
+      await report.note(n.kind === 'listener' ? `Left for you: ${name}. A written note needs a person's judgment.`
+        : acted ? (still ? `Tried, still there: ${name}` : `Fixed: ${name}`)
+        : !still ? `Gone as a side effect: ${name}`
+        : `Left for you: ${name}`)
+    }
     await report.report({ status: 'done', stage: 'Done', changes })
     log(`[${job.id.slice(0, 8)}] done: version ${versionId}`)
     uploaded = null; versionId = null
