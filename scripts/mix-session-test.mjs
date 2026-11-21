@@ -13,6 +13,9 @@
 //    wired, and no error says "plan" (the app replaces purchase-shaped words —
 //    "plan" among them — with generic copy, which would garble these).
 // C. BOTH CLIENTS call the same three routes (the app has no copy of the logic).
+// D. THE INTERN HAND-OFF (src/lib/mix-session-intern.ts + /api/mix-session/intern):
+//    which songs a hand-off of the whole session starts a job for, which it
+//    leaves alone, and that the route is the owner's only and scoped to them.
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -22,6 +25,7 @@ import {
   buildMixSession, currentVersionByProject, mixSessionText, buildPlanInput, resolvePlan,
   clock, PLAN_OUTPUT_SCHEMA, PLAN_AREAS, PLAN_MAX_NOTES,
 } from '../src/lib/mix-session.ts'
+import { handoffStatus, HANDOFF_MINUTES_PER_SONG } from '../src/lib/mix-session-intern.ts'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => readFileSync(join(repoRoot, p), 'utf8')
@@ -242,6 +246,77 @@ console.log('C. both clients')
   check('MixSessionView.swift is compiled into the app',
     /\/\* MixSessionView\.swift in Sources \*\/ = \{isa = PBXBuildFile/.test(pbx) && /\/\* MixSessionView\.swift in Sources \*\/,/.test(pbx))
   check('Home links to the Mix Session', source('ios/mixBase/Views/Home/HomeView.swift').includes('MixSessionView('))
+}
+
+// ── D. The intern hand-off ───────────────────────────────────────────────────
+console.log('\nD. Handing the whole session to the intern')
+{
+  const song = (n, notes) => ({
+    project_id: `p${n}`, title: `Song ${n}`, version: { id: `v${n}`, display_label: `Mix ${n}` },
+    open_count: notes.filter(x => !x.done).length, done_count: notes.filter(x => x.done).length, notes,
+  })
+  const session = {
+    songs: [
+      song(1, [{ id: 'n1', done: false }, { id: 'n1b', done: false }]),   // a measured note the intern has a rule for
+      song(2, [{ id: 'n2', done: false }]),                                // only a note a person wrote
+      song(3, [{ id: 'n3', done: true }, { id: 'n3b', done: false }]),     // its measured note is ticked off already
+      song(4, [{ id: 'n4', done: false }]),                                // a job is already waiting
+      song(5, [{ id: 'n5', done: false }]),                                // the Mac is on it
+      song(6, [{ id: 'n6', done: true }]),                                 // nothing open: not part of a hand-off
+      song(7, [{ id: 'n7', done: false }]),                                // last job finished: ready again
+    ],
+  }
+  const findings = new Map([
+    ['v1', [{ code: 'changed.sub', note_id: 'n1' }]],
+    ['v2', []],
+    ['v3', [{ code: 'changed.sub', note_id: 'n3' }]],
+    ['v4', [{ code: 'changed.sub', note_id: 'n4' }]],
+    ['v5', [{ code: 'changed.sub', note_id: 'n5' }]],
+    ['v7', [{ code: 'changed.sub', note_id: 'n7' }]],
+  ])
+  const jobs = new Map([
+    ['v4', { status: 'queued', stage: null, stalled: false }],
+    ['v5', { status: 'working', stage: 'Bouncing', stalled: false }],
+    ['v7', { status: 'done', stage: 'Done', stalled: false }],
+  ])
+  const status = handoffStatus(session, findings, jobs)
+  const state = id => status.songs.find(x => x.version_id === id)?.state
+  check('a song with an open note the intern has a rule for is ready', state('v1') === 'ready')
+  check('a song with only written notes is left for the owner', state('v2') === 'written-only')
+  check('a measured note already ticked off does not make a song ready', state('v3') === 'written-only')
+  check('a job waiting or working is shown as it is, never handed twice', state('v4') === 'queued' && state('v5') === 'working')
+  check('the stage comes through while the Mac works', status.songs.find(x => x.version_id === 'v5')?.stage === 'Bouncing')
+  check('a song with nothing open is not part of the hand-off', state('v6') === undefined && status.songs.length === 6)
+  check('a finished job does not block handing the song again', state('v7') === 'ready')
+  check('counts add up', status.ready_count === 2 && status.in_flight_count === 2 && status.left_count === 2,
+    `${status.ready_count}/${status.in_flight_count}/${status.left_count}`)
+  check('the time is one song at a time for everything ready or in flight', status.minutes === 4 * HANDOFF_MINUTES_PER_SONG)
+  check('no findings at all reads as nothing to fix, not as an error', handoffStatus(session, new Map(), new Map()).ready_count === 0)
+
+  const route = source('src/app/api/mix-session/intern/route.ts')
+  check('the hand-off 404s anyone but the owner before anything is read',
+    /isAdminIdentity\(userId\)\)\) return \{ error: NextResponse\.json\(\{ error: 'Not found' \}, \{ status: 404 \}\)/.test(route) &&
+    route.indexOf('isAdminIdentity(userId)') < route.indexOf('loadMixSession('))
+  check('identity is the X-User-Id header, never the body', route.includes("request.headers.get('X-User-Id')") && !/request\.json\(/.test(route))
+  check('the hand-off is rate limited', route.includes('checkUserLimit(internLimiter, userId)'))
+  check('every job read and write names the caller',
+    (route.match(/from\('mb_intern_jobs'\)/g) ?? []).length === (route.match(/\.eq\('user_id', (g\.)?userId\)|insert\(\{ user_id: g\.userId/g) ?? []).length)
+  check('versions come only from the caller\'s own session', /session\.songs\.filter\(s => s\.open_count > 0\)\.map\(s => s\.version\.id\)/.test(route))
+  check('only ready songs get a job', /if \(song\.state !== 'ready'\) continue/.test(route))
+  check('the job is handed the same notes as the song\'s own button', route.includes('notesForJob(feedback ?? [], version.mix_check?.findings ?? [])'))
+  check('the route is not public', !/['"]\/api\/mix-session\/intern/.test(source('src/proxy.ts')))
+
+  const panel = source('src/components/SessionInternHandoff.tsx')
+  check('web reads and hands over through /api/mix-session/intern', panel.includes("fetch('/api/mix-session/intern')") && panel.includes("fetch('/api/mix-session/intern', { method: 'POST' })"))
+  check('web shows nothing to anyone but the owner', /res\.status === 404\) setStatus\(null\)/.test(panel))
+  check('the Mix Session page shows the hand-off', source('src/app/session/SessionClient.tsx').includes('<SessionInternHandoff'))
+
+  const api = source('ios/mixBase/Services/MixbaseAPI.swift')
+  check('app reads the hand-off, and treats 404 as "not the owner"', /func sessionHandoff\(\)[\s\S]*?"\/api\/mix-session\/intern", method: "GET"[\s\S]*?if status == 404 \{ return nil \}/.test(api))
+  check('app hands over via POST', /func handSessionToIntern\(\)[\s\S]*?"\/api\/mix-session\/intern", method: "POST"/.test(api))
+  const view = source('ios/mixBase/Views/Session/MixSessionView.swift')
+  check('app screen shows the hand-off card', view.includes('internCard(handoff)') && view.includes('MixbaseAPI.shared.handSessionToIntern()'))
+  check('app keeps no copy of the rules: it shows the server\'s states', !view.includes('internCanFix') && !view.includes('changed.'))
 }
 
 if (failures) {
