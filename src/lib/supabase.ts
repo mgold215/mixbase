@@ -246,6 +246,17 @@ export function audioProxyUrl(supabaseUrl: string): string {
   return `/api/audio/${supabaseUrl.slice(idx + marker.length)}`
 }
 
+// A small, resized copy of a public Storage image, served by Supabase's image
+// transformer. Use for anything shown as a thumbnail: artwork originals are up
+// to 4032px, and decoding dozens of them at full size (a 65-track album list)
+// costs ~1 GB of memory and crashes iOS Safari ("A problem repeatedly occurred").
+// Non-Storage URLs (e.g. transient Replicate links) are returned unchanged.
+export function storageThumbUrl(url: string, edge = 160): string {
+  return url.includes('/storage/v1/object/public/')
+    ? `${url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')}?width=${edge}&height=${edge}&quality=70`
+    : url
+}
+
 // Rewrite an mf-artwork public URL to our same-origin proxy so iOS can render it on
 // the lock screen / Control Center (see src/app/api/artwork/[...path]/route.ts).
 // Non-mf-artwork URLs (e.g. transient Replicate URLs) are returned unchanged.
