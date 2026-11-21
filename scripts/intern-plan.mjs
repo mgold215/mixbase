@@ -31,7 +31,7 @@ import { pathToFileURL } from 'node:url'
 import { ANALYSIS_RATE, MIX_BANDS, createMixAnalyzer, isMixSummary } from '../src/lib/mix-check.ts'
 import { buildFindings } from '../src/lib/mix-check-findings.ts'
 import {
-  INTERN_SPEC_HZ, coreWindows, createTrackMeter, describeMove, judgeFix, locallyJudged, planFixes, refineMove,
+  INTERN_SPEC_HZ, coreWindows, createLowWidthMeter, createTrackMeter, describeMove, internHasRule, judgeFix, locallyJudged, lowWidthWindows, planFixes, refineMove,
 } from '../src/lib/intern-rules.ts'
 
 const AUDIO = new Set(['.wav', '.wave', '.aif', '.aiff', '.caf', '.flac', '.mp3', '.m4a'])
@@ -73,21 +73,29 @@ export async function plan({ job, tracksDir, mix = null, offset = 0, skip = null
     .filter(f => AUDIO.has(extname(f).toLowerCase()) && !f.startsWith('.') && statSync(join(tracksDir, f)).isFile())
     .filter(f => !leaveOut || !leaveOut.test(basename(f, extname(f))))
     .sort()
+  // The stretches each "low end is stereo" note is about: every track's low end is
+  // measured there too (mid against side), in the same pass over the file.
+  const lowNotes = lowWidthWindows(job.job?.notes ?? [], song.sections)
+  const lowWindows = lowNotes.flatMap(n => n.windows.length ? [{ start: Math.min(...n.windows.map(w => w.start)), end: Math.max(...n.windows.map(w => w.end)) }] : [{ start: 0, end: 0 }])
   const tracks = [], unreadable = []
   for (const f of files) {
     const meter = createTrackMeter(ANALYSIS_RATE, windows, offset)
+    const width = lowNotes.length ? createLowWidthMeter(ANALYSIS_RATE, lowWindows, offset) : null
+    const both = { push(l, r) { meter.push(l, r); width?.push(l, r) } }
     try {
-      const seconds = await decode(join(tracksDir, f), meter, ffmpeg)
-      tracks.push({ name: basename(f, extname(f)), file: f, seconds: round1(seconds), ...meter.finish() })
+      const seconds = await decode(join(tracksDir, f), both, ffmpeg)
+      tracks.push({ name: basename(f, extname(f)), file: f, seconds: round1(seconds), ...meter.finish(), ...(width ? { low: width.finish() } : {}) })
     } catch (err) { unreadable.push({ file: f, error: err.message }) }
   }
-  const result = planFixes({ notes: job.job?.notes ?? [], bands: song.bands ?? [], tracks })
+  const result = planFixes({ notes: job.job?.notes ?? [], bands: song.bands ?? [], tracks, lowNotes: lowNotes.map(n => n.code), resonances: song.resonances ?? [] })
 
   // Which track carries how much of each band, for the log and for a person reading it.
   const totals = MIX_BANDS.map((_, i) => tracks.reduce((s, t) => s + bandsOf(t.spec)[i], 0))
   const carriers = tracks.map(t => ({
     name: t.name, seconds: t.seconds, frames: t.frames,
     share: Object.fromEntries(MIX_BANDS.map((b, i) => [b.key, totals[i] > 0 ? Math.round((bandsOf(t.spec)[i] / totals[i]) * 100) / 100 : 0])),
+    // How much of the low end's SIDE energy this track holds, for each low-width note.
+    ...(t.low ? { lowSide: Object.fromEntries(lowNotes.map((n, k) => { const all = tracks.reduce((s, x) => s + (x.low?.[k]?.side ?? 0), 0); return [n.code, all > 0 ? Math.round(((t.low[k]?.side ?? 0) / all) * 100) / 100 : 0] })) } : {}),
   }))
 
   // Do the tracks add up to the mix? A band far off means the export missed
@@ -111,7 +119,7 @@ export async function judge({ job, bounce, handled = null, ffmpeg }) {
   if (seconds < 5) throw new Error('The bounce is too short to check (under 5 seconds)')
   const measured = analyzer.finish('full')
   const verdict = buildFindings(measured, { previous: { label: String(baseline.label ?? 'the earlier mix'), summary: baseline.summary } })
-  const codes = handled ?? (job.job?.notes ?? []).map(n => n.code).filter(c => typeof c === 'string' && MIX_BANDS.some(b => c === `changed.${b.key}`))
+  const codes = handled ?? (job.job?.notes ?? []).map(n => n.code).filter(c => internHasRule(c))
   const was = new Map((song.bands ?? []).map(b => [b.key, b.vsPrevious]))
   return {
     ...judgeFix(locallyJudged(song.findings ?? []), locallyJudged(verdict.findings), codes),
@@ -121,6 +129,8 @@ export async function judge({ job, bounce, handled = null, ffmpeg }) {
     bands: verdict.bands.map(b => ({ key: b.key, before: was.get(b.key) ?? null, after: b.vsPrevious })),
     findings: verdict.findings.map(f => ({ code: f.code, severity: f.severity, title: f.title })),
     loudness: { integratedLufs: measured.summary.i, truePeakDb: measured.summary.tp, seconds: round1(seconds) },
+    // How much louder the left is than the right (dB), for the left/right note.
+    balanceDb: measured.detail?.balanceDb ?? null,
   }
 }
 

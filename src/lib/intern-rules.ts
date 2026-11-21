@@ -140,16 +140,111 @@ export function createTrackMeter(sampleRate: number, windows: TimeWindow[] = [],
   }
 }
 
+// ── How wide a track's low end is ────────────────────────────────────────────
+
+/** Mix Check's "low end": the stereo-correlation notes are about 30–120 Hz. */
+export const LOW_WIDTH_HZ = { lo: 30, hi: 120 }
+
+export type LowWidthMeter = {
+  push(left: Float32Array, right: Float32Array): void
+  /** For each window, the low end's power in the middle (L+R) and at the sides (L−R). */
+  finish(): { mid: number; side: number }[]
+}
+
+/**
+ * Measures how much of a track's low end is mid and how much is side, inside
+ * each window (the stretches a "low end is stereo" note names). A track whose
+ * lows are mono has no side; the tracks with the most side are the ones a
+ * mono.low note is about. `offsetSec` as in createTrackMeter.
+ */
+export function createLowWidthMeter(sampleRate: number, windows: TimeWindow[], offsetSec = 0): LowWidthMeter {
+  if (!Number.isFinite(sampleRate) || sampleRate < 22050) throw new Error(`Unsupported sample rate: ${sampleRate}`)
+  const fft = makeFft(NFFT)
+  const win = new Float64Array(NFFT)
+  for (let i = 0; i < NFFT; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / NFFT)
+  const df = sampleRate / NFFT
+  const first = Math.max(1, Math.ceil(LOW_WIDTH_HZ.lo / df)), last = Math.min(NFFT / 2 - 1, Math.floor(LOW_WIDTH_HZ.hi / df))
+  const bufL = new Float32Array(NFFT), bufR = new Float32Array(NFFT)
+  const reM = new Float64Array(NFFT), imM = new Float64Array(NFFT)
+  const reS = new Float64Array(NFFT), imS = new Float64Array(NFFT)
+  const out = windows.map(() => ({ mid: 0, side: 0, frames: 0 }))
+  let fill = 0, frame = 0
+
+  function analyse() {
+    const centre = (frame * HOP + NFFT / 2) / sampleRate + offsetSec
+    frame++
+    const hit = windows.flatMap((w, i) => (centre >= w.start && centre < w.end ? [i] : []))
+    if (!hit.length) return
+    for (let i = 0; i < NFFT; i++) {
+      reM[i] = ((bufL[i] + bufR[i]) / 2) * win[i]; imM[i] = 0
+      reS[i] = ((bufL[i] - bufR[i]) / 2) * win[i]; imS[i] = 0
+    }
+    fft(reM, imM); fft(reS, imS)
+    let mid = 0, side = 0
+    for (let b = first; b <= last; b++) { mid += reM[b] * reM[b] + imM[b] * imM[b]; side += reS[b] * reS[b] + imS[b] * imS[b] }
+    for (const i of hit) { out[i].mid += mid; out[i].side += side; out[i].frames++ }
+  }
+
+  return {
+    push(left, right) {
+      const n = Math.min(left.length, right.length)
+      for (let i = 0; i < n; i++) {
+        bufL[fill] = left[i]; bufR[fill] = right[i]
+        if (++fill === NFFT) {
+          analyse()
+          bufL.copyWithin(0, HOP); bufR.copyWithin(0, HOP)
+          fill = NFFT - HOP
+        }
+      }
+    },
+    finish() {
+      return out.map(o => ({ mid: o.frames ? o.mid / o.frames : 0, side: o.frames ? o.side / o.frames : 0 }))
+    },
+  }
+}
+
+/** Which notes the intern has a rule for: a band that changed or sits unusually against the catalog, a low end that is stereo, a narrow resonance. */
+export function internHasRule(code: string | null | undefined): boolean {
+  if (!code) return false
+  return MIX_BANDS.some(b => code === `changed.${b.key}` || code === `balance.${b.key}`) || code === 'changed.lowwidth' || /^mono\.low@\d+$/.test(code) || /^resonance\.\d+$/.test(code)
+}
+
+/** The stretches of the song a low-width note is about: its own section, or the core for 'changed.lowwidth'. */
+export function lowWidthWindows(notes: { code?: string | null }[], sections: unknown): { code: string; windows: TimeWindow[] }[] {
+  const rows = (Array.isArray(sections) ? sections : []).flatMap((x): TimeWindow[] => {
+    const start = Number((x as Record<string, unknown>)?.start), end = Number((x as Record<string, unknown>)?.end)
+    return Number.isFinite(start) && Number.isFinite(end) && end > start ? [{ start, end }] : []
+  })
+  const out: { code: string; windows: TimeWindow[] }[] = []
+  for (const note of notes ?? []) {
+    const code = typeof note?.code === 'string' ? note.code : ''
+    const at = /^mono\.low@(\d+)$/.exec(code)
+    if (at) {
+      // The section the note starts in; a note whose section is not listed still gets its 16 seconds.
+      const start = Number(at[1])
+      const sec = rows.find(r => Math.abs(r.start - start) < 1) ?? { start, end: start + 16 }
+      out.push({ code, windows: [sec] })
+    } else if (code === 'changed.lowwidth') {
+      out.push({ code, windows: coreWindows(sections) })
+    }
+  }
+  return out
+}
+
 // ── Trying a move on the measurements ────────────────────────────────────────
 
 export type InternMove = {
-  /** 'level' = the whole track up or down; 'eq' = one bell on the track. */
-  kind: 'level' | 'eq'
+  /** 'level' = the whole track up or down; 'eq' = one bell on the track;
+   *  'mono' = the track's low end narrowed to mono below `hz` (gainDb is 0);
+   *  'lowcut' = everything below `hz` removed (gainDb is 0). */
+  kind: 'level' | 'eq' | 'mono' | 'lowcut'
   track: string
   gainDb: number
   /** The bell's centre and Q, for an 'eq' move. */
   hz?: number
   q?: number
+  /** For a 'level' move on the output: the left/right balance to set, in percent (+ is right). */
+  balancePct?: number
   /** The note this answers. */
   band: MixBandKey
   code: string
@@ -216,8 +311,20 @@ export type InternPlan = {
 }
 
 type PlanNote = { id?: string | null; kind?: string | null; code?: string | null }
-type PlanBand = { key: string; vsPrevious?: number | null }
-type PlanTrack = { name: string; spec: number[] }
+type PlanBand = { key: string; vsPrevious?: number | null; vsCatalog?: number | null }
+
+/** Mix Check writes `balance.<band>` 3 dB from the catalog average; a fix aims this far from it, and counts as answered inside CATALOG_CLEAR_DB. */
+const CATALOG_AIM_DB = 2.0
+const CATALOG_CLEAR_DB = 2.6
+/** A move made only because a band is unusual FOR THE ARTIST is kept this small on any one track:
+ *  it is their sound being nudged, not a fault being undone. */
+export const CATALOG_MAX_MOVE_DB = 3
+type PlanTrack = { name: string; spec: number[]; low?: { mid: number; side: number }[] }
+
+/** A low end counts as mono again at this stereo correlation (Mix Check writes the note under 0.7). */
+const MONO_GOAL = 0.8
+/** A low cut on the sides takes about this much of the side energy below it away. */
+const MONO_REMOVES = 0.9
 
 /**
  * Chooses the moves for a job's notes.
@@ -234,7 +341,98 @@ type PlanTrack = { name: string; spec: number[] }
  * the loudness. What cannot be answered within MAX_MOVE_DB on
  * MAX_TRACKS_PER_NOTE tracks is skipped with the reason.
  */
-export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks: PlanTrack[] }): InternPlan {
+export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks: PlanTrack[]; lowNotes?: string[]; resonances?: { hz: number; db: number }[] }): InternPlan {
+  const out = planBands(input)
+  planMono(input, out)
+  planResonances(input, out)
+  return out
+}
+
+/** A resonance is cut down to this much above its surroundings (Mix Check writes the note at 6 dB). */
+const RESONANCE_LEAVE_DB = 3
+/** How narrow the cut is. */
+const RESONANCE_Q = 8
+
+/**
+ * A narrow peak (`resonance.<hz>`): a narrow cut at that frequency on the
+ * track that carries most of it, sized to leave the peak RESONANCE_LEAVE_DB
+ * above the bands around it. `resonances` is the handed mix's own list (how
+ * far each stands out). A peak no single track holds half of is left: it is
+ * the sum of the arrangement, and a cut on one part would not answer it.
+ */
+function planResonances(input: { notes: PlanNote[]; tracks: PlanTrack[]; resonances?: { hz: number; db: number }[] }, plan: InternPlan) {
+  for (const note of input.notes ?? []) {
+    const m = /^resonance\.(\d+)$/.exec(typeof note?.code === 'string' ? note.code : '')
+    if (!m) continue
+    const code = m[0], hz = Number(m[1])
+    const skip = (why: string) => plan.skipped.push({ note_id: note.id ?? null, code, why })
+    const found = (input.resonances ?? []).find(r => Math.abs(r.hz - hz) / hz < 0.06)
+    if (!found) { skip('How far this peak stands out was not handed over with the note.'); continue }
+    // The twelfth-octave bin the peak is in.
+    let bin = 0
+    INTERN_SPEC_HZ.forEach((f, i) => { if (Math.abs(Math.log2(f / hz)) < Math.abs(Math.log2(INTERN_SPEC_HZ[bin] / hz))) bin = i })
+    const rows = (input.tracks ?? []).filter(t => Array.isArray(t.spec) && t.spec.length === N).map(t => ({ name: t.name, power: t.spec[bin] })).sort((a, b) => b.power - a.power)
+    const total = rows.reduce((s, r) => s + r.power, 0)
+    if (!rows.length || total <= 0) { skip('No exported track could be measured there.'); continue }
+    if (rows[0].power < 0.5 * total) { skip(`No single track holds this peak (the most is ${rows[0].name} with ${Math.round((rows[0].power / total) * 100)}%): it is the sum of the arrangement.`); continue }
+    const gainDb = -round1(Math.min(MAX_MOVE_DB, Math.max(1, found.db - RESONANCE_LEAVE_DB)))
+    plan.moves.push({ kind: 'eq', track: rows[0].name, gainDb, hz, q: RESONANCE_Q, band: 'presence', code, note_id: note.id ?? null })
+  }
+}
+
+/**
+ * Low end that is stereo (`mono.low@<sec>`, `changed.lowwidth`): the tracks
+ * with the most side energy below 120 Hz in the stretch the note names get
+ * their low end narrowed to mono, most first, until the tracks together are
+ * predicted mono enough. `tracks[i].low[k]` is the track's mid and side power
+ * for `lowNotes[k]` (createLowWidthMeter over lowWidthWindows). When the
+ * tracks are already mono and the mix is not, the width comes from a bus or
+ * the output chain and no track move answers it: the note is skipped saying so.
+ */
+function planMono(input: { notes: PlanNote[]; tracks: PlanTrack[]; lowNotes?: string[] }, plan: InternPlan) {
+  const codes = input.lowNotes ?? []
+  const narrowed = new Set(plan.moves.filter(m => m.kind === 'mono').map(m => m.track))
+  for (const note of input.notes ?? []) {
+    const code = typeof note?.code === 'string' ? note.code : ''
+    const k = codes.indexOf(code)
+    if (!(code === 'changed.lowwidth' || /^mono\.low@\d+$/.test(code))) continue
+    // planBands could not know this note: take back its "no rule" line.
+    const at = plan.skipped.findIndex(x => x.code === code && x.note_id === (note.id ?? null))
+    if (at >= 0) plan.skipped.splice(at, 1)
+    const skip = (why: string) => plan.skipped.push({ note_id: note.id ?? null, code, why })
+    const rows = (input.tracks ?? []).flatMap(t => {
+      const low = k >= 0 ? t.low?.[k] : undefined
+      return low && Number.isFinite(low.mid) && Number.isFinite(low.side) && low.mid + low.side > 0 ? [{ name: t.name, mid: low.mid, side: low.side }] : []
+    })
+    if (!rows.length) { skip('No exported track could be measured where this note is.'); continue }
+    // Tracks add in power (they are not copies of one another): the mix's correlation is (mid − side) / (mid + side).
+    const left = (name: string, side: number) => (narrowed.has(name) ? side * (1 - MONO_REMOVES) : side)
+    const corr = () => {
+      const mid = rows.reduce((s, r) => s + r.mid, 0), side = rows.reduce((s, r) => s + left(r.name, r.side), 0)
+      return (mid - side) / (mid + side)
+    }
+    const before = corr()
+    if (before >= MONO_GOAL) {
+      if (!rows.some(r => narrowed.has(r.name))) skip(`The tracks themselves are mono down there (correlation ${before.toFixed(2)}): the width comes from a bus effect or the output chain, which the intern does not touch.`)
+      continue
+    }
+    const sideTotal = rows.reduce((s, r) => s + r.side, 0)
+    const wide = rows.filter(r => !narrowed.has(r.name) && r.side >= 0.05 * sideTotal).sort((a, b) => b.side - a.side).slice(0, MAX_TRACKS_PER_NOTE)
+    const chosen: string[] = []
+    for (const r of wide) {
+      narrowed.add(r.name); chosen.push(r.name)
+      if (corr() >= MONO_GOAL) break
+    }
+    if (corr() < MONO_GOAL) {
+      for (const name of chosen) narrowed.delete(name)
+      skip(`Narrowing the ${wide.length} widest track${wide.length === 1 ? '' : 's'} would only bring the low end to a correlation of ${corr().toFixed(2)}: it is wide across the arrangement, which is a mix decision.`)
+      continue
+    }
+    for (const track of chosen) plan.moves.push({ kind: 'mono', track, gainDb: 0, hz: LOW_WIDTH_HZ.hi, band: 'sub', code, note_id: note.id ?? null })
+  }
+}
+
+function planBands(input: { notes: PlanNote[]; bands: PlanBand[]; tracks: PlanTrack[] }): InternPlan {
   const state = new Map<string, Float64Array>()
   for (const t of input.tracks ?? []) {
     if (!t || typeof t.name !== 'string' || !Array.isArray(t.spec) || t.spec.length !== N) continue
@@ -253,11 +451,19 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     loudnessShift: round1(loudnessShift),
   })
 
-  const todo: { note: PlanNote; band: number }[] = []
+  // Each band against the artist's own catalog, as it is in this bounce (`balance.<band>` notes).
+  const beforeCat: (number | null)[] = MIX_BANDS.map(band => {
+    const v = (input.bands ?? []).find(b => b && b.key === band.key)?.vsCatalog
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  })
+  const todo: { note: PlanNote; band: number; cat: boolean }[] = []
   for (const note of input.notes ?? []) {
     const code = typeof note?.code === 'string' ? note.code : null
     const band = code?.startsWith('changed.') ? MIX_BANDS.findIndex(b => `changed.${b.key}` === code) : -1
-    if (band >= 0 && before[band] != null) { todo.push({ note, band }); continue }
+    if (band >= 0 && before[band] != null) { todo.push({ note, band, cat: false }); continue }
+    const catBand = code?.startsWith('balance.') ? MIX_BANDS.findIndex(b => `balance.${b.key}` === code) : -1
+    if (catBand >= 0 && beforeCat[catBand] != null) { todo.push({ note, band: catBand, cat: true }); continue }
+    if (code && /^resonance\.\d+$/.test(code)) continue // planResonances
     skipped.push({
       note_id: note?.id ?? null, code,
       why: note?.kind === 'listener' ? 'A written note needs a person\'s judgment; the intern only fixes what Mix Check measured.'
@@ -269,15 +475,20 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     for (const { note } of todo) skipped.push({ note_id: note.id ?? null, code: note.code ?? null, why: 'No exported track could be measured.' })
     return plan(before, 0)
   }
-  todo.sort((a, b) => Math.abs(before[b.band]!) - Math.abs(before[a.band]!))
+  const size = (t: { band: number; cat: boolean }) => Math.abs((t.cat ? beforeCat : before)[t.band]!)
+  todo.sort((a, b) => Number(a.cat) - Number(b.cat) || size(b) - size(a)) // what changed first, then what is unusual
 
   const start = levels(state)
   // Each band's change since the previous version, were the tracks in `s`.
   const predict = (s: Map<string, Float64Array>) => {
     const now = levels(s)
     const shift = now.loud - start.loud
-    return { vs: before.map((v, i) => (v == null ? null : v + (now.bands[i] - now.loud) - (start.bands[i] - start.loud))), shift }
+    const delta = (i: number) => (now.bands[i] - now.loud) - (start.bands[i] - start.loud)
+    return { vs: before.map((v, i) => (v == null ? null : v + delta(i))), cat: beforeCat.map((v, i) => (v == null ? null : v + delta(i))), shift }
   }
+  type Predicted = ReturnType<typeof predict>
+  // The figure a note is about: the band against the previous version, or against the catalog.
+  const read = (p: Predicted, band: number, cat: boolean) => (cat ? p.cat : p.vs)[band]!
   const withMove = (s: Map<string, Float64Array>, m: InternMove) => new Map(s).set(m.track, moved(s.get(m.track)!, m))
   // Fine = nothing that was fine is pushed towards a note, nothing flagged is made worse, loudness holds.
   const sideOk = (from: (number | null)[], to: { vs: (number | null)[]; shift: number }, band: number) =>
@@ -289,21 +500,23 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     return Math.max(0, ...a.map((v, i) => (i === band ? 0 : Math.abs(b[i] - v))))
   }
   // The gain (within ±MAX_MOVE_DB) that puts the band nearest the goal. More gain always means more of the band.
-  const solve = (s: Map<string, Float64Array>, m: InternMove, band: number, goal: number): InternMove => {
-    let lo = -MAX_MOVE_DB, hi = MAX_MOVE_DB
+  const solve = (s: Map<string, Float64Array>, m: InternMove, band: number, goal: number, cat = false): InternMove => {
+    const limit = cat ? CATALOG_MAX_MOVE_DB : MAX_MOVE_DB
+    let lo = -limit, hi = limit
     for (let i = 0; i < 40; i++) {
       const mid = (lo + hi) / 2
-      if (predict(withMove(s, { ...m, gainDb: mid })).vs[band]! < goal) lo = mid; else hi = mid
+      if (read(predict(withMove(s, { ...m, gainDb: mid })), band, cat) < goal) lo = mid; else hi = mid
     }
     return { ...m, gainDb: round1((lo + hi) / 2) }
   }
 
-  for (const { note, band } of todo) {
+  for (const { note, band, cat } of todo) {
     const key = MIX_BANDS[band].key
     const now = predict(state)
-    const cur = now.vs[band]!
-    if (Math.abs(cur) <= CLEAR_DB) continue // an earlier move already answered it
-    const goal = Math.sign(cur) * AIM_DB
+    const cur = read(now, band, cat)
+    const clear = cat ? CATALOG_CLEAR_DB : CLEAR_DB
+    if (Math.abs(cur) <= clear) continue // an earlier move already answered it
+    const goal = Math.sign(cur) * (cat ? CATALOG_AIM_DB : AIM_DB)
     const share = (spec: Float64Array) => BAND_BINS[band].reduce((s, i) => s + spec[i], 0)
     const carriers = [...state.entries()].map(([name, spec]) => ({ name, power: share(spec) }))
       .filter(c => c.power > 0).sort((a, b) => b.power - a.power).slice(0, MAX_TRACKS_PER_NOTE)
@@ -315,10 +528,10 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     let best: { move: InternMove; rank: number } | null = null
     carriers.forEach((c, rank) => {
       for (const kind of ['level', 'eq'] as const) {
-        const move = solve(state, { kind, track: c.name, gainDb: 0, ...(kind === 'eq' ? bellFor(key) : {}), ...base }, band, goal)
+        const move = solve(state, { kind, track: c.name, gainDb: 0, ...(kind === 'eq' ? bellFor(key) : {}), ...base }, band, goal, cat)
         const tried = withMove(state, move)
         const after = predict(tried)
-        if (Math.abs(after.vs[band]!) > CLEAR_DB || !sideOk(now.vs, after, band)) continue
+        if (Math.abs(read(after, band, cat)) > clear || !sideOk(now.vs, after, band)) continue
         if (kind === 'level' && side(state, tried, band) > LEVEL_SIDE_DB) continue
         const better = !best || (kind === 'level' && best.move.kind === 'eq') || (kind === best.move.kind && rank < best.rank)
         if (better) best = { move, rank }
@@ -336,12 +549,12 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     const set: InternMove[] = []
     let reached = false
     for (const c of carriers) {
-      const move = solve(trial, { kind: 'eq', track: c.name, gainDb: 0, ...bellFor(key), ...base }, band, goal)
+      const move = solve(trial, { kind: 'eq', track: c.name, gainDb: 0, ...bellFor(key), ...base }, band, goal, cat)
       if (Math.abs(move.gainDb) < 0.3) continue
       trial = withMove(trial, move)
       set.push(move)
       const after = predict(trial)
-      if (Math.abs(after.vs[band]!) <= CLEAR_DB) { reached = sideOk(now.vs, after, band); break }
+      if (Math.abs(read(after, band, cat)) <= clear) { reached = sideOk(now.vs, after, band); break }
     }
     if (reached) {
       moves.push(...set)
@@ -351,7 +564,7 @@ export function planFixes(input: { notes: PlanNote[]; bands: PlanBand[]; tracks:
     }
     skipped.push({
       note_id: note.id ?? null, code: note.code ?? null,
-      why: `No move of up to ${MAX_MOVE_DB} dB on the ${carriers.length === 1 ? 'track' : `${carriers.length} tracks`} carrying ${MIX_BANDS[band].label.toLowerCase()} clears this without disturbing the rest of the mix.`,
+      why: `No move of up to ${cat ? CATALOG_MAX_MOVE_DB : MAX_MOVE_DB} dB on the ${carriers.length === 1 ? 'track' : `${carriers.length} tracks`} carrying ${MIX_BANDS[band].label.toLowerCase()} clears this without disturbing the rest of the mix.`,
     })
   }
 
@@ -376,6 +589,15 @@ export function refineMove(move: InternMove, wantedDb: number, observedDb: numbe
 
 /** A move as a line of the job's change list (PATCH /api/intern/jobs/<id> `changes`). */
 export function describeMove(move: InternMove): { track: string; what: string; from: string; to: string; note_id?: string } {
+  if (move.kind === 'lowcut') {
+    return { track: move.track, what: `Low cut at ${move.hz} Hz`, from: 'off', to: 'on', ...(move.note_id ? { note_id: move.note_id } : {}) }
+  }
+  if (move.kind === 'level' && move.balancePct && !move.gainDb) {
+    return { track: move.track, what: 'Balance', from: 'centre', to: `${Math.abs(move.balancePct).toFixed(0)}% ${move.balancePct > 0 ? 'right' : 'left'}`, ...(move.note_id ? { note_id: move.note_id } : {}) }
+  }
+  if (move.kind === 'mono') {
+    return { track: move.track, what: `Low end made mono below ${move.hz} Hz`, from: 'stereo', to: 'mono', ...(move.note_id ? { note_id: move.note_id } : {}) }
+  }
   const signed = `${move.gainDb > 0 ? '+' : move.gainDb < 0 ? '−' : ''}${Math.abs(move.gainDb).toFixed(1)} dB`
   return {
     track: move.track,
@@ -390,6 +612,9 @@ export function describeMove(move: InternMove): { track: string; what: string; f
 
 /** Never chased, so never counted for or against a fix (intern-jobs.ts NEVER_HANDED). */
 const NOT_JUDGED = (code: string) => code === 'genre.balance'
+
+/** Two timed notes of a kind this many seconds apart are the same note, moved. */
+const SAME_PLACE_S = 40
 
 /** A note's kind without its place: 'drop.smaller@157' and 'resonance.3175'
  *  name a second or a frequency that a new bounce can shift by one. */
@@ -409,9 +634,19 @@ export function judgeFix(before: { code: string }[], after: { code: string }[], 
     return m
   }
   const was = count(before), is = count(after)
-  const still = new Set((after ?? []).map(f => f.code))
-  const cleared = handled.filter(c => !still.has(c))
-  const remaining = handled.filter(c => still.has(c))
+  // A note tied to a moment ('mono.low@95') is still there when one of its
+  // kind sits within SAME_PLACE_S of it: a new bounce can shift it by a second.
+  const second = (code: string) => { const m = /@(\d+)$/.exec(code); return m ? Number(m[1]) : null }
+  const hzOf = (code: string) => { const m = /^resonance\.(\d+)$/.exec(code); return m ? Number(m[1]) : null }
+  const stillThere = (code: string) => (after ?? []).some(f => {
+    if (f.code === code) return true
+    const ha = hzOf(code), hb = hzOf(f.code)
+    if (ha != null && hb != null) return Math.abs(hb - ha) / ha < 0.06
+    const a = second(code), b = second(f.code)
+    return a != null && b != null && kindOf(f.code) === kindOf(code) && Math.abs(a - b) <= SAME_PLACE_S
+  })
+  const cleared = handled.filter(c => !stillThere(c))
+  const remaining = handled.filter(c => stillThere(c))
   const appeared = [...is].filter(([kind, n]) => n > (was.get(kind) ?? 0)).map(([kind]) => kind)
   return { keep: handled.length > 0 && remaining.length === 0 && appeared.length === 0, cleared, remaining, appeared }
 }

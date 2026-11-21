@@ -76,12 +76,82 @@ console.log('\nintern: the step log and the comparison\n')
     JSON.stringify(internComparison(timed(['mono.low@95', 'mono.low@143', 'drop.quieter@112']), timed(['mono.low@175', 'drop.quieter@46', 'mono.low@96'])).notes.map(n => [n.state, n.before, n.after]))
     === JSON.stringify([['cleared', 'drop.quieter@112', null], ['still', 'mono.low@95', 'mono.low@96'], ['still', 'mono.low@143', 'mono.low@175'], ['new', null, 'drop.quieter@46']]))
   const { internCanFix } = await import('../src/lib/intern-jobs.ts')
-  check('the button is offered only for a note the intern has a rule for',
-    internCanFix([{ code: 'mono.low@95' }, { code: 'changed.sub' }]) && !internCanFix([{ code: 'changed.loudness' }, { code: 'genre.balance' }, { code: 'balance.presence' }]) && !internCanFix(null)
-    && /can_hand: internCanFix/.test(handoff) && /canHand: answer\?\.can_hand === true/.test(panel) && /hasNotes: intern\.canHand == true/.test(card))
+  check('which notes have a rule is one list, the same on the server as in the rules',
+    internCanFix([{ code: 'mono.low@95' }, { code: 'changed.sub' }]) && internCanFix([{ code: 'balance.presence' }]) && internCanFix([{ code: 'changed.loudness' }]) && !internCanFix([{ code: 'genre.balance' }, { code: 'drop.quieter@46' }, { code: 'dynamics.crushed' }, { code: 'dropout@12' }]) && !internCanFix(null)
+    && /can_fix: internCanFix/.test(handoff) && /canHand: answer\?\.can_hand === true/.test(panel) && /hasNotes: intern\.canHand == true/.test(card))
+  check('the hand-off is offered whenever the mix has any open note, counted the way the hand-off itself counts them', /can_hand: openNotes > 0/.test(handoff) && /return notesForJob\(data \?\? \[\], version\.mix_check\?\.findings \?\? \[\]\)\.length/.test(handoff))
   check('no comparison is made up when either mix has no full report', internComparison(from, { label: 'x', report: null }) === null && internComparison({ label: 'x', report: { bands: [] } }, to) === null)
   check('"against" is only named when both were measured against the same mix',
     internComparison(from, { ...to, report: { ...to.report, compared: { previous: 'MASTER 3' } } })?.against === null)
+}
+
+console.log('\nintern: a low end that is stereo\n')
+{
+  const R = await import('../src/lib/intern-rules.ts')
+  const { internCanFix } = await import('../src/lib/intern-jobs.ts')
+  const codes = ['changed.sub', 'changed.lowwidth', 'mono.low@95', 'changed.loudness', 'genre.balance', 'balance.presence', 'drop.quieter@46', 'resonance.3175']
+  const M = await import('../src/lib/mastering-rules.ts')
+  const all = [...codes, 'balance.lr', 'balance.sub', 'peak.over', 'peak.clip', 'dynamics.crushed', 'tail.cut', 'dc.offset', 'dropout@12', 'phase.wide@40', 'drop.smaller@48']
+  check('the server offers the button for exactly the notes the intern or the mastering engineer can act on',
+    all.every(c => (R.internHasRule(c) || M.masteringHasRule(c)) === internCanFix([{ code: c }])), all.filter(c => R.internHasRule(c) || M.masteringHasRule(c)).join(', '))
+
+  // A sine at 60 Hz: in the middle on one track, hard left on another (half mid, half side).
+  const sr = 44100, n = sr * 12
+  const tone = (l, r) => { const L = new Float32Array(n), Rr = new Float32Array(n); for (let i = 0; i < n; i++) { const v = 0.3 * Math.sin((2 * Math.PI * 60 * i) / sr); L[i] = v * l; Rr[i] = v * r } return [L, Rr] }
+  const measure = ([L, Rr]) => { const m = R.createLowWidthMeter(sr, [{ start: 2, end: 10 }]); m.push(L, Rr); return m.finish() }
+  const centre = measure(tone(1, 1)), left = measure(tone(1, 0)), flipped = measure(tone(1, -1))
+  check('a centred low end has no side; one panned hard has as much side as mid; one out of phase is all side',
+    centre[0].side < centre[0].mid * 1e-6 && Math.abs(left[0].side / left[0].mid - 1) < 0.01 && flipped[0].mid < flipped[0].side * 1e-6)
+  check('nothing outside the window is counted', R.createLowWidthMeter(sr, [{ start: 100, end: 110 }]).finish()[0].mid === 0)
+
+  const spec = Array(R.INTERN_SPEC_HZ.length).fill(1e-6)
+  const T = (name, mid, side) => ({ name, spec, low: [{ mid, side }] })
+  const note = { id: 'n1', kind: 'mix-check', code: 'mono.low@95' }
+  const one = R.planFixes({ notes: [note], bands: [], lowNotes: ['mono.low@95'], tracks: [T('KICK', 10, 0), T('PAD', 1, 6), T('HAT', 0.1, 0.2)] })
+  check('the widest track is narrowed, and only as many as it takes',
+    one.moves.length === 1 && one.moves[0].kind === 'mono' && one.moves[0].track === 'PAD' && one.moves[0].hz === 120 && one.skipped.length === 0, JSON.stringify(one.moves))
+  check('the move reads as a line of the change list', R.describeMove(one.moves[0]).what === 'Low end made mono below 120 Hz' && R.describeMove(one.moves[0]).to === 'mono')
+  const bus = R.planFixes({ notes: [note], bands: [], lowNotes: ['mono.low@95'], tracks: [T('KICK', 10, 0.1), T('SUB', 8, 0.1)] })
+  check('tracks that are already mono are left alone, with the reason (the width is a bus or the output)',
+    bus.moves.length === 0 && /bus effect or the output chain/.test(bus.skipped[0]?.why ?? ''))
+  const everywhere = R.planFixes({ notes: [note], bands: [], lowNotes: ['mono.low@95'], tracks: ['A', 'B', 'C', 'D', 'E', 'F'].map(x => T(x, 1, 1)) })
+  check('a low end that is wide across the arrangement is not chased', everywhere.moves.length === 0 && /mix decision/.test(everywhere.skipped[0]?.why ?? ''))
+  const two = R.planFixes({ notes: [note, { id: 'n2', kind: 'mix-check', code: 'mono.low@143' }], bands: [], lowNotes: ['mono.low@95', 'mono.low@143'],
+    tracks: [{ name: 'KICK', spec, low: [{ mid: 10, side: 0 }, { mid: 10, side: 0 }] }, { name: 'PAD', spec, low: [{ mid: 1, side: 6 }, { mid: 1, side: 6 }] }] })
+  check('a track narrowed for one note is not narrowed twice for the next', two.moves.length === 1 && two.skipped.length === 0, JSON.stringify(two))
+  check('a mono move is never resized', R.refineMove(one.moves[0], 1, 0.5) === null)
+
+  check('a timed note is still there when one of its kind is within 40 s, gone when none is',
+    JSON.stringify(R.judgeFix([{ code: 'mono.low@95' }, { code: 'mono.low@143' }], [{ code: 'mono.low@96' }], ['mono.low@95', 'mono.low@143']).remaining) === '["mono.low@95"]'
+    && R.judgeFix([{ code: 'mono.low@95' }], [], ['mono.low@95']).keep === true)
+  const w = R.lowWidthWindows([{ code: 'mono.low@95' }, { code: 'changed.sub' }, { code: 'mono.low@300' }], [{ kind: 'break', start: 95, end: 112, lufs: -8 }])
+  check('a low-width note is measured over its own section', w.length === 2 && w[0].windows[0].end === 112 && w[1].windows[0].start === 300 && w[1].windows[0].end === 316)
+}
+
+console.log('\nintern: against the catalog, and resonances\n')
+{
+  const R = await import('../src/lib/intern-rules.ts')
+  const HZ = R.INTERN_SPEC_HZ
+  // A track with energy only inside one range of frequencies.
+  const track = (name, lo, hi, power) => ({ name, spec: HZ.map(f => (f >= lo && f < hi ? power : 1e-9)) })
+  const tracks = [track('KICK', 30, 120, 40), track('PADS', 250, 2000, 12), track('LEAD', 2000, 6000, 1), track('HATS', 6000, 16000, 1)]
+  const bands = [['sub', 0, 0], ['punch', 0, 0], ['upperBass', 0, 0], ['lowMid', 0, 0], ['mid', 0, 0], ['presence', 0, 4.2], ['air', 0, 0]].map(([key, vsPrevious, vsCatalog]) => ({ key, vsPrevious, vsCatalog }))
+  const heavy = R.planFixes({ notes: [{ id: 'n', kind: 'mix-check', code: 'balance.presence' }], bands, tracks })
+  check('a band heavy against the catalog is brought down on the track carrying it', heavy.moves.length === 1 && heavy.moves[0].track === 'LEAD' && heavy.moves[0].gainDb < 0 && heavy.moves[0].code === 'balance.presence', JSON.stringify(heavy.moves))
+  const light = R.planFixes({ notes: [{ id: 'n', kind: 'mix-check', code: 'balance.presence' }], bands: bands.map(b => (b.key === 'presence' ? { ...b, vsCatalog: -4.2 } : b)), tracks })
+  check('…and a band that is light is brought UP there (which the output channel could not do)', light.moves.length === 1 && light.moves[0].track === 'LEAD' && light.moves[0].gainDb > 0, JSON.stringify(light.moves))
+  check('a band with no catalog figure has no move', R.planFixes({ notes: [{ id: 'n', kind: 'mix-check', code: 'balance.presence' }], bands: bands.map(b => ({ ...b, vsCatalog: null })), tracks }).moves.length === 0)
+
+  const ring = { name: 'LEAD', spec: HZ.map(f => (Math.abs(Math.log2(f / 3175)) < 0.05 ? 50 : 1)) }
+  const res = R.planFixes({ notes: [{ id: 'r', kind: 'mix-check', code: 'resonance.3175' }], bands: [], tracks: [ring, track('PADS', 250, 2000, 1)], resonances: [{ hz: 3175, db: 8.5 }] })
+  check('a resonance gets one narrow cut at its frequency on the track that holds it, sized to leave it 3 dB proud',
+    res.moves.length === 1 && res.moves[0].kind === 'eq' && res.moves[0].track === 'LEAD' && res.moves[0].hz === 3175 && res.moves[0].q === 8 && res.moves[0].gainDb === -5.5, JSON.stringify(res.moves))
+  const spread = R.planFixes({ notes: [{ id: 'r', kind: 'mix-check', code: 'resonance.3175' }], bands: [], tracks: ['A', 'B', 'C'].map(n => ({ ...ring, name: n })), resonances: [{ hz: 3175, db: 8.5 }] })
+  check('a peak no single track holds is left, with the reason', spread.moves.length === 0 && /sum of the arrangement/.test(spread.skipped[0]?.why ?? ''))
+  check('a resonance is the same one within a few percent of its frequency',
+    R.judgeFix([{ code: 'resonance.3175' }], [{ code: 'resonance.3200' }], ['resonance.3175']).remaining.length === 1 && R.judgeFix([{ code: 'resonance.3175' }], [{ code: 'resonance.800' }], ['resonance.3175']).cleared.length === 1)
+  const logicSrc = read('scripts/intern-logic.mjs')
+  check('two bells on one track use two bands of its EQ', /bands\.set\(move\.code, bands\.size \+ 1\)/.test(logicSrc) && /`Peak \$\{peak\} Gain`/.test(logicSrc))
 }
 
 console.log('\nintern: jobs\n')

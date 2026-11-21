@@ -98,7 +98,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       }
     }
   }
-  const state = { copy: null, project: null, reopen: [], outDirs: [], ours: new Map() }
+  const state = { copy: null, project: null, reopen: [], outDirs: [], ours: new Map(), peaks: new Map() }
 
   async function until(what, fn, { timeout = 60_000, every = 500 } = {}) {
     const end = Date.now() + timeout
@@ -267,6 +267,15 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     })
   }
 
+  /** The output channel's strip (the one with the Bounce button): where the mastering engineer works. */
+  async function outputStrip() {
+    const area = await mixer()
+    const dump = await ax('ax.dump', { el: area.h, depth: 2, max: 400 })
+    const out = (dump.children ?? []).filter(c => c.role === 'AXLayoutItem').find(c => (c.children ?? []).some(k => k.role === 'AXButton' && k.desc === 'bounce'))
+    if (!out?.desc) throw new LogicProblem('The output channel could not be found in the mixer')
+    return out.desc
+  }
+
   /** Every strip's mute and solo switches, read fresh from the mixer: [{ index, name, mute, solo }]. */
   async function switches() {
     const area = await mixer()
@@ -415,7 +424,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
   }
 
   /** Bounce the project to `file` (a .wav path), with the owner's own bounce settings. */
-  async function bounce(file) {
+  async function bounce(file, { tail = null } = {}) {
     await closePluginWindows()
     await menu(['File', 'Bounce', 'Project or Section...'])
     const dialog = await until('the Bounce dialog', async () => (await windows()).find(w => /^Bounce /.test(w.title) && w.id !== 'save-panel'), { timeout: 20_000 })
@@ -426,6 +435,8 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       if (row.value !== want) await press(row.h)
     }
     for (const other of ['AIFF', 'CAF']) await setPopup(dialog.h, other, 'WAVE')
+    // The audio tail: as the owner has it, unless an ending that was cut off asks for it.
+    if (tail != null) await setCheckbox(dialog.h, 'Include Audio Tail', tail)
     await setCheckbox(dialog.h, 'Add to Project', false)
     await setCheckbox(dialog.h, 'Add to Apple Music Library', false)
     await press((await one(dialog.h, { role: 'AXButton', title: 'OK', depth: 2 })).h)
@@ -552,6 +563,64 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     return shown()
   }
 
+  /**
+   * Chooses an entry of a pop-up control by what it says (a pattern), and
+   * returns what the control then shows. A pop-up in a plug-in's Controls view
+   * only builds its menu for a real click: pressing it through Accessibility
+   * shows the current entry and nothing else. So its row is scrolled into view,
+   * the control is clicked where it is (the one click the intern makes; Logic
+   * must be in front for it), and the entry is then pressed by name.
+   */
+  async function setChoice(win, label, pattern) {
+    const popupNow = async () => (await controlRow(win, label)).find(c => c.role === 'AXPopUpButton')
+    let popup = await popupNow()
+    if (!popup) throw new LogicProblem(`"${label}" is not a control that can be chosen from`)
+    if (pattern.test(String(popup.value ?? ''))) return popup.value
+    // The window as it is NOW: it changes size when its view is switched. A plug-in window
+    // can open partly below the screen, where a click cannot land: it is moved up first.
+    const current = async () => (await windows()).find(w => w.title === win.title && w.sub === 'AXDialog')
+    let live = await current()
+    const screen = (await ax('ping')).screen ?? {}
+    if (live && screen.h && (live.frame[1] + live.frame[3] > screen.h - 10 || live.frame[1] < (screen.top ?? 0))) {
+      // Logic's plug-in windows refuse a position set through Accessibility: the title bar is dragged.
+      await ax('app.activate')
+      await sleep(400)
+      const grab = { x: live.frame[0] + live.frame[2] / 2, y: live.frame[1] + 14 }
+      await ax('sys.drag', { ...grab, toX: grab.x, toY: (screen.top ?? 25) + 60 }).catch(err => log(`could not move the plug-in window: ${err.message}`))
+      await sleep(600)
+      live = await current()
+    }
+    const box = live?.frame ?? win.frame
+    // In view: inside the window as it is, and on the screen (a click below its edge lands nowhere).
+    const floor = Math.min(box[1] + box[3], screen.h ? screen.h - 6 : Infinity)
+    const inView = p => p?.frame && p.frame[2] > 0 && p.frame[3] > 0 && p.frame[1] > box[1] && p.frame[1] + p.frame[3] < floor
+    const bar = await one(win.h, { role: 'AXScrollBar', depth: 4 })
+    for (const at of [0, 0.25, 0.5, 0.75, 1]) {
+      if (inView(popup)) break
+      if (!bar) break
+      await ax('ax.set', { el: bar.h, attr: 'AXValue', value: at })
+      await sleep(500)
+      popup = await popupNow()
+    }
+    if (!inView(popup)) throw new LogicProblem(`"${label}" could not be brought into view`)
+    await ax('app.activate')
+    await sleep(500)
+    await ax('sys.click', { x: popup.frame[0] + popup.frame[2] / 2, y: popup.frame[1] + popup.frame[3] / 2, real: true })
+    const items = await until('the menu', async () => {
+      const found = await find((await popupNow()).h, { role: 'AXMenuItem', limit: 30 })
+      return found.filter(i => i.title).length > 1 ? found : null
+    }, { timeout: 6000 }).catch(() => [])
+    const pick = items.find(i => pattern.test(i.title ?? ''))
+    if (!pick) {
+      const current = items.find(i => i.title === popup.value)
+      if (current) await press(current.h) // close the menu where it was
+      throw new LogicProblem(`"${label}" has no choice like ${pattern} (it offers ${items.map(i => i.title).filter(Boolean).join(', ') || 'nothing'})`)
+    }
+    await press(pick.h)
+    await sleep(500)
+    return (await popupNow())?.value
+  }
+
   async function setSwitch(win, label, on) {
     const row = await controlRow(win, label)
     const box = row.find(c => c.role === 'AXCheckBox')
@@ -561,6 +630,9 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
   const KINDS = {
     level: { name: 'Gain', menu: ['Utility', 'Gain'] },
     eq: { name: 'Channel EQ', menu: ['EQ', 'Channel EQ'] },
+    // Its own Channel EQ: "sides only" applies to the whole plug-in, so it cannot share one with a bell.
+    mono: { name: 'Channel EQ', menu: ['EQ', 'Channel EQ'] },
+    lowcut: { name: 'Channel EQ', menu: ['EQ', 'Channel EQ'] },
   }
 
   /** Opens the intern's own plug-in for a move on a strip, inserting it after everything else the first time. */
@@ -569,7 +641,8 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     const spec = KINDS[kind]
     let { empty, used } = await insertsOf(strip)
     if (state.ours.has(key)) {
-      const mine = used.filter(u => u.desc.trim() === spec.name).pop()
+      // The intern may have two plug-ins of a name on a strip: each is found by its place among them.
+      const mine = used.filter(u => u.desc.trim() === spec.name)[state.ours.get(key)]
       if (!mine) throw new LogicProblem(`The ${spec.name} added on ${strip.name} is gone`)
       await press(mine.children.find(c => c.desc === 'open').h)
       return pluginWindow(strip.name)
@@ -588,7 +661,7 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     const format = formats.find(f => f.title === 'Stereo') ?? formats.find(f => f.title === 'Mono') ?? formats[0]
     if (!format) throw new LogicProblem(`${spec.name} cannot be added to ${strip.name}`)
     await press(format.h)
-    state.ours.set(key, true)
+    state.ours.set(key, used.filter(u => u.desc.trim() === spec.name).length)
     return pluginWindow(strip.name)
   }
 
@@ -614,15 +687,43 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
       let shown
       if (move.kind === 'level') {
         shown = { gain: await setNumber(win, 'Gain', move.gainDb) }
+        // The left/right balance, in percent (+ is right), when the move carries one.
+        if (move.balancePct != null) shown.balance = await setNumber(win, 'Balance', move.balancePct)
+      } else if (move.kind === 'lowcut') {
+        await setSwitch(win, 'Low Cut On/Off', !move.off)
+        shown = { hz: move.off ? null : await setNumber(win, 'Low Cut Frequency', move.hz), off: !!move.off }
+      } else if (move.kind === 'mono') {
+        if (move.off) {
+          // Taken back: the low cut off again leaves the plug-in doing nothing.
+          await setSwitch(win, 'Low Cut On/Off', false)
+          await setView(win, 'Editor')
+          await closePluginWindows()
+          done.push({ track: strip.name, kind: move.kind, off: true })
+          continue
+        }
+        // The sides of the signal lose everything below `hz`: what is left down there is mono.
+        const mode = await setChoice(win, 'Channel Processing', /^side/i)
+        await setChoice(win, 'Low Cut Slope', /^24\b/) // the menu lists bare numbers (6, 12, 18, 24, 36, 48); the control then shows "24 dB/Oct"
+        await setSwitch(win, 'Low Cut On/Off', true)
+        shown = { mode, hz: await setNumber(win, 'Low Cut Frequency', move.hz) }
+        if (!/^side/i.test(String(mode)) || shown.hz == null || Math.abs(shown.hz - move.hz) > 5) throw new LogicProblem(`${strip.name}: the Channel EQ would not take a sides-only low cut at ${move.hz} Hz (it shows ${mode}, ${shown.hz} Hz)`)
       } else {
+        // One Channel EQ a strip, one of its four peak bands a note: two bells on a track do not overwrite each other.
+        const bands = state.peaks.get(index) ?? new Map()
+        state.peaks.set(index, bands)
+        if (!bands.has(move.code)) bands.set(move.code, bands.size + 1)
+        const peak = bands.get(move.code)
+        if (peak > 4) throw new LogicProblem(`${strip.name} would need more than four EQ bands`)
         await setSwitch(win, 'Gain-Q Coupling', false)
+        await setSwitch(win, `Peak ${peak} On/Off`, true)
         shown = {
-          hz: await setNumber(win, 'Peak 1 Frequency', move.hz),
-          q: await setNumber(win, 'Peak 1 Q-Factor', move.q),
-          gain: await setNumber(win, 'Peak 1 Gain', move.gainDb),
+          peak,
+          hz: await setNumber(win, `Peak ${peak} Frequency`, move.hz),
+          q: await setNumber(win, `Peak ${peak} Q-Factor`, move.q),
+          gain: await setNumber(win, `Peak ${peak} Gain`, move.gainDb),
         }
       }
-      if (shown.gain == null || Math.abs(shown.gain - move.gainDb) > 0.15) throw new LogicProblem(`${strip.name}: the ${KINDS[move.kind].name} would not take ${move.gainDb} dB (it shows ${shown.gain})`)
+      if (move.kind !== 'mono' && move.kind !== 'lowcut' && (shown.gain == null || Math.abs(shown.gain - move.gainDb) > 0.15)) throw new LogicProblem(`${strip.name}: the ${KINDS[move.kind].name} would not take ${move.gainDb} dB (it shows ${shown.gain})`)
       // Leave the plug-in as the owner would find any other: in its editor view.
       await setView(win, 'Editor')
       await closePluginWindows()
@@ -632,5 +733,5 @@ export function createLogic(helper, { log = () => {}, tag = 'job', onFolder = as
     return done
   }
 
-  return { open, close, save, bounce, exportTracks, applyMoves, strips, sumTracks, silenced, setMuted, cleanup, state }
+  return { open, close, save, bounce, exportTracks, applyMoves, strips, sumTracks, outputStrip, silenced, setMuted, cleanup, state }
 }

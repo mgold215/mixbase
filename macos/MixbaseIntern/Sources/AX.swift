@@ -92,7 +92,13 @@ final class AXBridge {
         case "ax.set":
             guard let attr = c["attr"] as? String, let value = c["value"] else { throw AXFailure(message: "Missing attr or value") }
             let el = try element(c["el"])
-            let err = AXUIElementSetAttributeValue(el, attr as CFString, value as CFTypeRef)
+            // A window's position is a point, not a plain value (used to bring a plug-in window fully on screen).
+            var boxed: CFTypeRef = value as CFTypeRef
+            if attr == (kAXPositionAttribute as String), let d = value as? [String: Any], let x = d["x"] as? Double, let y = d["y"] as? Double {
+                var point = CGPoint(x: x, y: y)
+                if let v = AXValueCreate(.cgPoint, &point) { boxed = v }
+            }
+            let err = AXUIElementSetAttributeValue(el, attr as CFString, boxed)
             if err != .success { throw AXFailure(message: "set \(attr): \(axName(err))") }
             return json(try? copy(el, attr)) ?? NSNull()
         case "ax.act":
@@ -117,11 +123,14 @@ final class AXBridge {
             return try type(text)
         case "sys.click":
             guard let x = c["x"] as? Double, let y = c["y"] as? Double else { throw AXFailure(message: "Missing x or y") }
-            return try click(CGPoint(x: x, y: y), double: c["double"] as? Bool ?? false)
+            return try click(CGPoint(x: x, y: y), double: c["double"] as? Bool ?? false, real: c["real"] as? Bool ?? false)
         case "logic.savedir":
             // Where Logic's next save dialog will open. With `path`, points it at
             // that folder; with `restore` (what an earlier call returned), puts it back.
             return try saveDirectory(path: c["path"] as? String, restore: c["restore"] as? String)
+        case "sys.drag":
+            guard let x = c["x"] as? Double, let y = c["y"] as? Double, let tx = c["toX"] as? Double, let ty = c["toY"] as? Double else { throw AXFailure(message: "Missing x, y, toX or toY") }
+            return try drag(from: CGPoint(x: x, y: y), to: CGPoint(x: tx, y: ty))
         case "sys.awake":
             return holdAwake(c["on"] as? Bool ?? true)
         case "sys.wake":
@@ -161,6 +170,8 @@ final class AXBridge {
             "display_asleep": CGDisplayIsAsleep(CGMainDisplayID()) != 0,
             "logic_running": app != nil,
             "logic_frontmost": app?.isActive ?? false,
+            // The part of the main screen windows can use (top-left origin), for keeping a window on it.
+            "screen": NSScreen.main.map { s in ["w": s.frame.width, "h": s.frame.height, "top": s.frame.height - s.visibleFrame.maxY] } ?? [:],
         ]
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.logicBundleId),
            let v = Bundle(url: url)?.infoDictionary?["CFBundleShortVersionString"] as? String { out["logic_version"] = v }
@@ -480,7 +491,7 @@ final class AXBridge {
 
     /// A click is delivered to Logic's own process and only at a point inside
     /// one of Logic's windows: never to whatever else is on screen.
-    private func click(_ p: CGPoint, double: Bool) throws -> Any {
+    private func click(_ p: CGPoint, double: Bool, real: Bool = false) throws -> Any {
         guard let app = logicApp() else { throw AXFailure(message: "Logic Pro is not running") }
         let inside = try windows().contains { w in
             guard let f = w["frame"] as? [Any], f.count == 4,
@@ -493,10 +504,43 @@ final class AXBridge {
             for type in [CGEventType.leftMouseDown, .leftMouseUp] {
                 guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: .left) else { continue }
                 e.setIntegerValueField(.mouseEventClickState, value: Int64(n))
-                e.postToPid(app.processIdentifier)
+                // `real`: a click through the screen, for the few controls (a plug-in's
+                // pop-up menus) that answer nothing else. Only with Logic in front, so it
+                // cannot land on another app's window that happens to cover the point.
+                if real {
+                    guard app.isActive else { throw AXFailure(message: "Logic Pro is not in front") }
+                    e.post(tap: .cghidEventTap)
+                } else {
+                    e.postToPid(app.processIdentifier)
+                }
                 usleep(30_000)
             }
         }
+        return true
+    }
+
+    /// A real drag, for moving one of Logic's plug-in windows (they refuse a position set
+    /// through Accessibility, and can open partly below the screen). It starts inside a
+    /// Logic window, with Logic in front, and nowhere else.
+    private func drag(from: CGPoint, to: CGPoint) throws -> Any {
+        guard let app = logicApp(), app.isActive else { throw AXFailure(message: "Logic Pro is not in front") }
+        let inside = try windows().contains { w in
+            guard let f = w["frame"] as? [Any], f.count == 4,
+                  let x = f[0] as? CGFloat, let y = f[1] as? CGFloat, let width = f[2] as? CGFloat, let height = f[3] as? CGFloat else { return false }
+            return CGRect(x: x, y: y, width: width, height: height).contains(from)
+        }
+        guard inside else { throw AXFailure(message: "That point is not inside a Logic window") }
+        let src = CGEventSource(stateID: .hidSystemState)
+        func send(_ type: CGEventType, _ p: CGPoint) {
+            CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+            usleep(25_000)
+        }
+        send(.leftMouseDown, from)
+        for i in 1...12 {
+            let t = CGFloat(i) / 12
+            send(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
+        }
+        send(.leftMouseUp, to)
         return true
     }
 

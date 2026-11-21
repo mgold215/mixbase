@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle()
     const v = version as unknown as {
       id: string; version_number: number; label: string | null; status: string; audio_url: string; audio_filename: string | null
-      mix_check: { findings?: unknown; bands?: unknown; compared?: unknown; detail?: { sections?: unknown } } | null
+      mix_check: { findings?: unknown; bands?: unknown; compared?: unknown; detail?: { sections?: unknown; resonances?: unknown } } | null
       mb_projects: { id: string; title: string; genre: string | null; bpm: number | null }
     } | null
     // The mix the notes were written against, as measured: with it the Mac can
@@ -74,6 +74,12 @@ export async function POST(request: NextRequest) {
       ? await supabaseAdmin.from('mb_versions').select('audio_filename').eq('project_id', v.mb_projects.id).limit(200)
       : { data: null }
     const filenames = [...new Set((siblings ?? []).map(s => (s as { audio_filename: string | null }).audio_filename).filter((f): f is string => !!f))]
+    // A mix the intern itself made was bounced from the intern's COPY of the
+    // project, which is on the Mac in that job's folder: the next fix builds on
+    // that copy, not on the owner's project (which never had the earlier fix).
+    const { data: maker } = v
+      ? await supabaseAdmin.from('mb_intern_jobs').select('id').eq('user_id', userId).eq('result_version_id', v.id).eq('status', 'done').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      : { data: null }
     const baseline = earlier && isMixCheckReport(earlier.mix_check)
       ? { version_id: earlier.id, label: versionDisplayLabel(earlier), summary: earlier.mix_check.summary }
       : null
@@ -88,12 +94,15 @@ export async function POST(request: NextRequest) {
         version_label: versionDisplayLabel(v),
         audio_filename: v.audio_filename,
         filenames,
+        made_by_job_id: (maker as { id?: string } | null)?.id ?? null,
         audio_url: v.audio_url,
         // What Mix Check measured, so a fix can be worked out from numbers.
         findings: v.mix_check?.findings ?? [],
         bands: v.mix_check?.bands ?? [],
         compared: v.mix_check?.compared ?? null,
         sections: v.mix_check?.detail?.sections ?? [],
+        // How far each narrow peak stands out ({ hz, db }), for the cut that answers a resonance note.
+        resonances: v.mix_check?.detail?.resonances ?? [],
         baseline,
       },
     })

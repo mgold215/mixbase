@@ -103,6 +103,37 @@ The owner asked for CATALYST instead of EVERGREEN. Its newest mix, MASTER 5, had
 - **A mute is read and pressed on the mixer strip.** Its value is right when read fresh, but the handle that was pressed keeps the old value, so the mixer is read again to confirm. (A search for track headers across the whole window ran out of time and found none.)
 - **Taking a version back leaves its audio file in Storage**: the owner's token may not delete there. The row goes (through `DELETE /api/versions/<id>`); the file is an orphan for the usual cleanup.
 
+## Every note, and the mastering engineer (2026-11-20)
+
+The owner: "The intern needs to be able to fix everything the mix check flags", "put another QA agent on top of that, the mastering engineer, who fine tunes everything the mix check/intern doesn't catch", and "This intern needs to be able to do automation. That should be doable."
+
+**Two passes over one copy, both by rule, Mix Check the judge of each.**
+
+| Note | Who | Fix |
+|---|---|---|
+| `changed.<band>` | intern | level or bell on the tracks carrying the band |
+| `balance.<band>` (against the catalog) | intern, else mastering engineer | the same, aimed at 2 dB from the catalog average and never over 3 dB a track (`CATALOG_MAX_MOVE_DB`): it is the owner's sound being nudged. If no track move answers it, one cut of up to 2 dB on the output (a boost there would push the peaks) |
+| `mono.low@<sec>`, `changed.lowwidth` | intern, else mastering engineer | Channel EQ, sides only, low cut at 120 Hz, on the tracks holding most of the low end's side energy in that stretch (`createLowWidthMeter`); on the output when no track answers it |
+| `resonance.<hz>` | intern | a narrow cut (Q 8) on the track holding at least half of that peak |
+| `peak.over`, `peak.clip`, `changed.loudness` | mastering engineer | ONE Gain on the output: the largest trim asked for; a quieter mix comes up only as far as the peaks allow |
+| `balance.lr` | mastering engineer | the same Gain's Balance |
+| `dc.offset` | mastering engineer | low cut at 20 Hz on the output |
+| `tail.cut` | mastering engineer | the bounce made with "Include Audio Tail" |
+| `dynamics.crushed`, `phase.wide@`, `drop.quieter@`, `drop.smaller@` | nobody yet | need the owner's limiter backed off, a polarity or width fix, and automation |
+| `dropout@` | nobody | missing audio cannot be put back |
+| `genre.balance` | never | the owner's first brief: never chase it |
+| a note a person wrote | nobody | needs judgment; handed over and reported as left |
+
+- `src/lib/intern-rules.ts` (`planFixes` = `planBands` + `planMono` + `planResonances`) and `src/lib/mastering-rules.ts` (`planMastering`, `deliverableProblems`). `internHasRule` / `masteringHasRule` say which notes have a rule; the server's `internCanFix` must agree (a test checks).
+- **The mastering engineer works on the output strip only** (`logic.outputStrip()`: the strip with the Bounce button), after the intern, on the intern's bounce. Its bounce is kept only if the intern's notes are still gone, nothing new appeared and it is still the same audio (`deliverableProblems`). Otherwise its moves are set back to nothing (`neutral`) and the intern's bounce is the one uploaded.
+- **What a fix is judged on**: the notes a move was made for. A note the rules left alone is logged with its reason. Notes only the server can confirm (a band against the catalog) never take a version back; they are reported after the server's check.
+- **Every handed note gets one outcome line** at the end: Fixed / Tried, still there / Gone as a side effect / Left for you.
+- **The button is offered for any open note** (`can_hand`); `can_fix` says whether one has a rule.
+- **A follow-up on a mix the intern made starts from the intern's own copy** (`made_by_job_id` in the claim → that job's folder on the Mac), because the owner's project never had the earlier fix. If that folder is gone the job says to hand over the mix it was made from.
+- **A plug-in's pop-up controls** ("Channel Processing", "Low Cut Slope") only build their menus for a real click: `setChoice` scrolls the row into view, drags the plug-in window on screen if it opened below it (those windows refuse a position set through Accessibility), clicks the control with Logic in front, then presses the entry by name. The slope menu lists bare numbers (24), not "24 dB/Oct".
+- **Bounces of the same project differ a little** (free-running synths): the sub measured 0.9 dB apart on two runs, and a low-end note came and went between two bounces. A mastering move was taken back for it once. Not solved.
+- `handoff.json` also takes `dry_run` and `take_back`.
+
 ## After a macOS update (2026-11-20: macOS 15.6.1 → 27.2.1)
 
 The owner updated the Mac and asked that the intern still worked. It did not, three ways, none of them a lost permission (both switches and the sign-in survived the update and a rebuild):
@@ -133,9 +164,8 @@ A cloud session cannot do the Mac half (tried 2026-11-19): the Mac's folders are
 
 ## Next
 
-- Only `changed.<band>` has a rule. Every other measured note, and every note a person wrote ("Needs sub"), is handed over and skipped with a sentence saying why.
-- A job needs the Mac awake and not password-locked. After an hour of display sleep the owner's Mac asks for a password; the job then sits at "Waiting for your Mac to be unlocked".
-- Stop is noticed between steps, so a bounce or an export in progress finishes first (up to a few minutes).
-- A project that does not bounce to the handed mix even with its muted strips on (it has changed, or the mix was finished elsewhere) is refused: nothing is uploaded. Only mutes are tried; a soloed strip, a bypassed plug-in or a different project alternative are not.
-- Tracks that share a name are told apart by Logic's export numbering (`HOOK`, `HOOK_1`), assumed to follow mixer order.
-- The owner's EVERGREEN project was open in Logic when the work began and was closed by the first copy that was opened (it had no unsaved changes). A job reopens what was open; the exploration by hand did not.
+- **Automation**, for `drop.quieter@` / `drop.smaller@` (a level ride across the boundary). To try first: Logic's automation event list (rows with a position and a value), then menu commands that create points at borders, then recording a fader move.
+- `dynamics.crushed` (the owner's limiter backed off 1 to 2 dB in the copy, found by name on the output strip) and `phase.wide@` (polarity or width on the track causing it).
+- Whether notes a person wrote get a Claude step on the subscription: the owner has been asked, no answer yet.
+- A job needs the Mac awake and not password-locked. Stop is noticed between steps.
+- The owner's EVERGREEN project was open in Logic when the work began and was closed by the first copy that was opened (it had no unsaved changes).
