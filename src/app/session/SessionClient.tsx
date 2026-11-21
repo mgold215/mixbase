@@ -5,6 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Check, Copy, Sparkles, TriangleAlert, X, Loader2, ListChecks } from 'lucide-react'
 import CassetteIcon from '@/components/CassetteIcon'
+import SessionInternHandoff from '@/components/SessionInternHandoff'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { audioProxyUrl, artworkProxyUrl } from '@/lib/supabase'
 import { clock, type MixSession, type SessionNote, type SessionPlan, type SessionSong } from '@/lib/mix-session'
@@ -203,6 +204,8 @@ export default function SessionClient() {
         </p>
       )}
       {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+      {/* Owner-only: hand every song's open notes to the mixing intern. Renders nothing for anyone else. */}
+      <SessionInternHandoff refreshKey={openCount} />
       {openCount === 0 && (
         <p className="text-sm text-center py-2" style={{ color: 'var(--text-muted)' }}>Every note is done. Nice.</p>
       )}
